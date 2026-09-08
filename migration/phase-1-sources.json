@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "phase": "1",
+  "preparedAt": "2026-09-08",
+  "sources": [
+    {
+      "repository": "Officially-aditya/Cuppet-code",
+      "ref": "840ed751b61c04afc881a393b7836d4d2c932f61",
+      "use": "behavioral contract only; no OpenCode runtime imported"
+    },
+    {
+      "repository": "Officially-aditya/Agent-Execute",
+      "ref": "03429e7729bb82bec17a47c1a8c7094228c90ebe",
+      "use": "streamed completion pattern: incremental deltas and clean finalization"
+    },
+    {
+      "repository": "Officially-aditya/browserControl",
+      "ref": "7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8",
+      "use": "runtime boundary pattern: model-agnostic orchestration and execution outside UI"
+    }
+  ],
+  "phaseOneAuthority": {
+    "conversationTruth": "SQLite in the independent runtime process",
+    "providerSecretTruth": "Electron main-process OS-encrypted settings store",
+    "uiState": "renderer projection only",
+    "generationCancellation": "runtime-owned AbortController"
+  },
+  "acceptance": [
+    "Electron renderer is isolated from Node APIs",
+    "runtime is a separate executable Node process",
+    "conversation persists across runtime restart",
+    "one real OpenAI-compatible provider streams deltas",
+    "Stop aborts generation and persists partial output",
+    "production source contains no OpenCode dependency"
+  ]
+}

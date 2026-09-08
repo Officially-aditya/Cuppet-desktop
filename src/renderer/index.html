@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>Cuppet</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">C</div>
+          <div>
+            <div class="brand-title">Cuppet</div>
+            <div class="brand-subtitle">Desktop alpha</div>
+          </div>
+        </div>
+        <button id="new-chat" class="primary-button full">New chat</button>
+      </div>
+      <div id="session-list" class="session-list" aria-label="Conversations"></div>
+      <div class="sidebar-bottom">
+        <button id="settings-button" class="ghost-button full">Provider settings</button>
+      </div>
+    </aside>
+
+    <main class="main-pane">
+      <header class="topbar">
+        <div>
+          <div id="conversation-title" class="conversation-title">New chat</div>
+          <div id="runtime-status" class="runtime-status">Starting runtime…</div>
+        </div>
+        <div id="provider-pill" class="provider-pill">Provider not configured</div>
+      </header>
+
+      <section id="messages" class="messages" aria-live="polite">
+        <div class="empty-state">
+          <div class="empty-icon">⌁</div>
+          <h1>Independent Cuppet runtime</h1>
+          <p>Conversations are stored locally in SQLite and streamed from the provider by a separate runtime process.</p>
+        </div>
+      </section>
+
+      <footer class="composer-wrap">
+        <form id="composer" class="composer">
+          <textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea>
+          <div class="composer-actions">
+            <span id="composer-hint" class="composer-hint">Enter to send · Shift+Enter for newline</span>
+            <button id="stop-button" type="button" class="stop-button hidden">Stop</button>
+            <button id="send-button" type="submit" class="send-button">Send</button>
+          </div>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="settings-dialog" class="settings-dialog">
+    <form id="settings-form" method="dialog">
+      <div class="dialog-header">
+        <div>
+          <h2>Provider settings</h2>
+          <p>Phase 1 uses an OpenAI-compatible chat-completions endpoint.</p>
+        </div>
+        <button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button>
+      </div>
+      <label>
+        Base URL
+        <input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>
+        Model
+        <input id="provider-model" type="text" required placeholder="Your model ID" />
+      </label>
+      <label>
+        API key
+        <input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" />
+      </label>
+      <div id="settings-note" class="settings-note"></div>
+      <div class="dialog-actions">
+        <button type="button" id="settings-cancel" class="ghost-button">Cancel</button>
+        <button type="submit" class="primary-button">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>

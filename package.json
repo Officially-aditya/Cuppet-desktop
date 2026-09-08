@@ -1,10 +1,18 @@
 {
   "name": "cuppet-desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "Independent Cuppet desktop/runtime migration",
+  "type": "module",
+  "main": "src/main/main.mjs",
   "scripts": {
-    "phase0:verify": "node scripts/verify-phase0.mjs"
+    "start": "electron .",
+    "test": "node --test",
+    "phase0:verify": "node scripts/verify-phase0.mjs",
+    "phase1:verify": "node scripts/verify-phase1.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.2.0"
   },
   "engines": {
     "node": ">=22"
