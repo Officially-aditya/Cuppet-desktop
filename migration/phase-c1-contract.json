@@ -1,0 +1,86 @@
+{
+  "phase": "C1",
+  "name": "TST workspace tools and independent permission execution",
+  "source_baseline": {
+    "repository": "Officially-aditya/Cuppet-code",
+    "commit": "840ed751b61c04afc881a393b7836d4d2c932f61",
+    "references": [
+      "packages/opencode-plugin/src/index.ts",
+      "packages/opencode-plugin/src/rpc.ts",
+      "packages/cli/src/controller.ts",
+      "packages/cli/src/opencode/safe-bash.ts"
+    ]
+  },
+  "authorities": {
+    "filesystem": "current source and workspace truth",
+    "tst": "structural workspace discovery and memory/evidence substrate",
+    "permission_broker": "whether a model-requested protected operation may execute",
+    "sqlite_tool_executions": "durable tool-call audit; separate from visible chat transcript",
+    "sqlite_messages": "visible user/assistant/system conversation truth",
+    "pe3": "task-local observed-path and workspace-staleness projection only",
+    "renderer": "permission UI projection only; never executes tools directly"
+  },
+  "model_tools": {
+    "read_only": ["cuppet_plan", "cuppet_memory_search", "tst_explore", "tst_read"],
+    "mutating": ["workspace_edit", "workspace_write"],
+    "execution": ["bash"]
+  },
+  "tst_explore_modes": ["workspace", "tree", "search", "trace"],
+  "permission_policy": {
+    "ordinary_workspace_read": "allow unless graph-first gate is explicitly enabled",
+    "sensitive_read": "ask",
+    "env_example": "allow",
+    "protected_runtime_credentials": "deny",
+    "edit_write": "ask unless guarded session auto proves the exact resource is safe",
+    "bash": "ask except narrow metadata-only safe-bash classifier",
+    "always": "session-scoped exact action/resource fingerprint only; never wildcard",
+    "guarded_auto": "session-scoped; workspace-contained non-sensitive read/edit/write resources only",
+    "plan_mode": "read-only; mutation and arbitrary shell denied",
+    "noninteractive": "operations requiring a prompt fail closed"
+  },
+  "safe_bash_family": [
+    "pwd",
+    "ls with metadata-only flags",
+    "git status with bounded status flags",
+    "git log requiring --oneline with bounded flags",
+    "git branch with bounded read-only flags",
+    "git ls-files with bounded flags",
+    "git rev-parse for repository metadata only",
+    "toolchain version commands"
+  ],
+  "security_invariants": [
+    "filesystem paths may not escape the project root",
+    "symlink escapes are not guarded-auto eligible",
+    "secret-like and credential files are not guarded-auto eligible",
+    "OpenCode is not a production dependency",
+    "renderer and preload expose approval decisions, not filesystem or shell primitives",
+    "tool output is untrusted model input and is not durable visible transcript content",
+    "a tool may not be reported successful unless its runtime execution succeeded",
+    "Stop/cancellation aborts permission waits and active execution"
+  ],
+  "limits": {
+    "tool_steps_per_generation": 64,
+    "tool_output_bytes": 131072,
+    "file_read_write_bytes": 1048576,
+    "permission_resources_per_request": 16,
+    "graph_duplicate_cache_sessions": 128,
+    "graph_duplicate_calls_per_session": 128,
+    "bash_timeout_ms_max": 120000
+  },
+  "pe3_integration": {
+    "successful_read_or_explore": "observed paths",
+    "successful_edit_write_or_detected_shell_change": "workspace mutation/staleness update",
+    "failed_or_rejected_tool": "no path privilege update"
+  },
+  "acceptance": [
+    "streamed OpenAI-compatible tool calls reconstruct correctly",
+    "safe-bash parity/security tests pass",
+    "sensitive/protected/symlink/noninteractive permission tests pass",
+    "guarded-auto and exact-always semantics pass",
+    "tool execution audit stays separate from visible transcript",
+    "plan-mode mutation is rejected",
+    "duplicate structural exploration is suppressed per session",
+    "full runtime can block on permission, resume, mutate, audit, and complete",
+    "all inherited migration gates remain green"
+  ]
+}

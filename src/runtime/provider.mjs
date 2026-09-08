@@ -23,7 +23,9 @@ export class OpenAICompatibleChatProvider {
     this.#fetch = fetchImpl;
   }
 
-  async stream(messages, { signal, onDelta }) {
+  async stream(messages, { signal, onDelta, tools = [] }) {
+    const request = { model: this.#model, messages, stream: true };
+    if (Array.isArray(tools) && tools.length) { request.tools = tools; request.tool_choice = 'auto'; }
     const response = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -31,7 +33,7 @@ export class OpenAICompatibleChatProvider {
         'content-type': 'application/json',
         accept: 'text/event-stream, application/json',
       },
-      body: JSON.stringify({ model: this.#model, messages, stream: true }),
+      body: JSON.stringify(request),
       signal,
     });
 
@@ -47,9 +49,10 @@ export class OpenAICompatibleChatProvider {
 
     const payload = await response.json();
     const text = completionText(payload);
-    if (!text) throw new Error('Provider returned an empty assistant response.');
-    await onDelta(text);
-    return { text, usage: payload?.usage ?? null };
+    const toolCalls = completionToolCalls(payload);
+    if (!text && !toolCalls.length) throw new Error('Provider returned an empty assistant response.');
+    if (text) await onDelta(text);
+    return { text, toolCalls, usage: payload?.usage ?? null };
   }
 }
 
@@ -59,6 +62,7 @@ export async function consumeSseBody(body, onDelta, signal) {
   let buffer = '';
   let text = '';
   let usage = null;
+  const toolCalls = new Map();
 
   try {
     while (true) {
@@ -70,7 +74,8 @@ export async function consumeSseBody(body, onDelta, signal) {
       buffer = parsed.rest;
       for (const event of parsed.events) {
         const result = await consumeSseEvent(event, onDelta);
-        if (result.done) return { text, usage };
+        mergeToolCallDeltas(toolCalls, result.toolCallDeltas);
+        if (result.done) return finalizeStream(text, usage, toolCalls);
         if (result.delta) text += result.delta;
         if (result.usage) usage = result.usage;
       }
@@ -79,6 +84,7 @@ export async function consumeSseBody(body, onDelta, signal) {
     buffer += decoder.decode();
     if (buffer.trim()) {
       const result = await consumeSseEvent(buffer, onDelta);
+      mergeToolCallDeltas(toolCalls, result.toolCallDeltas);
       if (result.delta) text += result.delta;
       if (result.usage) usage = result.usage;
     }
@@ -86,8 +92,9 @@ export async function consumeSseBody(body, onDelta, signal) {
     reader.releaseLock();
   }
 
-  if (!text) throw new Error('Provider stream completed without text.');
-  return { text, usage };
+  const final = finalizeStream(text, usage, toolCalls);
+  if (!final.text && !final.toolCalls.length) throw new Error('Provider stream completed without text or tool calls.');
+  return final;
 }
 
 export function splitSseEvents(value) {
@@ -102,8 +109,8 @@ async function consumeSseEvent(event, onDelta) {
     .map((line) => line.slice(5).trimStart())
     .join('\n')
     .trim();
-  if (!data) return { done: false, delta: '' };
-  if (data === '[DONE]') return { done: true, delta: '' };
+  if (!data) return { done: false, delta: '', toolCallDeltas: [] };
+  if (data === '[DONE]') return { done: true, delta: '', toolCallDeltas: [] };
 
   let payload;
   try {
@@ -111,24 +118,54 @@ async function consumeSseEvent(event, onDelta) {
   } catch {
     throw new Error('Provider returned malformed streaming JSON.');
   }
-  const delta = payload?.choices?.[0]?.delta?.content;
-  if (typeof delta === 'string' && delta.length > 0) {
-    await onDelta(delta);
-  }
+  const choice = payload?.choices?.[0] ?? {};
+  const delta = choice?.delta?.content;
+  if (typeof delta === 'string' && delta.length > 0) await onDelta(delta);
+  const toolCallDeltas = Array.isArray(choice?.delta?.tool_calls) ? choice.delta.tool_calls.map(normalizeToolCallDelta) : [];
   return {
     done: false,
     delta: typeof delta === 'string' ? delta : '',
     usage: payload?.usage ?? null,
+    toolCallDeltas,
   };
+}
+
+function mergeToolCallDeltas(target, deltas) {
+  for (const delta of deltas ?? []) {
+    const index = Number.isInteger(delta.index) ? delta.index : target.size;
+    const current = target.get(index) ?? { id: '', name: '', arguments: '' };
+    if (delta.id) current.id = delta.id;
+    if (delta.name) current.name += delta.name;
+    if (delta.arguments) current.arguments += delta.arguments;
+    target.set(index, current);
+  }
+}
+function normalizeToolCallDelta(value) {
+  return {
+    index: Number.isInteger(value?.index) ? value.index : undefined,
+    id: typeof value?.id === 'string' ? value.id : '',
+    name: typeof value?.function?.name === 'string' ? value.function.name : '',
+    arguments: typeof value?.function?.arguments === 'string' ? value.function.arguments : '',
+  };
+}
+function finalizeStream(text, usage, toolCalls) {
+  return { text, usage, toolCalls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([index, value]) => ({ id: value.id || `tool_call_${index}`, name: value.name, arguments: value.arguments || '{}' })).filter((call) => call.name) };
 }
 
 function completionText(payload) {
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => typeof part?.text === 'string' ? part.text : '').join('');
-  }
+  if (Array.isArray(content)) return content.map((part) => typeof part?.text === 'string' ? part.text : '').join('');
   return '';
+}
+function completionToolCalls(payload) {
+  const calls = payload?.choices?.[0]?.message?.tool_calls;
+  if (!Array.isArray(calls)) return [];
+  return calls.flatMap((call, index) => {
+    const name = typeof call?.function?.name === 'string' ? call.function.name : '';
+    if (!name) return [];
+    return [{ id: typeof call?.id === 'string' ? call.id : `tool_call_${index}`, name, arguments: typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}' }];
+  });
 }
 
 async function safeResponseText(response) {

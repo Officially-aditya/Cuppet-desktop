@@ -9,9 +9,11 @@ import { CognitiveStateStore } from './cognitive-state.mjs';
 import { ContextCompiler } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
 import { Pe3ProjectRouter } from './pe3/router.mjs';
+import { PermissionBroker } from './permissions.mjs';
+import { ToolRuntime } from './tool-runtime.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -23,6 +25,9 @@ export class RuntimeService {
     planStore,
     cognitiveState,
     contextCompiler,
+    permissionBroker,
+    toolRuntime,
+    interactive = process.env.CUPPET_NONINTERACTIVE !== '1',
     backgroundFactory,
     pe3Factory,
   }) {
@@ -35,6 +40,8 @@ export class RuntimeService {
     this.#plans = planStore ?? new LosslessPlanStore(join(dataDir, 'lossless-plans'));
     this.#cognitive = cognitiveState ?? new CognitiveStateStore(join(dataDir, 'cognitive-state.json'));
     this.#compiler = contextCompiler ?? new ContextCompiler({ tst: this.#tst, planStore: this.#plans, cognitiveState: this.#cognitive });
+    this.#permissions = permissionBroker ?? new PermissionBroker({ emit: this.#emit, interactive });
+    this.#tools = toolRuntime ?? new ToolRuntime({ tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, db: this.#db, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
@@ -45,6 +52,7 @@ export class RuntimeService {
     this.#closed = true;
     for (const run of this.#runs.values()) run.controller.abort();
     this.#runs.clear();
+    this.#permissions.close?.();
     this.#tst.close?.();
     this.#db.close();
     return Promise.all([...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined))).then(() => undefined);
@@ -53,7 +61,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, pendingPermissions: this.#permissions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -63,6 +71,14 @@ export class RuntimeService {
       case 'background.flush': return this.#flushBackground(params.sessionId);
       case 'session.mode.get': return { sessionId: params.sessionId, mode: this.#cognitive.mode(params.sessionId) };
       case 'session.mode.set': return this.#cognitive.setMode(params.sessionId, params.mode);
+      case 'session.auto.get': { const session = this.requireSession(params.sessionId); return this.#permissions.autoStatus(session.id); }
+      case 'session.auto.set': {
+        const session = this.requireSession(params.sessionId);
+        if (params.enabled && !session.projectId) throw new Error('Guarded auto mode requires a project-bound session');
+        return this.#permissions.setAuto(session.id, Boolean(params.enabled));
+      }
+      case 'permission.list': return this.#permissions.list(params.sessionId ?? null);
+      case 'permission.reply': return this.#permissions.reply(params.requestId, params.reply);
       case 'context.compact': return this.#compact(params);
       case 'plan.get': return this.#plans.toolResult(params.sessionId, params.request ?? { action: 'overview' });
       case 'memory.query': return this.#queryMemory(params);
@@ -217,9 +233,9 @@ export class RuntimeService {
     this.#emit({ type: 'message.created', message: delivery.assistant });
 
     const controller = new AbortController();
-    this.#runs.set(targetSessionId, { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, sourceSessionId, route });
+    this.#runs.set(targetSessionId, { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route });
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
-    void this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [] });
+    void this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [] });
     return { accepted: true, sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route };
   }
 
@@ -251,7 +267,7 @@ export class RuntimeService {
     run.controller.abort(); return { stopped: true, sessionId, messageId: run.assistantId, projectId: run.projectId };
   }
 
-  async #generate({ sessionId, assistantId, userId, provider, signal, refreshPaths = [], attachments = [] }) {
+  async #generate({ sessionId, assistantId, userId, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [] }) {
     let completedMessage;
     try {
       const durable = this.#db.getSession(sessionId).messages.filter((message) => message.id !== assistantId && message.status !== 'streaming');
@@ -259,12 +275,22 @@ export class RuntimeService {
       const providerMessages = injectPe3Context(compiled.messages, refreshPaths, attachments);
       this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
       const adapter = this.#providerFactory(provider ?? {});
-      await adapter.stream(providerMessages.map(({ role, content }) => ({ role, content })), {
+      await this.#tools.run({
+        adapter,
+        messages: providerMessages.map(({ role, content }) => ({ role, content })),
+        sessionId,
+        projectId,
+        projectRoot,
+        mode: this.#cognitive.mode(sessionId),
         signal,
         onDelta: async (delta) => {
           if (signal.aborted || this.#closed) return;
           const message = this.#db.appendMessageContent(assistantId, delta);
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
+        },
+        onPaths: async (paths, mutation) => {
+          if (!projectId || process.env.CUPPET_PE3 === '0') return;
+          await this.#pe3Observe(sessionId, paths, mutation);
         },
       });
       if (signal.aborted || this.#closed) throw abortError();

@@ -69,6 +69,10 @@ export class TstBridge {
   async observeMemory(sessionID, observation) { return this.call('memory.observe', { session_id: sessionID, ...observation }); }
   async queryMemory(sessionID, query, limit = 20) { return this.call('memory.query', { session_id: sessionID, query, limit: Math.min(Math.max(limit, 1), 40) }); }
   async recordEvidence(sessionID, memoryID, kind, reference, success = true) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success }); }
+  async graphLocate(pattern, prefix, limit = 12) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
+  async graphList(prefix, limit = 100) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
+  async graphWorkspace(limit = 100) { return this.call('graph.workspace', { limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
+  async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: Math.min(Math.max(Math.floor(depth), 1), 4), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
   close() { this.#client?.destroy(); this.#client = undefined; }
   async #ensure() {
     if (this.#client?.connected) return this.#client;
