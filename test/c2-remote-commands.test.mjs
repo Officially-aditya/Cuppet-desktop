@@ -20,7 +20,7 @@ function fixture(){
     case 'permission.reply':return{resolved:true};
     default:throw new Error(`unexpected ${method}`);
   }};
-  const adapter=new RemoteCommandAdapter({call,identity:{hostId:'host_1',deviceName:'Laptop'},providerConfig:{baseUrl:'https://api.example.test/v1',model:'model-a',backgroundModel:'model-b',apiKey:'super-secret'}});
+  const adapter=new RemoteCommandAdapter({call,identity:{hostId:'host_1',deviceName:'Laptop'},providerConfig:{baseUrl:'https://user:password@api.example.test/v1',model:'model-a',backgroundModel:'model-b',apiKey:'super-secret'}});
   return{adapter,calls};
 }
 const actor={deviceID:'dev_1'};
@@ -28,11 +28,16 @@ const actor={deviceID:'dev_1'};
 test('remote command adapter keeps provider secret local and binds device workspace/session state',async()=>{
   const {adapter,calls}=fixture();
   const host=await adapter.execute(actor,'host.get');assert.equal(host.provider.configured,true);assert.equal(JSON.stringify(host).includes('super-secret'),false);
+  const providers=await adapter.execute(actor,'provider.list');
+  assert.deepEqual(providers,[{id:'openai-compatible',name:'OpenAI-compatible',connected:true}]);
+  assert.equal(JSON.stringify(providers).includes('password'),false);
+  assert.equal(JSON.stringify(providers).includes('api.example.test'),false);
   const workspaces=await adapter.execute(actor,'workspace.list');assert.deepEqual(workspaces.map((w)=>w.workspaceId),['p1']);
   await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
   const created=await adapter.execute(actor,'session.new',{});assert.equal(created.projectId,'p1');
   await adapter.execute(actor,'session.submit',{prompt:'Implement it'});
   const send=calls.findLast((entry)=>entry.method==='session.send');assert.equal(send.params.sessionId,'s2');assert.equal(send.params.provider.apiKey,'super-secret');
+  assert.equal(send.params.provider.baseUrl,'https://user:password@api.example.test/v1');
   assert.equal(JSON.stringify(await adapter.execute(actor,'session.snapshot')).includes('super-secret'),false);
 });
 
