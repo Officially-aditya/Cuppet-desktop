@@ -36,9 +36,12 @@ export class ProviderSettingsStore {
   }
 
   rendererValue() {
+    const projection = providerProjection(this.#value, { includeEndpoint: true });
+    const apiKeyConfigured = Boolean(this.#encryptedApiKey);
     return {
-      ...providerProjection(this.#value, { includeEndpoint: true }),
-      apiKeyConfigured: Boolean(this.#encryptedApiKey),
+      ...projection,
+      configured: apiKeyConfigured && Boolean(projection.primary?.modelID),
+      apiKeyConfigured,
       encryptionAvailable: safeStorage.isEncryptionAvailable(),
     };
   }
