@@ -4,88 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Cuppet</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Cuppet</title><link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <div class="brand-row">
-          <div class="brand-mark" aria-hidden="true">C</div>
-          <div>
-            <div class="brand-title">Cuppet</div>
-            <div class="brand-subtitle">Desktop alpha</div>
-          </div>
-        </div>
-        <button id="new-chat" class="primary-button full">New chat</button>
-      </div>
-      <div id="session-list" class="session-list" aria-label="Conversations"></div>
-      <div class="sidebar-bottom">
-        <button id="settings-button" class="ghost-button full">Provider settings</button>
-      </div>
-    </aside>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="brand-row"><div class="brand-mark" aria-hidden="true">C</div><div><div class="brand-title">Cuppet</div><div class="brand-subtitle">Desktop alpha</div></div></div>
+      <button id="new-chat" class="primary-button full">New chat</button>
+      <nav class="primary-nav" aria-label="Primary"><button class="nav-button" disabled>Search</button><button class="nav-button" disabled>Agents</button><button class="nav-button" disabled>Remote</button></nav>
+    </div>
+    <div class="projects-header"><span>Projects</span><button id="add-project" class="text-button">Add</button></div>
+    <div id="project-list" class="project-list" aria-label="Projects and conversations"></div>
+    <div class="sidebar-bottom"><button id="settings-button" class="ghost-button full">Provider settings</button></div>
+  </aside>
+  <main class="main-pane">
+    <header class="topbar"><div><div id="conversation-title" class="conversation-title">New chat</div><div id="project-status" class="project-status">General chat</div><div id="runtime-status" class="runtime-status">Starting runtime…</div></div><div id="provider-pill" class="provider-pill">Provider not configured</div></header>
+    <section id="messages" class="messages" aria-live="polite"></section>
+    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button">Send</button></div></form></footer>
+  </main>
+</div>
 
-    <main class="main-pane">
-      <header class="topbar">
-        <div>
-          <div id="conversation-title" class="conversation-title">New chat</div>
-          <div id="runtime-status" class="runtime-status">Starting runtime…</div>
-        </div>
-        <div id="provider-pill" class="provider-pill">Provider not configured</div>
-      </header>
+<dialog id="new-chat-dialog" class="settings-dialog"><form id="new-chat-form" method="dialog"><div class="dialog-header"><div><h2>New chat</h2><p>Choose a project or start a general chat without filesystem access.</p></div><button id="new-chat-close" type="button" class="icon-button" aria-label="Close">×</button></div><label>Project<select id="new-chat-project"><option value="">General chat</option></select></label><div class="dialog-actions"><button type="button" id="new-chat-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Start chat</button></div></form></dialog>
 
-      <section id="messages" class="messages" aria-live="polite">
-        <div class="empty-state">
-          <div class="empty-icon">⌁</div>
-          <h1>Independent Cuppet runtime</h1>
-          <p>Conversations are stored locally in SQLite and streamed from the provider by a separate runtime process.</p>
-        </div>
-      </section>
+<dialog id="add-project-dialog" class="settings-dialog wide-dialog"><div class="dialog-header dialog-pad"><div><h2>Add project</h2><p>Register a folder or clone an explicitly chosen GitHub repository.</p></div><button id="add-project-close" type="button" class="icon-button" aria-label="Close">×</button></div><div class="add-project-grid">
+  <section class="project-method"><h3>Local folder</h3><p>Add an existing folder. Its Git root and origin are detected when present.</p><input id="local-project-name" type="text" placeholder="Project name (optional)"/><button id="add-local-project" class="ghost-button">Choose folder</button></section>
+  <section class="project-method"><h3>GitHub URL</h3><p>HTTPS and SSH github.com repository URLs are supported. Embedded credentials are rejected.</p><input id="github-url" type="text" placeholder="https://github.com/owner/repo.git"/><button id="clone-url-project" class="ghost-button">Choose destination & clone</button></section>
+  <section class="project-method picker-method"><h3>GitHub repositories</h3><p>Uses an existing authenticated GitHub CLI session; no second OAuth app is created.</p><div class="inline-row"><input id="github-search" type="search" placeholder="Filter repositories"/><button id="load-github-repos" class="ghost-button">Load</button></div><div id="github-repo-results" class="repo-results"></div></section>
+</div><div id="add-project-note" class="dialog-note dialog-pad"></div></dialog>
 
-      <footer class="composer-wrap">
-        <form id="composer" class="composer">
-          <textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea>
-          <div class="composer-actions">
-            <span id="composer-hint" class="composer-hint">Enter to send · Shift+Enter for newline</span>
-            <button id="stop-button" type="button" class="stop-button hidden">Stop</button>
-            <button id="send-button" type="submit" class="send-button">Send</button>
-          </div>
-        </form>
-      </footer>
-    </main>
-  </div>
-
-  <dialog id="settings-dialog" class="settings-dialog">
-    <form id="settings-form" method="dialog">
-      <div class="dialog-header">
-        <div>
-          <h2>Provider settings</h2>
-          <p>Phase 1 uses an OpenAI-compatible chat-completions endpoint.</p>
-        </div>
-        <button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button>
-      </div>
-      <label>
-        Base URL
-        <input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" />
-      </label>
-      <label>
-        Model
-        <input id="provider-model" type="text" required placeholder="Your model ID" />
-      </label>
-      <label>
-        API key
-        <input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" />
-      </label>
-      <div id="settings-note" class="settings-note"></div>
-      <div class="dialog-actions">
-        <button type="button" id="settings-cancel" class="ghost-button">Cancel</button>
-        <button type="submit" class="primary-button">Save</button>
-      </div>
-    </form>
-  </dialog>
-
-  <div id="toast" class="toast hidden" role="status"></div>
-  <script src="app.js" defer></script>
-</body>
-</html>
+<dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-header"><div><h2>Provider settings</h2><p>OpenAI-compatible chat-completions endpoint.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></div><label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label><label>Model<input id="provider-model" type="text" required placeholder="Your model ID" /></label><label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
+<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script>
+</body></html>
