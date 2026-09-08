@@ -262,21 +262,23 @@ export class RuntimeService {
       await adapter.stream(providerMessages.map(({ role, content }) => ({ role, content })), {
         signal,
         onDelta: async (delta) => {
-          if (signal.aborted) return;
+          if (signal.aborted || this.#closed) return;
           const message = this.#db.appendMessageContent(assistantId, delta);
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
         },
       });
-      if (signal.aborted) throw abortError();
+      if (signal.aborted || this.#closed) throw abortError();
       completedMessage = this.#db.updateMessage(assistantId, { status: 'complete' });
       this.#emit({ type: 'message.completed', message: completedMessage });
     } catch (error) {
+      if (this.#closed) return;
       const stopped = signal.aborted || error?.name === 'AbortError';
       const current = this.#db.getMessage(assistantId);
       completedMessage = this.#db.updateMessage(assistantId, { status: stopped ? 'stopped' : 'error', content: stopped ? current?.content ?? '' : current?.content || `Generation failed: ${cleanError(error)}` });
       this.#emit({ type: 'message.completed', message: completedMessage });
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: cleanError(error) });
     } finally {
+      if (this.#closed) return;
       const run = this.#runs.get(sessionId); this.#runs.delete(sessionId);
       const session = this.#db.getSessionSummary(sessionId); if (session) this.#emit({ type: 'session.updated', session });
       this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: run?.projectId ?? session?.projectId ?? null });
