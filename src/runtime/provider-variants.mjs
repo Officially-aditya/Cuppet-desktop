@@ -124,7 +124,7 @@ function bridgeEntry(bridge, model) {
   return (Array.isArray(bridge?.models) ? bridge.models : []).find((entry) => entry?.providerID === providerID && entry?.modelID === modelID);
 }
 function normalizedVariants(value) {
-  if (Array.isArray(value)) return value.flatMap((variant) => typeof variant?.id === 'string' && variant.id ? [{ id: variant.id, headers: record(variant.headers), body: sanitizeVariantOptions(record(variant.body)) }] : []);
+  if (Array.isArray(value)) return value.flatMap((variant) => typeof variant?.id === 'string' && variant.id ? [{ id: variant.id, headers: sanitizeVariantOptions(record(variant.headers)), body: sanitizeVariantOptions(record(variant.body)) }] : []);
   if (isRecord(value)) return Object.entries(value).flatMap(([id, body]) => id && isRecord(body) ? [{ id, headers: {}, body: sanitizeVariantOptions(body) }] : []);
   return [];
 }
