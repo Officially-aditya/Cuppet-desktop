@@ -18,6 +18,20 @@ function providerFactory() {
   });
 }
 
+function backgroundFactory() {
+  return () => ({
+    stats: { queued: 0, runs: 0 },
+    async ready() {},
+    async close() {},
+    foregroundStarted() {},
+    setProviderConfig() {},
+    async recordTurn() {},
+    foregroundIdle() {},
+    pause() {},
+    resume() {},
+  });
+}
+
 async function waitComplete(service, sessionId) {
   for (let i = 0; i < 50; i++) {
     const session = await service.handle('session.get', { sessionId });
@@ -41,7 +55,13 @@ test('runtime PE3 create handoff writes the new task only to its target SQLite s
   const projectRoot = join(dir,'project');
   await import('node:fs/promises').then((fs) => fs.mkdir(projectRoot,{recursive:true}));
   const events = [];
-  const service = new RuntimeService({ databasePath:join(dir,'db.sqlite3'), dataDir:join(dir,'runtime'), emit:(event)=>events.push(event), providerFactory:providerFactory() });
+  const service = new RuntimeService({
+    databasePath:join(dir,'db.sqlite3'),
+    dataDir:join(dir,'runtime'),
+    emit:(event)=>events.push(event),
+    providerFactory:providerFactory(),
+    backgroundFactory:backgroundFactory(),
+  });
   try {
     const project = await service.handle('project.add-local',{path:projectRoot,name:'Project'});
     const source = await service.handle('session.create',{projectId:project.id});
