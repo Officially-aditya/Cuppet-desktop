@@ -6,7 +6,6 @@ const PROVIDER_OVERRIDES = Object.freeze({
     integrationIds: Object.freeze(['openai', 'azure', 'azure-openai']),
   }),
   google: Object.freeze({ label: 'Google', description: 'Gemini API models' }),
-  opencode: Object.freeze({ label: 'OpenCode', description: 'OpenCode-provided models' }),
   vertex: Object.freeze({
     label: 'Vertex AI',
     description: 'Google Cloud ADC models',
@@ -17,7 +16,7 @@ const PROVIDER_OVERRIDES = Object.freeze({
 
 const DISPLAY_ACRONYMS = new Map([
   ['ai', 'AI'], ['api', 'API'], ['adc', 'ADC'], ['azure', 'Azure'], ['gpt', 'GPT'],
-  ['llm', 'LLM'], ['nim', 'NIM'], ['nvidia', 'NVIDIA'], ['openai', 'OpenAI'], ['opencode', 'OpenCode'],
+  ['llm', 'LLM'], ['nim', 'NIM'], ['nvidia', 'NVIDIA'], ['openai', 'OpenAI'],
 ]);
 
 export { PROVIDER_OVERRIDES };
