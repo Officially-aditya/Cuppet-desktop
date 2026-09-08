@@ -24,6 +24,17 @@ async function bootstrap() {
 function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   ipcMain.handle('cuppet:health', () => request('health'));
+  ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
+  ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
+  ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
+  ipcMain.handle('cuppet:orchestrator:set', (_event, enabled) => request('orchestrator.set', { enabled: Boolean(enabled) }));
+  ipcMain.handle('cuppet:background:status', () => request('background.status'));
+  ipcMain.handle('cuppet:background:pause', () => request('background.pause'));
+  ipcMain.handle('cuppet:background:resume', () => request('background.resume'));
+  ipcMain.handle('cuppet:background:flush', (_event, sessionId) => request('background.flush', { sessionId }));
+  ipcMain.handle('cuppet:plan:get', (_event, sessionId, requestValue) => request('plan.get', { sessionId, request: requestValue }));
+  ipcMain.handle('cuppet:memory:query', (_event, sessionId, query) => request('memory.query', { sessionId, query }));
+
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
