@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { RuntimeService } from '../runtime/service.mjs';
 import { RemoteManager } from '../runtime/remote/manager.mjs';
 import { ensureHostIdentity, setRemoteTokenPublicKey } from '../runtime/remote/identity.mjs';
 import { registerHost } from '../runtime/remote/enroll.mjs';
 import { runRelayServer, DEFAULT_RELAY_BIND, DEFAULT_RELAY_PORT } from '../runtime/remote/relay.mjs';
 
+const here=dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_BASE='https://connect.cuppet.in';
 const args=process.argv.slice(2);const command=args[0]??'help';const flags=parseFlags(args.slice(1));
 try{
@@ -30,8 +32,8 @@ async function remoteControl(flags){
   await waitForSignal();await remote.close();await service.close();
 }
 async function relay(flags){
-  const port=integer(flags.port,DEFAULT_RELAY_PORT);const bind=String(flags.bind??DEFAULT_RELAY_BIND);const authFile=String(flags['auth-file']??join(process.cwd(),'cuppet-relay-auth.json'));const adminToken=typeof flags['admin-token']==='string'?flags['admin-token']:undefined;const origins=listFlag(flags.origin);
-  const controller=new AbortController();const server=await runRelayServer({port,bind,authFile,adminToken,origins,signal:controller.signal});console.log(`Cuppet relay listening on ${bind}:${server.port}`);console.log(`Auth file: ${authFile}`);if(bind!==DEFAULT_RELAY_BIND)console.log('WARNING: terminate TLS before exposing plaintext HTTP/WS outside localhost.');await waitForSignal();controller.abort();
+  const port=integer(flags.port,DEFAULT_RELAY_PORT);const bind=String(flags.bind??DEFAULT_RELAY_BIND);const authFile=String(flags['auth-file']??join(process.cwd(),'cuppet-relay-auth.json'));const adminToken=typeof flags['admin-token']==='string'?flags['admin-token']:undefined;const origins=listFlag(flags.origin);const appDirectory=join(here,'..','remote-app');
+  const controller=new AbortController();const server=await runRelayServer({port,bind,authFile,adminToken,origins,appDirectory,signal:controller.signal});console.log(`Cuppet relay listening on ${bind}:${server.port}`);console.log(`Remote app: http://${bind}:${server.port}/app`);console.log(`Auth file: ${authFile}`);if(bind!==DEFAULT_RELAY_BIND)console.log('WARNING: terminate TLS before exposing plaintext HTTP/WS outside localhost.');await waitForSignal();controller.abort();
 }
 async function enroll(flags){
   const dataDir=String(flags['data-dir']??process.env.CUPPET_DATA_DIR??join(homedir(),'.cuppet-desktop'));const remoteDir=join(dataDir,'remote');let identity=await ensureHostIdentity(remoteDir);const token=String(flags.token??process.env.CUPPET_TOKEN??'');if(!token)throw new Error('remote-enroll requires --token or CUPPET_TOKEN');const apiBase=String(flags['api-base']??process.env.CUPPET_API_BASE??DEFAULT_API_BASE);
@@ -43,4 +45,4 @@ function append(target,key,value){if(target[key]===undefined)target[key]=value;e
 function listFlag(value){if(value===undefined)return[];return(Array.isArray(value)?value:[value]).map(String).slice(0,32);}
 function integer(value,fallback){const parsed=Number(value);return Number.isInteger(parsed)&&parsed>=0&&parsed<=65535?parsed:fallback;}
 function waitForSignal(){return new Promise((resolve)=>{const done=()=>{process.off('SIGINT',done);process.off('SIGTERM',done);resolve();};process.once('SIGINT',done);process.once('SIGTERM',done);});}
-function usage(){console.log(`Cuppet independent CLI\n\n  cuppet remote-control [--relay-url wss://…] [--api-base https://connect.cuppet.in]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base https://connect.cuppet.in]\n\nHeadless provider env: CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BASE_URL.`);}
+function usage(){console.log(`Cuppet independent CLI\n\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BASE_URL.`);}
