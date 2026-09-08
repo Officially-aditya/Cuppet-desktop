@@ -33,7 +33,9 @@ expect(text['src/runtime/database.mjs'].includes('transaction(') && text['src/ru
 expect(text['src/runtime/service.mjs'].includes("type: 'pe3.routed'") && text['src/runtime/service.mjs'].includes('[PE3 routing marker]'), 'runtime PE3 target/source projection missing');
 expect(text['src/runtime/service.mjs'].includes('route = router.accept') && text['src/runtime/service.mjs'].includes('this.#db.transaction') && text['src/runtime/service.mjs'].includes('router.commit'), 'runtime handoff is not prepare/accept/transaction/commit');
 expect(text['src/main/main.mjs'].includes('cuppet:pe3:status') && text['src/preload/preload.cjs'].includes('pe3:'), 'PE3 desktop control surface missing');
-expect(text['src/renderer/app.js'].includes("event.type === 'pe3.routed'"), 'renderer does not follow PE3 target session');
+const renderer = text['src/renderer/app.js'];
+expect(renderer.includes("event.type==='pe3.routed'") && renderer.includes('event.targetSessionId') && renderer.includes('openSession(event.targetSessionId)'), 'renderer does not follow PE3 route events to the target session');
+expect(renderer.includes('const result=await window.cuppet.sessions.send') && renderer.includes('result?.sessionId') && renderer.includes('state.runningSessions.delete(sourceSessionId)'), 'composer does not follow the runtime-selected PE3 target or clear the source run flag');
 expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /opencode/i.test(value)), 'OpenCode leaked into B2 production source');
 
 const tests = [
@@ -46,4 +48,4 @@ const tests = [
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase B2 gate passed: deterministic/local PE3 routing, persistence, staleness, attachments, and transactional task handoff verified.');
+console.log('Phase B2 gate passed: deterministic/local PE3 routing, persistence, staleness, attachments, transactional task handoff, and target-session following verified.');
