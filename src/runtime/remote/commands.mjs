@@ -87,7 +87,10 @@ export class RemoteCommandAdapter {
   #modelSelect(state,params){
     if(String(params.providerID??'openai-compatible')!=='openai-compatible')throw new Error('unknown provider'); const modelID=String(params.modelID??''); const allowed=this.#modelList(state).map((model)=>model.modelID); if(!allowed.includes(modelID))throw new Error('model is not configured on this host'); state.model=modelID; return {providerID:'openai-compatible',modelID};
   }
-  #providerList(){return [{id:'openai-compatible',name:'OpenAI-compatible',connected:Boolean(this.#provider.apiKey&&this.#provider.model),baseUrl:this.#provider.baseUrl??null}];}
+  // Provider endpoint details are local configuration. A remote device only
+  // needs to know which logical provider is available, never its URL (which
+  // could itself contain credential material in user-entered configurations).
+  #providerList(){return [{id:'openai-compatible',name:'OpenAI-compatible',connected:Boolean(this.#provider.apiKey&&this.#provider.model)}];}
   #providerSelect(params){if(String(params.providerID??params.id??'')!=='openai-compatible')throw new Error('unknown provider');return {id:'openai-compatible',selected:true};}
   async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return {mode:result.mode};}
   async #modeSet(state,explicit,params){const sessionId=this.#requireSession(state,explicit);const raw=String(params.agent??params.mode??'');if(!['plan','build'].includes(raw))throw new Error('agent/mode must be plan or build');return this.#call('session.mode.set',{sessionId,mode:raw});}
