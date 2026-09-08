@@ -10,7 +10,7 @@ import { ContextCompiler } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #backgrounds = new Map(); #backgroundFactory; #dataDir; #ready;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #backgrounds = new Map(); #backgroundFactory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -37,12 +37,14 @@ export class RuntimeService {
     this.#ready = this.#cognitive.ready();
   }
 
-  async close() {
+  close() {
+    if (this.#closed) return Promise.resolve();
+    this.#closed = true;
     for (const run of this.#runs.values()) run.controller.abort();
     this.#runs.clear();
-    await Promise.all([...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined)));
     this.#tst.close?.();
     this.#db.close();
+    return Promise.all([...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined))).then(() => undefined);
   }
 
   async handle(method, params = {}) {
