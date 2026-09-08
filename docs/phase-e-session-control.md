@@ -68,18 +68,18 @@ A noninteractive/headless generation cannot wait indefinitely for an unavailable
 
 Undo is implemented by `MutationJournal`; it is not implemented with `git reset`, `git checkout`, `git clean`, or transcript deletion.
 
-For deterministic `workspace_edit` and `workspace_write` calls, Cuppet records the exact pre-mutation UTF-8 bytes before execution and the SHA-256 post-mutation hash after successful execution. Journal files are private runtime state, written atomically with a `0700` directory and `0600` files.
+For deterministic `workspace_edit` and `workspace_write` calls, Cuppet records the exact raw pre-mutation bytes before execution and the SHA-256 post-mutation hash after successful execution. Raw preimages are persisted as base64 inside private runtime journal state so arbitrary byte sequences survive round trips without UTF-8 normalization. Each reversible journal entry is also bound to the original canonical project workspace and to the durable SQLite `tool_executions` row that performed the mutation. Journal files are written atomically with a `0700` directory and `0600` files.
 
 On undo:
 
 1. the session must be idle and project-bound;
-2. the original project workspace must still be available;
+2. the currently attached canonical workspace must be the same workspace that produced the journal entry;
 3. the latest applied journal entry must be a reversible file entry;
 4. the current file state must match the recorded Cuppet postimage hash;
-5. only then does Cuppet restore the exact recorded preimage or remove a file that Cuppet originally created;
+5. only then does Cuppet restore the exact recorded raw preimage or remove a file that Cuppet originally created;
 6. the restored result is hashed again before the journal entry is marked undone.
 
-This deliberately gives user/external filesystem activity precedence. If a user, editor, hook, formatter, or another process changes the file after Cuppet's mutation, Undo reports a conflict and does not overwrite it.
+This deliberately gives user/external filesystem activity precedence. If a user, editor, hook, formatter, or another process changes the file after Cuppet's mutation, Undo reports a conflict and does not overwrite it. Relocating or rebinding a project also fails closed for an older journal entry rather than applying that entry to a different checkout that happens to contain a matching relative path.
 
 ### Shell mutations are barriers
 
@@ -133,7 +133,9 @@ Phase E is accepted only when all prior phase gates still pass and the E gate pr
 - lossless plan source IDs are remapped into the fork;
 - question reply/reject resumes or terminates the waiting tool;
 - noninteractive questions fail closed;
-- exact file bytes can be restored after runtime restart;
+- arbitrary raw file bytes can be restored exactly after runtime restart;
+- reversible entries are tied to the original canonical project workspace;
+- journal entries reference the durable SQLite tool execution rather than only the provider call ID;
 - a Cuppet-created file is removed on undo;
 - an external edit after a Cuppet mutation blocks undo without data loss;
 - an opaque shell mutation blocks undo;
