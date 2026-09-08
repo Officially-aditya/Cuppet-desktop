@@ -29,9 +29,9 @@ expect(text['src/runtime/pe3/semantic-router.mjs'].includes('dormantMatchMin') &
 expect(text['src/runtime/pe3/local-embedding.mjs'].includes("@huggingface/transformers") && text['src/runtime/pe3/local-embedding.mjs'].includes('Xenova/all-MiniLM-L6-v2'), 'local PE3 embedding provider missing');
 expect(text['src/runtime/pe3/registry.mjs'].includes('MAX_AGENTS=32') && text['src/runtime/pe3/registry.mjs'].includes("pe3-task-agents.json"), 'bounded project-local PE3 registry missing');
 expect(text['src/runtime/pe3/registry.mjs'].includes('fileSignatures') && text['src/runtime/pe3/registry.mjs'].includes('recoveredFromCorruption'), 'offline staleness/corruption recovery missing');
-expect(text['src/runtime/database.mjs'].includes('transaction(fn)') && text['src/runtime/database.mjs'].includes('ROLLBACK'), 'SQLite transaction boundary missing');
+expect(text['src/runtime/database.mjs'].includes('transaction(') && text['src/runtime/database.mjs'].includes('BEGIN IMMEDIATE') && text['src/runtime/database.mjs'].includes('COMMIT') && text['src/runtime/database.mjs'].includes('ROLLBACK'), 'SQLite transaction boundary missing');
 expect(text['src/runtime/service.mjs'].includes("type: 'pe3.routed'") && text['src/runtime/service.mjs'].includes('[PE3 routing marker]'), 'runtime PE3 target/source projection missing');
-expect(text['src/runtime/service.mjs'].includes('this.#db.transaction') && text['src/runtime/service.mjs'].includes('router.commit'), 'runtime handoff is not transactional');
+expect(text['src/runtime/service.mjs'].includes('route = router.accept') && text['src/runtime/service.mjs'].includes('this.#db.transaction') && text['src/runtime/service.mjs'].includes('router.commit'), 'runtime handoff is not prepare/accept/transaction/commit');
 expect(text['src/main/main.mjs'].includes('cuppet:pe3:status') && text['src/preload/preload.cjs'].includes('pe3:'), 'PE3 desktop control surface missing');
 expect(text['src/renderer/app.js'].includes("event.type === 'pe3.routed'"), 'renderer does not follow PE3 target session');
 expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /opencode/i.test(value)), 'OpenCode leaked into B2 production source');
