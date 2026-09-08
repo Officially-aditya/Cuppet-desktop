@@ -196,7 +196,7 @@ export class RuntimeService {
     let delivery;
     if (router && route.state === 'accepted') {
       try {
-        const committed = await router.commit(route.token, (tx) => this.#db.transaction(() => this.#writeRoutedTurn({ tx, ids, text, projectId: existing.projectId }))
+        const committed = await router.commit(route.token, (tx) => this.#db.transaction(() => this.#writeRoutedTurn({ tx, ids, text, projectId: existing.projectId })));
         route = committed.route;
         delivery = committed.result;
       } catch (error) {
