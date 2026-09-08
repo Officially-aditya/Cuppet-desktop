@@ -7,6 +7,8 @@ export const VIEWER_DEVICE_SCOPES = ['session.read'];
 
 export const COMMAND_SCOPES = Object.freeze({
   'host.get':'session.read',
+  'status':'session.read',
+  'doctor':'session.read',
   'workspace.list':'session.read',
   'session.list':'session.read',
   'session.snapshot':'session.read',
