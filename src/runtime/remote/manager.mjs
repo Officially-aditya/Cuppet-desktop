@@ -8,6 +8,8 @@ import { registerHost } from './enroll.mjs';
 import { runRemoteSetup } from './setup.mjs';
 import { verifyRemoteToken } from './token.mjs';
 
+const DEFAULT_CUPPET_API_BASE='https://connect.cuppet.in';
+
 export class RemoteManager {
   #remoteDir; #call; #emit; #identity; #bridge; #transport; #commands; #relayUrl; #provider={}; #startedAt; #starting;
   constructor({dataDir,call,emit=()=>{}}){this.#remoteDir=join(dataDir,'remote');this.#call=call;this.#emit=emit;}
@@ -23,12 +25,12 @@ export class RemoteManager {
     return this.#starting;
   }
   async #start({relayUrl,apiBase,authToken,setup,provider,createInvite,signal}){
-    let identity=await this.ready();if(provider)this.setProviderConfig(provider);let resolvedRelay=relayUrl;
+    let identity=await this.ready();if(provider)this.setProviderConfig(provider);let resolvedRelay=relayUrl;const connectBase=apiBase||DEFAULT_CUPPET_API_BASE;
     if(authToken){
-      const enrollment=await registerHost({apiBase:apiBase??'https://api.cuppet.ai',token:authToken,identity,relaySecret:identity.relaySecret});resolvedRelay??=enrollment.relayUrl;
+      const enrollment=await registerHost({apiBase:connectBase,token:authToken,identity,relaySecret:identity.relaySecret});resolvedRelay??=enrollment.relayUrl;
       if(enrollment.remoteTokenPublicKey)identity=await setRemoteTokenPublicKey(this.#remoteDir,enrollment.remoteTokenPublicKey);
     }else if(setup&&!resolvedRelay){
-      const enrollment=await runRemoteSetup({apiBase:apiBase??'https://api.cuppet.ai',identity,signal,onSetup:(prompt)=>this.#emit({type:'remote.setup',setup:prompt})});resolvedRelay=enrollment.relayUrl;
+      const enrollment=await runRemoteSetup({apiBase:connectBase,identity,signal,onSetup:(prompt)=>this.#emit({type:'remote.setup',setup:prompt})});resolvedRelay=enrollment.relayUrl;
       if(enrollment.remoteTokenPublicKey)identity=await setRemoteTokenPublicKey(this.#remoteDir,enrollment.remoteTokenPublicKey);
     }
     if(!resolvedRelay)throw new Error('A relay URL or managed Cuppet setup is required to start remote control.');
