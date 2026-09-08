@@ -21,10 +21,11 @@ export class ContextCompiler {
     if (previous && previous !== userMessageId && this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
     this.#lastMessage.set(sessionId, userMessageId);
 
+    if (orchestrator) return { messages: source, mode: 'orchestrator', injected: false, trimmed: false, tst: this.#tst?.status ?? null };
+
     const plan = await this.#planStore?.capture({ sessionID: sessionId, messageID: userMessageId, prompt: String(user.content), agent: mode === 'plan' ? 'plan' : 'build' }).catch(() => undefined);
     if (plan) await this.#planStore?.setAgent(sessionId, mode === 'plan' ? 'plan' : 'build').catch(() => undefined);
     const planBlock = plan ? renderLosslessPlanContext(plan, mode === 'plan' ? 'plan' : 'build') : '';
-    if (orchestrator) return { messages: injectBlocks(source, '', planBlock), mode: 'orchestrator', injected: Boolean(planBlock), trimmed: false, tst: this.#tst?.status ?? null };
 
     const experimentMode = process.env.CUPPET_STM_EVENT_CONTEXT === '1' ? 'stm_events' : process.env.CUPPET_STM_ONLY_COMPACTION === '1' ? 'stm_only' : mode;
     const epochKey = `${sessionId}\0${userMessageId}\0${experimentMode}`;
