@@ -114,6 +114,22 @@ export class ConversationDatabase {
   renameSession(id,title,now=Date.now()){ this.#db.prepare('UPDATE sessions SET title=?,updated_at=? WHERE id=?').run(title,now,id); return this.getSessionSummary(id); }
   touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now,id); }
 
+  forkSession({ sourceSessionId, id, title, now = Date.now() }) {
+    const source = this.getSession(sourceSessionId);
+    if (!source) throw new Error(`unknown session: ${sourceSessionId}`);
+    if (source.messages.some((message) => message.status === 'streaming')) throw new Error('cannot fork a session while it is generating');
+    return this.transaction(() => {
+      const session = this.createSession({ id, projectId: source.projectId, title: title || `${source.title || 'New chat'} (fork)`, now });
+      const messageMap = {};
+      for (const message of source.messages) {
+        const messageId = `${id}:fork:${message.sequence}:${message.id}`;
+        messageMap[message.id] = messageId;
+        this.appendMessage({ id: messageId, sessionId: id, role: message.role, content: message.content, status: message.status, now });
+      }
+      return { session: this.getSessionSummary(session.id), sourceSessionId, messageMap };
+    });
+  }
+
   createToolExecution({ id, sessionId, callId, toolName, argumentsJson='{}', now=Date.now() }) {
     this.#db.prepare(`INSERT INTO tool_executions (id,session_id,call_id,tool_name,arguments_json,output,status,permission_source,created_at,updated_at) VALUES (?,?,?,?,?,'','running',NULL,?,?)`).run(id,sessionId,callId,toolName,argumentsJson,now,now);
     this.touchSession(sessionId,now);
