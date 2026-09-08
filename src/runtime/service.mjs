@@ -8,9 +8,10 @@ import { LosslessPlanStore } from './lossless-plan.mjs';
 import { CognitiveStateStore } from './cognitive-state.mjs';
 import { ContextCompiler } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
+import { Pe3ProjectRouter } from './pe3/router.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #backgrounds = new Map(); #backgroundFactory; #dataDir; #ready; #closed = false;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -23,6 +24,7 @@ export class RuntimeService {
     cognitiveState,
     contextCompiler,
     backgroundFactory,
+    pe3Factory,
   }) {
     this.#dataDir = dataDir;
     this.#db = new ConversationDatabase(databasePath);
@@ -34,6 +36,7 @@ export class RuntimeService {
     this.#cognitive = cognitiveState ?? new CognitiveStateStore(join(dataDir, 'cognitive-state.json'));
     this.#compiler = contextCompiler ?? new ContextCompiler({ tst: this.#tst, planStore: this.#plans, cognitiveState: this.#cognitive });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
+    this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
   }
 
@@ -50,7 +53,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, cognitive: this.#cognitiveStatus() };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -63,6 +66,9 @@ export class RuntimeService {
       case 'context.compact': return this.#compact(params);
       case 'plan.get': return this.#plans.toolResult(params.sessionId, params.request ?? { action: 'overview' });
       case 'memory.query': return this.#queryMemory(params);
+      case 'pe3.status': return this.#pe3Status(params.sessionId ?? null, params.projectId ?? null);
+      case 'pe3.observe-paths': return this.#pe3Observe(params.sessionId, params.paths, false);
+      case 'pe3.workspace-mutation': return this.#pe3Observe(params.sessionId, params.paths, true);
       case 'project.list': return this.#projects.list();
       case 'project.get': return this.#projects.get(params.projectId);
       case 'project.open': return this.#projects.open(params.projectId);
@@ -70,9 +76,14 @@ export class RuntimeService {
       case 'project.clone-url': return this.#addProject(() => this.#projects.cloneUrl({ id: `project_${randomUUID()}`, ...params }));
       case 'project.github-list': return this.#projects.listGithubRepositories(params);
       case 'project.github-clone': return this.#addProject(() => this.#projects.cloneGithubRepository({ id: `project_${randomUUID()}`, ...params }));
-      case 'project.relocate': return this.#updateProject(() => this.#projects.relocate(params.projectId, params.path));
+      case 'project.relocate': {
+        const project = await this.#updateProject(() => this.#projects.relocate(params.projectId, params.path));
+        this.#pe3Routers.delete(project.id);
+        return project;
+      }
       case 'project.remove': {
         const result = await this.#projects.remove(params.projectId);
+        this.#pe3Routers.delete(params.projectId);
         this.#emit({ type: 'project.removed', projectId: params.projectId });
         return result;
       }
@@ -123,6 +134,23 @@ export class RuntimeService {
     const session = this.requireSession(sessionId);
     return this.#backgroundFor(session.projectId).flushNow(sessionId);
   }
+  async #pe3Status(sessionId, projectId) {
+    const session = sessionId ? this.requireSession(sessionId) : null;
+    const id = projectId ?? session?.projectId;
+    if (!id) return { enabled: false, reason: 'PE3 requires a project-bound chat' };
+    const project = await this.#projects.get(id);
+    const router = await this.#pe3For(id, project);
+    return { enabled: process.env.CUPPET_PE3 !== '0', ...router.status() };
+  }
+  async #pe3Observe(sessionId, paths, mutation) {
+    const session = this.requireSession(sessionId);
+    if (!session.projectId) return { observed: false, reason: 'PE3 requires a project-bound chat' };
+    const boundedPaths = Array.isArray(paths) ? paths.slice(0, 64).map((value) => String(value).slice(0, 512)) : [];
+    const project = await this.#projects.get(session.projectId);
+    const router = await this.#pe3For(session.projectId, project);
+    if (mutation) await router.noteWorkspaceMutation(sessionId, boundedPaths); else await router.noteObservedPaths(sessionId, boundedPaths);
+    return { observed: true, mutation, sessionId, paths: boundedPaths };
+  }
   async #addProject(factory) { const project = await factory(); this.#emit({ type: 'project.created', project }); return project; }
   async #updateProject(factory) { const project = await factory(); this.#emit({ type: 'project.updated', project }); return project; }
 
@@ -138,28 +166,83 @@ export class RuntimeService {
   }
 
   async send(params) {
-    const sessionId = params.sessionId; const text = typeof params.text === 'string' ? params.text.trim() : '';
+    const sourceSessionId = params.sessionId; const text = typeof params.text === 'string' ? params.text.trim() : '';
     if (!text) throw new Error('message text is required');
-    if (this.#runs.has(sessionId)) throw new Error('this session is already generating');
-    const existing = this.requireSession(sessionId);
+    if (this.#runs.has(sourceSessionId)) throw new Error('this session is already generating');
+    const existing = this.requireSession(sourceSessionId);
+    const projectBinding={projectId:existing.projectId??null};
+    let project = null;
     if (existing.projectId) {
-      const project = await this.#projects.get(existing.projectId);
+      project = await this.#projects.get(existing.projectId);
       if (project.missing) throw new Error(`Project folder is missing for ${project.name}. Relocate the project before continuing.`);
     }
 
     for (const worker of this.#backgrounds.values()) worker.foregroundStarted();
-    const user = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId, role: 'user', content: text, status: 'complete' });
-    this.#emit({ type: 'message.created', message: user });
-    if (existing.title === 'New chat') {
-      const renamed = this.#db.renameSession(sessionId, titleFromMessage(text)); this.#emit({ type: 'session.updated', session: renamed });
+    const ids = { user: `msg_${randomUUID()}`, assistant: `msg_${randomUUID()}`, marker: `msg_${randomUUID()}` };
+    let route = fallbackRoute(sourceSessionId, existing.projectId, 'PE3 not applicable');
+    let router;
+    if (existing.projectId && process.env.CUPPET_PE3 !== '0') {
+      try {
+        router = await this.#pe3For(existing.projectId, project);
+        route = await router.prepare({ sourceSessionId, prompt: text, attachments: params.attachments });
+        router.accept(route.token, { targetAvailable: (targetSessionId) => !this.#runs.has(targetSessionId) });
+      } catch (error) {
+        if (router && route?.token) router.abort(route.token, cleanError(error));
+        route = fallbackRoute(sourceSessionId, existing.projectId, `PE3 preserved source after routing fallback: ${cleanError(error)}`);
+        router = undefined;
+      }
     }
-    const assistant = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId, role: 'assistant', content: '', status: 'streaming' });
-    this.#emit({ type: 'message.created', message: assistant });
+
+    let delivery;
+    if (router && route.state === 'accepted') {
+      try {
+        const committed = await router.commit(route.token, (tx) => this.#db.transaction(() => this.#writeRoutedTurn({ tx, ids, text, projectId: existing.projectId }))
+        route = committed.route;
+        delivery = committed.result;
+      } catch (error) {
+        router.abort(route.token, cleanError(error));
+        route = fallbackRoute(sourceSessionId, existing.projectId, `PE3 handoff aborted; source preserved: ${cleanError(error)}`);
+        delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text }));
+      }
+    } else {
+      delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text }));
+    }
+
+    const targetSessionId = delivery.user.sessionId;
+    if (delivery.createdSession) this.#emit({ type: 'session.created', session: delivery.createdSession });
+    if (delivery.sourceSession) this.#emit({ type: 'session.updated', session: delivery.sourceSession });
+    if (delivery.targetSession) this.#emit({ type: 'session.updated', session: delivery.targetSession });
+    if (route.action !== 'continue') this.#emit({ type: 'pe3.routed', ...route });
+    this.#emit({ type: 'message.created', message: delivery.user });
+    this.#emit({ type: 'message.created', message: delivery.assistant });
+
     const controller = new AbortController();
-    this.#runs.set(sessionId, { controller, assistantId: assistant.id, userId: user.id, userText: text, projectId:existing.projectId??null });
-    this.#emit({ type: 'run.started', sessionId, messageId: assistant.id, projectId: existing.projectId ?? null, mode: this.#cognitive.mode(sessionId) });
-    void this.#generate({ sessionId, assistantId: assistant.id, userId: user.id, provider: params.provider, signal: controller.signal });
-    return { accepted: true, sessionId, messageId: assistant.id, projectId: existing.projectId ?? null, mode: this.#cognitive.mode(sessionId) };
+    this.#runs.set(targetSessionId, { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, sourceSessionId, route });
+    this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
+    void this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [] });
+    return { accepted: true, sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route };
+  }
+
+  #writeRoutedTurn({ tx, ids, text, projectId }) {
+    let createdSession = null;
+    if (tx.action === 'create') createdSession = this.#db.createSession({ id: tx.targetSessionId, projectId, title: titleFromMessage(text) });
+    let sourceSession = null;
+    if (tx.targetSessionId !== tx.sourceSessionId) {
+      this.#db.appendMessage({ id: ids.marker, sessionId: tx.sourceSessionId, role: 'system', content: routingMarker(tx), status: 'complete' });
+      sourceSession = this.#db.getSessionSummary(tx.sourceSessionId);
+    }
+    const targetBefore = this.#db.getSessionSummary(tx.targetSessionId);
+    const user = this.#db.appendMessage({ id: ids.user, sessionId: tx.targetSessionId, role: 'user', content: text, status: 'complete' });
+    if (!createdSession && targetBefore?.title === 'New chat') this.#db.renameSession(tx.targetSessionId, titleFromMessage(text));
+    const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId: tx.targetSessionId, role: 'assistant', content: '', status: 'streaming' });
+    return { user, assistant, createdSession, sourceSession, targetSession: this.#db.getSessionSummary(tx.targetSessionId) };
+  }
+  #writeDirectTurn({ sessionId, ids, text }) {
+    const before = this.#db.getSessionSummary(sessionId);
+    const user = this.#db.appendMessage({ id: ids.user, sessionId, role: 'user', content: text, status: 'complete' });
+    if (before?.title === 'New chat') this.#db.renameSession(sessionId, titleFromMessage(text));
+    const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId, role: 'assistant', content: '', status: 'streaming' });
+    return { user, assistant, createdSession: null, sourceSession: null, targetSession: this.#db.getSessionSummary(sessionId) };
   }
 
   stop(sessionId) {
@@ -168,14 +251,15 @@ export class RuntimeService {
     run.controller.abort(); return { stopped: true, sessionId, messageId: run.assistantId, projectId: run.projectId };
   }
 
-  async #generate({ sessionId, assistantId, userId, provider, signal }) {
+  async #generate({ sessionId, assistantId, userId, provider, signal, refreshPaths = [], attachments = [] }) {
     let completedMessage;
     try {
       const durable = this.#db.getSession(sessionId).messages.filter((message) => message.id !== assistantId && message.status !== 'streaming');
       const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: userId });
-      this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
+      const providerMessages = injectPe3Context(compiled.messages, refreshPaths, attachments);
+      this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
       const adapter = this.#providerFactory(provider ?? {});
-      await adapter.stream(compiled.messages.map(({ role, content }) => ({ role, content })), {
+      await adapter.stream(providerMessages.map(({ role, content }) => ({ role, content })), {
         signal,
         onDelta: async (delta) => {
           if (signal.aborted) return;
@@ -205,6 +289,21 @@ export class RuntimeService {
     }
   }
 
+  async #pe3For(projectId, project) {
+    let pending = this.#pe3Routers.get(projectId);
+    if (!pending) {
+      pending = (async () => {
+        const resolved = project ?? await this.#projects.get(projectId);
+        const router = this.#pe3Factory({ projectId, projectRoot: resolved.canonicalPath });
+        await router.ready();
+        return router;
+      })();
+      this.#pe3Routers.set(projectId, pending);
+      pending.catch(() => { if (this.#pe3Routers.get(projectId) === pending) this.#pe3Routers.delete(projectId); });
+    }
+    return pending;
+  }
+
   #backgroundFor(projectId) {
     const key = projectId ?? 'general';
     let worker = this.#backgrounds.get(key);
@@ -218,6 +317,16 @@ export class RuntimeService {
   }
 }
 
+function fallbackRoute(sessionId, projectId, reason) { return { token: null, state: 'committed', projectId, sourceSessionId: sessionId, targetSessionId: sessionId, action: 'continue', reason, affinity: { score: 0, pathOverlap: 0, symbolOverlap: 0, termOverlap: 0, lexicalRatio: 0, weightedOverlap: 0 }, refreshPaths: [], attachments: [] }; }
+function routingMarker(tx) { return `[PE3 routing marker] action=${tx.action} target=${tx.targetSessionId} reason=${String(tx.reason).replace(/\s+/g, ' ').slice(0, 220)}`; }
+function injectPe3Context(messages, refreshPaths, attachments) {
+  const blocks = [];
+  if (refreshPaths.length) blocks.push(`<CUPPET_PE3_REFRESH ephemeral="true">\nThe workspace changed while this task was dormant. Refresh these paths from current filesystem truth before relying on old file-specific assumptions: ${refreshPaths.slice(0, 12).join(', ')}\n</CUPPET_PE3_REFRESH>`);
+  if (attachments.length) blocks.push(`<CUPPET_PE3_ATTACHMENTS ephemeral="true">\nAttachment metadata routed with this turn (metadata only; do not invent unread contents):\n${attachments.slice(0, 16).map((item) => `- ${[item.name, item.path, item.mime, Number.isFinite(item.size) ? `${item.size} bytes` : ''].filter(Boolean).join(' · ')}`).join('\n')}\n</CUPPET_PE3_ATTACHMENTS>`);
+  if (!blocks.length) return messages.map((message) => ({ ...message }));
+  const output = messages.map((message) => ({ ...message })); let index = output.length - 1; while (index >= 0 && output[index].role !== 'user') index--;
+  output.splice(Math.max(0, index), 0, { role: 'system', content: blocks.join('\n\n') }); return output;
+}
 function titleFromMessage(value) { const oneLine = value.replace(/\s+/g, ' ').trim(); return oneLine.length <= 56 ? oneLine : `${oneLine.slice(0, 53).trimEnd()}…`; }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
