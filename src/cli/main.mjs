@@ -27,6 +27,7 @@ try{
   else if(command==='status')await showStatus(flags);
   else if(command==='doctor')await showDoctor(flags);
   else if(command==='sessions')showSessions(flags);
+  else if(command==='undo')await headlessUndo(flags);
   else if(command==='prompt')await headlessPrompt(flags);
   else{usage();if(command!=='help'&&command!=='--help'&&command!=='-h')process.exitCode=1;}
 }catch(error){console.error(`Cuppet: ${error instanceof Error?error.message:String(error)}`);process.exitCode=1;}
@@ -67,6 +68,12 @@ function showSessions(flags){
   const dataDir=dataDirectory(flags);const db=new ConversationDatabase(join(dataDir,'conversations.sqlite3'));
   try{console.log(JSON.stringify(db.listSessions(),null,2));}finally{db.close();}
 }
+async function headlessUndo(flags){
+  const dataDir=dataDirectory(flags);const databasePath=join(dataDir,'conversations.sqlite3');const sessionId=resolveExistingSession(databasePath,flags,{latestByDefault:true});
+  const service=new RuntimeService({databasePath,dataDir,interactive:false});
+  try{const result=await service.handle('session.undo',{sessionId});if(flags.json===true)console.log(JSON.stringify(result,null,2));else console.log(result.undone?`Undid ${result.path||'latest Cuppet mutation'} in ${sessionId}.`:(result.reason||'Nothing to undo.'));}
+  finally{await service.close();}
+}
 async function headlessPrompt(flags){
   const prompt=String(flags.prompt??flags._?.[0]??'').trim();if(!prompt)throw new Error('prompt requires --prompt <text> or a positional message');
   const dataDir=dataDirectory(flags);const databasePath=join(dataDir,'conversations.sqlite3');
@@ -101,6 +108,10 @@ function prepareHeadlessSession({databasePath,dataDir,flags}){
     if(sourceSessionId)return{sessionId:sourceSessionId,sourceSessionId,forked:false};
     sessionId=`session_${randomUUID()}`;db.createSession({id:sessionId});return{sessionId,sourceSessionId:null,forked:false};
   }finally{db.close();}
+}
+function resolveExistingSession(databasePath,flags,{latestByDefault=false}={}){
+  const db=new ConversationDatabase(databasePath);
+  try{const explicit=stringFlag(flags.session);const sessionId=explicit||((flags.continue===true||latestByDefault)?db.listSessions()[0]?.id:null);if(!sessionId)throw new Error('No existing session. Pass --session <id>.');if(!db.getSessionSummary(sessionId))throw new Error(`unknown session: ${sessionId}`);return sessionId;}finally{db.close();}
 }
 
 async function waitForTerminalAssistant(service,sessionId){
@@ -148,4 +159,4 @@ function stringFlag(value){return typeof value==='string'&&value?value:null;}
 function listFlag(value){if(value===undefined)return[];return(Array.isArray(value)?value:[value]).map(String).slice(0,32);}
 function integer(value,fallback){const parsed=Number(value);return Number.isInteger(parsed)&&parsed>=0&&parsed<=65535?parsed:fallback;}
 function waitForSignal(){return new Promise((resolve)=>{const done=()=>{process.off('SIGINT',done);process.off('SIGTERM',done);resolve();};process.once('SIGINT',done);process.once('SIGTERM',done);});}
-function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}
+function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet undo [--session id|-s id] [--json]\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}
