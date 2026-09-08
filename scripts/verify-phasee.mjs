@@ -27,7 +27,7 @@ const plans = text['src/runtime/lossless-plan.mjs'];
 expect(plans.includes('async fork(sourceSessionID, targetSessionID, messageMap') && plans.includes('sourceMessageID: mapID(item.sourceMessageID)') && plans.includes('messageID: mapID(item.messageID)'), 'lossless plan fork/remapping missing');
 
 const questions = text['src/runtime/questions.mjs']; const questionsDense = dense['src/runtime/questions.mjs'];
-expect(questions.includes('MAX_QUESTIONS = 8') && questions.includes('MAX_OPTIONS = 12') && questions.includes('MAX_ANSWERS = 12') && questions.includes('MAX_ANSWER_CHARS = 512'), 'question bounds changed');
+expect(questions.includes('MAX_QUESTIONS = 8') && questions.includes('MAX_OPTIONS = 12') && questions.includes('MAX_ANSWER_VALUES = 12') && questionsDense.includes('clean(item,512)'), 'question bounds changed');
 expect(questions.includes('QuestionInteractionRequiredError') && questions.includes('QuestionRejectedError'), 'question fail-closed/rejection errors missing');
 expect(questionsDense.includes('if(!this.#interactive)thrownewQuestionInteractionRequiredError'), 'noninteractive question path no longer fails closed');
 expect(questions.includes("type: 'question.requested'") && questions.includes("type: 'question.resolved'"), 'question lifecycle events missing');
