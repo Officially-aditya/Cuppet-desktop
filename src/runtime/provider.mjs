@@ -1,3 +1,5 @@
+import { providerRequest } from './provider-policy.mjs';
+
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 export class ProviderConfigurationError extends Error {
@@ -12,23 +14,52 @@ export class OpenAICompatibleChatProvider {
   #baseUrl;
   #model;
   #fetch;
+  #requestHeaders;
+  #requestBody;
 
-  constructor({ apiKey, baseUrl = DEFAULT_BASE_URL, model, fetchImpl = globalThis.fetch }) {
-    if (!apiKey?.trim()) throw new ProviderConfigurationError('An API key is required. Open Provider settings and add one.');
-    if (!model?.trim()) throw new ProviderConfigurationError('A model is required. Open Provider settings and choose one.');
+  constructor(configuration = {}) {
+    let resolved;
+    try { resolved = providerRequest(configuration, 'primary'); }
+    catch (error) {
+      const raw = record(configuration);
+      // Direct request configurations produced by providerRequest are already
+      // lowered. Accept them without re-resolving a role.
+      if (string(raw.apiKey) && string(raw.model)) resolved = raw;
+      else throw new ProviderConfigurationError(error instanceof Error ? error.message : String(error));
+    }
+    const apiKey = string(resolved.apiKey);
+    const model = string(resolved.model);
+    const baseUrl = string(resolved.baseUrl) || DEFAULT_BASE_URL;
+    if (!apiKey) throw new ProviderConfigurationError('An API key is required. Open Provider settings and add one.');
+    if (!model) throw new ProviderConfigurationError('A model is required. Open Provider settings and choose one.');
+    const fetchImpl = resolved.fetchImpl ?? configuration.fetchImpl ?? globalThis.fetch;
     if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
-    this.#apiKey = apiKey.trim();
-    this.#baseUrl = baseUrl.trim().replace(/\/+$/, '') || DEFAULT_BASE_URL;
-    this.#model = model.trim();
+    this.#apiKey = apiKey;
+    this.#baseUrl = baseUrl.replace(/\/+$/, '') || DEFAULT_BASE_URL;
+    this.#model = model;
     this.#fetch = fetchImpl;
+    this.#requestHeaders = sanitizeHeaders(resolved.requestHeaders);
+    this.#requestBody = sanitizeRequestBody(resolved.requestBody);
   }
 
   async stream(messages, { signal, onDelta, tools = [] }) {
-    const request = { model: this.#model, messages, stream: true };
-    if (Array.isArray(tools) && tools.length) { request.tools = tools; request.tool_choice = 'auto'; }
+    const request = {
+      ...structuredClone(this.#requestBody),
+      model: this.#model,
+      messages,
+      stream: true,
+    };
+    if (Array.isArray(tools) && tools.length) {
+      request.tools = tools;
+      request.tool_choice = 'auto';
+    } else {
+      delete request.tools;
+      delete request.tool_choice;
+    }
     const response = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
+        ...this.#requestHeaders,
         authorization: `Bearer ${this.#apiKey}`,
         'content-type': 'application/json',
         accept: 'text/event-stream, application/json',
@@ -43,9 +74,7 @@ export class OpenAICompatibleChatProvider {
     }
 
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('text/event-stream') && response.body) {
-      return consumeSseBody(response.body, onDelta, signal);
-    }
+    if (contentType.includes('text/event-stream') && response.body) return consumeSseBody(response.body, onDelta, signal);
 
     const payload = await response.json();
     const text = completionText(payload);
@@ -104,30 +133,16 @@ export function splitSseEvents(value) {
 }
 
 async function consumeSseEvent(event, onDelta) {
-  const data = event.split('\n')
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trimStart())
-    .join('\n')
-    .trim();
+  const data = event.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n').trim();
   if (!data) return { done: false, delta: '', toolCallDeltas: [] };
   if (data === '[DONE]') return { done: true, delta: '', toolCallDeltas: [] };
-
   let payload;
-  try {
-    payload = JSON.parse(data);
-  } catch {
-    throw new Error('Provider returned malformed streaming JSON.');
-  }
+  try { payload = JSON.parse(data); } catch { throw new Error('Provider returned malformed streaming JSON.'); }
   const choice = payload?.choices?.[0] ?? {};
   const delta = choice?.delta?.content;
   if (typeof delta === 'string' && delta.length > 0) await onDelta(delta);
   const toolCallDeltas = Array.isArray(choice?.delta?.tool_calls) ? choice.delta.tool_calls.map(normalizeToolCallDelta) : [];
-  return {
-    done: false,
-    delta: typeof delta === 'string' ? delta : '',
-    usage: payload?.usage ?? null,
-    toolCallDeltas,
-  };
+  return { done: false, delta: typeof delta === 'string' ? delta : '', usage: payload?.usage ?? null, toolCallDeltas };
 }
 
 function mergeToolCallDeltas(target, deltas) {
@@ -140,51 +155,13 @@ function mergeToolCallDeltas(target, deltas) {
     target.set(index, current);
   }
 }
-function normalizeToolCallDelta(value) {
-  return {
-    index: Number.isInteger(value?.index) ? value.index : undefined,
-    id: typeof value?.id === 'string' ? value.id : '',
-    name: typeof value?.function?.name === 'string' ? value.function.name : '',
-    arguments: typeof value?.function?.arguments === 'string' ? value.function.arguments : '',
-  };
-}
-function finalizeStream(text, usage, toolCalls) {
-  return { text, usage, toolCalls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([index, value]) => ({ id: value.id || `tool_call_${index}`, name: value.name, arguments: value.arguments || '{}' })).filter((call) => call.name) };
-}
-
-function completionText(payload) {
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((part) => typeof part?.text === 'string' ? part.text : '').join('');
-  return '';
-}
-function completionToolCalls(payload) {
-  const calls = payload?.choices?.[0]?.message?.tool_calls;
-  if (!Array.isArray(calls)) return [];
-  return calls.flatMap((call, index) => {
-    const name = typeof call?.function?.name === 'string' ? call.function.name : '';
-    if (!name) return [];
-    return [{ id: typeof call?.id === 'string' ? call.id : `tool_call_${index}`, name, arguments: typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}' }];
-  });
-}
-
-async function safeResponseText(response) {
-  try {
-    const raw = (await response.text()).trim();
-    if (!raw) return '';
-    try {
-      const parsed = JSON.parse(raw);
-      return String(parsed?.error?.message ?? parsed?.message ?? raw).slice(0, 500);
-    } catch {
-      return raw.slice(0, 500);
-    }
-  } catch {
-    return '';
-  }
-}
-
-function abortError() {
-  const error = new Error('Generation stopped');
-  error.name = 'AbortError';
-  return error;
-}
+function normalizeToolCallDelta(value) { return { index: Number.isInteger(value?.index) ? value.index : undefined, id: typeof value?.id === 'string' ? value.id : '', name: typeof value?.function?.name === 'string' ? value.function.name : '', arguments: typeof value?.function?.arguments === 'string' ? value.function.arguments : '' }; }
+function finalizeStream(text, usage, toolCalls) { return { text, usage, toolCalls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([index, value]) => ({ id: value.id || `tool_call_${index}`, name: value.name, arguments: value.arguments || '{}' })).filter((call) => call.name) }; }
+function completionText(payload) { const content = payload?.choices?.[0]?.message?.content; if (typeof content === 'string') return content; if (Array.isArray(content)) return content.map((part) => typeof part?.text === 'string' ? part.text : '').join(''); return ''; }
+function completionToolCalls(payload) { const calls = payload?.choices?.[0]?.message?.tool_calls; if (!Array.isArray(calls)) return []; return calls.flatMap((call, index) => { const name = typeof call?.function?.name === 'string' ? call.function.name : ''; if (!name) return []; return [{ id: typeof call?.id === 'string' ? call.id : `tool_call_${index}`, name, arguments: typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}' }]; }); }
+async function safeResponseText(response) { try { const raw = (await response.text()).trim(); if (!raw) return ''; try { const parsed = JSON.parse(raw); return String(parsed?.error?.message ?? parsed?.message ?? raw).slice(0, 500); } catch { return raw.slice(0, 500); } } catch { return ''; } }
+function sanitizeHeaders(value) { const source = record(value); return Object.fromEntries(Object.entries(source).flatMap(([key, item]) => typeof item === 'string' && !['authorization','proxy-authorization','cookie','set-cookie'].includes(key.toLowerCase()) ? [[key, item.slice(0, 4000)]] : [])); }
+function sanitizeRequestBody(value) { return structuredClone(record(value)); }
+function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function string(value) { return typeof value === 'string' ? value.trim() : ''; }
