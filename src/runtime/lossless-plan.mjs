@@ -73,6 +73,23 @@ export class LosslessPlanStore {
     return structuredClone(plan);
   }
 
+  async fork(sourceSessionID, targetSessionID, messageMap = {}) {
+    const source = await this.get(sourceSessionID);
+    if (!source) return undefined;
+    const now = Date.now();
+    const mapID = (value) => typeof messageMap?.[value] === 'string' && messageMap[value] ? messageMap[value] : value;
+    const plan = {
+      ...structuredClone(source),
+      sessionID: targetSessionID,
+      sources: source.sources.map((item) => ({ ...structuredClone(item), messageID: mapID(item.messageID) })),
+      phases: source.phases.map((item) => ({ ...structuredClone(item), sourceMessageID: mapID(item.sourceMessageID) })),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.#save(plan);
+    return structuredClone(plan);
+  }
+
   async toolResult(sessionID, request = {}) {
     const plan = await this.get(sessionID);
     if (!plan) return undefined;
