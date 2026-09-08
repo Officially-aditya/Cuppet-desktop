@@ -62,7 +62,7 @@ export class PermissionBroker {
     if (reply === 'always') {
       let approvals = this.#always.get(pending.request.sessionId);
       if (!approvals) { approvals = new Set(); this.#always.set(pending.request.sessionId, approvals); }
-      approvals.add(permissionFingerprint(pending.request.action, pending.request.resources));
+      approvals.add(pending.fingerprint);
     }
     const allowed = reply === 'once' || reply === 'always';
     this.#emit({ type: 'permission.resolved', sessionId: pending.request.sessionId, requestId, reply, allowed });
@@ -71,13 +71,14 @@ export class PermissionBroker {
     return { resolved: true, requestId, reply };
   }
 
-  async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal }) {
+  async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal, fingerprintKey = '' }) {
     const normalized = resources.slice(0, 16).map((value) => String(value).slice(0, 1024));
+    const boundedFingerprintKey = String(fingerprintKey ?? '').slice(0, 512);
     const immediate = await immediateDecision({ action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId) });
     if (immediate.effect === 'allow') return { allowed: true, source: immediate.source };
     if (immediate.effect === 'deny') throw new PermissionDeniedError(immediate.reason, { code: immediate.code });
 
-    const fingerprint = permissionFingerprint(action, normalized);
+    const fingerprint = permissionFingerprint(action, normalized, boundedFingerprintKey);
     if (this.#always.get(sessionId)?.has(fingerprint)) return { allowed: true, source: 'session-exact' };
     if (!this.#interactive) throw new PermissionDeniedError('Permission requires interaction in a non-interactive runtime.', { code: 'interaction_required' });
     if (signal?.aborted) throw abortError();
@@ -98,7 +99,7 @@ export class PermissionBroker {
         reject(abortError());
       };
       if (signal) signal.addEventListener('abort', abortListener, { once: true });
-      this.#pending.set(request.id, { request, resolve: resolvePromise, reject, signal, abortListener });
+      this.#pending.set(request.id, { request, fingerprint, resolve: resolvePromise, reject, signal, abortListener });
       this.#emit({ type: 'permission.requested', request });
     });
   }
@@ -183,5 +184,5 @@ async function nearestExistingAncestorIsInside(candidate, root) {
   }
 }
 function isAtOrInside(root, candidate) { const path = relative(root, candidate); return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path); }
-function permissionFingerprint(action, resources) { return `${action}\0${resources.join('\0')}`; }
+function permissionFingerprint(action, resources, fingerprintKey = '') { return `${action}\0${resources.join('\0')}\0${fingerprintKey}`; }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
