@@ -37,9 +37,9 @@ export class RemoteCommandAdapter {
       case 'session.undo': throw new Error('Undo is unavailable until the independent runtime has an authoritative mutation journal.');
       case 'permission.list': return this.#call('permission.list',{...(explicitSession?{sessionId:explicitSession}:{})});
       case 'permission.reply': return this.#permissionReply(params);
-      case 'question.list': return [];
-      case 'question.reply':
-      case 'question.reject': throw new Error('Interactive question requests are not implemented by the independent runtime.');
+      case 'question.list': return this.#call('question.list',{...(explicitSession?{sessionId:explicitSession}:{})});
+      case 'question.reply': return this.#questionReply(params);
+      case 'question.reject': return this.#questionReject(params);
       case 'model.list': return this.#modelList(state);
       case 'model.select': return this.#modelSelect(state,params);
       case 'provider.list': return this.#providerList(state);
@@ -90,6 +90,14 @@ export class RemoteCommandAdapter {
     if(!requestId)throw new Error('permission request id is required'); if(!['once','always','reject'].includes(reply))throw new Error('permission reply must be once, always, or reject');
     return this.#call('permission.reply',{requestId,reply});
   }
+  async #questionReply(params){
+    const request=record(params.request);const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id);if(!requestId)throw new Error('question request id is required');
+    const answers=boundedAnswers(params.answers);return this.#call('question.reply',{requestId,answers});
+  }
+  async #questionReject(params){
+    const request=record(params.request);const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id);if(!requestId)throw new Error('question request id is required');
+    return this.#call('question.reject',{requestId});
+  }
 
   #modelList(state){
     const projection=providerProjection(this.#provider);
@@ -120,8 +128,6 @@ export class RemoteCommandAdapter {
     return {...selected};
   }
 
-  // Provider endpoint details and credentials are local configuration. Remote
-  // receives only the normalized catalog and connection readiness.
   #providerList(state){
     const projection=providerProjection(this.#provider);
     return projection.catalog.map((provider)=>({
@@ -185,4 +191,5 @@ function displayPath(path,name){if(typeof path!=='string'||!path)return name??'P
 function record(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
 function stringOr(value){return typeof value==='string'&&value?value:undefined;}
 function boundedAttachments(values){return Array.isArray(values)?values.slice(0,16).flatMap((item)=>record(item).path||record(item).name?[{...(stringOr(record(item).name)?{name:String(record(item).name).slice(0,240)}:{}),...(stringOr(record(item).path)?{path:String(record(item).path).slice(0,512)}:{}),...(stringOr(record(item).mime)?{mime:String(record(item).mime).slice(0,128)}:{}),...(Number.isFinite(record(item).size)?{size:Math.max(0,Math.trunc(record(item).size))}:{})}]:[]):[];}
+function boundedAnswers(values){return Array.isArray(values)?values.slice(0,8).map((group)=>Array.isArray(group)?group.slice(0,12).flatMap((value)=>typeof value==='string'&&value.trim()?[value.trim().slice(0,512)]:[]):[]):[];}
 async function waitUntilIdle(call,sessionId){for(let i=0;i<100;i++){const session=await call('session.get',{sessionId});const last=[...(session.messages??[])].reverse().find((message)=>message.role==='assistant');if(!last||last.status!=='streaming')return;await new Promise((resolve)=>setTimeout(resolve,10));}throw new Error('session did not stop before steer');}
