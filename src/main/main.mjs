@@ -27,6 +27,10 @@ function registerIpc() {
   ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
+  ipcMain.handle('cuppet:session:auto:get', (_event, sessionId) => request('session.auto.get', { sessionId }));
+  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: Boolean(enabled) }));
+  ipcMain.handle('cuppet:permission:list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
+  ipcMain.handle('cuppet:permission:reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
   ipcMain.handle('cuppet:orchestrator:set', (_event, enabled) => request('orchestrator.set', { enabled: Boolean(enabled) }));
   ipcMain.handle('cuppet:background:status', () => request('background.status'));
   ipcMain.handle('cuppet:background:pause', () => request('background.pause'));
@@ -70,6 +74,7 @@ function validateClonePayload(value, withUrl) {
   else output.nameWithOwner = typeof record.nameWithOwner === 'string' ? record.nameWithOwner.slice(0, 180) : '';
   return output;
 }
+function validatePermissionReply(value) { return ['once', 'always', 'reject'].includes(value) ? value : 'reject'; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
 function validateAttachments(values) {
   if (!Array.isArray(values)) return [];
