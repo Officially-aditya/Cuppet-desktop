@@ -14,10 +14,9 @@ export class MutationJournal {
   #directory; #cache = new Map(); #writes = new Map();
   constructor(directory) { this.#directory = directory; }
 
-  async beginFile({ sessionId, executionId, tool, projectRoot, absolutePath, relativePath }) {
-    if (!sessionId || !executionId || !projectRoot || !absolutePath || !relativePath) throw new Error('mutation snapshot requires session, execution, workspace, and path');
-    const safe = await resolveWorkspacePath(projectRoot, relativePath, false);
-    if (safe.absolute !== resolve(absolutePath)) throw new Error('mutation path authority mismatch');
+  async beginFile({ sessionId, executionId, tool, projectRoot, path }) {
+    if (!sessionId || !executionId || !projectRoot || !path) throw new Error('mutation snapshot requires session, execution, workspace, and path');
+    const safe = await resolveWorkspacePath(projectRoot, path, false);
     const before = await snapshotFile(safe.absolute);
     return { sessionId, executionId, tool: String(tool || 'workspace'), projectRoot: safe.root, path: safe.relative, before };
   }
@@ -34,7 +33,7 @@ export class MutationJournal {
       kind: 'file',
       path: token.path,
       before: token.before,
-      after: publicSnapshot(after),
+      after: { exists: after.exists, hash: after.exists ? after.hash : null },
       state: 'applied',
       createdAt: Date.now(),
     };
@@ -141,7 +140,6 @@ async function snapshotFile(path) {
     throw error;
   }
 }
-function publicSnapshot(value) { return { exists: value.exists === true, hash: value.exists ? value.hash : null, ...(value.content !== undefined ? { content: value.content } : {}) }; }
 function snapshotMatches(actual, expected) { return Boolean(actual?.exists) === Boolean(expected?.exists) && (!expected?.exists || actual?.hash === expected?.hash); }
 function findLatestApplied(entries) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i]?.state === 'applied') return i; return -1; }
 function validEntry(entry) { return entry && entry.schema === SCHEMA_VERSION && typeof entry.sessionId === 'string' && ['file', 'barrier'].includes(entry.kind) && ['applied', 'undone'].includes(entry.state); }
