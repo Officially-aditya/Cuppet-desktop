@@ -19,7 +19,8 @@
     "phaseb:verify": "node scripts/verify-phaseb.mjs",
     "phaseb1:verify": "node scripts/verify-phaseb1.mjs",
     "phaseb2:verify": "node scripts/verify-phaseb2.mjs",
-    "phasec1:verify": "node scripts/verify-phasec1.mjs"
+    "phasec1:verify": "node scripts/verify-phasec1.mjs",
+    "phasec2:verify": "node scripts/verify-phasec2.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0"
