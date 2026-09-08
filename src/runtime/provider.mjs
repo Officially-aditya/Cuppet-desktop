@@ -18,14 +18,13 @@ export class OpenAICompatibleChatProvider {
   #requestBody;
 
   constructor(configuration = {}) {
+    const raw = record(configuration);
+    const alreadyLowered = string(raw.apiKey) && string(raw.model) && ('requestHeaders' in raw || 'requestBody' in raw);
     let resolved;
-    try { resolved = providerRequest(configuration, 'primary'); }
-    catch (error) {
-      const raw = record(configuration);
-      // Direct request configurations produced by providerRequest are already
-      // lowered. Accept them without re-resolving a role.
-      if (string(raw.apiKey) && string(raw.model)) resolved = raw;
-      else throw new ProviderConfigurationError(error instanceof Error ? error.message : String(error));
+    if (alreadyLowered) resolved = raw;
+    else {
+      try { resolved = providerRequest(configuration, 'primary'); }
+      catch (error) { throw new ProviderConfigurationError(error instanceof Error ? error.message : String(error)); }
     }
     const apiKey = string(resolved.apiKey);
     const model = string(resolved.model);
