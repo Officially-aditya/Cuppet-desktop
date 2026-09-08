@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const MESSAGE_STATUSES = new Set(['complete', 'streaming', 'stopped', 'interrupted', 'error']);
+const TOOL_STATUSES = new Set(['running', 'complete', 'error', 'rejected']);
 
 export class ConversationDatabase {
   #db;
@@ -39,13 +40,27 @@ export class ConversationDatabase {
         updated_at INTEGER NOT NULL,
         UNIQUE(session_id, sequence)
       );
+      CREATE TABLE IF NOT EXISTS tool_executions (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        call_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        arguments_json TEXT NOT NULL,
+        output TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','complete','error','rejected')),
+        permission_source TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_projects_last_opened ON projects(last_opened_at DESC);
       CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_session_sequence ON messages(session_id, sequence ASC);
+      CREATE INDEX IF NOT EXISTS idx_tool_executions_session_created ON tool_executions(session_id, created_at ASC);
     `);
     this.#ensureSessionProjectColumn();
     const now = Date.now();
     this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming'").run(now);
+    this.#db.prepare("UPDATE tool_executions SET status = 'error', output = CASE WHEN output = '' THEN 'Interrupted by runtime restart.' ELSE output END, updated_at = ? WHERE status = 'running'").run(now);
   }
   #ensureSessionProjectColumn() {
     const columns = this.#db.prepare('PRAGMA table_info(sessions)').all();
@@ -91,11 +106,26 @@ export class ConversationDatabase {
     return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s ${filter} ORDER BY s.updated_at DESC`).all(...(projectId === undefined ? [] : [projectId]));
   }
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
-  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages}; }
+  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages,toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,status,now,now); this.touchSession(sessionId,now); return this.getMessage(id); }
   getMessage(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; }
   updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); return this.getMessage(id); }
   appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
   renameSession(id,title,now=Date.now()){ this.#db.prepare('UPDATE sessions SET title=?,updated_at=? WHERE id=?').run(title,now,id); return this.getSessionSummary(id); }
   touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now,id); }
+
+  createToolExecution({ id, sessionId, callId, toolName, argumentsJson='{}', now=Date.now() }) {
+    this.#db.prepare(`INSERT INTO tool_executions (id,session_id,call_id,tool_name,arguments_json,output,status,permission_source,created_at,updated_at) VALUES (?,?,?,?,?,'','running',NULL,?,?)`).run(id,sessionId,callId,toolName,argumentsJson,now,now);
+    this.touchSession(sessionId,now);
+    return this.getToolExecution(id);
+  }
+  finishToolExecution(id,{status,output='',permissionSource=null,now=Date.now()}) {
+    if(!TOOL_STATUSES.has(status)||status==='running') throw new Error(`invalid terminal tool status: ${status}`);
+    const current=this.getToolExecution(id); if(!current) throw new Error(`unknown tool execution: ${id}`);
+    this.#db.prepare('UPDATE tool_executions SET output=?,status=?,permission_source=?,updated_at=? WHERE id=?').run(String(output),status,permissionSource,now,id);
+    this.touchSession(current.sessionId,now);
+    return this.getToolExecution(id);
+  }
+  getToolExecution(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE id=?`).get(id) ?? null; }
+  listToolExecutions(sessionId){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=? ORDER BY created_at ASC,id ASC`).all(sessionId); }
 }
