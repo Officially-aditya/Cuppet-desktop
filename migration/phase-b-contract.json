@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "phase": "B",
+  "preparedAt": "2026-09-08",
+  "authority": {
+    "projectRegistration": "SQLite independent runtime",
+    "checkoutContents": "filesystem",
+    "gitAuthentication": "existing host Git credential helper / SSH configuration",
+    "repositoryPickerAuthentication": "existing GitHub CLI session for this increment",
+    "chatProjectBinding": "sessions.project_id"
+  },
+  "entryPaths": ["local_folder", "github_url", "authenticated_repository_picker"],
+  "invariants": [
+    "project path is canonicalized and duplicate registrations by checkout path are rejected",
+    "repository URL credentials are rejected and secrets are redacted from errors",
+    "failed clones clean only the partial target created by that clone",
+    "removing a project registration never deletes the checkout",
+    "a running session keeps the project binding it started with",
+    "a new chat is persisted on first message rather than on New chat click",
+    "missing project folders can be relocated without deleting chat history"
+  ],
+  "deferredPreferredAdapter": {
+    "provider": "Sydney GitHub App repository listing",
+    "reason": "Sydney source/API was not accessible to this implementation environment; project discovery is isolated so the adapter can be replaced without storage changes"
+  }
+}
