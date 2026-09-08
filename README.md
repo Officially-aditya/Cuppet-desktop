@@ -4,13 +4,13 @@ Independent desktop/runtime migration for Cuppet.
 
 ## Current increment
 
-**Phase C2 — independent remote control, relay, setup, and token boundary: implemented candidate.**
+**Phase D — independent provider, model-role, and reasoning/effort parity: implemented candidate.**
 
-Cuppet now owns the remote-control host boundary directly on top of the independent runtime. Devices can attach to projects/sessions, submit work, stop runs, switch Build/Plan mode, select host-configured models, and answer C1 permission requests without depending on the old OpenCode controller.
+Cuppet now owns provider/model policy independently of the old OpenCode controller. The local host keeps provider credentials and endpoint authority, while a sanitized provider catalog carries coding-capable model metadata, independent primary/secondary role selections, and supported reasoning/effort variants across desktop, headless, and Remote surfaces.
 
-The relay remains transport-only: it performs zero coding inference, persists no transcript, and never receives provider API keys. Device identity/scopes are enforced by the host through local pairing credentials or locally verified short-lived managed Ed25519 tokens.
+Reasoning/effort is lowered into provider request metadata rather than prompt text. Live provider variants win over the legacy compatibility bridge, bridge data is recursively sanitized before persistence/projection, and Remote devices may select only host-advertised provider/model/effort combinations.
 
-Phases A, B, B1, B2, and C1 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned coding tools, and the independent permission boundary remain authoritative.
+Phases A, B, B1, B2, C1, and C2 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned coding tools, permissions, and host-authoritative remote control remain authoritative.
 
 The production source still has **no OpenCode dependency**.
 
@@ -21,7 +21,29 @@ npm install
 npm start
 ```
 
-Open **Provider settings** and configure an OpenAI-compatible base URL, primary model ID, and API key. An optional background model can be configured separately. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+Open **Provider settings** and configure the local provider ID/base URL, primary model, optional secondary/background model, supported effort selections, and API key. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+
+## Provider, model-role, and effort policy
+
+Phase D separates local secret/transport configuration from reusable non-secret model policy:
+
+- provider API key and endpoint authority stay on the local host;
+- primary and secondary roles are independently persisted and resolved;
+- model catalogs require coding-agent capability: text input/output, streaming, and tool calling;
+- OpenAI/Azure and Vertex/Vertex-Anthropic aliases remain grouped without crossing vendors;
+- unknown/future provider IDs can participate when they advertise the required capability contract;
+- live variants and the compatibility variant bridge are sanitized before projection;
+- effort/reasoning metadata is applied once at provider-request lowering, while auth, selected model, prompts, and runtime tools remain authoritative;
+- the background memory canonicalizer uses the independent secondary role and secondary effort;
+- desktop, headless, and Remote expose the same non-secret provider/model/variant policy.
+
+The independent CLI can inspect the sanitized host policy:
+
+```bash
+cuppet models --provider-id openai-compatible --model <model-id> --effort <variant>
+```
+
+Headless provider configuration stays local through `CUPPET_PROVIDER_ID`, `CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BACKGROUND_MODEL`, `CUPPET_EFFORT`, `CUPPET_BACKGROUND_EFFORT`, and `CUPPET_BASE_URL`. Optional non-secret discovery metadata can be provided through `CUPPET_MODEL_CATALOG_JSON` and `CUPPET_VARIANT_BRIDGE_JSON`.
 
 ## Remote control
 
@@ -35,7 +57,7 @@ cuppet relay
 cuppet remote-enroll --token <session-token>
 ```
 
-Headless provider configuration stays local (`CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BASE_URL`). A remote device cannot provide or retrieve host provider credentials.
+A remote device cannot provide or retrieve host provider credentials/endpoints. It can select only a model/effort combination already advertised by the host policy; the host performs the final request lowering locally.
 
 Remote protocol v1 preserves:
 
@@ -51,7 +73,7 @@ Remote protocol v1 preserves:
 
 The self-host relay is a trusted transport, not an end-to-end-encrypted boundary. Use TLS before exposing it outside localhost.
 
-Two old command surfaces intentionally fail instead of inventing authority: `session.undo` waits for an independent mutation journal, and interactive question reply/reject waits for an independent runtime question broker.
+Two old command surfaces intentionally still fail instead of inventing authority: `session.undo` waits for an independent mutation journal, and interactive question reply/reject waits for an independent runtime question broker. Those are now explicit post-D migration obligations.
 
 ## Runtime-owned coding tools
 
@@ -270,23 +292,25 @@ npm run phaseb1:verify
 npm run phaseb2:verify
 npm run phasec1:verify
 npm run phasec2:verify
+npm run phased:verify
 ```
 
-C2 verifies protocol/pairing/token/setup boundaries, authenticated scope-checked/replay-safe command routing, real relay/host/device integration, runtime-backed remote actions, lifecycle cleanliness, desktop/headless surfaces, and the rule that provider secrets never become remote state.
+D verifies provider grouping/capability discovery, independent primary/secondary role resolution, effort/variant sanitization and request lowering, background secondary-role execution, desktop/headless/Remote projection parity, host-only secret/endpoint authority, and Remote selection restricted to host-advertised model/effort choices.
 
 ## Architecture
 
 ```text
 Electron renderer
     ├── conversations/projects
+    ├── provider/model/effort controls
     ├── permission decision UI
     └── Remote lifecycle UI
           │ narrow contextBridge
           ▼
 Electron main
     ├── native folder picker
-    ├── OS-encrypted provider settings
-    └── local provider configuration forwarding
+    ├── OS-encrypted provider credentials/endpoints
+    └── sanitized provider/model policy projection
           │ NDJSON runtime protocol
           ▼
 Independent Node runtime
@@ -305,11 +329,15 @@ Independent Node runtime
     │    ├── workspace_edit / workspace_write
     │    └── bash
     ├── evidence-gated background enricher
-    ├── OpenAI-compatible provider adapter
+    ├── ProviderPolicy
+    │    ├── primary/secondary role selection
+    │    ├── sanitized model/variant catalog
+    │    └── one-step request lowering
+    ├── OpenAI-compatible execution adapter
     ├── RemoteManager / RemoteBridge
     │    ├── host identity + device scopes
     │    ├── local/JWT authentication
-    │    └── runtime-backed command adapter
+    │    └── host-advertised model/effort selection
     └── generation/tool cancellation
           │ outbound WebSocket only
           ▼
@@ -331,10 +359,11 @@ Authority stays explicit:
 - LosslessPlanStore → canonical implementation requirements;
 - TST LTM → verified reusable memory;
 - CognitiveStateStore → mode/orchestrator/background controls;
-- Electron main/headless host → provider-secret authority;
-- remote device state → ephemeral selection/projection only;
+- Electron main/headless host → provider-secret/endpoint authority;
+- ProviderPolicy → non-secret provider/model/role/effort policy and request lowering;
+- remote device state → ephemeral advertised model/effort selection only;
 - relay → transport/presence only;
-- renderer → presentation/navigation/approval projection only.
+- renderer → presentation/navigation/approval/policy projection only.
 
 ## Migration docs
 
@@ -347,9 +376,11 @@ Authority stays explicit:
 - Phase C1 contract: [`migration/phase-c1-contract.json`](migration/phase-c1-contract.json)
 - Phase C2 remote control: [`docs/phase-c2-remote-control.md`](docs/phase-c2-remote-control.md)
 - Phase C2 contract: [`migration/phase-c2-contract.json`](migration/phase-c2-contract.json)
+- Phase D provider/model/effort: [`docs/phase-d-provider-model-effort.md`](docs/phase-d-provider-model-effort.md)
+- Phase D contract: [`migration/phase-d-contract.json`](migration/phase-d-contract.json)
 
 ## Migration rule
 
 A later phase may replace an old OpenCode mechanism, but it may not silently replace Cuppet policy. Context compilation, plans, PE3, evidence-gated memory, permissions, model roles, session controls, and remote compatibility remain explicit migration obligations.
 
-**Next gate after C2: D** — complete provider/model/effort parity on the independent runtime: provider routing, model-role selection, reasoning/effort variants, and their desktop/headless/remote projections without moving provider-secret authority out of the local host.
+**Next gate after D: E** — complete the remaining shared session/control compatibility that still intentionally fails closed: independent undo/mutation ownership, interactive question brokerage, and the remaining headless session-resume/fork/status/doctor command semantics. Phase E must reuse the existing SQLite/runtime authorities rather than rebuilding an OpenCode-shaped controller.
