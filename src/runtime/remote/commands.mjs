@@ -1,10 +1,17 @@
 import { basename } from 'node:path';
 import { PROTOCOL_VERSION } from './protocol.mjs';
+import {
+  normalizeProviderConfiguration,
+  providerProjection,
+  providerRequest,
+  resolveAdvertisedSelection,
+} from '../provider-policy.mjs';
+import { modelMatchesProvider } from '../provider-catalog.mjs';
 
 export class RemoteCommandAdapter {
-  #call; #identity; #provider={}; #states=new Map();
+  #call; #identity; #provider=normalizeProviderConfiguration({}); #states=new Map();
   constructor({ call, identity, providerConfig={} }) { this.#call=call; this.#identity=identity; this.setProviderConfig(providerConfig); }
-  setProviderConfig(config={}) { this.#provider=sanitizeProviderConfig(config); }
+  setProviderConfig(config={}) { this.#provider=normalizeProviderConfiguration(config); }
   detachDevice(deviceId){ this.#states.delete(deviceId); }
 
   async execute(actor,type,payload={},envelope={}) {
@@ -32,8 +39,8 @@ export class RemoteCommandAdapter {
       case 'question.reject': throw new Error('Interactive question requests are not implemented by the independent runtime.');
       case 'model.list': return this.#modelList(state);
       case 'model.select': return this.#modelSelect(state,params);
-      case 'provider.list': return this.#providerList();
-      case 'provider.select': return this.#providerSelect(params);
+      case 'provider.list': return this.#providerList(state);
+      case 'provider.select': return this.#providerSelect(state,params);
       case 'agent.mode.get': return this.#modeGet(state,explicitSession);
       case 'agent.mode.set':
       case 'plan.set': return this.#modeSet(state,explicitSession,params);
@@ -43,7 +50,7 @@ export class RemoteCommandAdapter {
 
   async #hostGet(state){
     const workspaces=await this.#workspaceList(state);
-    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.6.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
+    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.7.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
   }
   async #workspaceList(state){
     const projects=await this.#call('project.list',{});
@@ -80,27 +87,97 @@ export class RemoteCommandAdapter {
     if(!requestId)throw new Error('permission request id is required'); if(!['once','always','reject'].includes(reply))throw new Error('permission reply must be once, always, or reject');
     return this.#call('permission.reply',{requestId,reply});
   }
+
   #modelList(state){
-    const models=[]; if(this.#provider.model)models.push({providerID:'openai-compatible',modelID:this.#provider.model,role:'primary',selected:(state.model??this.#provider.model)===this.#provider.model});
-    if(this.#provider.backgroundModel&&this.#provider.backgroundModel!==this.#provider.model)models.push({providerID:'openai-compatible',modelID:this.#provider.backgroundModel,role:'secondary',selected:state.model===this.#provider.backgroundModel}); return models;
+    const projection=providerProjection(this.#provider);
+    const selected=state.selection??this.#defaultSelection(state);
+    return projection.models.filter((model)=>this.#modelVisibleForProvider(state,model)).map((model)=>({
+      providerID:model.providerID,
+      modelID:model.modelID,
+      name:model.name,
+      roles:model.roles,
+      variants:[...model.variants],
+      selected:Boolean(selected&&sameSelection(selected,model)),
+      selectedVariant:selected&&sameSelection(selected,model)?selected.variant??null:null,
+    }));
   }
   #modelSelect(state,params){
-    if(String(params.providerID??'openai-compatible')!=='openai-compatible')throw new Error('unknown provider'); const modelID=String(params.modelID??''); const allowed=this.#modelList(state).map((model)=>model.modelID); if(!allowed.includes(modelID))throw new Error('model is not configured on this host'); state.model=modelID; return {providerID:'openai-compatible',modelID};
+    const requestedProvider=String(params.providerID??state.providerID??this.#provider.primary?.providerID??'');
+    const modelID=String(params.modelID??'');
+    if(!requestedProvider||!modelID)throw new Error('providerID and modelID are required');
+    const requested={providerID:requestedProvider,modelID,...(typeof params.variant==='string'&&params.variant.trim()?{variant:params.variant.trim()}:{})};
+    let selected;
+    try{selected=resolveAdvertisedSelection(this.#provider,requested);}catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      if(/not configured on this host/.test(message))throw new Error('model is not configured on this host');
+      throw error;
+    }
+    if(state.providerID&&!this.#selectionMatchesProvider(state.providerID,selected))throw new Error('model is not available for the selected provider');
+    state.selection=selected;
+    return {...selected};
   }
-  // Provider endpoint details are local configuration. A remote device only
-  // needs to know which logical provider is available, never its URL (which
-  // could itself contain credential material in user-entered configurations).
-  #providerList(){return [{id:'openai-compatible',name:'OpenAI-compatible',connected:Boolean(this.#provider.apiKey&&this.#provider.model)}];}
-  #providerSelect(params){if(String(params.providerID??params.id??'')!=='openai-compatible')throw new Error('unknown provider');return {id:'openai-compatible',selected:true};}
+
+  // Provider endpoint details and credentials are local configuration. Remote
+  // receives only the normalized catalog and connection readiness.
+  #providerList(state){
+    const projection=providerProjection(this.#provider);
+    return projection.catalog.map((provider)=>({
+      id:provider.id,
+      name:provider.id==='openai-compatible'?'OpenAI-compatible':provider.label,
+      connected:projection.configured&&provider.modelCount>0,
+      selected:(state.providerID??projection.catalog.find((item)=>this.#selectionMatchesProvider(item.id,projection.primary))?.id??null)===provider.id,
+    }));
+  }
+  #providerSelect(state,params){
+    const requested=String(params.providerID??params.id??'');
+    const projection=providerProjection(this.#provider);
+    const provider=projection.catalog.find((item)=>item.id===requested||item.integrationIds.includes(requested));
+    if(!provider)throw new Error('unknown provider');
+    if(!projection.models.some((model)=>modelMatchesProvider(model,provider)))throw new Error('provider has no configured coding model');
+    state.providerID=provider.id;
+    if(state.selection&&!modelMatchesProvider(state.selection,provider))state.selection=null;
+    return {id:provider.id,selected:true};
+  }
   async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return {mode:result.mode};}
   async #modeSet(state,explicit,params){const sessionId=this.#requireSession(state,explicit);const raw=String(params.agent??params.mode??'');if(!['plan','build'].includes(raw))throw new Error('agent/mode must be plan or build');return this.#call('session.mode.set',{sessionId,mode:raw});}
-  #selectedProvider(state){if(!this.#provider.apiKey||!this.#provider.model)throw new Error('Host provider is not configured');return {...this.#provider,model:state.model??this.#provider.model};}
-  #providerStatus(state){return {configured:Boolean(this.#provider.apiKey&&this.#provider.model),ready:Boolean(this.#provider.apiKey&&this.#provider.model),selectedProvider:'openai-compatible',selectedModel:state.model??this.#provider.model??null};}
+
+  #selectedProvider(state){
+    const projection=providerProjection(this.#provider);
+    if(!projection.configured)throw new Error('Host provider is not configured');
+    const selected=state.selection??this.#defaultSelection(state);
+    if(!selected)throw new Error('Host provider is not configured');
+    return providerRequest(this.#provider,selected);
+  }
+  #defaultSelection(state){
+    if(!state.providerID)return this.#provider.primary?{...this.#provider.primary}:null;
+    const projection=providerProjection(this.#provider);
+    const provider=projection.catalog.find((item)=>item.id===state.providerID);
+    if(!provider)return null;
+    if(this.#provider.primary&&modelMatchesProvider(this.#provider.primary,provider))return{...this.#provider.primary};
+    const model=projection.models.find((item)=>modelMatchesProvider(item,provider));
+    return model?{providerID:model.providerID,modelID:model.modelID}:null;
+  }
+  #modelVisibleForProvider(state,model){
+    if(!state.providerID)return true;
+    const provider=providerProjection(this.#provider).catalog.find((item)=>item.id===state.providerID);
+    return provider?modelMatchesProvider(model,provider):false;
+  }
+  #selectionMatchesProvider(providerID,selection){
+    if(!selection)return false;
+    const provider=providerProjection(this.#provider).catalog.find((item)=>item.id===providerID||item.integrationIds.includes(providerID));
+    return Boolean(provider&&modelMatchesProvider(selection,provider));
+  }
+  #providerStatus(state){
+    const projection=providerProjection(this.#provider);
+    const selected=state.selection??this.#defaultSelection(state);
+    const provider=projection.catalog.find((item)=>selected&&modelMatchesProvider(selected,item));
+    return {configured:projection.configured,ready:projection.configured,selectedProvider:provider?.id??null,selectedModel:selected?.modelID??null,selectedVariant:selected?.variant??null};
+  }
   #requireSession(state,explicit){const id=explicit??state.sessionId;if(!id)throw new Error('no remote session is attached');state.sessionId=id;return id;}
-  #state(deviceId){const key=String(deviceId??'unknown');let state=this.#states.get(key);if(!state){state={projectId:null,sessionId:null,model:null};this.#states.set(key,state);}return state;}
+  #state(deviceId){const key=String(deviceId??'unknown');let state=this.#states.get(key);if(!state){state={projectId:null,sessionId:null,providerID:null,selection:null};this.#states.set(key,state);}return state;}
 }
 
-function sanitizeProviderConfig(config){return {baseUrl:typeof config.baseUrl==='string'?config.baseUrl:undefined,model:typeof config.model==='string'?config.model:undefined,backgroundModel:typeof config.backgroundModel==='string'?config.backgroundModel:undefined,apiKey:typeof config.apiKey==='string'?config.apiKey:undefined,contextWindow:Number.isFinite(config.contextWindow)?config.contextWindow:undefined};}
+function sameSelection(left,right){return String(left?.providerID??'').toLowerCase()===String(right?.providerID??'').toLowerCase()&&String(left?.modelID??'')===String(right?.modelID??'');}
 function displayPath(path,name){if(typeof path!=='string'||!path)return name??'Project';return `…/${basename(path)}`;}
 function record(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
 function stringOr(value){return typeof value==='string'&&value?value:undefined;}
