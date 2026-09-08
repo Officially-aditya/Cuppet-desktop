@@ -58,6 +58,8 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
   ipcMain.handle('cuppet:session:send', (_event, sessionId, text, attachments) => request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() }));
   ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
+  ipcMain.handle('cuppet:session:undo:status', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
 
   ipcMain.handle('cuppet:project:list', () => request('project.list'));
   ipcMain.handle('cuppet:project:get', (_event, projectId) => request('project.get', { projectId }));
@@ -103,7 +105,7 @@ function validateQuestionAnswers(values) {
   if (!Array.isArray(values)) return [];
   return values.slice(0, 8).map((group) => Array.isArray(group) ? group.slice(0, 12).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []);
 }
-function boundedId(value) { return typeof value === 'string' ? value.slice(0, 160) : ''; }
+function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
 function validateAttachments(values) {
   if (!Array.isArray(values)) return [];
