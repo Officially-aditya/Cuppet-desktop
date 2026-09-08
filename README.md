@@ -4,11 +4,13 @@ Independent desktop/runtime migration for Cuppet.
 
 ## Current increment
 
-**Phase C1 — TST workspace tools and independent permission execution: implemented candidate.**
+**Phase C2 — independent remote control, relay, setup, and token boundary: implemented candidate.**
 
-Cuppet now owns the foreground coding-tool boundary directly inside the independent runtime. The provider can structurally explore a project through TST, read exact filesystem contents, edit/write project files, and run shell commands without depending on OpenCode. Every protected operation passes through a runtime-owned permission broker before execution.
+Cuppet now owns the remote-control host boundary directly on top of the independent runtime. Devices can attach to projects/sessions, submit work, stop runs, switch Build/Plan mode, select host-configured models, and answer C1 permission requests without depending on the old OpenCode controller.
 
-Phases A, B, B1, and B2 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, cognitive controls, and PE3 task routing remain runtime-owned.
+The relay remains transport-only: it performs zero coding inference, persists no transcript, and never receives provider API keys. Device identity/scopes are enforced by the host through local pairing credentials or locally verified short-lived managed Ed25519 tokens.
+
+Phases A, B, B1, B2, and C1 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned coding tools, and the independent permission boundary remain authoritative.
 
 The production source still has **no OpenCode dependency**.
 
@@ -20,6 +22,36 @@ npm start
 ```
 
 Open **Provider settings** and configure an OpenAI-compatible base URL, primary model ID, and API key. An optional background model can be configured separately. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+
+## Remote control
+
+The desktop **Remote** surface can start/stop the local host, use a manual relay or the managed Cuppet account-link flow, create trusted/viewer pairing invitations, list paired devices, and revoke them.
+
+The same implementation is available headlessly:
+
+```bash
+cuppet remote-control
+cuppet relay
+cuppet remote-enroll --token <session-token>
+```
+
+Headless provider configuration stays local (`CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BASE_URL`). A remote device cannot provide or retrieve host provider credentials.
+
+Remote protocol v1 preserves:
+
+- 512 KiB frame cap;
+- monotonic host event sequence numbers;
+- reconnect snapshots + host-process `connectionId`;
+- replay-safe command IDs;
+- per-command scopes;
+- single-use short-lived pairing invites;
+- viewer read-only scope;
+- host/device-bound Ed25519 managed tokens;
+- host replacement invalidating previously authenticated device authority.
+
+The self-host relay is a trusted transport, not an end-to-end-encrypted boundary. Use TLS before exposing it outside localhost.
+
+Two old command surfaces intentionally fail instead of inventing authority: `session.undo` waits for an independent mutation journal, and interactive question reply/reject waits for an independent runtime question broker.
 
 ## Runtime-owned coding tools
 
@@ -52,7 +84,7 @@ Identical exploration calls are cached per session. Repeating the same query ret
 
 ### Provider tool loop
 
-The OpenAI-compatible provider adapter now reconstructs streamed `tool_calls`, including fragmented names and JSON arguments.
+The OpenAI-compatible provider adapter reconstructs streamed `tool_calls`, including fragmented names and JSON arguments.
 
 ```text
 SQLite durable transcript
@@ -81,7 +113,7 @@ Provider-only tool-call/tool-result messages are ephemeral. They are not appende
 
 ## Permission boundary
 
-Permissions are runtime policy, not model policy and not renderer policy.
+Permissions are runtime policy, not model policy and not renderer/remote policy.
 
 ### Reads
 
@@ -114,12 +146,12 @@ Arbitrary commands, shell chaining/redirection/expansion, installs, builds, test
 
 ### Visible permission choices
 
-When a model requests protected work, the desktop shows:
+When a model requests protected work, the desktop or an authorized remote device can choose:
 
 - **Allow once**;
 - **Always this exact request**;
 - **Reject**;
-- **Enable guarded auto** only when the runtime marks the workspace resource eligible.
+- **Enable guarded auto** only from the local desktop when the runtime marks the workspace resource eligible.
 
 “Always” is an exact action + exact resource fingerprint for the current session. It is not a wildcard rule.
 
@@ -164,7 +196,7 @@ local sentence embedding
         └─ low confidence / failure → continue active task
 ```
 
-Tool execution now feeds PE3 directly:
+Tool execution feeds PE3 directly:
 
 - successful exploration/read → observed paths;
 - successful edit/write → workspace mutation;
@@ -237,22 +269,24 @@ npm run phaseb:verify
 npm run phaseb1:verify
 npm run phaseb2:verify
 npm run phasec1:verify
+npm run phasec2:verify
 ```
 
-C1 verifies safe-bash parity, sensitive/protected/symlink permission behavior, guarded auto, exact approvals, plan/noninteractive failure, streamed tool-call reconstruction, durable tool audit, duplicate TST discovery suppression, and a full runtime permission-block/resume/write/completion flow.
+C2 verifies protocol/pairing/token/setup boundaries, authenticated scope-checked/replay-safe command routing, real relay/host/device integration, runtime-backed remote actions, lifecycle cleanliness, desktop/headless surfaces, and the rule that provider secrets never become remote state.
 
 ## Architecture
 
 ```text
 Electron renderer
     ├── conversations/projects
-    └── permission decision UI
+    ├── permission decision UI
+    └── Remote lifecycle UI
           │ narrow contextBridge
           ▼
 Electron main
     ├── native folder picker
     ├── OS-encrypted provider settings
-    └── permission decision forwarding only
+    └── local provider configuration forwarding
           │ NDJSON runtime protocol
           ▼
 Independent Node runtime
@@ -272,7 +306,17 @@ Independent Node runtime
     │    └── bash
     ├── evidence-gated background enricher
     ├── OpenAI-compatible provider adapter
+    ├── RemoteManager / RemoteBridge
+    │    ├── host identity + device scopes
+    │    ├── local/JWT authentication
+    │    └── runtime-backed command adapter
     └── generation/tool cancellation
+          │ outbound WebSocket only
+          ▼
+Cuppet relay
+    ├── transport/presence
+    ├── bounded in-memory replay
+    └── optional browser Remote client
 ```
 
 Authority stays explicit:
@@ -287,7 +331,9 @@ Authority stays explicit:
 - LosslessPlanStore → canonical implementation requirements;
 - TST LTM → verified reusable memory;
 - CognitiveStateStore → mode/orchestrator/background controls;
-- Electron main → provider-secret persistence;
+- Electron main/headless host → provider-secret authority;
+- remote device state → ephemeral selection/projection only;
+- relay → transport/presence only;
 - renderer → presentation/navigation/approval projection only.
 
 ## Migration docs
@@ -299,9 +345,11 @@ Authority stays explicit:
 - Phase B2 PE3 routing: [`docs/phase-b2-pe3-routing.md`](docs/phase-b2-pe3-routing.md)
 - Phase C1 tools/permissions: [`docs/phase-c1-tools-permissions.md`](docs/phase-c1-tools-permissions.md)
 - Phase C1 contract: [`migration/phase-c1-contract.json`](migration/phase-c1-contract.json)
+- Phase C2 remote control: [`docs/phase-c2-remote-control.md`](docs/phase-c2-remote-control.md)
+- Phase C2 contract: [`migration/phase-c2-contract.json`](migration/phase-c2-contract.json)
 
 ## Migration rule
 
 A later phase may replace an old OpenCode mechanism, but it may not silently replace Cuppet policy. Context compilation, plans, PE3, evidence-gated memory, permissions, model roles, session controls, and remote compatibility remain explicit migration obligations.
 
-**Next gate after C1: C2** — migrate remote-control/relay/setup/token behavior onto the independent runtime without moving coding inference or provider credentials into the relay/backend.
+**Next gate after C2: D** — complete provider/model/effort parity on the independent runtime: provider routing, model-role selection, reasoning/effort variants, and their desktop/headless/remote projections without moving provider-secret authority out of the local host.
