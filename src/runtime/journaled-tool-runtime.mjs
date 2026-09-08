@@ -73,9 +73,11 @@ class ToolMutationCapture {
     if (!finished) return;
     this.#pending.delete(finished.callId);
     try {
-      if (finished.pending.kind === 'file') await this.#journal.commitFile(finished.pending.token);
-      else if (finished.pending.kind === 'barrier' && mutation) {
-        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: finished.callId, tool: 'bash', paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
+      if (finished.pending.kind === 'file') {
+        finished.pending.token.executionId = String(finished.event.executionId || finished.pending.token.executionId || finished.callId);
+        await this.#journal.commitFile(finished.pending.token);
+      } else if (finished.pending.kind === 'barrier' && mutation) {
+        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: 'bash', paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
       }
     } catch (error) { this.#failure = error instanceof Error ? error : new Error(String(error)); throw this.#failure; }
   }
