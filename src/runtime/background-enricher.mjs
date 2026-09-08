@@ -59,8 +59,14 @@ export class BackgroundEnricher {
         this.#ledger.observe({ key, claim: candidate.value, kind: candidate.kind, relation, sessionID: batch.sessionID, projectID: batch.projectID, sourceRef, timestampMs: this.#now(), trustedSupport, explicitUser, downstreamVerified: false });
         const admission = this.#ledger.admission(key, candidate.kind); if (admission.blocked) continue;
         admitted++;
-        const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', score: admission.score, scope: candidate.scope }).catch(() => undefined);
-        if (explicitUser && observed?.id) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
+        const scope = candidate.scope === 'project' && admission.independentlyReinforced ? 'project' : 'session';
+        const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', scope }).catch(() => undefined);
+        if (observed?.id && explicitUser) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
+        if (observed?.id) {
+          for (let index = 0; index < admission.reinforcementEvidenceCount; index += 1) {
+            await this.#tst.recordEvidence(batch.sessionID, observed.id, 'independent_reinforcement', `candidate-ledger:${index + 1}:${sourceRef}`, true).catch(() => undefined);
+          }
+        }
       }
       this.#batches.delete(batch.sessionID); this.#lastCompleted.set(batch.sessionID, this.#now()); await this.#ledger.persist(); return { status: 'completed', candidates: admitted };
     } catch (error) {
