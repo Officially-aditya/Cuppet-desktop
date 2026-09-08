@@ -1,0 +1,12 @@
+{
+  "name": "cuppet-desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Independent Cuppet desktop/runtime migration",
+  "scripts": {
+    "phase0:verify": "node scripts/verify-phase0.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
