@@ -14,7 +14,14 @@ export class RemoteManager {
   #remoteDir; #call; #emit; #identity; #bridge; #transport; #commands; #relayUrl; #provider={}; #startedAt; #starting;
   constructor({dataDir,call,emit=()=>{}}){this.#remoteDir=join(dataDir,'remote');this.#call=call;this.#emit=emit;}
   async ready(){this.#identity??=await ensureHostIdentity(this.#remoteDir);return this.#identity;}
-  setProviderConfig(config={}){this.#provider={...config};this.#commands?.setProviderConfig(this.#provider);return this.status();}
+  setProviderConfig(config={}){
+    this.#provider={...config};
+    this.#commands?.setProviderConfig(this.#provider);
+    // Provider configuration is pushed at ordinary desktop startup. Updating
+    // it must not call status()/ready() and create remote identity/state until
+    // the user actually opens or starts Remote.
+    return {providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model)};
+  }
   handleRuntimeEvent(event){this.#bridge?.onRuntimeEvent(event);}
   async status(){const identity=await this.ready();return {running:Boolean(this.#bridge),connected:Boolean(this.#transport?.connected),hostId:identity.hostId,name:identity.deviceName,relayUrl:this.#relayUrl??null,startedAt:this.#startedAt??null,pairedDevices:(await listPairedDevices(this.#remoteDir)).length,providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model),protocolVersion:1};}
 
