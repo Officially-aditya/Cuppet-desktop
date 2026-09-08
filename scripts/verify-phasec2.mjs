@@ -81,10 +81,12 @@ for (const method of ['remote.status', 'remote.provider-config', 'remote.start',
 const main = text['src/main/main.mjs'];
 const preload = text['src/preload/preload.cjs'];
 const renderer = text['src/renderer/remote.js'];
+const rendererHtml = text['src/renderer/index.html'];
 expect(main.includes('cuppet:remote:start') && main.includes('settings.runtimeValue()'), 'Electron main remote/provider-local bridge missing');
 expect(preload.includes('remote:') && preload.includes('invite:') && preload.includes('revoke:'), 'preload remote lifecycle bridge missing');
-expect(renderer.includes('Managed app link') && renderer.includes('Viewer') && renderer.includes('Revoke'), 'desktop Remote UI incomplete');
-expect(text['src/renderer/index.html'].includes('remote.js'), 'desktop Remote UI is not loaded');
+for (const control of ['remote-start', 'remote-setup', 'remote-stop', 'remote-invite-trusted', 'remote-invite-viewer', 'remote-devices']) expect(rendererHtml.includes(`id="${control}"`), `desktop Remote control missing: ${control}`);
+expect(renderer.includes("window.cuppet.remote.start") && renderer.includes("window.cuppet.remote.invite('viewer')") && renderer.includes('window.cuppet.remote.revoke'), 'desktop Remote UI actions incomplete');
+expect(rendererHtml.includes('remote.js'), 'desktop Remote UI is not loaded');
 
 const cli = text['src/cli/main.mjs'];
 for (const command of ['remote-control', 'relay', 'remote-enroll']) expect(cli.includes(command), `independent CLI entrypoint missing: ${command}`);
