@@ -5,7 +5,7 @@ export const TST_PROTOCOL_VERSION = 'cuppet.tst.v3';
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 export class TstClient extends EventEmitter {
-  #socket; #nextID = 1; #buffer = Buffer.alloc(0); #pending = new Map(); #closed = false;
+  #socket; #nextID = 1; #buffer = Buffer.alloc(0); #pending = new Map(); #closed = false; #capabilities = new Set();
   constructor(socket) {
     super(); this.#socket = socket;
     socket.on('data', (chunk) => this.#consume(chunk));
@@ -21,6 +21,7 @@ export class TstClient extends EventEmitter {
     if (initialized?.protocol !== TST_PROTOCOL_VERSION) {
       client.destroy(); throw new Error(`TST protocol mismatch: expected ${TST_PROTOCOL_VERSION}, received ${initialized?.protocol ?? 'unknown'}`);
     }
+    client.#capabilities = new Set(Array.isArray(initialized?.capabilities) ? initialized.capabilities.map(String) : []);
     return client;
   }
   call(method, params = {}) {
@@ -33,6 +34,8 @@ export class TstClient extends EventEmitter {
       this.#socket.write(Buffer.concat([header, payload]), (error) => { if (!error) return; this.#pending.delete(id); reject(error); });
     });
   }
+  supports(capability) { return this.#capabilities.has(capability); }
+  get capabilities() { return [...this.#capabilities].sort(); }
   get connected() { return !this.#closed; }
   destroy() { if (this.#closed) return; this.#closed = true; this.#socket.destroy(); this.#failAll(new Error('TST client closed')); }
   #consume(chunk) {
@@ -52,14 +55,19 @@ export class TstClient extends EventEmitter {
 }
 
 export class TstBridge {
-  #socketPath; #token; #client; #lastError;
+  #socketPath; #token; #client; #lastError; #lastCapabilities = [];
   constructor({ socketPath = process.env.CUPPET_TST_SOCKET, token = process.env.CUPPET_TST_TOKEN } = {}) { this.#socketPath = socketPath; this.#token = token; }
   get configured() { return Boolean(this.#socketPath && this.#token); }
-  get status() { return { configured: this.configured, connected: Boolean(this.#client?.connected), lastError: this.#lastError ?? null, protocol: TST_PROTOCOL_VERSION }; }
+  get status() { return { configured: this.configured, connected: Boolean(this.#client?.connected), lastError: this.#lastError ?? null, protocol: TST_PROTOCOL_VERSION, capabilities: this.#client?.capabilities ?? this.#lastCapabilities }; }
   async call(method, params = {}) {
     if (!this.configured) throw new Error('TST is not configured');
     const client = await this.#ensure();
     try { return await client.call(method, params); } catch (error) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; throw error; }
+  }
+  async supports(capability) {
+    if (!this.configured) return false;
+    const client = await this.#ensure();
+    return client.supports(capability);
   }
   async prepareContext(sessionID, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0) {
     return this.call('context.prepare', { session_id: sessionID, query: String(query).slice(0, 6000), mode, projection_budget: Math.min(Math.max(Math.floor(projectionBudget), 0), 16384), hints: hints.slice(0, 32), observations: observations.slice(0, 256) });
@@ -68,17 +76,30 @@ export class TstBridge {
   async turnCompleted(sessionID) { return this.call('turn.completed', { session_id: sessionID }); }
   async observeMemory(sessionID, observation) { return this.call('memory.observe', { session_id: sessionID, ...observation }); }
   async queryMemory(sessionID, query, limit = 20) { return this.call('memory.query', { session_id: sessionID, query, limit: Math.min(Math.max(limit, 1), 40) }); }
-  async recordEvidence(sessionID, memoryID, kind, reference, success = true) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success }); }
+  async recordEvidence(sessionID, memoryID, kind, reference, success = true, contentHash = undefined) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }); }
+  async graphQuery(query, prefix, limit = 12) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 32) }); }
   async graphLocate(pattern, prefix, limit = 12) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
   async graphList(prefix, limit = 100) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
   async graphWorkspace(limit = 100) { return this.call('graph.workspace', { limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
   async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: Math.min(Math.max(Math.floor(depth), 1), 4), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
+  async resolveEditTargets(path, query, expectedHash = undefined, limit = 12) {
+    if (!(await this.supports('edit.resolve_targets'))) throw new Error('Connected TST daemon does not support revision-bound edit targets. Upgrade the bundled TST runtime.');
+    return this.call('edit.resolve_targets', { path: String(path).slice(0, 1024), query: String(query).slice(0, 512), ...(expectedHash ? { expected_hash: String(expectedHash).slice(0, 128) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 64) });
+  }
+  async parseStaged(path, baseHash, content) {
+    if (!(await this.supports('edit.parse_staged'))) throw new Error('Connected TST daemon does not support staged parsing. Upgrade the bundled TST runtime.');
+    return this.call('edit.parse_staged', { path: String(path).slice(0, 1024), base_hash: baseHash || null, content: String(content) });
+  }
+  async refreshGraphPaths(paths) {
+    if (!(await this.supports('graph.refresh_paths'))) throw new Error('Connected TST daemon does not support the graph refresh barrier. Upgrade the bundled TST runtime.');
+    return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) });
+  }
   close() { this.#client?.destroy(); this.#client = undefined; }
   async #ensure() {
     if (this.#client?.connected) return this.#client;
     try {
-      const client = await TstClient.connect(this.#socketPath, this.#token); this.#lastError = undefined; this.#client = client;
-      client.on('disconnect', (error) => { this.#lastError = cleanError(error); if (this.#client === client) this.#client = undefined; });
+      const client = await TstClient.connect(this.#socketPath, this.#token); this.#lastError = undefined; this.#client = client; this.#lastCapabilities = client.capabilities;
+      client.on('disconnect', (error) => { this.#lastError = cleanError(error); this.#lastCapabilities = client.capabilities; if (this.#client === client) this.#client = undefined; });
       return client;
     } catch (error) { this.#lastError = cleanError(error); throw error; }
   }
