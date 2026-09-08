@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('cuppet', {
     autoGet: (sessionId) => ipcRenderer.invoke('cuppet:session:auto:get', sessionId),
     autoSet: (sessionId, enabled) => ipcRenderer.invoke('cuppet:session:auto:set', sessionId, enabled),
   },
+  remote: {
+    status: () => ipcRenderer.invoke('cuppet:remote:status'),
+    start: (value = {}) => ipcRenderer.invoke('cuppet:remote:start', value),
+    stop: () => ipcRenderer.invoke('cuppet:remote:stop'),
+    invite: (role = 'trusted') => ipcRenderer.invoke('cuppet:remote:invite', role),
+    devices: () => ipcRenderer.invoke('cuppet:remote:devices'),
+    revoke: (deviceId) => ipcRenderer.invoke('cuppet:remote:revoke', deviceId),
+  },
   pe3: {
     status: (sessionId) => ipcRenderer.invoke('cuppet:pe3:status', sessionId),
     observePaths: (sessionId, paths) => ipcRenderer.invoke('cuppet:pe3:observe-paths', sessionId, paths),

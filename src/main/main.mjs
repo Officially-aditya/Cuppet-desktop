@@ -17,6 +17,7 @@ async function bootstrap() {
   runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
   await runtime.start();
+  await runtime.request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
   registerIpc();
   createWindow();
 }
@@ -42,6 +43,13 @@ function registerIpc() {
   ipcMain.handle('cuppet:pe3:observe-paths', (_event, sessionId, paths) => request('pe3.observe-paths', { sessionId, paths: validatePaths(paths) }));
   ipcMain.handle('cuppet:pe3:workspace-mutation', (_event, sessionId, paths) => request('pe3.workspace-mutation', { sessionId, paths: validatePaths(paths) }));
 
+  ipcMain.handle('cuppet:remote:status', () => request('remote.status'));
+  ipcMain.handle('cuppet:remote:start', (_event, value) => request('remote.start', { ...validateRemoteStart(value), provider: settings.runtimeValue() }));
+  ipcMain.handle('cuppet:remote:stop', () => request('remote.stop'));
+  ipcMain.handle('cuppet:remote:invite', (_event, role) => request('remote.invite', { role: role === 'viewer' ? 'viewer' : 'trusted' }));
+  ipcMain.handle('cuppet:remote:devices', () => request('remote.devices'));
+  ipcMain.handle('cuppet:remote:revoke', (_event, deviceId) => request('remote.revoke', { deviceId: typeof deviceId === 'string' ? deviceId.slice(0, 128) : '' }));
+
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
@@ -60,7 +68,11 @@ function registerIpc() {
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
 
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
-  ipcMain.handle('cuppet:settings:save', (_event, value) => settings.save(value));
+  ipcMain.handle('cuppet:settings:save', async (_event, value) => {
+    const result = await settings.save(value);
+    await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+    return result;
+  });
 }
 
 function validateProjectPayload(value) {
@@ -73,6 +85,15 @@ function validateClonePayload(value, withUrl) {
   if (withUrl) output.url = typeof record.url === 'string' ? record.url.slice(0, 500) : '';
   else output.nameWithOwner = typeof record.nameWithOwner === 'string' ? record.nameWithOwner.slice(0, 180) : '';
   return output;
+}
+function validateRemoteStart(value) {
+  const record = value && typeof value === 'object' ? value : {};
+  return {
+    relayUrl: typeof record.relayUrl === 'string' ? record.relayUrl.trim().slice(0, 500) : '',
+    apiBase: typeof record.apiBase === 'string' ? record.apiBase.trim().slice(0, 500) : '',
+    setup: record.setup === true,
+    createInvite: record.createInvite !== false,
+  };
 }
 function validatePermissionReply(value) { return ['once', 'always', 'reject'].includes(value) ? value : 'reject'; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }

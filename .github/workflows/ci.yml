@@ -21,3 +21,4 @@ jobs:
       - run: npm run phaseb1:verify
       - run: npm run phaseb2:verify
       - run: npm run phasec1:verify
+      - run: npm run phasec2:verify
