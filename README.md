@@ -4,11 +4,13 @@ Independent desktop/runtime migration for Cuppet.
 
 ## Current increment
 
-**Phase B2 — PE3 task-local routing: implemented.**
+**Phase C1 — TST workspace tools and independent permission execution: implemented candidate.**
 
-Cuppet now owns task-context isolation directly inside the independent desktop runtime. Project prompts are routed before inference to the correct durable task session using deterministic affinity first, optional TST graph localization second, and a lazy local semantic fallback only for the ambiguous band.
+Cuppet now owns the foreground coding-tool boundary directly inside the independent runtime. The provider can structurally explore a project through TST, read exact filesystem contents, edit/write project files, and run shell commands without depending on OpenCode. Every protected operation passes through a runtime-owned permission broker before execution.
 
-The production runtime still has **no OpenCode dependency**. Phases A, B, and B1 remain intact: SQLite conversations, project binding/import, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, and cognitive controls continue to be runtime-owned.
+Phases A, B, B1, and B2 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, cognitive controls, and PE3 task routing remain runtime-owned.
+
+The production source still has **no OpenCode dependency**.
 
 ### Run it
 
@@ -17,11 +19,129 @@ npm install
 npm start
 ```
 
-Open **Provider settings** and configure an OpenAI-compatible base URL, primary model ID, and API key. An optional background model ID can be configured separately. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+Open **Provider settings** and configure an OpenAI-compatible base URL, primary model ID, and API key. An optional background model can be configured separately. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+
+## Runtime-owned coding tools
+
+Project-bound chats expose a deliberately small tool surface:
+
+- `tst_explore` — TST workspace/tree/search/trace discovery;
+- `tst_read` — exact bounded filesystem reads;
+- `workspace_edit` — precise text replacement;
+- `workspace_write` — bounded UTF-8 file creation/replacement;
+- `bash` — project-scoped shell execution;
+- `cuppet_plan` — lossless implementation-plan retrieval;
+- `cuppet_memory_search` — Cuppet memory retrieval.
+
+General chats do not receive filesystem or shell tools.
+
+### Structural exploration first
+
+`tst_explore` consolidates the old graph navigation surface into four modes:
+
+```text
+workspace → bounded project overview
+tree      → bounded project-relative file tree
+search    → structural symbol/path localization
+trace     → bounded caller/callee/dependency trace
+```
+
+TST owns structural discovery; it does **not** become source-content authority. After navigation, `tst_read` resolves and reads the current filesystem file.
+
+Identical exploration calls are cached per session. Repeating the same query returns a compact reference rather than paying for duplicate graph output.
+
+### Provider tool loop
+
+The OpenAI-compatible provider adapter now reconstructs streamed `tool_calls`, including fragmented names and JSON arguments.
+
+```text
+SQLite durable transcript
+        │ detached model projection
+        ▼
+ContextCompiler + PE3 ephemeral context
+        ▼
+Provider inference
+   │                 │
+   │ text            │ tool call
+   ▼                 ▼
+visible stream   ToolRuntime
+                     │
+                     ▼
+              PermissionBroker
+                │ allow/deny
+                ▼
+               execute
+                │
+                ├── bounded tool result → provider loop
+                ├── durable audit → SQLite tool_executions
+                └── observed/mutated paths → PE3
+```
+
+Provider-only tool-call/tool-result messages are ephemeral. They are not appended to the visible SQLite `messages` transcript.
+
+## Permission boundary
+
+Permissions are runtime policy, not model policy and not renderer policy.
+
+### Reads
+
+Ordinary project reads remain automatic. Sensitive files such as `.env`, credential-like files, private keys, and certificates require approval. `.env.example` remains readable as template/documentation data.
+
+Cuppet-owned credential/runtime files are denied rather than merely prompted.
+
+### Edits and writes
+
+Edits/writes require approval unless **guarded auto** is enabled for that session and the exact path passes containment and sensitivity checks.
+
+Guarded auto is intentionally narrow:
+
+- session-scoped;
+- project-contained files only;
+- no sensitive paths;
+- no symlink escapes;
+- no shell-command auto approval.
+
+### Safe bash
+
+Only the pinned metadata-only command family can run automatically:
+
+- `pwd`;
+- `ls` with a small flag allowlist and no path operand;
+- bounded read-only `git status`, `git log --oneline`, `git branch`, `git ls-files`, and selected `git rev-parse`;
+- common toolchain version commands.
+
+Arbitrary commands, shell chaining/redirection/expansion, installs, builds, tests, mutation commands, and path-bearing discovery commands require permission.
+
+### Visible permission choices
+
+When a model requests protected work, the desktop shows:
+
+- **Allow once**;
+- **Always this exact request**;
+- **Reject**;
+- **Enable guarded auto** only when the runtime marks the workspace resource eligible.
+
+“Always” is an exact action + exact resource fingerprint for the current session. It is not a wildcard rule.
+
+Plan mode remains read-only at the runtime boundary. Noninteractive/headless execution fails closed when an operation would require consent.
+
+## Durable tool audit
+
+SQLite `tool_executions` is the authority for model-requested tool execution history. It stores tool name, call ID, argument JSON, bounded output, status, permission source, and timestamps separately from visible chat messages.
+
+A stale `running` row after process restart is converted to an interrupted error rather than being treated as a successful tool.
+
+Runtime limits include:
+
+- 64 tool calls per generation;
+- 128 KiB tool output;
+- 1 MiB file read/edit/write ceiling;
+- 16 resources per permission request;
+- 120-second maximum shell timeout.
 
 ## PE3 task-local routing
 
-A project can now maintain several long-running coding tasks without mixing their provider context:
+B2 remains the task-context scheduler for project chats:
 
 ```text
 incoming project prompt
@@ -44,64 +164,18 @@ local sentence embedding
         └─ low confidence / failure → continue active task
 ```
 
-The expensive failure mode is a false split, so PE3 is intentionally conservative: uncertain routing preserves the active task rather than inventing another context.
+Tool execution now feeds PE3 directly:
 
-### Durable task contexts
+- successful exploration/read → observed paths;
+- successful edit/write → workspace mutation;
+- shell commands that leave Git-visible changes → workspace mutation;
+- rejected/failed tools → no path-privilege update.
 
-Task-local contexts are ordinary **SQLite sessions** under the same project. PE3 does not maintain a second transcript store.
-
-For a cross-task route:
-
-1. PE3 prepares the route before the new user message is durable.
-2. The target session must accept the handoff.
-3. One SQLite transaction creates the sibling session when needed, records a bounded source routing marker, writes the user turn exactly once to the target, and creates the target streaming assistant message.
-4. Only after the database transaction succeeds is router state committed.
-
-If acceptance or the database transaction fails, the route is aborted and the source request is preserved. Half-routed turns are not allowed to survive.
-
-When a prompt is routed to a sibling task, the desktop follows the returned target session automatically so streaming, Stop, Build/Plan state and visible history stay aligned with the actual execution target.
-
-### Weighted task fingerprints
-
-Task identity is based on concrete work rather than every word a task has mentioned. Evidence is weighted approximately in this order:
-
-1. touched/modified paths;
-2. observed active/read paths and recent tool symbols;
-3. TST-localized paths and symbols;
-4. prompt-mentioned paths and symbols;
-5. lexical terms.
-
-Weak prompt/localization evidence decays across turns. Dormant tasks are checked before semantic novelty creates a new task.
-
-### Local semantic escalation
-
-PE3 uses `@huggingface/transformers` with `Xenova/all-MiniLM-L6-v2` by default. The embedding runtime is lazy: normal deterministic turns do not load it, and routing inference is local rather than an extra remote LLM/classifier request.
-
-Environment controls:
-
-- `CUPPET_PE3=0` — disable automatic PE3 routing;
-- `CUPPET_PE3_EMBED_MODEL` — override the embedding model;
-- `CUPPET_PE3_MODEL_CACHE` — override model cache location;
-- `CUPPET_PE3_MODEL_DIR` — use pre-staged model assets;
-- `CUPPET_PE3_ALLOW_MODEL_DOWNLOAD=0` — strict offline mode; unavailable semantic routing safely keeps the active task.
-
-Semantic vectors are process-local caches and are deliberately not persisted.
-
-### Persistence and workspace staleness
-
-Each project may persist up to 32 bounded task identities in `pe3-task-agents.json`. The registry contains routing metadata, fingerprints, stale paths, epochs, timestamps and bounded file signatures only. It does **not** contain transcripts, assistant/tool output, provider prompts, credentials or embedding vectors.
-
-On restart, persisted privileged paths are checked against current filesystem metadata. Changed or missing paths lose their active/touched privilege, are removed from the path fingerprint, and are marked stale. Reactivating that task adds a bounded ephemeral refresh instruction so prior file assumptions cannot override current workspace truth.
-
-A missing or corrupt registry fails closed to fresh routing state and never blocks desktop startup.
-
-### Attachments
-
-The B2 routing envelope accepts at most 16 bounded attachment metadata records with validated MIME metadata. At this phase PE3 routes **metadata only**; it never invents unread attachment contents. Routed attachment/refresh information is ephemeral provider context and is not added to the visible SQLite transcript.
+Cross-task routing remains transactional: prepare → target accept → SQLite transaction → router commit. Task contexts are ordinary SQLite sessions; PE3 stores only bounded routing metadata.
 
 ## Cognitive runtime
 
-The B1 model-request path remains:
+B1's detached context architecture remains unchanged:
 
 ```text
 SQLite durable task transcript
@@ -114,49 +188,45 @@ Cuppet ContextCompiler
         └── lossless plan projection
         │ ephemeral provider request only
         ▼
-Provider streaming
+Provider + runtime tool loop
         │
         ▼
 SQLite durable assistant result
 ```
 
-Synthetic retrieval/context is **never written back into SQLite**. SQLite remains conversation truth; the provider receives only an ephemeral projection.
+Synthetic retrieval/context is never written back into the visible conversation.
 
 ### Foreground context
 
 - maximum synthetic context: 2,048 tokens;
 - target budget: 4% of usable provider context, with a 512-token floor;
 - STM / graph / verified LTM allocation: 45 / 35 / 20;
-- generated context is memoized by session + current user-message epoch for cache-stable repeated model steps;
-- history trimming remains fail-closed unless TST reports complete observation coverage and retained STM.
+- context memoized by session + current user-message epoch for cache stability;
+- history trimming remains fail-closed without complete TST coverage.
 
 ### Plan mode and lossless requirements
 
-Each chat can switch between **Build** and **Plan**. Plan mode uses up to 12% of usable provider context, capped at 16K tokens, with workspace projection / graph / STM / LTM allocation of 70 / 15 / 10 / 5.
+Build/Plan mode remains session-persisted. Plan mode can use up to 12% of usable context, capped at 16K tokens, with workspace projection / graph / STM / LTM allocation of 70 / 15 / 10 / 5.
 
-The **LosslessPlanStore** preserves exact source requirements independently from chat/todo projections and makes stable `P01`, `P02`, … phases recoverable after restart.
+`LosslessPlanStore` preserves canonical source requirements independently from todo/chat projection and exposes stable `P01`, `P02`, … phases.
 
-### TST / STM and background memory
+### TST / STM and memory
 
-When `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN` are present, the runtime lazily connects to authenticated `cuppet.tst.v3`. TST remains optional for desktop startup.
+When `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN` are configured, the runtime lazily connects to authenticated `cuppet.tst.v3`. TST remains optional for desktop startup.
 
-If TST is unavailable, foreground preserves full durable history, unsafe replacement/STM compaction fails closed, and background enrichment does not spend secondary-model tokens.
+If TST is unavailable, unsafe history replacement/STM compaction fails closed and structural `tst_explore` reports that the graph is unavailable rather than inventing topology.
 
-The secondary/background model is only a canonicalizer. Its output uses `model_candidate` provenance and never gains promotion authority merely because a model selected it.
-
-### Orchestrator
-
-**Orchestrator** remains a persisted global runtime control. When enabled, all automatic synthetic context and automatic lossless-plan injection are disabled so the master model must use explicit retrieval/delegation surfaces.
+The secondary/background model remains a canonicalizer only. `model_candidate` output does not gain durable promotion authority merely because a model selected it.
 
 ## Projects
 
-Phase B behavior remains intact:
+Phase B remains intact:
 
-- **Local folder** — register any local folder; Git root/origin are detected when available.
-- **GitHub URL** — clone normal HTTPS or SSH `github.com` repository URLs with existing Git/SSH credentials.
-- **GitHub repositories** — browse repositories using an already-authenticated `gh` CLI session and clone the selected repository.
+- **Local folder** — register an existing folder; detect Git root/origin when available.
+- **GitHub URL** — clone normal HTTPS/SSH `github.com` repositories with existing credentials.
+- **GitHub repositories** — browse using an already-authenticated `gh` CLI session and clone the selected repository.
 
-Chats remain permanently bound to their project. Switching projects cannot retarget an active run, removing a project registration does not delete its checkout, and missing folders can be relocated without losing history.
+Chats remain permanently bound to their project. Switching projects cannot retarget an active run, removing a registration does not delete the checkout, and missing folders can be relocated without losing history.
 
 ## Phase gates
 
@@ -166,69 +236,72 @@ npm run phase1:verify
 npm run phaseb:verify
 npm run phaseb1:verify
 npm run phaseb2:verify
+npm run phasec1:verify
 ```
 
-B2 verifies deterministic task switching/reactivation, conservative local semantic fallback, bounded routing metadata persistence, offline staleness invalidation, attachment bounds, transactional rollback, stale-task refresh behavior, and full-runtime SQLite target-session ownership.
+C1 verifies safe-bash parity, sensitive/protected/symlink permission behavior, guarded auto, exact approvals, plan/noninteractive failure, streamed tool-call reconstruction, durable tool audit, duplicate TST discovery suppression, and a full runtime permission-block/resume/write/completion flow.
 
 ## Architecture
 
 ```text
 Electron renderer
-    │ narrow contextBridge API
-    ▼
-Electron main process
+    ├── conversations/projects
+    └── permission decision UI
+          │ narrow contextBridge
+          ▼
+Electron main
     ├── native folder picker
-    └── OS-encrypted provider settings
-    │ newline-delimited JSON
-    ▼
+    ├── OS-encrypted provider settings
+    └── permission decision forwarding only
+          │ NDJSON runtime protocol
+          ▼
 Independent Node runtime
-    ├── SQLite projects + task conversations
-    ├── Git / GitHub project service
+    ├── SQLite
+    │    ├── projects
+    │    ├── task sessions/messages
+    │    └── tool_executions
+    ├── ProjectManager
     ├── PE3 project router
-    │    ├── weighted task fingerprints
-    │    ├── TST graph localization
-    │    ├── lazy local embedding fallback
-    │    ├── project-local routing registry
-    │    └── transactional task handoff
     ├── CognitiveStateStore
-    ├── ContextCompiler
-    │    ├── LosslessPlanStore
-    │    └── TST / STM bridge
+    ├── ContextCompiler / LosslessPlanStore
+    ├── TST / STM bridge
+    ├── PermissionBroker
+    ├── ToolRuntime
+    │    ├── tst_explore / tst_read
+    │    ├── workspace_edit / workspace_write
+    │    └── bash
     ├── evidence-gated background enricher
-    ├── provider streaming
-    └── generation cancellation
+    ├── OpenAI-compatible provider adapter
+    └── generation/tool cancellation
 ```
 
 Authority stays explicit:
 
-- filesystem → checkout/code truth and current-file staleness truth;
+- filesystem → source/workspace truth;
+- TST graph → structural navigation;
 - SQLite project rows → project registration identity;
-- SQLite sessions/messages → task/conversation truth;
+- SQLite sessions/messages → visible task/conversation truth;
+- SQLite tool executions → durable tool audit;
+- PermissionBroker → protected-operation approval authority;
 - PE3 registry → bounded task-routing metadata only;
-- PE3 semantic vectors → in-memory cache only;
 - LosslessPlanStore → canonical implementation requirements;
 - TST LTM → verified reusable memory;
-- CandidateLedger + TST evidence rules → candidate admission/promotion boundary;
 - CognitiveStateStore → mode/orchestrator/background controls;
-- runtime run record → immutable project binding for active execution;
 - Electron main → provider-secret persistence;
-- renderer → projection/navigation only.
+- renderer → presentation/navigation/approval projection only.
 
 ## Migration docs
 
 - Phase 0 audit: [`docs/phase-0-behavior-inventory.md`](docs/phase-0-behavior-inventory.md)
-- Phase 0 baseline: [`migration/cuppet-source-baseline.json`](migration/cuppet-source-baseline.json)
 - Phase A architecture: [`docs/phase-1-architecture.md`](docs/phase-1-architecture.md)
-- Phase A source pins: [`migration/phase-1-sources.json`](migration/phase-1-sources.json)
 - Phase B projects: [`docs/phase-b-projects.md`](docs/phase-b-projects.md)
-- Phase B contract: [`migration/phase-b-contract.json`](migration/phase-b-contract.json)
 - Phase B1 cognitive runtime: [`docs/phase-b1-cognitive-runtime.md`](docs/phase-b1-cognitive-runtime.md)
-- Phase B1 contract: [`migration/phase-b1-contract.json`](migration/phase-b1-contract.json)
 - Phase B2 PE3 routing: [`docs/phase-b2-pe3-routing.md`](docs/phase-b2-pe3-routing.md)
-- Phase B2 contract: [`migration/phase-b2-contract.json`](migration/phase-b2-contract.json)
+- Phase C1 tools/permissions: [`docs/phase-c1-tools-permissions.md`](docs/phase-c1-tools-permissions.md)
+- Phase C1 contract: [`migration/phase-c1-contract.json`](migration/phase-c1-contract.json)
 
 ## Migration rule
 
-A later phase may replace an old OpenCode mechanism, but it may not silently replace Cuppet policy. Context compilation, lossless plans, PE3, evidence-gated memory, model roles, permissions, session controls, and remote compatibility remain explicit migration obligations.
+A later phase may replace an old OpenCode mechanism, but it may not silently replace Cuppet policy. Context compilation, plans, PE3, evidence-gated memory, permissions, model roles, session controls, and remote compatibility remain explicit migration obligations.
 
-**Next gate: C1** — move Cuppet's TST-backed workspace exploration/read tools and the independent tool/permission execution surface onto the desktop runtime, preserving permission boundaries before browser execution and remote-control migration.
+**Next gate after C1: C2** — migrate remote-control/relay/setup/token behavior onto the independent runtime without moving coding inference or provider credentials into the relay/backend.
