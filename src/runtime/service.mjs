@@ -11,10 +11,11 @@ import { BackgroundEnricher } from './background-enricher.mjs';
 import { Pe3ProjectRouter } from './pe3/router.mjs';
 import { PermissionBroker } from './permissions.mjs';
 import { QuestionBroker } from './questions.mjs';
-import { ToolRuntime } from './tool-runtime.mjs';
+import { MutationJournal } from './mutation-journal.mjs';
+import { JournaledToolRuntime } from './journaled-tool-runtime.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -28,6 +29,7 @@ export class RuntimeService {
     contextCompiler,
     permissionBroker,
     questionBroker,
+    mutationJournal,
     toolRuntime,
     interactive = process.env.CUPPET_NONINTERACTIVE !== '1',
     backgroundFactory,
@@ -44,7 +46,8 @@ export class RuntimeService {
     this.#compiler = contextCompiler ?? new ContextCompiler({ tst: this.#tst, planStore: this.#plans, cognitiveState: this.#cognitive });
     this.#permissions = permissionBroker ?? new PermissionBroker({ emit: this.#emit, interactive });
     this.#questions = questionBroker ?? new QuestionBroker({ emit: this.#emit, interactive });
-    this.#tools = toolRuntime ?? new ToolRuntime({ tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, emit: this.#emit });
+    this.#journal = mutationJournal ?? new MutationJournal(join(dataDir, 'mutation-journal'));
+    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
@@ -115,6 +118,8 @@ export class RuntimeService {
       case 'session.get': return this.requireSession(params.sessionId);
       case 'session.send': return this.send(params);
       case 'session.stop': return this.stop(params.sessionId);
+      case 'session.undo.status': return this.#journal.status(this.requireSession(params.sessionId).id);
+      case 'session.undo': return this.#undo(params.sessionId);
       default: throw new Error(`unknown runtime method: ${method}`);
     }
   }
@@ -146,7 +151,8 @@ export class RuntimeService {
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
     const prompt = typeof params.prompt === 'string' ? params.prompt : [...session.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider) });
+    const userMessageId = [...session.messages].reverse().find((message) => message.role === 'user')?.id;
+    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(session.messages), userMessageId });
   }
   async #queryMemory(params) {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
@@ -173,6 +179,20 @@ export class RuntimeService {
     const router = await this.#pe3For(session.projectId, project);
     if (mutation) await router.noteWorkspaceMutation(sessionId, boundedPaths); else await router.noteObservedPaths(sessionId, boundedPaths);
     return { observed: true, mutation, sessionId, paths: boundedPaths };
+  }
+  async #undo(sessionId) {
+    const session = this.requireSession(sessionId);
+    if (this.#runs.has(session.id)) throw new Error('Cannot undo while this session is generating. Stop it first.');
+    if (!session.projectId) throw new Error('Undo requires a project-bound session.');
+    const project = await this.#projects.get(session.projectId);
+    if (!project || project.missing) throw new Error('Undo requires the original project workspace to be available.');
+    const result = await this.#journal.undoLatest({ sessionId: session.id, projectRoot: project.canonicalPath });
+    if (result.undone && result.path) {
+      if (process.env.CUPPET_PE3 !== '0') await this.#pe3Observe(session.id, [result.path], true).catch(() => undefined);
+      this.#emit({ type: 'mutation.undone', sessionId: session.id, projectId: session.projectId, mutationId: result.mutationId, path: result.path, tool: result.tool });
+      this.#emit({ type: 'session.updated', session: this.#db.getSessionSummary(session.id) });
+    }
+    return result;
   }
   async #addProject(factory) { const project = await factory(); this.#emit({ type: 'project.created', project }); return project; }
   async #updateProject(factory) { const project = await factory(); this.#emit({ type: 'project.updated', project }); return project; }
