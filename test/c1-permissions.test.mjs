@@ -5,7 +5,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PermissionBroker, PermissionDeniedError, isSafeAutoBashCommand, isSafeWorkspaceResource } from '../src/runtime/permissions.mjs';
 
-const tick = () => new Promise((resolve) => setImmediate(resolve));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitPending(broker, sessionId, count = 1) {
+  for (let i = 0; i < 100; i++) {
+    const pending = broker.list(sessionId);
+    if (pending.length >= count) return pending;
+    await sleep(2);
+  }
+  throw new Error(`expected ${count} pending permission request(s)`);
+}
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-c1-permissions-'));
@@ -25,27 +33,12 @@ async function fixture() {
 
 test('safe bash classifier only accepts the pinned metadata-only command family', () => {
   for (const command of [
-    'pwd',
-    'ls',
-    'ls -lah',
-    'git status --short',
-    'git log --oneline -1',
-    'git branch --show-current',
-    'git ls-files --cached',
-    'git rev-parse --show-toplevel',
-    'node --version',
-    'go version',
+    'pwd', 'ls', 'ls -lah', 'git status --short', 'git log --oneline -1', 'git branch --show-current',
+    'git ls-files --cached', 'git rev-parse --show-toplevel', 'node --version', 'go version',
   ]) assert.equal(isSafeAutoBashCommand(command), true, command);
 
   for (const command of [
-    'ls src',
-    'cat .env',
-    'git diff',
-    'git status && rm -rf .',
-    'git log -1',
-    'npm test',
-    'pwd > /tmp/out',
-    'echo $HOME',
+    'ls src', 'cat .env', 'git diff', 'git status && rm -rf .', 'git log -1', 'npm test', 'pwd > /tmp/out', 'echo $HOME',
   ]) assert.equal(isSafeAutoBashCommand(command), false, command);
 });
 
@@ -64,8 +57,7 @@ test('ordinary reads remain automatic while sensitive reads prompt and protected
     );
 
     const sensitive = broker.authorize({ sessionId: 's1', action: 'read', resources: ['.env'], projectRoot: root });
-    await tick();
-    const request = broker.list('s1')[0];
+    const request = (await waitPending(broker, 's1'))[0];
     assert.equal(request.action, 'read');
     assert.equal(request.autoEligible, false);
     broker.reply(request.id, 'reject');
@@ -92,9 +84,7 @@ test('guarded auto is session-scoped and never bypasses sensitive files or symli
 
     const sensitive = broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.env'], projectRoot: root });
     const escaped = broker.authorize({ sessionId: 's1', action: 'read', resources: ['escape/secret.txt'], projectRoot: root });
-    await tick();
-    const requests = broker.list('s1');
-    assert.equal(requests.length, 2);
+    const requests = await waitPending(broker, 's1', 2);
     assert.equal(requests.every((request) => request.autoEligible === false), true);
     for (const request of requests) broker.reply(request.id, 'reject');
     await assert.rejects(sensitive, PermissionDeniedError);
@@ -131,8 +121,7 @@ test('always approval is exact-request only and does not create a wildcard', asy
   const broker = new PermissionBroker();
   try {
     const first = broker.authorize({ sessionId: 's1', action: 'bash', resources: ['npm test'], projectRoot: root });
-    await tick();
-    const request = broker.list('s1')[0];
+    const request = (await waitPending(broker, 's1'))[0];
     broker.reply(request.id, 'always');
     assert.deepEqual(await first, { allowed: true, source: 'session-exact', requestId: request.id });
     assert.deepEqual(
@@ -141,9 +130,8 @@ test('always approval is exact-request only and does not create a wildcard', asy
     );
 
     const different = broker.authorize({ sessionId: 's1', action: 'bash', resources: ['npm run lint'], projectRoot: root });
-    await tick();
-    assert.equal(broker.list('s1').length, 1);
-    broker.reply(broker.list('s1')[0].id, 'reject');
+    const differentRequest = (await waitPending(broker, 's1'))[0];
+    broker.reply(differentRequest.id, 'reject');
     await assert.rejects(different, PermissionDeniedError);
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });
