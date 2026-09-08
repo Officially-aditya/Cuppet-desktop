@@ -32,6 +32,7 @@
   },
   "security": {
     "providerKeysCrossRelay": false,
+    "providerEndpointCrossRelay": false,
     "relayPerformsInference": false,
     "relayPersistsTranscript": false,
     "relayIsE2EEBoundary": false,
@@ -41,6 +42,7 @@
     "managedTokenHostDeviceBound": true,
     "setupQrContainsPollSecret": false,
     "setupQrContainsRelaySecret": false,
+    "providerConfigCreatesRemoteState": false,
     "unusedShutdownCreatesRemoteState": false,
     "defaultManagedApiBase": "https://connect.cuppet.in"
   },
