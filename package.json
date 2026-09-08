@@ -1,8 +1,7 @@
 {
   "name": "cuppet-desktop",
+  "version": "0.7.0-alpha.1",
   "private": true,
-  "version": "0.6.0-alpha.1",
-  "description": "Independent Cuppet desktop/runtime migration",
   "type": "module",
   "main": "src/main/main.mjs",
   "bin": {
@@ -10,25 +9,21 @@
   },
   "scripts": {
     "start": "electron .",
-    "test": "node --test",
-    "remote-control": "node src/cli/main.mjs remote-control",
-    "relay": "node src/cli/main.mjs relay",
-    "remote-enroll": "node src/cli/main.mjs remote-enroll",
     "phase0:verify": "node scripts/verify-phase0.mjs",
     "phase1:verify": "node scripts/verify-phase1.mjs",
     "phaseb:verify": "node scripts/verify-phaseb.mjs",
     "phaseb1:verify": "node scripts/verify-phaseb1.mjs",
     "phaseb2:verify": "node scripts/verify-phaseb2.mjs",
     "phasec1:verify": "node scripts/verify-phasec1.mjs",
-    "phasec2:verify": "node scripts/verify-phasec2.mjs"
+    "phasec2:verify": "node scripts/verify-phasec2.mjs",
+    "phased:verify": "node scripts/verify-phased.mjs",
+    "remote-control": "node src/cli/main.mjs remote-control",
+    "relay": "node src/cli/main.mjs relay",
+    "remote-enroll": "node src/cli/main.mjs remote-enroll",
+    "models": "node src/cli/main.mjs models"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.2.0"
-  },
-  "devDependencies": {
-    "electron": "44.2.0"
-  },
-  "engines": {
-    "node": ">=22"
+    "electron": "^37.4.0",
+    "ws": "^8.18.3"
   }
 }
