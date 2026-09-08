@@ -28,6 +28,14 @@ async function waitComplete(service, sessionId) {
   throw new Error('generation did not complete');
 }
 
+async function waitFinished(events, sessionId) {
+  for (let i = 0; i < 50; i++) {
+    if (events.some((event) => event.type === 'run.finished' && event.sessionId === sessionId)) return;
+    await sleep(10);
+  }
+  throw new Error('run did not finish');
+}
+
 test('runtime PE3 create handoff writes the new task only to its target SQLite session', async () => {
   const dir = await mkdtemp(join(tmpdir(),'cuppet-runtime-pe3-'));
   const projectRoot = join(dir,'project');
@@ -40,11 +48,13 @@ test('runtime PE3 create handoff writes the new task only to its target SQLite s
     const first = await service.handle('session.send',{sessionId:source.id,text:'Implement auth in src/auth.ts',provider:{model:'test'}});
     assert.equal(first.sessionId,source.id);
     await waitComplete(service,source.id);
+    await waitFinished(events,source.id);
 
     const second = await service.handle('session.send',{sessionId:source.id,text:'New task: implement billing in src/billing.ts',provider:{model:'test'}});
     assert.equal(second.pe3.action,'create');
     assert.notEqual(second.sessionId,source.id);
     const target = await waitComplete(service,second.sessionId);
+    await waitFinished(events,second.sessionId);
     const sourceAfter = await service.handle('session.get',{sessionId:source.id});
 
     assert.equal(sourceAfter.messages.filter((message)=>message.role==='user').length,1);
