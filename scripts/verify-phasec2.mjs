@@ -60,13 +60,14 @@ expect(commands.includes('Interactive question requests are not implemented by t
 const manager = text['src/runtime/remote/manager.mjs'];
 expect(manager.includes("'https://connect.cuppet.in'") && manager.includes('verifyRemoteToken') && manager.includes('authenticateDevice'), 'remote manager setup/auth path incomplete');
 expect(manager.includes('WebSocketTransport') && manager.includes('buildAttachSnapshot'), 'remote outbound transport/snapshot bridge missing');
+expect(manager.includes('if(this.#bridge) await this.stop()') && manager.includes('must not lazily create remote identity/state'), 'unused remote shutdown may create persistent state');
 
 const relay = text['src/runtime/remote/relay.mjs'];
 expect(relay.includes('REPLAY_LIMIT') && relay.includes('RATE_LIMIT') && relay.includes('PAIR_ATTEMPT_LIMIT'), 'relay replay/rate/pairing limits missing');
 expect(relay.includes('client.accept') && relay.includes('device.authenticated') && relay.includes('room.replay.length = 0'), 'relay pre-auth/host replacement isolation missing');
 
 const runtimeMain = text['src/runtime/main.mjs'];
-for (const method of ['remote.status', 'remote.configure', 'remote.start', 'remote.stop', 'remote.invite', 'remote.devices', 'remote.revoke']) expect(runtimeMain.includes(`case '${method}'`), `local remote runtime method missing: ${method}`);
+for (const method of ['remote.status', 'remote.provider-config', 'remote.start', 'remote.stop', 'remote.invite', 'remote.devices', 'remote.revoke']) expect(runtimeMain.includes(`case '${method}'`), `local remote runtime method missing: ${method}`);
 
 const main = text['src/main/main.mjs'];
 const preload = text['src/preload/preload.cjs'];
@@ -84,14 +85,15 @@ expect(text['src/remote-app/index.html'].includes('Cuppet Remote') && text['src/
 expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /@opencode|opencode-ai|OpenCode-derived controller/i.test(value)), 'OpenCode leaked into C2 production source');
 
 const contract = JSON.parse(text['migration/phase-c2-contract.json']);
-expect(contract.phase === 'C2' && contract.protocol?.version === 1 && contract.security?.providerKeysCrossRelay === false, 'C2 machine contract invalid');
+expect(contract.phase === 'C2' && contract.protocol?.version === 1 && contract.security?.providerKeysCrossRelay === false && contract.security?.unusedShutdownCreatesRemoteState === false, 'C2 machine contract invalid');
 
 const tests = [
   'test/c2-remote-protocol.test.mjs',
   'test/c2-remote-bridge.test.mjs',
   'test/c2-relay.integration.test.mjs',
   'test/c2-remote-commands.test.mjs',
+  'test/c2-remote-lifecycle.test.mjs',
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, desktop/CLI lifecycle, and provider-secret boundary verified.');
+console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, lifecycle cleanliness, desktop/CLI controls, and provider-secret boundary verified.');
