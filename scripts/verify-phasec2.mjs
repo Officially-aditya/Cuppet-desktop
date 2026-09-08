@@ -62,7 +62,7 @@ expect(commands.includes('Interactive question requests are not implemented by t
 const manager = text['src/runtime/remote/manager.mjs'];
 expect(manager.includes("'https://connect.cuppet.in'") && manager.includes('verifyRemoteToken') && manager.includes('authenticateDevice'), 'remote manager setup/auth path incomplete');
 expect(manager.includes('WebSocketTransport') && manager.includes('buildAttachSnapshot'), 'remote outbound transport/snapshot bridge missing');
-expect(manager.includes('provider configuration is pushed at ordinary desktop startup') && manager.includes('if(this.#bridge) await this.stop()'), 'unused remote configuration/shutdown may create persistent state');
+expect(manager.includes('Provider configuration is pushed at ordinary desktop startup') && manager.includes('if(this.#bridge) await this.stop()'), 'unused remote configuration/shutdown may create persistent state');
 
 const relay = text['src/runtime/remote/relay.mjs'];
 expect(relay.includes('REPLAY_LIMIT') && relay.includes('RATE_LIMIT') && relay.includes('PAIR_ATTEMPT_LIMIT'), 'relay replay/rate/pairing limits missing');
