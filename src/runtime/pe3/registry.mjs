@@ -1,0 +1,42 @@
+import { chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+
+const SCHEMA_VERSION=1, MAX_AGENTS=32, MAX_SIGNATURES=128, MAX_PATHS=16, MAX_SYMBOLS=16, MAX_TERMS=32;
+
+export class Pe3TaskRegistry {
+  #path; #projectRoot;
+  constructor(projectStore,projectRoot){this.#path=join(projectStore,'pe3-task-agents.json');this.#projectRoot=projectRoot;}
+  get path(){return this.#path;}
+  async load(validSessionIDs){
+    let parsed;try{parsed=JSON.parse(await readFile(this.#path,'utf8'));}catch(error){return empty(error?.code!=='ENOENT');}
+    if(!parsed||parsed.schemaVersion!==SCHEMA_VERSION||!Array.isArray(parsed.agents))return empty(true);
+    const storedAgents=parsed.agents.map(parseAgent).filter(Boolean); const bounded=storedAgents.filter((a)=>validSessionIDs.has(a.sessionID)).sort((a,b)=>b.lastActiveAt-a.lastActiveAt).slice(0,MAX_AGENTS); const changed=await this.#changedPaths(parsed.fileSignatures??{}); const staleBySession=new Map();
+    const agents=bounded.map((agent)=>{const privileged=new Set([...agent.activePaths,...agent.touchedPaths]);const offline=[...changed].filter((path)=>privileged.has(path));const stale=boundedUnique([...agent.stalePaths,...offline],MAX_PATHS);if(stale.length)staleBySession.set(agent.sessionID,stale);if(!offline.length)return clone(agent);const set=new Set(offline);const next=clone(agent);next.activePaths=next.activePaths.filter((p)=>!set.has(p));next.touchedPaths=next.touchedPaths.filter((p)=>!set.has(p));next.fingerprint.paths=next.fingerprint.paths.filter((s)=>!set.has(s.value));next.fingerprint.revision++;next.stalePaths=stale;next.cacheEpoch++;next.workspaceEpoch++;return next;});
+    const activeSessionID=typeof parsed.activeSessionID==='string'&&validSessionIDs.has(parsed.activeSessionID)?parsed.activeSessionID:undefined;
+    return{agents,...(activeSessionID?{activeSessionID}:{}),staleBySession,droppedSessionCount:storedAgents.length-agents.length,recoveredFromCorruption:false};
+  }
+  async save(agents,activeSessionID,supplementalStale=new Map()){
+    const bounded=[...agents].sort((a,b)=>b.lastActiveAt-a.lastActiveAt).slice(0,MAX_AGENTS).map((a)=>sanitize(a,supplementalStale.get(a.sessionID)??[]));
+    const active=activeSessionID?bounded.find((a)=>a.sessionID===activeSessionID):undefined;const signatureAgents=active?[active,...bounded.filter((a)=>a.sessionID!==active.sessionID)]:bounded;const paths=firstUnique(signatureAgents.flatMap((a)=>[...a.activePaths,...a.touchedPaths]),MAX_SIGNATURES);const fileSignatures={};for(const path of paths){const signature=await this.#signature(path);if(signature)fileSignatures[path]=signature;}
+    const state={schemaVersion:SCHEMA_VERSION,...(activeSessionID&&bounded.some((a)=>a.sessionID===activeSessionID)?{activeSessionID}:{}),agents:bounded,fileSignatures};await mkdir(dirname(this.#path),{recursive:true,mode:0o700});const temp=`${this.#path}.${process.pid}.tmp`;await writeFile(temp,`${JSON.stringify(state)}\n`,{mode:0o600});await chmod(temp,0o600);await rename(temp,this.#path);await chmod(this.#path,0o600);
+  }
+  async #changedPaths(signatures){const changed=new Set();for(const [path,previous] of Object.entries(signatures).slice(0,MAX_SIGNATURES)){const current=await this.#signature(path);if(!current||current.size!==previous?.size||current.mtimeMs!==previous?.mtimeMs||current.mode!==previous?.mode)changed.add(path);}return changed;}
+  async #signature(path){const target=safeProjectPath(this.#projectRoot,path);if(!target)return;try{const info=await lstat(target);return{size:Math.max(0,info.size),mtimeMs:Math.trunc(info.mtimeMs),mode:info.mode};}catch{return;}}
+}
+
+function parseAgent(value){if(!value||typeof value!=='object'||typeof value.sessionID!=='string')return;const sessionID=bounded(value.sessionID,256);if(!sessionID)return;const createdAt=finite(value.createdAt)??Date.now();return{id:`task:${sessionID}`,sessionID,taskDescriptor:safe(value.taskDescriptor,320),activePaths:safeArray(value.activePaths,MAX_PATHS,512),touchedPaths:safeArray(value.touchedPaths,MAX_PATHS,512),recentSymbols:safeArray(value.recentSymbols,MAX_SYMBOLS,128),terms:safeArray(value.terms,MAX_TERMS,96),fingerprint:parseFingerprint(value.fingerprint),stalePaths:safeArray(value.stalePaths,MAX_PATHS,512),cacheEpoch:nonNegative(value.cacheEpoch),workspaceEpoch:nonNegative(value.workspaceEpoch),createdAt,lastActiveAt:finite(value.lastActiveAt)??createdAt,turns:nonNegative(value.turns)};}
+function parseFingerprint(value){return{revision:nonNegative(value?.revision),paths:parseSignals(value?.paths,MAX_PATHS),symbols:parseSignals(value?.symbols,MAX_SYMBOLS),terms:parseSignals(value?.terms,MAX_TERMS)};}
+function parseSignals(values,limit){if(!Array.isArray(values))return[];return values.slice(0,limit).flatMap((item)=>{if(!item||typeof item.value!=='string'||!['prompt','localized','active','touched','symbol'].includes(item.source))return[];const value=safe(item.value,512),weight=finite(item.weight),updatedAt=finite(item.updatedAt);return value&&weight!==undefined&&updatedAt!==undefined?[{value,weight:Math.max(0,Math.min(1,weight)),source:item.source,updatedAt}]:[];});}
+function sanitize(agent,extra){const copy=clone(agent);return{...copy,id:`task:${bounded(agent.sessionID,256)}`,sessionID:bounded(agent.sessionID,256),taskDescriptor:safe(agent.taskDescriptor,320),activePaths:safeArray(agent.activePaths,MAX_PATHS,512),touchedPaths:safeArray(agent.touchedPaths,MAX_PATHS,512),recentSymbols:safeArray(agent.recentSymbols,MAX_SYMBOLS,128),terms:safeArray(agent.terms,MAX_TERMS,96),stalePaths:safeArray([...agent.stalePaths,...extra],MAX_PATHS,512),fingerprint:{revision:nonNegative(agent.fingerprint?.revision),paths:parseSignals(agent.fingerprint?.paths,MAX_PATHS),symbols:parseSignals(agent.fingerprint?.symbols,MAX_SYMBOLS),terms:parseSignals(agent.fingerprint?.terms,MAX_TERMS)},cacheEpoch:nonNegative(agent.cacheEpoch),workspaceEpoch:nonNegative(agent.workspaceEpoch),turns:nonNegative(agent.turns)};}
+function safeProjectPath(root,path){if(!root||!path||isAbsolute(path))return;const target=resolve(root,path),rel=relative(root,target);if(!rel||rel.startsWith('..')||isAbsolute(rel))return;return target;}
+function safeArray(values,limit,bytes){if(!Array.isArray(values)&&!(values&&Symbol.iterator in Object(values)))return[];return boundedUnique([...values].map((v)=>safe(v,bytes)).filter(Boolean),limit);}
+function safe(value,bytes){const redacted=redact(String(value??'').trim());if(!redacted||redacted.includes('[REDACTED]'))return'';return bounded(redacted,bytes);}
+function redact(value){return value.replace(/\b(?:sk|ghp|github_pat|xox[baprs])-[-A-Za-z0-9_]{12,}\b/gi,'[REDACTED]').replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [REDACTED]').replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi,'$1[REDACTED]');}
+function bounded(value,maxBytes){const normalized=String(value).trim().replace(/\s+/g,' ');if(Buffer.byteLength(normalized)<=maxBytes)return normalized;let end=normalized.length;while(end>0&&Buffer.byteLength(normalized.slice(0,end))>maxBytes)end--;return normalized.slice(0,end);}
+function boundedUnique(values,limit){const out=[];for(const raw of values){const value=String(raw).trim();if(!value)continue;const i=out.indexOf(value);if(i>=0)out.splice(i,1);out.push(value);if(out.length>limit)out.shift();}return out;}
+function firstUnique(values,limit){const out=[],seen=new Set();for(const raw of values){const value=String(raw).trim();if(!value||seen.has(value))continue;seen.add(value);out.push(value);if(out.length>=limit)break;}return out;}
+function finite(value){return typeof value==='number'&&Number.isFinite(value)?value:undefined;}
+function nonNegative(value){return Math.max(0,Math.trunc(finite(value)??0));}
+function clone(agent){return{...agent,activePaths:[...(agent.activePaths??[])],touchedPaths:[...(agent.touchedPaths??[])],recentSymbols:[...(agent.recentSymbols??[])],terms:[...(agent.terms??[])],stalePaths:[...(agent.stalePaths??[])],fingerprint:{revision:agent.fingerprint?.revision??0,paths:(agent.fingerprint?.paths??[]).map((s)=>({...s})),symbols:(agent.fingerprint?.symbols??[]).map((s)=>({...s})),terms:(agent.fingerprint?.terms??[]).map((s)=>({...s}))}};}
+function empty(recoveredFromCorruption){return{agents:[],staleBySession:new Map(),droppedSessionCount:0,recoveredFromCorruption};}
+export const PE3_MAX_PERSISTED_AGENTS=MAX_AGENTS;
