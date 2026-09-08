@@ -32,9 +32,9 @@ test('low-confidence semantic race preserves the active task and provider failur
   const active = agent('a','auth');
   const dormant = agent('b','billing');
   const provider = new FakeEmbeddingProvider({
-    ambiguous: [.7,.7],
-    'task: auth': [.72,.69],
-    'task: billing': [.69,.72],
+    ambiguous: [1,0],
+    'task: auth': [.45,.893],
+    'task: billing': [.44,.898],
     failure: new Error('model unavailable'),
   });
   const router = new SemanticTaskRouter(provider);
