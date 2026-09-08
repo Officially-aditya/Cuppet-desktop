@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "phase": "B1",
+  "preparedAt": "2026-09-08",
+  "source": {
+    "repository": "Officially-aditya/Cuppet-code",
+    "ref": "840ed751b61c04afc881a393b7836d4d2c932f61"
+  },
+  "authority": {
+    "visibleTranscript": "SQLite sessions/messages",
+    "modelProjection": "detached ContextCompiler output only",
+    "canonicalImplementationSpec": "LosslessPlanStore",
+    "verifiedReusableMemory": "TST LTM",
+    "candidateAdmission": "deterministic CandidateLedger plus TST evidence rules",
+    "cognitiveControls": "CognitiveStateStore",
+    "renderer": "projection only"
+  },
+  "modes": {
+    "foreground": { "maxTokens": 2048, "usableShare": 0.04, "shares": { "stm": 0.45, "graph": 0.35, "ltm": 0.20 } },
+    "plan": { "maxTokens": 16384, "usableShare": 0.12, "shares": { "projection": 0.70, "graph": 0.15, "stm": 0.10, "ltm": 0.05 } },
+    "stm_events": { "maxTokens": 15000, "optInEnv": "CUPPET_STM_EVENT_CONTEXT" },
+    "stm_only": { "optInEnv": "CUPPET_STM_ONLY_COMPACTION" },
+    "orchestrator": { "automaticContext": false, "automaticLosslessPlanInjection": false }
+  },
+  "background": {
+    "idleDelayMs": 60000,
+    "cooldownMs": 900000,
+    "maxCandidates": 4,
+    "requiresTst": true,
+    "modelPromotionAuthority": false,
+    "modelProvenance": "model_candidate"
+  },
+  "roles": {
+    "foreground": "primary",
+    "plan": "primary",
+    "background": "secondary",
+    "orchestratorMaster": "primary",
+    "worker": "secondary"
+  },
+  "deferred": [
+    "PE3 task routing",
+    "transactional cross-session handoff",
+    "tool/permission execution loop",
+    "browser execution",
+    "remote control migration"
+  ]
+}
