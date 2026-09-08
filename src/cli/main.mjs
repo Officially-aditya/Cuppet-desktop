@@ -71,6 +71,7 @@ async function headlessPrompt(flags){
   const prompt=String(flags.prompt??flags._?.[0]??'').trim();if(!prompt)throw new Error('prompt requires --prompt <text> or a positional message');
   const dataDir=dataDirectory(flags);const databasePath=join(dataDir,'conversations.sqlite3');
   const selected=prepareHeadlessSession({databasePath,dataDir,flags});
+  if(selected.pendingPlanFork)await selected.pendingPlanFork.plans.fork(selected.sourceSessionId,selected.sessionId,selected.pendingPlanFork.messageMap);
   const provider=providerFromEnv(flags);let targetSessionId=selected.sessionId;
   const service=new RuntimeService({databasePath,dataDir,interactive:false});
   try{
@@ -95,7 +96,6 @@ function prepareHeadlessSession({databasePath,dataDir,flags}){
       const copied=db.forkSession({sourceSessionId,id:sessionId});
       forked=true;
       const plans=new LosslessPlanStore(join(dataDir,'lossless-plans'));
-      // The plan write is awaited after the SQLite handle is closed below.
       return {sessionId,sourceSessionId,forked,pendingPlanFork:{plans,messageMap:copied.messageMap}};
     }
     if(sourceSessionId)return{sessionId:sourceSessionId,sourceSessionId,forked:false};
