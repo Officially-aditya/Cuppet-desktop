@@ -10,10 +10,11 @@ import { ContextCompiler } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
 import { Pe3ProjectRouter } from './pe3/router.mjs';
 import { PermissionBroker } from './permissions.mjs';
+import { QuestionBroker } from './questions.mjs';
 import { ToolRuntime } from './tool-runtime.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -26,6 +27,7 @@ export class RuntimeService {
     cognitiveState,
     contextCompiler,
     permissionBroker,
+    questionBroker,
     toolRuntime,
     interactive = process.env.CUPPET_NONINTERACTIVE !== '1',
     backgroundFactory,
@@ -41,7 +43,8 @@ export class RuntimeService {
     this.#cognitive = cognitiveState ?? new CognitiveStateStore(join(dataDir, 'cognitive-state.json'));
     this.#compiler = contextCompiler ?? new ContextCompiler({ tst: this.#tst, planStore: this.#plans, cognitiveState: this.#cognitive });
     this.#permissions = permissionBroker ?? new PermissionBroker({ emit: this.#emit, interactive });
-    this.#tools = toolRuntime ?? new ToolRuntime({ tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, db: this.#db, emit: this.#emit });
+    this.#questions = questionBroker ?? new QuestionBroker({ emit: this.#emit, interactive });
+    this.#tools = toolRuntime ?? new ToolRuntime({ tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
@@ -53,6 +56,7 @@ export class RuntimeService {
     for (const run of this.#runs.values()) run.controller.abort();
     this.#runs.clear();
     this.#permissions.close?.();
+    this.#questions.close?.();
     this.#tst.close?.();
     this.#db.close();
     return Promise.all([...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined))).then(() => undefined);
@@ -61,7 +65,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, pendingPermissions: this.#permissions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -79,6 +83,9 @@ export class RuntimeService {
       }
       case 'permission.list': return this.#permissions.list(params.sessionId ?? null);
       case 'permission.reply': return this.#permissions.reply(params.requestId, params.reply);
+      case 'question.list': return this.#questions.list(params.sessionId ?? null);
+      case 'question.reply': return this.#questions.reply(params.requestId, params.answers);
+      case 'question.reject': return this.#questions.reject(params.requestId);
       case 'context.compact': return this.#compact(params);
       case 'plan.get': return this.#plans.toolResult(params.sessionId, params.request ?? { action: 'overview' });
       case 'memory.query': return this.#queryMemory(params);
@@ -139,7 +146,7 @@ export class RuntimeService {
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
     const prompt = typeof params.prompt === 'string' ? params.prompt : [...session.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider) });
+    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(session.messages), userMessageId: [...session.messages].reverse().find((message) => message.role === 'user')?.id });
   }
   async #queryMemory(params) {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
