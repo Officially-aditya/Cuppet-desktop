@@ -33,11 +33,12 @@ expect(questionsDense.includes('if(!this.#interactive)thrownewQuestionInteractio
 expect(questions.includes("type: 'question.requested'") && questions.includes("type: 'question.resolved'"), 'question lifecycle events missing');
 
 const journal = text['src/runtime/mutation-journal.mjs']; const journalDense = dense['src/runtime/mutation-journal.mjs'];
-expect(journal.includes("createHash('sha256')") && journal.includes('UndoConflictError') && journal.includes('snapshotMatches(current, entry.after)'), 'hash-checked undo conflict boundary missing');
-expect(journal.includes("kind: 'barrier'") && journal.includes("entry.kind !== 'file'"), 'opaque mutation barrier missing');
+expect(journal.includes("createHash('sha256')") && journal.includes('UndoConflictError') && journal.includes('snapshotMatches(current, item.after)'), 'hash-checked undo conflict boundary missing');
+expect(journal.includes("kind: 'barrier'") && journal.includes("entry.kind === 'barrier'"), 'opaque mutation barrier missing');
+expect(journal.includes('beginBatch({ sessionId') && journal.includes('commitBatch(token)') && journal.includes("kind: 'batch'") && journal.includes('for (const item of files)'), 'single-boundary multi-file undo journal missing');
 expect(journal.includes('mode: 0o700') && journal.includes('mode: 0o600') && journal.includes('rename(temporary, target)'), 'private atomic journal persistence missing');
 expect(journal.includes('MAX_SNAPSHOT_BYTES = 1024 * 1024') && journal.includes('MAX_ENTRIES = 256'), 'mutation journal bounds changed');
-expect(journal.includes('contentBase64') && journal.includes("Buffer.from(entry.before.contentBase64, 'base64')") && journal.includes('const content = await readFile(path);'), 'mutation journal no longer preserves raw preimage bytes');
+expect(journal.includes('contentBase64') && journal.includes("Buffer.from(snapshot.contentBase64, 'base64')") && journal.includes('const content = await readFile(path);'), 'mutation journal no longer preserves raw preimage bytes');
 expect(journalDense.includes('if(entry.projectRoot!==currentRoot)thrownewUndoConflictError'), 'undo is not bound to the original canonical workspace');
 expect(!/git\s+(?:reset|checkout|clean|restore)\b/i.test(journal), 'mutation journal contains a destructive Git restoration path');
 
