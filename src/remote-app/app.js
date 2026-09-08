@@ -4,7 +4,7 @@
   const params = new URLSearchParams(location.search);
   let hostId = params.get('host') || localStorage.getItem('cuppet.remote.host') || '';
   let creds = hostId ? readCreds(hostId) : null;
-  let ws; let authed = false; let reconnectTimer; let reconnectAttempt = 0; let commandCounter = 0; let activeSession = null; let currentMode = 'build'; let liveAssistant;
+  let ws; let authed = false; let reconnectTimer; let reconnectAttempt = 0; let commandCounter = 0; let activeSession = null; let currentMode = 'build'; let liveAssistant; let remoteModels = [];
   const pendingCommands = new Map();
 
   const pairScreen = $('pair'); const appScreen = $('app');
@@ -17,6 +17,7 @@
   $('new-session').addEventListener('click', () => void newSession());
   $('plan').addEventListener('click', () => void togglePlan());
   $('model').addEventListener('change', () => void selectModel());
+  $('effort').addEventListener('change', () => void selectEffort());
   $('stop').addEventListener('click', () => void command('session.abort').catch(showError));
   $('send').addEventListener('click', () => void sendPrompt());
   $('prompt').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendPrompt(); } });
@@ -102,8 +103,23 @@
   async function resumeSession(id){if(!id)return;await command('session.resume',{sessionID:id});activeSession=id;await refreshSession();}
   async function newSession(){const result=await command('session.new');activeSession=result.id;await refreshSessions();await refreshSession();}
   async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();return;}try{const [snap,messages]=await Promise.all([command('session.snapshot'),command('session.messages')]);currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderMessages(messages||[]);}catch{} }
-  async function refreshModels(){const values=await command('model.list').catch(()=>[]);const select=$('model');select.replaceChildren();for(const model of values){const option=document.createElement('option');option.value=`${model.providerID}|${model.modelID}`;option.textContent=model.modelID;if(model.selected)option.selected=true;select.append(option);} }
-  async function selectModel(){const [providerID,modelID]=$('model').value.split('|');if(modelID)await command('model.select',{providerID,modelID}).catch(showError);}
+
+  async function refreshModels(){
+    remoteModels=await command('model.list').catch(()=>[]);
+    const select=$('model');const before=select.value;select.replaceChildren();
+    for(const model of remoteModels){const option=document.createElement('option');option.value=`${model.providerID}|${model.modelID}`;option.textContent=model.name||model.modelID;if(model.selected)option.selected=true;select.append(option);}
+    if(before&&[...select.options].some((option)=>option.value===before)&&!remoteModels.some((model)=>model.selected))select.value=before;
+    renderEfforts();
+  }
+  function renderEfforts(){
+    const [providerID,modelID]=$('model').value.split('|');const model=remoteModels.find((item)=>item.providerID===providerID&&item.modelID===modelID);const select=$('effort');const current=model?.selectedVariant||'';
+    select.replaceChildren(makeOption('','Default effort'),...(model?.variants||[]).map((value)=>makeOption(value,value)));
+    select.disabled=!model?.variants?.length;if(current&&(model?.variants||[]).includes(current))select.value=current;
+  }
+  async function selectModel(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{await command('model.select',{providerID,modelID});await refreshModels();}catch(showError);}
+  async function selectEffort(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{const payload={providerID,modelID,...($('effort').value?{variant:$('effort').value}:{})};await command('model.select',payload);await refreshModels();}catch(showError);}
+  function makeOption(value,label){const option=document.createElement('option');option.value=value;option.textContent=label;return option;}
+
   async function togglePlan(){if(!activeSession)return;const next=currentMode==='plan'?'build':'plan';await command('agent.mode.set',{mode:next});currentMode=next;$('plan').textContent=next==='plan'?'Plan':'Build';}
   async function sendPrompt(){let text=$('prompt').value.trim();if(!text)return;if(!activeSession)await newSession();$('prompt').value='';addBubble('user',text);liveAssistant=null;try{const result=await command('session.submit',{prompt:text});if(result?.sessionId&&result.sessionId!==activeSession){activeSession=result.sessionId;await refreshSessions();}}catch(showError);}
   async function refreshPermissions(){const values=await command('permission.list').catch(()=>[]);$('pending').replaceChildren();for(const request of values)renderPermission(request);}
