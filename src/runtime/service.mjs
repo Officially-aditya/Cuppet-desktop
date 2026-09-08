@@ -185,7 +185,7 @@ export class RuntimeService {
       try {
         router = await this.#pe3For(existing.projectId, project);
         route = await router.prepare({ sourceSessionId, prompt: text, attachments: params.attachments });
-        router.accept(route.token, { targetAvailable: (targetSessionId) => !this.#runs.has(targetSessionId) });
+        route = router.accept(route.token, { targetAvailable: (targetSessionId) => !this.#runs.has(targetSessionId) });
       } catch (error) {
         if (router && route?.token) router.abort(route.token, cleanError(error));
         route = fallbackRoute(sourceSessionId, existing.projectId, `PE3 preserved source after routing fallback: ${cleanError(error)}`);
