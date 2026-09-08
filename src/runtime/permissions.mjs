@@ -34,7 +34,10 @@ export class PermissionBroker {
   }
 
   close() {
-    for (const pending of this.#pending.values()) pending.reject(abortError());
+    for (const pending of this.#pending.values()) {
+      pending.signal?.removeEventListener('abort', pending.abortListener);
+      pending.reject(abortError());
+    }
     this.#pending.clear();
   }
 
@@ -70,7 +73,7 @@ export class PermissionBroker {
 
   async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal }) {
     const normalized = resources.slice(0, 16).map((value) => String(value).slice(0, 1024));
-    const immediate = await immediateDecision({ sessionId, action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId) });
+    const immediate = await immediateDecision({ action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId) });
     if (immediate.effect === 'allow') return { allowed: true, source: immediate.source };
     if (immediate.effect === 'deny') throw new PermissionDeniedError(immediate.reason, { code: immediate.code });
 
@@ -109,10 +112,15 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
   if (WORKSPACE_ACTIONS.has(action)) {
     if (!projectRoot) return { effect: 'deny', code: 'project_required', reason: 'Filesystem tools require a project-bound session.' };
     if (resources.some((resource) => isProtectedResource(resource))) return { effect: 'deny', code: 'protected_resource', reason: 'Cuppet protected runtime/credential files cannot be accessed by the coding model.' };
-    if (auto && resources.length > 0 && (await Promise.all(resources.map((resource) => isSafeWorkspaceResource(resource, projectRoot)))).every(Boolean)) {
-      return { effect: 'allow', source: 'session-auto' };
+
+    const envExample = resources.length > 0 && resources.every(isEnvExampleResource);
+    const safe = resources.length > 0 && (await Promise.all(resources.map((resource) => isSafeWorkspaceResource(resource, projectRoot)))).every(Boolean);
+
+    if (action === 'read' && process.env.CUPPET_GRAPH_FIRST_GATE !== '1' && (safe || envExample)) {
+      return { effect: 'allow', source: 'workspace-read' };
     }
-    return { effect: 'ask', autoEligible: resources.length > 0 };
+    if (auto && safe) return { effect: 'allow', source: 'session-auto' };
+    return { effect: 'ask', autoEligible: safe };
   }
 
   if (action === 'bash') return { effect: 'ask', autoEligible: false };
@@ -151,6 +159,10 @@ export function isSensitivePath(path) {
   return parts.some((part) => part === '.env' || part.startsWith('.env.') || part.includes('credentials') || part.endsWith('.pem') || part.endsWith('.key') || part === 'ltm-trie.json');
 }
 
+function isEnvExampleResource(resource) {
+  const normalized = String(resource).replaceAll('\\', '/').toLowerCase();
+  return normalized === '.env.example' || normalized.endsWith('/.env.example');
+}
 function isProtectedResource(resource) {
   const normalized = String(resource).replaceAll('\\', '/').toLowerCase();
   return normalized.endsWith('/.claude.json') || normalized === '.claude.json' || normalized.endsWith('/.cuppet/credentials.json') || normalized.endsWith('/.cuppet/ltm-trie.json');
