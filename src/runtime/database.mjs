@@ -55,6 +55,18 @@ export class ConversationDatabase {
     }
   }
   close(){ this.#db.close(); }
+  transaction(callback) {
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = callback();
+      if (result && typeof result.then === 'function') throw new Error('SQLite transaction callback must be synchronous');
+      this.#db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try { this.#db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
 
   createProject({ id, name, canonicalPath, repositoryId = null, remoteUrl = null, now = Date.now() }) {
     this.#db.prepare(`INSERT INTO projects (id,name,canonical_path,repository_id,remote_url,created_at,updated_at,last_opened_at) VALUES (?,?,?,?,?,?,?,?)`)
