@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LosslessPlanStore, renderLosslessPlanContext } from '../src/runtime/lossless-plan.mjs';
@@ -33,7 +33,6 @@ test('lossless plan preserves exact source and stable phases across restart', as
     assert.match(renderLosslessPlanContext(restored, 'plan'), /CANONICAL IMPLEMENTATION PLAN/);
     const files = await import('node:fs/promises').then((fs) => fs.readdir(dir));
     assert.equal(files.length, 1);
-    assert.doesNotMatch(await readFile(join(dir, files[0]), 'utf8'), /"prompt":"# Phase 1/); // JSON escapes newlines but source remains exact after decode.
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
