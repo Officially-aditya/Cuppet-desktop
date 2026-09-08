@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { CandidateLedger, candidateSourceRef, canonicalLedgerKey, hasContradictionCue, hasCorrectionCue, hasDurableUserCue, isSensitiveCandidate } from './candidate-ledger.mjs';
+import { providerRequest } from './provider-policy.mjs';
 
 const MAX_SIGNALS = 8;
 const MAX_SIGNAL_CHARS = 1200;
@@ -14,7 +15,7 @@ export class BackgroundEnricher {
   }
   async ready() { await this.#ledger.ready(); }
   get stats() { return { paused: this.#paused, queued: this.#batches.size, running: this.#running, lastCompleted: Object.fromEntries(this.#lastCompleted) }; }
-  setProviderConfig(config) { this.#providerConfig = config ? { ...config } : undefined; }
+  setProviderConfig(config) { this.#providerConfig = config ? structuredClone(config) : undefined; }
   pause() { this.#paused = true; this.#clearTimer(); this.#activeController?.abort(); }
   resume() { this.#paused = false; this.#schedule(); }
   foregroundStarted() { this.#clearTimer(); this.#activeController?.abort(); }
@@ -40,10 +41,12 @@ export class BackgroundEnricher {
   async #runBatch(batch) {
     if (this.#paused || this.#running) return { status: 'deferred', candidates: 0 };
     if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 };
-    if (!this.#providerConfig?.apiKey || !this.#providerConfig?.model) return { status: 'unconfigured', candidates: 0 };
+    let request;
+    try { request = providerRequest(this.#providerConfig ?? {}, 'secondary'); }
+    catch { return { status: 'unconfigured', candidates: 0 }; }
     this.#running = true; const controller = new AbortController(); this.#activeController = controller;
     try {
-      const provider = this.#providerFactory({ ...this.#providerConfig, model: this.#providerConfig.backgroundModel || this.#providerConfig.model });
+      const provider = this.#providerFactory(request);
       let text = '';
       await provider.stream([{ role: 'system', content: backgroundPrompt(batch.signals) }], { signal: controller.signal, onDelta: async (delta) => { text += delta; } });
       if (controller.signal.aborted) return { status: 'cancelled', candidates: 0 };
@@ -63,9 +66,7 @@ export class BackgroundEnricher {
         const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', scope }).catch(() => undefined);
         if (observed?.id && explicitUser) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
         if (observed?.id) {
-          for (let index = 0; index < admission.reinforcementEvidenceCount; index += 1) {
-            await this.#tst.recordEvidence(batch.sessionID, observed.id, 'independent_reinforcement', `candidate-ledger:${index + 1}:${sourceRef}`, true).catch(() => undefined);
-          }
+          for (let index = 0; index < admission.reinforcementEvidenceCount; index += 1) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'independent_reinforcement', `candidate-ledger:${index + 1}:${sourceRef}`, true).catch(() => undefined);
         }
       }
       this.#batches.delete(batch.sessionID); this.#lastCompleted.set(batch.sessionID, this.#now()); await this.#ledger.persist(); return { status: 'completed', candidates: admitted };

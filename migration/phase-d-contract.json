@@ -1,0 +1,68 @@
+{
+  "phase": "D",
+  "sourceBaseline": {
+    "repository": "Officially-aditya/Cuppet-code",
+    "commit": "840ed751b61c04afc881a393b7836d4d2c932f61",
+    "legacyAcceptanceAreas": [
+      "packages/cli/test/platforms.test.ts",
+      "packages/cli/test/provider-routing.test.ts",
+      "packages/cli/test/effort.test.ts",
+      "packages/cli/test/variant-bridge.test.ts"
+    ]
+  },
+  "authority": {
+    "providerCredentials": "Electron safeStorage or headless host environment",
+    "providerEndpoint": "local host configuration",
+    "modelCatalog": "sanitized provider policy",
+    "primaryRole": "provider settings primary model reference",
+    "secondaryRole": "provider settings secondary model reference",
+    "effortVariants": "sanitized live or bridged model metadata",
+    "remoteSelection": "device-local pointer constrained to host-advertised provider/model/variant",
+    "providerExecution": "independent runtime adapter"
+  },
+  "requirements": {
+    "dynamicProviderIds": true,
+    "unknownFutureProvidersAccepted": true,
+    "openAiAzureGrouping": true,
+    "vertexGrouping": true,
+    "codingModelRequiresTextInput": true,
+    "codingModelRequiresTextOutput": true,
+    "codingModelRequiresStreaming": true,
+    "codingModelRequiresTools": true,
+    "primarySecondaryIndependent": true,
+    "backgroundUsesSecondaryRole": true,
+    "effortMustBeAdvertised": true,
+    "effortIsRequestMetadata": true,
+    "effortInjectedIntoPrompt": false,
+    "liveVariantsWin": true,
+    "variantBridgeIsFallbackOnly": true,
+    "variantMetadataCredentialFree": true,
+    "desktopProjectsSanitizedCatalog": true,
+    "headlessProjectsSanitizedCatalog": true,
+    "remoteProjectsSanitizedCatalog": true,
+    "remoteCanProvideEndpoint": false,
+    "remoteCanProvideApiKey": false,
+    "remoteCanProvideArbitraryRequestBody": false,
+    "remoteCanSelectUnadvertisedModel": false,
+    "remoteCanSelectUnadvertisedVariant": false
+  },
+  "compatibility": {
+    "legacyModelField": "projection of primary.modelID",
+    "legacyBackgroundModelField": "projection of secondary.modelID",
+    "legacyVertexAliasMayResolveToConcreteLiveProvider": true,
+    "missingModelMayNotGuessReplacement": true
+  },
+  "security": {
+    "rendererReceivesDecryptedApiKey": false,
+    "remoteReceivesProviderEndpoint": false,
+    "remoteReceivesProviderApiKey": false,
+    "catalogMayContainCredentialHeaders": false,
+    "variantBridgeMayContainCredentialFields": false,
+    "providerAuthOverridesVariantHeaders": true
+  },
+  "surfaces": {
+    "desktop": ["provider ID", "primary model", "primary effort", "secondary model", "secondary effort"],
+    "headless": ["cuppet models", "CUPPET_PROVIDER_ID", "CUPPET_MODEL", "CUPPET_BACKGROUND_MODEL", "CUPPET_EFFORT", "CUPPET_BACKGROUND_EFFORT"],
+    "remote": ["provider list", "model list", "model select", "effort select"]
+  }
+}

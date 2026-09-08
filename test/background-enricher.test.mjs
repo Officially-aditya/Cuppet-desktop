@@ -40,16 +40,37 @@ test('background candidate containing secrets is rejected before TST observation
 
 test('background worker does not call a model when TST is unavailable', async () => {
   let providerCalls = 0;
-  const worker = new BackgroundEnricher({
-    providerFactory: () => { providerCalls += 1; return { async stream() {} }; },
-    tst: { configured: false },
-    idleMs: 60_000,
-    cooldownMs: 0,
-  });
+  const worker = new BackgroundEnricher({ providerFactory: () => { providerCalls += 1; return { async stream() {} }; }, tst: { configured: false }, idleMs: 60_000, cooldownMs: 0 });
   await worker.ready(); worker.setProviderConfig({ apiKey: 'test', model: 'secondary' });
   await worker.recordTurn({ sessionID: 's1', projectID: 'p1', userText: 'hello', assistantText: 'hi' });
   const result = await worker.flushNow('s1');
   assert.equal(result.status, 'tst-unavailable');
   assert.equal(providerCalls, 0);
+  await worker.close();
+});
+
+test('background enrichment resolves the independent secondary model and effort before provider execution', async () => {
+  let received;
+  const output = JSON.stringify({ candidates: [] });
+  const worker = new BackgroundEnricher({
+    providerFactory: (configuration) => { received = configuration; return { async stream(_messages, { onDelta }) { await onDelta(output); return { text: output }; } }; },
+    tst: { configured: true }, idleMs: 60_000, cooldownMs: 0,
+  });
+  await worker.ready();
+  worker.setProviderConfig({
+    providerID: 'future-provider', baseUrl: 'https://provider.example/v1', apiKey: 'host-key',
+    models: [
+      { providerID: 'future-provider', modelID: 'foreground', capabilities: { tools: true, streaming: true, input: ['text'], output: ['text'] } },
+      { providerID: 'future-provider', modelID: 'worker', api: { id: 'worker-transport' }, capabilities: { tools: true, streaming: true, input: ['text'], output: ['text'] }, variants: [{ id: 'low', body: { reasoning: { effort: 'low' } } }] },
+    ],
+    primary: { providerID: 'future-provider', modelID: 'foreground' },
+    secondary: { providerID: 'future-provider', modelID: 'worker', variant: 'low' },
+  });
+  await worker.recordTurn({ sessionID: 's1', projectID: 'p1', userText: 'hello', assistantText: 'hi' });
+  const result = await worker.flushNow('s1');
+  assert.equal(result.status, 'completed');
+  assert.equal(received.model, 'worker-transport');
+  assert.equal(received.variant, 'low');
+  assert.deepEqual(received.requestBody.reasoning, { effort: 'low' });
   await worker.close();
 });

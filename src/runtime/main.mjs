@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { RuntimeService } from './service.mjs';
 import { RemoteManager } from './remote/manager.mjs';
+import { normalizeProviderConfiguration } from './provider-policy.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -61,12 +62,13 @@ process.on('SIGINT', () => void shutdown());
 process.stdin.on('end', () => void shutdown());
 
 function boundedProvider(value) {
-  const record = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return {
-    ...(typeof record.baseUrl === 'string' ? { baseUrl: record.baseUrl.slice(0, 500) } : {}),
-    ...(typeof record.model === 'string' ? { model: record.model.slice(0, 240) } : {}),
-    ...(typeof record.backgroundModel === 'string' ? { backgroundModel: record.backgroundModel.slice(0, 240) } : {}),
-    ...(typeof record.apiKey === 'string' ? { apiKey: record.apiKey.slice(0, 8192) } : {}),
-    ...(Number.isFinite(record.contextWindow) ? { contextWindow: Math.max(4096, Math.min(Math.trunc(record.contextWindow), 2_000_000)) } : {}),
-  };
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = normalizeProviderConfiguration({
+    ...source,
+    ...(typeof source.apiKey === 'string' ? { apiKey: source.apiKey.slice(0, 8192) } : {}),
+    ...(typeof source.baseUrl === 'string' ? { baseUrl: source.baseUrl.slice(0, 500) } : {}),
+    ...(Array.isArray(source.models) ? { models: source.models.slice(0, 512) } : {}),
+    ...(Array.isArray(source.integrations) ? { integrations: source.integrations.slice(0, 256) } : {}),
+  });
+  return normalized;
 }

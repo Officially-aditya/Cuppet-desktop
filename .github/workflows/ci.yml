@@ -8,7 +8,7 @@ jobs:
   phase-gates:
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,3 +22,4 @@ jobs:
       - run: npm run phaseb2:verify
       - run: npm run phasec1:verify
       - run: npm run phasec2:verify
+      - run: npm run phased:verify
