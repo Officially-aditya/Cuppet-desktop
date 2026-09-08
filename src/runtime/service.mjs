@@ -13,9 +13,11 @@ import { PermissionBroker } from './permissions.mjs';
 import { QuestionBroker } from './questions.mjs';
 import { MutationJournal } from './mutation-journal.mjs';
 import { JournaledToolRuntime } from './journaled-tool-runtime.mjs';
+import { TstBatchEditManager } from './tst-edit-batches.mjs';
+import { ProjectWriter } from './project-writer.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     databasePath,
@@ -30,6 +32,8 @@ export class RuntimeService {
     permissionBroker,
     questionBroker,
     mutationJournal,
+    batchEdits,
+    projectWriter,
     toolRuntime,
     interactive = process.env.CUPPET_NONINTERACTIVE !== '1',
     backgroundFactory,
@@ -47,7 +51,9 @@ export class RuntimeService {
     this.#permissions = permissionBroker ?? new PermissionBroker({ emit: this.#emit, interactive });
     this.#questions = questionBroker ?? new QuestionBroker({ emit: this.#emit, interactive });
     this.#journal = mutationJournal ?? new MutationJournal(join(dataDir, 'mutation-journal'));
-    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, emit: this.#emit });
+    this.#writer = projectWriter ?? new ProjectWriter();
+    this.#batchEdits = batchEdits ?? new TstBatchEditManager({ tst: this.#tst, journal: this.#journal, emit: this.#emit });
+    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
@@ -68,7 +74,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, activeProjectWriters: this.#writer.activeProjects, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -180,16 +186,40 @@ export class RuntimeService {
     if (mutation) await router.noteWorkspaceMutation(sessionId, boundedPaths); else await router.noteObservedPaths(sessionId, boundedPaths);
     return { observed: true, mutation, sessionId, paths: boundedPaths };
   }
+  async #recordValidation(sessionId, validation) {
+    if (!validation || validation.kind !== 'tst_validate' || !validation.success || !this.#tst.configured) return { recorded: false };
+    const fileHashes = validation.fileHashes && typeof validation.fileHashes === 'object' ? validation.fileHashes : {};
+    if (!Object.keys(fileHashes).length) return { recorded: false };
+    const commandText = (validation.commands ?? []).map((item) => `${item.command} [${item.exitCode}]`).join('; ').slice(0, 1200);
+    const observed = await this.#tst.observeMemory(sessionId, {
+      key: `validation:${Object.keys(fileHashes).sort().join(',').slice(0, 120)}`,
+      value: `Validation passed for current workspace hashes using: ${commandText}`,
+      kind: 'behavioral_claim', scope: 'session', provenance: 'tool', file_hashes: fileHashes,
+    });
+    const memoryId = observed?.id;
+    if (!memoryId) return { recorded: false };
+    for (const [path, hash] of Object.entries(fileHashes)) {
+      await this.#tst.recordEvidence(sessionId, memoryId, 'content_hash', `validation:${path}:${commandText}`, true, hash).catch(() => undefined);
+    }
+    return { recorded: true, memoryId };
+  }
+  async #refreshMutationGraph(paths) {
+    if (!this.#tst.configured || !paths?.length) return { refreshed: false, reason: 'TST unavailable or no paths' };
+    try { return { refreshed: true, result: await this.#tst.refreshGraphPaths(paths) }; }
+    catch (error) { this.#emit({ type: 'graph.refresh.failed', paths, message: cleanError(error) }); return { refreshed: false, reason: cleanError(error) }; }
+  }
   async #undo(sessionId) {
     const session = this.requireSession(sessionId);
     if (this.#runs.has(session.id)) throw new Error('Cannot undo while this session is generating. Stop it first.');
     if (!session.projectId) throw new Error('Undo requires a project-bound session.');
     const project = await this.#projects.get(session.projectId);
     if (!project || project.missing) throw new Error('Undo requires the original project workspace to be available.');
-    const result = await this.#journal.undoLatest({ sessionId: session.id, projectRoot: project.canonicalPath });
-    if (result.undone && result.path) {
-      if (process.env.CUPPET_PE3 !== '0') await this.#pe3Observe(session.id, [result.path], true).catch(() => undefined);
-      this.#emit({ type: 'mutation.undone', sessionId: session.id, projectId: session.projectId, mutationId: result.mutationId, path: result.path, tool: result.tool });
+    const result = await this.#writer.withProject(project.canonicalPath, () => this.#journal.undoLatest({ sessionId: session.id, projectRoot: project.canonicalPath }));
+    const paths = Array.isArray(result.paths) ? result.paths : result.path ? [result.path] : [];
+    if (result.undone && paths.length) {
+      await this.#refreshMutationGraph(paths);
+      if (process.env.CUPPET_PE3 !== '0') await this.#pe3Observe(session.id, paths, true).catch(() => undefined);
+      this.#emit({ type: 'mutation.undone', sessionId: session.id, projectId: session.projectId, mutationId: result.mutationId, path: result.path ?? null, paths, tool: result.tool });
       this.#emit({ type: 'session.updated', session: this.#db.getSessionSummary(session.id) });
     }
     return result;
@@ -316,8 +346,13 @@ export class RuntimeService {
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
         },
         onPaths: async (paths, mutation) => {
+          if (mutation) await this.#refreshMutationGraph(paths);
           if (!projectId || process.env.CUPPET_PE3 === '0') return;
           await this.#pe3Observe(sessionId, paths, mutation);
+        },
+        onValidation: async (validation) => {
+          await this.#recordValidation(sessionId, validation).catch(() => undefined);
+          this.#emit({ type: 'validation.completed', sessionId, validation });
         },
       });
       if (signal.aborted || this.#closed) throw abortError();
