@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "phase": "B2",
+  "preparedAt": "2026-09-08",
+  "source": {
+    "repository": "Officially-aditya/Cuppet-code",
+    "ref": "840ed751b61c04afc881a393b7836d4d2c932f61",
+    "documents": [
+      "docs/pe3-task-routing.md",
+      "docs/pe3-issue-10-persistence.md"
+    ]
+  },
+  "authority": {
+    "taskTranscript": "SQLite sessions/messages",
+    "projectBinding": "SQLite sessions.project_id",
+    "routingMetadata": "project-local pe3-task-agents.json",
+    "workspaceTruth": "current filesystem",
+    "graphLocalization": "TST when configured",
+    "semanticVectors": "in-memory cache only",
+    "renderer": "projection only"
+  },
+  "routingOrder": [
+    "deterministic task affinity",
+    "TST graph localization for ambiguous prompts",
+    "local semantic embedding fallback",
+    "conservative continue/create/reactivate decision"
+  ],
+  "semantic": {
+    "provider": "@huggingface/transformers",
+    "defaultModel": "Xenova/all-MiniLM-L6-v2",
+    "remoteRoutingInference": false,
+    "failureFallback": "continue active task",
+    "vectorsPersisted": false,
+    "falseSplitPolicy": "prefer missed split over low-confidence false split"
+  },
+  "persistence": {
+    "maxAgents": 32,
+    "storesTranscript": false,
+    "storesProviderPrompt": false,
+    "storesCredentials": false,
+    "storesEmbeddingVectors": false,
+    "corruptRegistry": "fail closed to fresh routing state",
+    "offlineFileChange": "remove privileged path evidence, mark stale, require refresh"
+  },
+  "handoff": {
+    "states": ["prepared", "accepted", "committed", "aborted"],
+    "order": ["prepare", "accept", "SQLite transaction", "router commit"],
+    "sourcePromptWrittenBeforeCommit": false,
+    "createTargetSessionInsideTransaction": true,
+    "crossSessionSourceRecord": "bounded PE3 routing marker only",
+    "failureBehavior": "abort handoff and preserve source request"
+  },
+  "attachments": {
+    "maxCount": 16,
+    "metadataOnly": true,
+    "mimeValidated": true,
+    "contentInvented": false
+  },
+  "runtimeControls": {
+    "disableEnv": "CUPPET_PE3=0",
+    "modelEnv": "CUPPET_PE3_EMBED_MODEL",
+    "cacheEnv": "CUPPET_PE3_MODEL_CACHE",
+    "localModelDirEnv": "CUPPET_PE3_MODEL_DIR",
+    "strictOfflineEnv": "CUPPET_PE3_ALLOW_MODEL_DOWNLOAD=0"
+  },
+  "deferred": [
+    "tool/permission execution loop",
+    "browser execution",
+    "remote control migration"
+  ]
+}
