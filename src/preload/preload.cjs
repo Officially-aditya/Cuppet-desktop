@@ -1,6 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('cuppet', {
   health: () => ipcRenderer.invoke('cuppet:health'),
+  cognitive: {
+    status: () => ipcRenderer.invoke('cuppet:cognitive:status'),
+    modeGet: (sessionId) => ipcRenderer.invoke('cuppet:session:mode:get', sessionId),
+    modeSet: (sessionId, mode) => ipcRenderer.invoke('cuppet:session:mode:set', sessionId, mode),
+    orchestratorSet: (enabled) => ipcRenderer.invoke('cuppet:orchestrator:set', enabled),
+    backgroundStatus: () => ipcRenderer.invoke('cuppet:background:status'),
+    backgroundPause: () => ipcRenderer.invoke('cuppet:background:pause'),
+    backgroundResume: () => ipcRenderer.invoke('cuppet:background:resume'),
+    backgroundFlush: (sessionId) => ipcRenderer.invoke('cuppet:background:flush', sessionId),
+    planGet: (sessionId, request = { action: 'overview' }) => ipcRenderer.invoke('cuppet:plan:get', sessionId, request),
+    memoryQuery: (sessionId, query) => ipcRenderer.invoke('cuppet:memory:query', sessionId, query),
+  },
   sessions: {
     list: (projectId) => ipcRenderer.invoke('cuppet:session:list', projectId),
     create: (projectId = null) => ipcRenderer.invoke('cuppet:session:create', projectId),

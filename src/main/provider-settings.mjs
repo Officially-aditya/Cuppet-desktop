@@ -6,6 +6,7 @@ const DEFAULTS = {
   provider: 'openai-compatible',
   baseUrl: 'https://api.openai.com/v1',
   model: '',
+  backgroundModel: '',
 };
 
 export class ProviderSettingsStore {
@@ -13,9 +14,7 @@ export class ProviderSettingsStore {
   #value = { ...DEFAULTS };
   #encryptedApiKey;
 
-  constructor(path) {
-    this.#path = path;
-  }
+  constructor(path) { this.#path = path; }
 
   async load() {
     try {
@@ -24,6 +23,7 @@ export class ProviderSettingsStore {
         provider: 'openai-compatible',
         baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : DEFAULTS.baseUrl,
         model: typeof parsed.model === 'string' ? parsed.model : '',
+        backgroundModel: typeof parsed.backgroundModel === 'string' ? parsed.backgroundModel : '',
       };
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
     } catch {
@@ -33,35 +33,22 @@ export class ProviderSettingsStore {
   }
 
   rendererValue() {
-    return {
-      ...this.#value,
-      apiKeyConfigured: Boolean(this.#encryptedApiKey),
-      encryptionAvailable: safeStorage.isEncryptionAvailable(),
-    };
+    return { ...this.#value, apiKeyConfigured: Boolean(this.#encryptedApiKey), encryptionAvailable: safeStorage.isEncryptionAvailable() };
   }
 
-  runtimeValue() {
-    return {
-      ...this.#value,
-      apiKey: this.#decryptApiKey(),
-    };
-  }
+  runtimeValue() { return { ...this.#value, apiKey: this.#decryptApiKey() }; }
 
   async save(input) {
     const baseUrl = typeof input?.baseUrl === 'string' ? input.baseUrl.trim() : '';
     const model = typeof input?.model === 'string' ? input.model.trim() : '';
+    const backgroundModel = typeof input?.backgroundModel === 'string' ? input.backgroundModel.trim() : '';
     if (!baseUrl) throw new Error('Provider base URL is required');
-    let parsed;
-    try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
-    if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) {
-      throw new Error('Provider base URL must use HTTPS unless it points to localhost');
-    }
-    this.#value = { provider: 'openai-compatible', baseUrl: baseUrl.replace(/\/+$/, ''), model };
+    let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
+    if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
+    this.#value = { provider: 'openai-compatible', baseUrl: baseUrl.replace(/\/+$/, ''), model, backgroundModel };
 
     if (typeof input?.apiKey === 'string' && input.apiKey.trim()) {
-      if (!safeStorage.isEncryptionAvailable()) {
-        throw new Error('OS credential encryption is unavailable; Cuppet will not persist the API key in plaintext');
-      }
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('OS credential encryption is unavailable; Cuppet will not persist the API key in plaintext');
       this.#encryptedApiKey = safeStorage.encryptString(input.apiKey.trim()).toString('base64');
     }
 
@@ -71,16 +58,9 @@ export class ProviderSettingsStore {
   }
 
   #decryptApiKey() {
-    if (!this.#encryptedApiKey) return '';
-    if (!safeStorage.isEncryptionAvailable()) return '';
-    try {
-      return safeStorage.decryptString(Buffer.from(this.#encryptedApiKey, 'base64'));
-    } catch {
-      return '';
-    }
+    if (!this.#encryptedApiKey || !safeStorage.isEncryptionAvailable()) return '';
+    try { return safeStorage.decryptString(Buffer.from(this.#encryptedApiKey, 'base64')); } catch { return ''; }
   }
 }
 
-function isLocalhost(hostname) {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-}
+function isLocalhost(hostname) { return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'; }
