@@ -26,6 +26,7 @@ async function fixture() {
   await writeFile(join(root, '.env'), 'SECRET=1\n');
   await writeFile(join(root, '.env.example'), 'SECRET=example\n');
   await writeFile(join(root, '.cuppet', 'credentials.json'), '{}\n');
+  await writeFile(join(root, '.cuppet', 'ltm-trie.json'), '{}\n');
   await writeFile(join(outside, 'secret.txt'), 'outside\n');
   await symlink(outside, join(root, 'escape'));
   return { dir, root };
@@ -63,10 +64,12 @@ test('ordinary reads remain automatic while sensitive reads prompt and protected
     broker.reply(request.id, 'reject');
     await assert.rejects(sensitive, (error) => error instanceof PermissionDeniedError && error.code === 'permission_denied');
 
-    await assert.rejects(
-      broker.authorize({ sessionId: 's1', action: 'read', resources: ['.cuppet/credentials.json'], projectRoot: root }),
-      (error) => error instanceof PermissionDeniedError && error.code === 'protected_resource',
-    );
+    for (const resource of ['.cuppet/credentials.json', '.cuppet/ltm-trie.json']) {
+      await assert.rejects(
+        broker.authorize({ sessionId: 's1', action: 'read', resources: [resource], projectRoot: root }),
+        (error) => error instanceof PermissionDeniedError && error.code === 'protected_resource',
+      );
+    }
     assert.equal(events.some((event) => event.type === 'permission.requested'), true);
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });
