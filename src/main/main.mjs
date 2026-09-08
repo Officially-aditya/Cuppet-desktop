@@ -34,11 +34,14 @@ function registerIpc() {
   ipcMain.handle('cuppet:background:flush', (_event, sessionId) => request('background.flush', { sessionId }));
   ipcMain.handle('cuppet:plan:get', (_event, sessionId, requestValue) => request('plan.get', { sessionId, request: requestValue }));
   ipcMain.handle('cuppet:memory:query', (_event, sessionId, query) => request('memory.query', { sessionId, query }));
+  ipcMain.handle('cuppet:pe3:status', (_event, sessionId) => request('pe3.status', { sessionId }));
+  ipcMain.handle('cuppet:pe3:observe-paths', (_event, sessionId, paths) => request('pe3.observe-paths', { sessionId, paths: validatePaths(paths) }));
+  ipcMain.handle('cuppet:pe3:workspace-mutation', (_event, sessionId, paths) => request('pe3.workspace-mutation', { sessionId, paths: validatePaths(paths) }));
 
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
-  ipcMain.handle('cuppet:session:send', (_event, sessionId, text) => request('session.send', { sessionId, text, provider: settings.runtimeValue() }));
+  ipcMain.handle('cuppet:session:send', (_event, sessionId, text, attachments) => request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() }));
   ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
 
   ipcMain.handle('cuppet:project:list', () => request('project.list'));
@@ -66,6 +69,18 @@ function validateClonePayload(value, withUrl) {
   if (withUrl) output.url = typeof record.url === 'string' ? record.url.slice(0, 500) : '';
   else output.nameWithOwner = typeof record.nameWithOwner === 'string' ? record.nameWithOwner.slice(0, 180) : '';
   return output;
+}
+function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
+function validateAttachments(values) {
+  if (!Array.isArray(values)) return [];
+  return values.slice(0, 16).flatMap((value) => {
+    if (!value || typeof value !== 'object') return [];
+    const name = typeof value.name === 'string' ? value.name.trim().slice(0, 240) : '';
+    const mime = typeof value.mime === 'string' ? value.mime.trim().slice(0, 128) : '';
+    const path = typeof value.path === 'string' ? value.path.trim().slice(0, 512) : '';
+    if (!name && !path) return [];
+    return [{ ...(name ? { name } : {}), ...(mime ? { mime } : {}), ...(path ? { path } : {}), ...(Number.isFinite(value.size) ? { size: Math.max(0, Math.trunc(value.size)) } : {}) }];
+  });
 }
 async function chooseFolder(options) {
   const title = typeof options?.title === 'string' ? options.title.slice(0, 100) : 'Choose folder';
