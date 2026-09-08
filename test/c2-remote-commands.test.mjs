@@ -15,9 +15,13 @@ function fixture(){
     case 'session.auto.get':return{sessionId:params.sessionId,enabled:false};
     case 'session.send':return{accepted:true,sessionId:params.sessionId,messageId:'m1'};
     case 'session.stop':return{stopped:true,sessionId:params.sessionId};
+    case 'session.undo':return{undone:true,sessionId:params.sessionId,path:'src/a.js'};
     case 'context.compact':return{abort:false};
     case 'permission.list':return[];
     case 'permission.reply':return{resolved:true};
+    case 'question.list':return[];
+    case 'question.reply':return{resolved:true,requestId:params.requestId,accepted:true};
+    case 'question.reject':return{resolved:true,requestId:params.requestId,accepted:false};
     default:throw new Error(`unexpected ${method}`);
   }};
   const adapter=new RemoteCommandAdapter({call,identity:{hostId:'host_1',deviceName:'Laptop'},providerConfig:{baseUrl:'https://api.example.test/v1',model:'model-a',backgroundModel:'model-b',apiKey:'super-secret'}});
@@ -40,13 +44,19 @@ test('remote command adapter keeps provider secret local and binds device worksp
   assert.equal(JSON.stringify(await adapter.execute(actor,'session.snapshot')).includes('super-secret'),false);
 });
 
-test('remote model selection is constrained to host-configured models and unsupported authority fails explicitly',async()=>{
-  const {adapter}=fixture();await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});await adapter.execute(actor,'session.resume',{sessionID:'s1'});
+test('remote model selection stays host constrained while undo and questions delegate to runtime authorities',async()=>{
+  const {adapter,calls}=fixture();await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});await adapter.execute(actor,'session.resume',{sessionID:'s1'});
   const models=await adapter.execute(actor,'model.list');assert.deepEqual(models.map((m)=>m.modelID),['model-a','model-b']);
   assert.deepEqual(await adapter.execute(actor,'model.select',{providerID:'openai-compatible',modelID:'model-b'}),{providerID:'openai-compatible',modelID:'model-b'});
   await assert.rejects(()=>adapter.execute(actor,'model.select',{providerID:'openai-compatible',modelID:'model-c'}),/not configured/);
-  await assert.rejects(()=>adapter.execute(actor,'session.undo'),/authoritative mutation journal/);
-  await assert.rejects(()=>adapter.execute(actor,'question.reply',{requestID:'q1',answers:[['yes']]}),/not implemented/);
+
+  assert.deepEqual(await adapter.execute(actor,'session.undo'),{undone:true,sessionId:'s1',path:'src/a.js'});
+  assert.deepEqual(calls.findLast((entry)=>entry.method==='session.undo'),{method:'session.undo',params:{sessionId:'s1'}});
+
+  await adapter.execute(actor,'question.reply',{requestID:'q1',answers:[['yes']]});
+  assert.deepEqual(calls.findLast((entry)=>entry.method==='question.reply'),{method:'question.reply',params:{requestId:'q1',answers:[['yes']]}});
+  await adapter.execute(actor,'question.reject',{requestID:'q2'});
+  assert.deepEqual(calls.findLast((entry)=>entry.method==='question.reject'),{method:'question.reject',params:{requestId:'q2'}});
 });
 
 test('remote permission reply uses the C1 permission authority rather than a remote-side grant table',async()=>{

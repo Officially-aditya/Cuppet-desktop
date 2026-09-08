@@ -32,6 +32,9 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: Boolean(enabled) }));
   ipcMain.handle('cuppet:permission:list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
   ipcMain.handle('cuppet:permission:reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
+  ipcMain.handle('cuppet:question:list', (_event, sessionId) => request('question.list', { sessionId: sessionId ?? null }));
+  ipcMain.handle('cuppet:question:reply', (_event, requestId, answers) => request('question.reply', { requestId: boundedId(requestId), answers: validateQuestionAnswers(answers) }));
+  ipcMain.handle('cuppet:question:reject', (_event, requestId) => request('question.reject', { requestId: boundedId(requestId) }));
   ipcMain.handle('cuppet:orchestrator:set', (_event, enabled) => request('orchestrator.set', { enabled: Boolean(enabled) }));
   ipcMain.handle('cuppet:background:status', () => request('background.status'));
   ipcMain.handle('cuppet:background:pause', () => request('background.pause'));
@@ -55,6 +58,8 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
   ipcMain.handle('cuppet:session:send', (_event, sessionId, text, attachments) => request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() }));
   ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
+  ipcMain.handle('cuppet:session:undo:status', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
 
   ipcMain.handle('cuppet:project:list', () => request('project.list'));
   ipcMain.handle('cuppet:project:get', (_event, projectId) => request('project.get', { projectId }));
@@ -96,6 +101,11 @@ function validateRemoteStart(value) {
   };
 }
 function validatePermissionReply(value) { return ['once', 'always', 'reject'].includes(value) ? value : 'reject'; }
+function validateQuestionAnswers(values) {
+  if (!Array.isArray(values)) return [];
+  return values.slice(0, 8).map((group) => Array.isArray(group) ? group.slice(0, 12).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []);
+}
+function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
 function validateAttachments(values) {
   if (!Array.isArray(values)) return [];

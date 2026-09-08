@@ -30,12 +30,13 @@ expect(setup.includes('pollSecret') && setup.includes('relaySecret') && setup.in
 const bridge = text['src/runtime/remote/bridge.mjs']; const bridgeDense = dense['src/runtime/remote/bridge.mjs'];
 expect(bridgeDense.includes('DEDUPE_CAPACITY=512') && bridgeDense.includes('this.#seen.has(dedupeKey)') && bridgeDense.includes('#connectionId=randomUUID()'), 'bridge replay/connection authority missing'); expect(bridge.includes('client.accept') && bridge.includes('client.reject') && bridge.includes('missing scope') && bridge.includes('duplicate:true'), 'bridge authentication/scope/replay behavior missing');
 
-const commands = text['src/runtime/remote/commands.mjs'];
+const commands = text['src/runtime/remote/commands.mjs']; const commandsDense = dense['src/runtime/remote/commands.mjs'];
 expect(commands.includes("this.#call('session.send'") && commands.includes("this.#call('permission.reply'") && commands.includes("this.#call('session.stop'"), 'remote adapter bypasses independent runtime methods');
 expect(commands.includes('Host provider is not configured') && commands.includes('model is not configured on this host'), 'remote provider/model boundary missing');
 expect(commands.includes('#providerList(') && commands.includes('providerProjection(this.#provider)'), 'remote provider projection missing');
 expect(!/baseUrl\s*:\s*this\.#provider/.test(commands) && !/apiKey\s*:\s*this\.#provider/.test(commands), 'remote provider projection exposes local endpoint or credential details');
-expect(commands.includes('Undo is unavailable until the independent runtime has an authoritative mutation journal.'), 'reviewed undo compatibility gap missing'); expect(commands.includes('Interactive question requests are not implemented by the independent runtime.'), 'reviewed question compatibility gap missing');
+expect(commandsDense.includes("case'session.undo':returnthis.#call('session.undo'"), 'remote undo no longer delegates to the independent runtime authority');
+expect(commandsDense.includes("case'question.list':returnthis.#call('question.list'") && commands.includes("this.#call('question.reply'") && commands.includes("this.#call('question.reject'"), 'remote question controls no longer delegate to the independent runtime authority');
 
 const manager = text['src/runtime/remote/manager.mjs']; const managerDense = dense['src/runtime/remote/manager.mjs'];
 expect(manager.includes("'https://connect.cuppet.in'") && manager.includes('verifyRemoteToken') && manager.includes('authenticateDevice'), 'remote manager setup/auth path incomplete'); expect(manager.includes('WebSocketTransport') && manager.includes('buildAttachSnapshot'), 'remote outbound transport/snapshot bridge missing'); expect(manager.includes('Provider configuration is pushed at ordinary desktop startup') && managerDense.includes('if(this.#bridge)awaitthis.stop().catch'), 'unused remote configuration/shutdown may create persistent state');

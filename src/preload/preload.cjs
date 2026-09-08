@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('cuppet', {
     autoGet: (sessionId) => ipcRenderer.invoke('cuppet:session:auto:get', sessionId),
     autoSet: (sessionId, enabled) => ipcRenderer.invoke('cuppet:session:auto:set', sessionId, enabled),
   },
+  questions: {
+    list: (sessionId = null) => ipcRenderer.invoke('cuppet:question:list', sessionId),
+    reply: (requestId, answers) => ipcRenderer.invoke('cuppet:question:reply', requestId, answers),
+    reject: (requestId) => ipcRenderer.invoke('cuppet:question:reject', requestId),
+  },
   remote: {
     status: () => ipcRenderer.invoke('cuppet:remote:status'),
     start: (value = {}) => ipcRenderer.invoke('cuppet:remote:start', value),
@@ -38,6 +43,8 @@ contextBridge.exposeInMainWorld('cuppet', {
     get: (sessionId) => ipcRenderer.invoke('cuppet:session:get', sessionId),
     send: (sessionId, text, attachments = []) => ipcRenderer.invoke('cuppet:session:send', sessionId, text, attachments),
     stop: (sessionId) => ipcRenderer.invoke('cuppet:session:stop', sessionId),
+    undoStatus: (sessionId) => ipcRenderer.invoke('cuppet:session:undo:status', sessionId),
+    undo: (sessionId) => ipcRenderer.invoke('cuppet:session:undo', sessionId),
   },
   projects: {
     list: () => ipcRenderer.invoke('cuppet:project:list'),

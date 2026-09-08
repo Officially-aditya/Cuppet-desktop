@@ -7,6 +7,8 @@ export const VIEWER_DEVICE_SCOPES = ['session.read'];
 
 export const COMMAND_SCOPES = Object.freeze({
   'host.get':'session.read',
+  'status':'session.read',
+  'doctor':'session.read',
   'workspace.list':'session.read',
   'session.list':'session.read',
   'session.snapshot':'session.read',
@@ -64,6 +66,8 @@ export function publicEventFor(event) {
     case 'tool.finished': return { type:'tool.completed', payload:{ callID:event.callId ?? event.executionId ?? null, success:event.success === true, name:event.tool ?? null, paths:Array.isArray(event.paths) ? event.paths.slice(0,64) : [] }, sessionId:stringOr(event.sessionId) };
     case 'permission.requested': return { type:'permission.requested', payload:{ request:event.request }, sessionId:stringOr(event.request?.sessionId ?? event.sessionId) };
     case 'permission.resolved': return { type:'permission.resolved', payload:{ requestID:event.requestId, reply:event.reply ?? null }, sessionId:stringOr(event.sessionId) };
+    case 'question.requested': return { type:'question.requested', payload:{ request:event.request }, sessionId:stringOr(event.request?.sessionId ?? event.sessionId) };
+    case 'question.resolved': return { type:'question.resolved', payload:{ requestID:event.requestId, accepted:event.accepted === true }, sessionId:stringOr(event.sessionId) };
     case 'session.updated': return { type:'session.updated', payload:{ sessionID:event.session?.id ?? event.sessionId ?? null }, sessionId:stringOr(event.session?.id ?? event.sessionId) };
     case 'run.finished': return { type:'session.idle', payload:{}, sessionId:stringOr(event.sessionId) };
     case 'run.started': return { type:'session.updated', payload:{ sessionID:event.sessionId, running:true }, sessionId:stringOr(event.sessionId) };

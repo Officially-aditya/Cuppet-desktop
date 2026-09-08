@@ -16,6 +16,7 @@
   $('session').addEventListener('change', () => void resumeSession($('session').value));
   $('new-session').addEventListener('click', () => void newSession());
   $('plan').addEventListener('click', () => void togglePlan());
+  $('undo').addEventListener('click', () => void undoSession());
   $('model').addEventListener('change', () => void selectModel());
   $('effort').addEventListener('change', () => void selectEffort());
   $('stop').addEventListener('click', () => void command('session.abort').catch(showError));
@@ -73,6 +74,8 @@
       case 'tool.completed': addTool(`${frame.payload?.success ? '✓' : '✕'} ${frame.payload?.name ?? 'tool'}${frame.payload?.paths?.length ? ` · ${frame.payload.paths.join(', ')}` : ''}`); break;
       case 'permission.requested': renderPermission(frame.payload?.request); break;
       case 'permission.resolved': document.querySelector(`[data-permission="${cssEscape(frame.payload?.requestID)}"]`)?.remove(); break;
+      case 'question.requested': renderQuestion(frame.payload?.request); break;
+      case 'question.resolved': document.querySelector(`[data-question="${cssEscape(frame.payload?.requestID)}"]`)?.remove(); break;
       case 'session.idle': liveAssistant=null; await refreshSession(); break;
       case 'session.updated': if (frame.payload?.sessionID) activeSession=frame.payload.sessionID; await refreshSessions(); break;
       case 'agent.error': addBubble('system', `Error: ${frame.payload?.message ?? 'runtime error'}`); break;
@@ -82,26 +85,26 @@
 
   function command(type,payload={}) {
     if (!authed || ws?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Remote host is not connected.'));
-    return new Promise((resolve,reject)=>{const id=`c${Date.now().toString(36)}-${++commandCounter}`;const timer=setTimeout(()=>{pendingCommands.delete(id);reject(new Error(`${type} timed out.`));},10000);pendingCommands.set(id,{resolve,reject,timer});ws.send(JSON.stringify({version:1,id,type,ts:Date.now(),payload}));});
+    return new Promise((resolve,reject)=>{const id=`c${Date.now().toString(36)}-${++commandCounter}`;const timer=setTimeout(()=>{pendingCommands.delete(id);reject(new Error(`${type} timed out.`));},10000);pendingCommands.set(id,{resolve,reject,timer});ws.send(JSON.stringify({version:1,id,type,ts:Date.now(),...(activeSession?{sessionId:activeSession}:{}),payload}));});
   }
 
   async function bootstrap() {
     try {
       const host = await command('host.get'); $('host').textContent = `${host.name || 'Cuppet'} · ${host.hostId}`;
-      await refreshWorkspaces(); await refreshSessions(); await refreshSession(); await refreshPermissions(); await refreshModels();
+      await refreshWorkspaces(); await refreshSessions(); await refreshSession(); await refreshInteractive(); await refreshModels();
     } catch (error) { showError(error); }
   }
   function applyAttach(payload) {
     if (payload?.host) $('host').textContent = `${payload.host.name || 'Cuppet'} · ${payload.host.hostId}`;
     if (Array.isArray(payload?.workspaces)) renderWorkspaces(payload.workspaces);
-    if (Array.isArray(payload?.permissions)) { $('pending').replaceChildren(); for (const request of payload.permissions) renderPermission(request); }
+    if (Array.isArray(payload?.permissions)) { for (const request of payload.permissions) renderPermission(request); }
   }
   async function refreshWorkspaces(){renderWorkspaces(await command('workspace.list').catch(()=>[]));}
   function renderWorkspaces(values){const select=$('workspace');const before=select.value;select.replaceChildren();for(const workspace of values){const option=document.createElement('option');option.value=workspace.workspaceId;option.textContent=workspace.name+(workspace.missing?' (missing)':'');select.append(option);}if(before&&[...select.options].some((o)=>o.value===before))select.value=before;else if(select.value)void attachWorkspace(select.value);}
-  async function attachWorkspace(id){if(!id)return;await command('workspace.attach',{workspaceId:id});activeSession=null;await refreshSessions();await refreshSession();}
+  async function attachWorkspace(id){if(!id)return;await command('workspace.attach',{workspaceId:id});activeSession=null;await refreshSessions();await refreshSession();await refreshInteractive();}
   async function refreshSessions(){const list=await command('session.list').catch(()=>[]);const select=$('session');select.replaceChildren();for(const session of list){const option=document.createElement('option');option.value=session.id;option.textContent=session.title||session.id;select.append(option);}if(activeSession&&[...select.options].some((o)=>o.value===activeSession))select.value=activeSession;else if(select.value){activeSession=select.value;await command('session.resume',{sessionID:activeSession}).catch(()=>undefined);} }
-  async function resumeSession(id){if(!id)return;await command('session.resume',{sessionID:id});activeSession=id;await refreshSession();}
-  async function newSession(){const result=await command('session.new');activeSession=result.id;await refreshSessions();await refreshSession();}
+  async function resumeSession(id){if(!id)return;await command('session.resume',{sessionID:id});activeSession=id;await refreshSession();await refreshInteractive();}
+  async function newSession(){const result=await command('session.new');activeSession=result.id;await refreshSessions();await refreshSession();await refreshInteractive();}
   async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();return;}try{const [snap,messages]=await Promise.all([command('session.snapshot'),command('session.messages')]);currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderMessages(messages||[]);}catch{} }
 
   async function refreshModels(){
@@ -116,14 +119,38 @@
     select.replaceChildren(makeOption('','Default effort'),...(model?.variants||[]).map((value)=>makeOption(value,value)));
     select.disabled=!model?.variants?.length;if(current&&(model?.variants||[]).includes(current))select.value=current;
   }
-  async function selectModel(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{await command('model.select',{providerID,modelID});await refreshModels();}catch(showError);}
-  async function selectEffort(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{const payload={providerID,modelID,...($('effort').value?{variant:$('effort').value}:{})};await command('model.select',payload);await refreshModels();}catch(showError);}
+  async function selectModel(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{await command('model.select',{providerID,modelID});await refreshModels();}catch(error){showError(error);}}
+  async function selectEffort(){const [providerID,modelID]=$('model').value.split('|');if(!modelID)return;try{const payload={providerID,modelID,...($('effort').value?{variant:$('effort').value}:{})};await command('model.select',payload);await refreshModels();}catch(error){showError(error);}}
   function makeOption(value,label){const option=document.createElement('option');option.value=value;option.textContent=label;return option;}
 
   async function togglePlan(){if(!activeSession)return;const next=currentMode==='plan'?'build':'plan';await command('agent.mode.set',{mode:next});currentMode=next;$('plan').textContent=next==='plan'?'Plan':'Build';}
-  async function sendPrompt(){let text=$('prompt').value.trim();if(!text)return;if(!activeSession)await newSession();$('prompt').value='';addBubble('user',text);liveAssistant=null;try{const result=await command('session.submit',{prompt:text});if(result?.sessionId&&result.sessionId!==activeSession){activeSession=result.sessionId;await refreshSessions();}}catch(showError);}
-  async function refreshPermissions(){const values=await command('permission.list').catch(()=>[]);$('pending').replaceChildren();for(const request of values)renderPermission(request);}
-  function renderPermission(request){if(!request?.id||document.querySelector(`[data-permission="${cssEscape(request.id)}"]`))return;const row=document.createElement('div');row.className='permission';row.dataset.permission=request.id;const text=document.createElement('div');text.textContent=`${request.action || 'action'} · ${(request.resources||[]).join(', ')}`;const actions=document.createElement('div');actions.className='actions';for(const [label,reply] of [['Allow','once'],['Always exact','always'],['Reject','reject']]){const button=document.createElement('button');button.textContent=label;button.addEventListener('click',async()=>{try{await command('permission.reply',{requestID:request.id,reply});row.remove();}catch(showError);});actions.append(button);}row.append(text,actions);$('pending').append(row);}
+  async function undoSession(){if(!activeSession)return;try{const result=await command('session.undo');addBubble('system',result?.undone?`Undid ${result.path || 'latest Cuppet mutation'}.`:(result?.reason||'Nothing to undo.'));await refreshSession();}catch(error){showError(error);}}
+  async function sendPrompt(){let text=$('prompt').value.trim();if(!text)return;if(!activeSession)await newSession();$('prompt').value='';addBubble('user',text);liveAssistant=null;try{const result=await command('session.submit',{prompt:text});if(result?.sessionId&&result.sessionId!==activeSession){activeSession=result.sessionId;await refreshSessions();}}catch(error){showError(error);}}
+
+  async function refreshInteractive(){
+    const [permissions,questions]=await Promise.all([command('permission.list').catch(()=>[]),command('question.list').catch(()=>[])]);
+    $('pending').replaceChildren();for(const request of permissions)renderPermission(request);for(const request of questions)renderQuestion(request);
+  }
+  async function refreshPermissions(){const values=await command('permission.list').catch(()=>[]);for(const node of [...$('pending').querySelectorAll('[data-permission]')])node.remove();for(const request of values)renderPermission(request);}
+  function renderPermission(request){if(!request?.id||document.querySelector(`[data-permission="${cssEscape(request.id)}"]`))return;const row=document.createElement('div');row.className='permission';row.dataset.permission=request.id;const text=document.createElement('div');text.textContent=`${request.action || 'action'} · ${(request.resources||[]).join(', ')}`;const actions=document.createElement('div');actions.className='actions';for(const [label,reply] of [['Allow','once'],['Always exact','always'],['Reject','reject']]){const button=document.createElement('button');button.textContent=label;button.addEventListener('click',async()=>{try{await command('permission.reply',{requestID:request.id,reply});row.remove();}catch(error){showError(error);}});actions.append(button);}row.append(text,actions);$('pending').append(row);}
+  function renderQuestion(request){
+    if(!request?.id||document.querySelector(`[data-question="${cssEscape(request.id)}"]`))return;
+    const row=document.createElement('div');row.className='permission question';row.dataset.question=request.id;
+    const title=document.createElement('strong');title.textContent='Cuppet needs your input';row.append(title);
+    const groups=[];
+    for(const [index,question] of (request.questions||[]).entries()){
+      const group=document.createElement('fieldset');const legend=document.createElement('legend');legend.textContent=question.header||`Question ${index+1}`;const prompt=document.createElement('p');prompt.textContent=question.question||'';group.append(legend,prompt);
+      const options=Array.isArray(question.options)?question.options:[];
+      if(options.length){for(const option of options){const label=document.createElement('label');const input=document.createElement('input');input.type=question.multiple?'checkbox':'radio';input.name=`remote-question-${request.id}-${index}`;input.value=String(option.label||'').slice(0,512);const text=document.createElement('span');text.textContent=option.description?`${option.label} — ${option.description}`:option.label;label.append(input,text);group.append(label);}}
+      else{const input=document.createElement('textarea');input.rows=2;input.maxLength=512;input.placeholder='Type your answer…';group.append(input);}
+      groups.push({group,question});row.append(group);
+    }
+    const note=document.createElement('div');note.className='error';const actions=document.createElement('div');actions.className='actions';const answer=document.createElement('button');answer.textContent='Answer';const reject=document.createElement('button');reject.textContent='Reject';
+    answer.addEventListener('click',async()=>{const answers=groups.map(({group,question},index)=>{const options=Array.isArray(question.options)?question.options:[];if(options.length)return[...group.querySelectorAll(`input[name="remote-question-${cssEscape(request.id)}-${index}"]:checked`)].map((input)=>input.value).slice(0,12);const value=group.querySelector('textarea')?.value.trim()||'';return value?[value.slice(0,512)]:[];});if(answers.some((group)=>!group.length)){note.textContent='Answer every question first.';return;}setQuestionBusy(row,true);try{await command('question.reply',{requestID:request.id,answers});row.remove();}catch(error){note.textContent=error.message||String(error);setQuestionBusy(row,false);}});
+    reject.addEventListener('click',async()=>{setQuestionBusy(row,true);try{await command('question.reject',{requestID:request.id});row.remove();}catch(error){note.textContent=error.message||String(error);setQuestionBusy(row,false);}});
+    actions.append(answer,reject);row.append(note,actions);$('pending').append(row);
+  }
+  function setQuestionBusy(row,busy){for(const input of row.querySelectorAll('input,textarea,button'))input.disabled=busy;}
   function renderMessages(messages){$('transcript').replaceChildren();liveAssistant=null;for(const message of messages){if(message.role==='system')continue;addBubble(message.role==='user'?'user':'assistant',message.content||'');}}
   function addBubble(kind,text){const node=document.createElement('div');node.className=`bubble ${kind}`;node.textContent=text;$('transcript').append(node);scrollEnd();return node;}
   function ensureAssistant(){if(!liveAssistant||!liveAssistant.isConnected)liveAssistant=addBubble('assistant','');return liveAssistant;}

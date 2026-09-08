@@ -7,6 +7,7 @@ import {
   resolveAdvertisedSelection,
 } from '../provider-policy.mjs';
 import { modelMatchesProvider } from '../provider-catalog.mjs';
+import { buildRuntimeDoctor, buildRuntimeStatus } from '../diagnostics.mjs';
 
 export class RemoteCommandAdapter {
   #call; #identity; #provider=normalizeProviderConfiguration({}); #states=new Map();
@@ -20,6 +21,8 @@ export class RemoteCommandAdapter {
     const explicitSession=stringOr(envelope.sessionId) ?? stringOr(params.sessionID) ?? stringOr(params.sessionId);
     switch(type){
       case 'host.get': return this.#hostGet(state);
+      case 'status': return buildRuntimeStatus({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.8.0-alpha.1' });
+      case 'doctor': return buildRuntimeDoctor({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.8.0-alpha.1' });
       case 'workspace.list': return this.#workspaceList(state);
       case 'workspace.attach': return this.#workspaceAttach(state,params.workspaceId ?? params.projectId);
       case 'session.list': return this.#call('session.list',state.projectId?{projectId:state.projectId}:{});
@@ -31,12 +34,12 @@ export class RemoteCommandAdapter {
       case 'session.steer': return this.#sessionSteer(state,explicitSession,params);
       case 'session.abort': return this.#call('session.stop',{sessionId:this.#requireSession(state,explicitSession)});
       case 'session.compact': return this.#call('context.compact',{sessionId:this.#requireSession(state,explicitSession),provider:this.#selectedProvider(state)});
-      case 'session.undo': throw new Error('Undo is unavailable until the independent runtime has an authoritative mutation journal.');
+      case 'session.undo': return this.#call('session.undo',{sessionId:this.#requireSession(state,explicitSession)});
       case 'permission.list': return this.#call('permission.list',{...(explicitSession?{sessionId:explicitSession}:{})});
       case 'permission.reply': return this.#permissionReply(params);
-      case 'question.list': return [];
-      case 'question.reply':
-      case 'question.reject': throw new Error('Interactive question requests are not implemented by the independent runtime.');
+      case 'question.list': return this.#call('question.list',{...(explicitSession?{sessionId:explicitSession}:{})});
+      case 'question.reply': return this.#questionReply(params);
+      case 'question.reject': return this.#questionReject(params);
       case 'model.list': return this.#modelList(state);
       case 'model.select': return this.#modelSelect(state,params);
       case 'provider.list': return this.#providerList(state);
@@ -50,7 +53,7 @@ export class RemoteCommandAdapter {
 
   async #hostGet(state){
     const workspaces=await this.#workspaceList(state);
-    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.7.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
+    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.8.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
   }
   async #workspaceList(state){
     const projects=await this.#call('project.list',{});
@@ -87,6 +90,14 @@ export class RemoteCommandAdapter {
     if(!requestId)throw new Error('permission request id is required'); if(!['once','always','reject'].includes(reply))throw new Error('permission reply must be once, always, or reject');
     return this.#call('permission.reply',{requestId,reply});
   }
+  async #questionReply(params){
+    const request=record(params.request);const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id);if(!requestId)throw new Error('question request id is required');
+    const answers=boundedAnswers(params.answers);return this.#call('question.reply',{requestId,answers});
+  }
+  async #questionReject(params){
+    const request=record(params.request);const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id);if(!requestId)throw new Error('question request id is required');
+    return this.#call('question.reject',{requestId});
+  }
 
   #modelList(state){
     const projection=providerProjection(this.#provider);
@@ -117,8 +128,6 @@ export class RemoteCommandAdapter {
     return {...selected};
   }
 
-  // Provider endpoint details and credentials are local configuration. Remote
-  // receives only the normalized catalog and connection readiness.
   #providerList(state){
     const projection=providerProjection(this.#provider);
     return projection.catalog.map((provider)=>({
@@ -138,7 +147,7 @@ export class RemoteCommandAdapter {
     if(state.selection&&!modelMatchesProvider(state.selection,provider))state.selection=null;
     return {id:provider.id,selected:true};
   }
-  async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return {mode:result.mode};}
+  async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return{mode:result.mode};}
   async #modeSet(state,explicit,params){const sessionId=this.#requireSession(state,explicit);const raw=String(params.agent??params.mode??'');if(!['plan','build'].includes(raw))throw new Error('agent/mode must be plan or build');return this.#call('session.mode.set',{sessionId,mode:raw});}
 
   #selectedProvider(state){
@@ -182,4 +191,5 @@ function displayPath(path,name){if(typeof path!=='string'||!path)return name??'P
 function record(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
 function stringOr(value){return typeof value==='string'&&value?value:undefined;}
 function boundedAttachments(values){return Array.isArray(values)?values.slice(0,16).flatMap((item)=>record(item).path||record(item).name?[{...(stringOr(record(item).name)?{name:String(record(item).name).slice(0,240)}:{}),...(stringOr(record(item).path)?{path:String(record(item).path).slice(0,512)}:{}),...(stringOr(record(item).mime)?{mime:String(record(item).mime).slice(0,128)}:{}),...(Number.isFinite(record(item).size)?{size:Math.max(0,Math.trunc(record(item).size))}:{})}]:[]):[];}
+function boundedAnswers(values){return Array.isArray(values)?values.slice(0,8).map((group)=>Array.isArray(group)?group.slice(0,12).flatMap((value)=>typeof value==='string'&&value.trim()?[value.trim().slice(0,512)]:[]):[]):[];}
 async function waitUntilIdle(call,sessionId){for(let i=0;i<100;i++){const session=await call('session.get',{sessionId});const last=[...(session.messages??[])].reverse().find((message)=>message.role==='assistant');if(!last||last.status!=='streaming')return;await new Promise((resolve)=>setTimeout(resolve,10));}throw new Error('session did not stop before steer');}

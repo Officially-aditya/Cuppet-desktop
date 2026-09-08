@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "phase": "E",
+  "name": "session-control-parity",
+  "version": "0.8.0-alpha.1",
+  "requirements": {
+    "sessionForkCopiesDurableTranscript": true,
+    "sessionForkCopiesProjectBinding": true,
+    "sessionForkCopiesToolAudit": false,
+    "losslessPlanForkRemapsMessageIds": true,
+    "headlessExplicitSession": true,
+    "headlessContinueLatest": true,
+    "headlessFork": true,
+    "headlessStatus": true,
+    "headlessDoctor": true,
+    "headlessUndo": true,
+    "questionsRuntimeOwned": true,
+    "questionsDesktopAnswerable": true,
+    "questionsRemoteAnswerable": true,
+    "questionsNoninteractiveFailClosed": true,
+    "undoRuntimeOwned": true,
+    "undoPersistentAcrossRestart": true,
+    "undoHashChecked": true,
+    "undoRestoresExactPreimage": true,
+    "undoRestoresRawBytes": true,
+    "undoRequiresOriginalWorkspace": true,
+    "undoCrossesOpaqueShellBarrier": false,
+    "undoOverwritesExternalEdits": false
+  },
+  "authority": {
+    "conversation": "sqlite",
+    "toolAudit": "sqlite-tool-executions",
+    "canonicalPlan": "lossless-plan-store",
+    "questions": "question-broker",
+    "undo": "mutation-journal",
+    "remote": "transport-only"
+  },
+  "remote": {
+    "questionListScope": "session.read",
+    "questionWriteScope": "question.write",
+    "undoScope": "session.write",
+    "statusDoctorScope": "session.read"
+  },
+  "limits": {
+    "questionsPerRequest": 8,
+    "optionsPerQuestion": 12,
+    "answersPerQuestion": 12,
+    "answerChars": 512,
+    "undoJournalEntriesPerSession": 256,
+    "undoSnapshotBytes": 1048576
+  },
+  "security": {
+    "undoUsesGitResetHard": false,
+    "undoUsesGitCheckoutRestore": false,
+    "undoUsesGitClean": false,
+    "undoRequiresCurrentPostimageMatch": true,
+    "undoRequiresOriginalWorkspace": true,
+    "opaqueShellMutationIsUndoBarrier": true,
+    "journalSnapshotEncoding": "base64",
+    "journalStoresProviderCredentials": false,
+    "rendererCanCallArbitraryRuntimeMethod": false,
+    "remoteCanBypassQuestionScope": false,
+    "remoteCanBypassUndoScope": false
+  }
+}

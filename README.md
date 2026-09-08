@@ -4,60 +4,96 @@ Independent desktop/runtime migration for Cuppet.
 
 ## Current increment
 
-**Phase D — independent provider, model-role, and reasoning/effort parity: implemented candidate.**
+**Phase E — independent session/control parity: implemented candidate (`0.8.0-alpha.1`).**
 
-Cuppet now owns provider/model policy independently of the old OpenCode controller. The local host keeps provider credentials and endpoint authority, while a sanitized provider catalog carries coding-capable model metadata, independent primary/secondary role selections, and supported reasoning/effort variants across desktop, headless, and Remote surfaces.
+Cuppet now owns the remaining shared session/control behavior without rebuilding an OpenCode-shaped controller:
 
-Reasoning/effort is lowered into provider request metadata rather than prompt text. Live provider variants win over the legacy compatibility bridge, bridge data is recursively sanitized before persistence/projection, and Remote devices may select only host-advertised provider/model/effort combinations.
+- durable headless session resume, continue, fork, status, doctor, and undo;
+- a runtime-owned interactive `QuestionBroker` shared by Desktop and Remote;
+- a private, byte-exact, hash-checked `MutationJournal` for safe undo of Cuppet-owned file mutations;
+- Desktop, browser Remote, and headless surfaces routed to the same runtime authorities.
 
-Phases A, B, B1, B2, C1, and C2 remain intact: SQLite conversations, project import/binding, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned coding tools, permissions, and host-authoritative remote control remain authoritative.
+Phases A through D remain intact: SQLite conversation/project state, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned coding tools and permissions, host-authoritative Remote, and independent provider/model/effort policy.
 
-The production source still has **no OpenCode dependency**.
+The production source has **no OpenCode dependency**.
 
-### Run it
+## Run it
 
 ```bash
 npm install
 npm start
 ```
 
-Open **Provider settings** and configure the local provider ID/base URL, primary model, optional secondary/background model, supported effort selections, and API key. Provider keys remain encrypted through Electron `safeStorage` and are never exposed to the renderer.
+Open **Provider settings** and configure the local provider ID/base URL, primary model, optional secondary/background model, supported effort selection, and API key. Provider credentials remain encrypted through Electron `safeStorage` and never enter renderer authority.
 
-## Provider, model-role, and effort policy
+## Session and control parity
 
-Phase D separates local secret/transport configuration from reusable non-secret model policy:
-
-- provider API key and endpoint authority stay on the local host;
-- primary and secondary roles are independently persisted and resolved;
-- model catalogs require coding-agent capability: text input/output, streaming, and tool calling;
-- OpenAI/Azure and Vertex/Vertex-Anthropic aliases remain grouped without crossing vendors;
-- unknown/future provider IDs can participate when they advertise the required capability contract;
-- live variants and the compatibility variant bridge are sanitized before projection;
-- effort/reasoning metadata is applied once at provider-request lowering, while auth, selected model, prompts, and runtime tools remain authoritative;
-- the background memory canonicalizer uses the independent secondary role and secondary effort;
-- desktop, headless, and Remote expose the same non-secret provider/model/variant policy.
-
-The independent CLI can inspect the sanitized host policy:
+The independent CLI supports durable continuation and inspection:
 
 ```bash
-cuppet models --provider-id openai-compatible --model <model-id> --effort <variant>
+cuppet prompt "Continue this task" --session <session-id>
+cuppet prompt "Continue the latest task" --continue
+cuppet prompt "Try another approach" --session <session-id> --fork
+cuppet sessions
+cuppet status
+cuppet doctor
+cuppet undo --session <session-id>
 ```
 
-Headless provider configuration stays local through `CUPPET_PROVIDER_ID`, `CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BACKGROUND_MODEL`, `CUPPET_EFFORT`, `CUPPET_BACKGROUND_EFFORT`, and `CUPPET_BASE_URL`. Optional non-secret discovery metadata can be provided through `CUPPET_MODEL_CATALOG_JSON` and `CUPPET_VARIANT_BRIDGE_JSON`.
+A session fork transactionally copies the durable visible transcript and project binding into a new SQLite session. Historical `tool_executions` are deliberately **not** cloned because they are audit records belonging to the source session. If a lossless canonical plan exists, it is copied separately and its source-message IDs are remapped to the forked transcript.
+
+Forking a currently streaming session fails closed.
+
+### Interactive questions
+
+`QuestionBroker` is the only authority for model-requested user questions.
+
+```text
+model question tool
+      │
+      ▼
+QuestionBroker
+  ├── question.requested
+  │      ├── Desktop
+  │      └── authorized Remote device
+  ├── reply  → bounded answers resume the tool loop
+  └── reject → explicit tool failure
+```
+
+Question requests are bounded to eight questions, twelve options per question, twelve answer values per question, and 512 characters per answer value. Desktop and Remote recover pending requests through `question.list`, so a renderer reload or reconnect does not lose a blocked question.
+
+Headless/noninteractive runs fail closed instead of waiting indefinitely for unavailable user interaction.
+
+### Conflict-safe undo
+
+Undo is runtime-owned by `MutationJournal`. It does **not** use `git reset`, `git checkout`, `git restore`, `git clean`, or transcript deletion.
+
+For deterministic `workspace_edit` and `workspace_write` calls, Cuppet records:
+
+- the exact raw pre-mutation bytes, persisted as base64;
+- the SHA-256 post-mutation hash;
+- the original canonical project workspace;
+- the durable SQLite `tool_executions` ID that performed the mutation.
+
+Journal state is private runtime data, persisted atomically in a `0700` directory with `0600` files. The journal keeps at most 256 entries per session and snapshots files up to 1 MiB.
+
+Undo succeeds only when the session is idle, the original workspace is still attached, and the current file still matches Cuppet's recorded postimage. It then restores the exact recorded bytes—or removes a file Cuppet created—and verifies the restored hash before marking the entry undone.
+
+If a user, editor, hook, formatter, or another process changes the file afterward, Cuppet refuses to overwrite that work. Rebinding/relocating the session to a different checkout also fails closed.
+
+A successful shell command that leaves Git-visible workspace mutations creates an **opaque undo barrier**. Cuppet will not guess how to reverse arbitrary shell behavior or cross that barrier with destructive Git commands.
 
 ## Remote control
 
-The desktop **Remote** surface can start/stop the local host, use a manual relay or the managed Cuppet account-link flow, create trusted/viewer pairing invitations, list paired devices, and revoke them.
+The desktop **Remote** surface can start/stop the local host, use a manual relay or managed Cuppet account-link flow, create trusted/viewer pairing invitations, list paired devices, and revoke them.
 
-The same implementation is available headlessly:
+Headless equivalents:
 
 ```bash
 cuppet remote-control
 cuppet relay
 cuppet remote-enroll --token <session-token>
 ```
-
-A remote device cannot provide or retrieve host provider credentials/endpoints. It can select only a model/effort combination already advertised by the host policy; the host performs the final request lowering locally.
 
 Remote protocol v1 preserves:
 
@@ -69,11 +105,40 @@ Remote protocol v1 preserves:
 - single-use short-lived pairing invites;
 - viewer read-only scope;
 - host/device-bound Ed25519 managed tokens;
-- host replacement invalidating previously authenticated device authority.
+- host replacement invalidating prior device authority.
 
-The self-host relay is a trusted transport, not an end-to-end-encrypted boundary. Use TLS before exposing it outside localhost.
+Phase E adds shared control routing without moving authority to the relay:
 
-Two old command surfaces intentionally still fail instead of inventing authority: `session.undo` waits for an independent mutation journal, and interactive question reply/reject waits for an independent runtime question broker. Those are now explicit post-D migration obligations.
+- `question.list` → `session.read`;
+- `question.reply` / `question.reject` → `question.write`;
+- `session.undo` → `session.write`;
+- `status` / `doctor` → `session.read`.
+
+Remote devices cannot provide or retrieve host provider credentials/endpoints. Provider/model/effort selection remains constrained to host-advertised policy, and the host performs final request lowering locally.
+
+The self-host relay is a trusted transport, **not** an end-to-end-encrypted boundary. Use TLS before exposing it outside localhost.
+
+## Provider, model-role, and effort policy
+
+Phase D remains the provider-policy authority:
+
+- provider API key and endpoint authority stay on the local host;
+- primary and secondary roles are independently persisted and resolved;
+- model catalogs require text input/output, streaming, and tool-calling capability;
+- OpenAI/Azure and Vertex/Vertex-Anthropic aliases remain grouped without crossing vendors;
+- future provider IDs can participate when they advertise the required capability contract;
+- live variants and compatibility bridge data are sanitized before projection;
+- effort/reasoning is lowered into provider request metadata, not prompt text;
+- the background canonicalizer uses the independent secondary model role;
+- Desktop, headless, and Remote expose the same non-secret model/variant policy.
+
+Inspect the sanitized host policy with:
+
+```bash
+cuppet models --provider-id openai-compatible --model <model-id> --effort <variant>
+```
+
+Headless provider configuration stays local through `CUPPET_PROVIDER_ID`, `CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BACKGROUND_MODEL`, `CUPPET_EFFORT`, `CUPPET_BACKGROUND_EFFORT`, and `CUPPET_BASE_URL`. Optional non-secret discovery metadata can be provided through `CUPPET_MODEL_CATALOG_JSON` and `CUPPET_VARIANT_BRIDGE_JSON`.
 
 ## Runtime-owned coding tools
 
@@ -82,8 +147,9 @@ Project-bound chats expose a deliberately small tool surface:
 - `tst_explore` — TST workspace/tree/search/trace discovery;
 - `tst_read` — exact bounded filesystem reads;
 - `workspace_edit` — precise text replacement;
-- `workspace_write` — bounded UTF-8 file creation/replacement;
+- `workspace_write` — bounded file creation/replacement;
 - `bash` — project-scoped shell execution;
+- `question` — bounded interactive user input through `QuestionBroker`;
 - `cuppet_plan` — lossless implementation-plan retrieval;
 - `cuppet_memory_search` — Cuppet memory retrieval.
 
@@ -91,7 +157,7 @@ General chats do not receive filesystem or shell tools.
 
 ### Structural exploration first
 
-`tst_explore` consolidates the old graph navigation surface into four modes:
+`tst_explore` consolidates structural navigation:
 
 ```text
 workspace → bounded project overview
@@ -100,13 +166,9 @@ search    → structural symbol/path localization
 trace     → bounded caller/callee/dependency trace
 ```
 
-TST owns structural discovery; it does **not** become source-content authority. After navigation, `tst_read` resolves and reads the current filesystem file.
-
-Identical exploration calls are cached per session. Repeating the same query returns a compact reference rather than paying for duplicate graph output.
+TST owns structural discovery, not source-content truth. `tst_read` resolves and reads the current filesystem after navigation. Identical exploration calls are cached per session so duplicate graph output is not repeatedly sent to the model.
 
 ### Provider tool loop
-
-The OpenAI-compatible provider adapter reconstructs streamed `tool_calls`, including fragmented names and JSON arguments.
 
 ```text
 SQLite durable transcript
@@ -118,84 +180,54 @@ Provider inference
    │                 │
    │ text            │ tool call
    ▼                 ▼
-visible stream   ToolRuntime
+visible stream   JournaledToolRuntime
                      │
-                     ▼
-              PermissionBroker
-                │ allow/deny
-                ▼
-               execute
-                │
-                ├── bounded tool result → provider loop
-                ├── durable audit → SQLite tool_executions
-                └── observed/mutated paths → PE3
+                     ├── QuestionBroker
+                     ├── PermissionBroker
+                     └── ToolRuntime
+                            │
+                            ├── bounded result → provider loop
+                            ├── durable audit → SQLite tool_executions
+                            ├── reversible mutation → MutationJournal
+                            └── observed/mutated paths → PE3
 ```
 
-Provider-only tool-call/tool-result messages are ephemeral. They are not appended to the visible SQLite `messages` transcript.
+Provider-only tool-call/tool-result messages remain ephemeral and are not appended to the visible SQLite message transcript.
 
 ## Permission boundary
 
-Permissions are runtime policy, not model policy and not renderer/remote policy.
+Permissions are runtime policy, not model, renderer, or Remote policy.
 
-### Reads
+Ordinary project reads remain automatic. Sensitive files such as `.env`, credential-like files, private keys, and certificates require approval; Cuppet-owned credential/runtime files are denied. Edits/writes require approval unless narrow session-scoped **guarded auto** is enabled and the exact path passes containment/sensitivity checks.
 
-Ordinary project reads remain automatic. Sensitive files such as `.env`, credential-like files, private keys, and certificates require approval. `.env.example` remains readable as template/documentation data.
+Only a pinned metadata-only shell command family can run automatically. Arbitrary commands, shell chaining/redirection/expansion, installs, builds, tests, mutations, and path-bearing discovery commands require permission.
 
-Cuppet-owned credential/runtime files are denied rather than merely prompted.
-
-### Edits and writes
-
-Edits/writes require approval unless **guarded auto** is enabled for that session and the exact path passes containment and sensitivity checks.
-
-Guarded auto is intentionally narrow:
-
-- session-scoped;
-- project-contained files only;
-- no sensitive paths;
-- no symlink escapes;
-- no shell-command auto approval.
-
-### Safe bash
-
-Only the pinned metadata-only command family can run automatically:
-
-- `pwd`;
-- `ls` with a small flag allowlist and no path operand;
-- bounded read-only `git status`, `git log --oneline`, `git branch`, `git ls-files`, and selected `git rev-parse`;
-- common toolchain version commands.
-
-Arbitrary commands, shell chaining/redirection/expansion, installs, builds, tests, mutation commands, and path-bearing discovery commands require permission.
-
-### Visible permission choices
-
-When a model requests protected work, the desktop or an authorized remote device can choose:
+Visible approval choices are:
 
 - **Allow once**;
 - **Always this exact request**;
 - **Reject**;
-- **Enable guarded auto** only from the local desktop when the runtime marks the workspace resource eligible.
+- **Enable guarded auto** from the local Desktop only when eligible.
 
-“Always” is an exact action + exact resource fingerprint for the current session. It is not a wildcard rule.
-
-Plan mode remains read-only at the runtime boundary. Noninteractive/headless execution fails closed when an operation would require consent.
+“Always” is an exact action + exact resource fingerprint for the current session, never a wildcard. Plan mode stays read-only and noninteractive execution fails closed when consent is required.
 
 ## Durable tool audit
 
-SQLite `tool_executions` is the authority for model-requested tool execution history. It stores tool name, call ID, argument JSON, bounded output, status, permission source, and timestamps separately from visible chat messages.
+SQLite `tool_executions` is the authority for model-requested execution history. It stores tool name, provider call ID, argument JSON, bounded output, terminal status, permission source, and timestamps separately from visible chat messages.
 
-A stale `running` row after process restart is converted to an interrupted error rather than being treated as a successful tool.
+A stale `running` row after restart becomes an interrupted error rather than a false success.
 
-Runtime limits include:
+Key runtime limits:
 
 - 64 tool calls per generation;
 - 128 KiB tool output;
-- 1 MiB file read/edit/write ceiling;
+- 1 MiB file read/edit/write and undo snapshot ceiling;
 - 16 resources per permission request;
 - 120-second maximum shell timeout.
 
 ## PE3 task-local routing
 
-B2 remains the task-context scheduler for project chats:
+PE3 remains the project task-context scheduler:
 
 ```text
 incoming project prompt
@@ -218,18 +250,11 @@ local sentence embedding
         └─ low confidence / failure → continue active task
 ```
 
-Tool execution feeds PE3 directly:
-
-- successful exploration/read → observed paths;
-- successful edit/write → workspace mutation;
-- shell commands that leave Git-visible changes → workspace mutation;
-- rejected/failed tools → no path-privilege update.
-
-Cross-task routing remains transactional: prepare → target accept → SQLite transaction → router commit. Task contexts are ordinary SQLite sessions; PE3 stores only bounded routing metadata.
+Successful exploration/read feeds observed paths; successful edit/write and Git-visible shell changes feed workspace mutation. Rejected/failed tools do not gain path privilege. Cross-task routing remains transactional: prepare → target accept → SQLite transaction → router commit.
 
 ## Cognitive runtime
 
-B1's detached context architecture remains unchanged:
+Synthetic retrieval remains detached from durable conversation truth:
 
 ```text
 SQLite durable task transcript
@@ -248,39 +273,21 @@ Provider + runtime tool loop
 SQLite durable assistant result
 ```
 
-Synthetic retrieval/context is never written back into the visible conversation.
+Foreground synthetic context is capped at 2,048 tokens, targeting 4% of usable provider context with a 512-token floor. STM / graph / verified LTM allocation remains 45 / 35 / 20, with cache-stable memoization by session + user-message epoch. History trimming fails closed without complete TST coverage.
 
-### Foreground context
+Build/Plan mode is session-persisted. Plan mode can use up to 12% of usable context, capped at 16K tokens, with workspace / graph / STM / LTM allocation of 70 / 15 / 10 / 5. `LosslessPlanStore` preserves canonical source requirements independently from todo/chat projection.
 
-- maximum synthetic context: 2,048 tokens;
-- target budget: 4% of usable provider context, with a 512-token floor;
-- STM / graph / verified LTM allocation: 45 / 35 / 20;
-- context memoized by session + current user-message epoch for cache stability;
-- history trimming remains fail-closed without complete TST coverage.
-
-### Plan mode and lossless requirements
-
-Build/Plan mode remains session-persisted. Plan mode can use up to 12% of usable context, capped at 16K tokens, with workspace projection / graph / STM / LTM allocation of 70 / 15 / 10 / 5.
-
-`LosslessPlanStore` preserves canonical source requirements independently from todo/chat projection and exposes stable `P01`, `P02`, … phases.
-
-### TST / STM and memory
-
-When `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN` are configured, the runtime lazily connects to authenticated `cuppet.tst.v3`. TST remains optional for desktop startup.
-
-If TST is unavailable, unsafe history replacement/STM compaction fails closed and structural `tst_explore` reports that the graph is unavailable rather than inventing topology.
-
-The secondary/background model remains a canonicalizer only. `model_candidate` output does not gain durable promotion authority merely because a model selected it.
+When `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN` are configured, the runtime lazily connects to authenticated `cuppet.tst.v3`. TST is optional for startup; unsafe history replacement and STM compaction fail closed when it is unavailable. The secondary/background model remains a canonicalizer only and cannot promote its own `model_candidate` output into trusted memory.
 
 ## Projects
 
-Phase B remains intact:
+Project behavior remains unchanged:
 
-- **Local folder** — register an existing folder; detect Git root/origin when available.
-- **GitHub URL** — clone normal HTTPS/SSH `github.com` repositories with existing credentials.
-- **GitHub repositories** — browse using an already-authenticated `gh` CLI session and clone the selected repository.
+- **Local folder** — register an existing folder and detect Git root/origin;
+- **GitHub URL** — clone normal HTTPS/SSH `github.com` repositories with existing credentials;
+- **GitHub repositories** — browse through an already-authenticated `gh` CLI session and clone the selected repository.
 
-Chats remain permanently bound to their project. Switching projects cannot retarget an active run, removing a registration does not delete the checkout, and missing folders can be relocated without losing history.
+Chats stay permanently bound to their project. Switching projects cannot retarget an active run, removing a registration does not delete the checkout, and missing folders can be relocated without losing conversation history. Phase E additionally refuses to replay an old undo entry against a different canonical checkout.
 
 ## Phase gates
 
@@ -293,9 +300,10 @@ npm run phaseb2:verify
 npm run phasec1:verify
 npm run phasec2:verify
 npm run phased:verify
+npm run phasee:verify
 ```
 
-D verifies provider grouping/capability discovery, independent primary/secondary role resolution, effort/variant sanitization and request lowering, background secondary-role execution, desktop/headless/Remote projection parity, host-only secret/endpoint authority, and Remote selection restricted to host-advertised model/effort choices.
+Phase E verifies all earlier contracts plus durable continuation/fork semantics, lossless-plan remapping, status/doctor privacy, bounded question brokerage, Desktop/Remote scope routing, byte-exact restart-persistent undo, external-edit conflicts, original-workspace binding, opaque shell barriers, durable audit-ID linkage, UI syntax, and the absence of destructive Git restoration or a production OpenCode dependency.
 
 ## Architecture
 
@@ -303,14 +311,16 @@ D verifies provider grouping/capability discovery, independent primary/secondary
 Electron renderer
     ├── conversations/projects
     ├── provider/model/effort controls
-    ├── permission decision UI
-    └── Remote lifecycle UI
+    ├── permission decisions
+    ├── question responses
+    ├── session Undo
+    └── Remote lifecycle
           │ narrow contextBridge
           ▼
 Electron main
     ├── native folder picker
     ├── OS-encrypted provider credentials/endpoints
-    └── sanitized provider/model policy projection
+    └── bounded runtime IPC methods
           │ NDJSON runtime protocol
           ▼
 Independent Node runtime
@@ -324,20 +334,13 @@ Independent Node runtime
     ├── ContextCompiler / LosslessPlanStore
     ├── TST / STM bridge
     ├── PermissionBroker
-    ├── ToolRuntime
-    │    ├── tst_explore / tst_read
-    │    ├── workspace_edit / workspace_write
-    │    └── bash
+    ├── QuestionBroker
+    ├── MutationJournal
+    ├── JournaledToolRuntime / ToolRuntime
     ├── evidence-gated background enricher
     ├── ProviderPolicy
-    │    ├── primary/secondary role selection
-    │    ├── sanitized model/variant catalog
-    │    └── one-step request lowering
     ├── OpenAI-compatible execution adapter
     ├── RemoteManager / RemoteBridge
-    │    ├── host identity + device scopes
-    │    ├── local/JWT authentication
-    │    └── host-advertised model/effort selection
     └── generation/tool cancellation
           │ outbound WebSocket only
           ▼
@@ -347,23 +350,27 @@ Cuppet relay
     └── optional browser Remote client
 ```
 
-Authority stays explicit:
+## Authority map
+
+Each fact/state class has one authority; everything else is a projection, index, cache, or transport:
 
 - filesystem → source/workspace truth;
 - TST graph → structural navigation;
 - SQLite project rows → project registration identity;
 - SQLite sessions/messages → visible task/conversation truth;
-- SQLite tool executions → durable tool audit;
-- PermissionBroker → protected-operation approval authority;
+- SQLite `tool_executions` → durable tool audit;
+- `PermissionBroker` → protected-operation approval;
+- `QuestionBroker` → pending interactive question state;
+- `MutationJournal` → reversible Cuppet-owned file mutation state;
 - PE3 registry → bounded task-routing metadata only;
-- LosslessPlanStore → canonical implementation requirements;
+- `LosslessPlanStore` → canonical implementation requirements;
 - TST LTM → verified reusable memory;
-- CognitiveStateStore → mode/orchestrator/background controls;
-- Electron main/headless host → provider-secret/endpoint authority;
-- ProviderPolicy → non-secret provider/model/role/effort policy and request lowering;
-- remote device state → ephemeral advertised model/effort selection only;
+- `CognitiveStateStore` → mode/orchestrator/background controls;
+- Electron main/headless host → provider secret/endpoint authority;
+- `ProviderPolicy` → non-secret provider/model/role/effort policy and request lowering;
+- Remote device state → scoped presentation/selection state only;
 - relay → transport/presence only;
-- renderer → presentation/navigation/approval/policy projection only.
+- renderer → presentation/navigation only.
 
 ## Migration docs
 
@@ -378,9 +385,11 @@ Authority stays explicit:
 - Phase C2 contract: [`migration/phase-c2-contract.json`](migration/phase-c2-contract.json)
 - Phase D provider/model/effort: [`docs/phase-d-provider-model-effort.md`](docs/phase-d-provider-model-effort.md)
 - Phase D contract: [`migration/phase-d-contract.json`](migration/phase-d-contract.json)
+- Phase E session/control parity: [`docs/phase-e-session-control.md`](docs/phase-e-session-control.md)
+- Phase E contract: [`migration/phase-e-contract.json`](migration/phase-e-contract.json)
 
 ## Migration rule
 
-A later phase may replace an old OpenCode mechanism, but it may not silently replace Cuppet policy. Context compilation, plans, PE3, evidence-gated memory, permissions, model roles, session controls, and remote compatibility remain explicit migration obligations.
+A later phase may replace an old mechanism, but it may not silently replace Cuppet policy or create a second authority. Context compilation, plans, PE3, evidence-gated memory, permissions, provider policy, questions, undo, session controls, and Remote compatibility remain explicit contracts.
 
-**Next gate after D: E** — complete the remaining shared session/control compatibility that still intentionally fails closed: independent undo/mutation ownership, interactive question brokerage, and the remaining headless session-resume/fork/status/doctor command semantics. Phase E must reuse the existing SQLite/runtime authorities rather than rebuilding an OpenCode-shaped controller.
+**Phase E completes the currently defined migration acceptance sequence through shared session/control parity.** Any later increment should start from the same authority-map rule rather than reopening controller duplication.

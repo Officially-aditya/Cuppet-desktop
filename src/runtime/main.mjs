@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { RuntimeService } from './service.mjs';
 import { RemoteManager } from './remote/manager.mjs';
 import { normalizeProviderConfiguration } from './provider-policy.mjs';
+import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -19,6 +20,8 @@ remote = new RemoteManager({ dataDir, call: (method, params) => service.handle(m
 
 async function handle(method, params = {}) {
   switch (method) {
+    case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.8.0-alpha.1' });
+    case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.8.0-alpha.1' });
     case 'remote.status': return remote.status();
     case 'remote.start': return remote.start({ ...params, provider: boundedProvider(params.provider) });
     case 'remote.stop': return remote.stop();

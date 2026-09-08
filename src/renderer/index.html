@@ -23,6 +23,7 @@
       <div><div id="conversation-title" class="conversation-title">New chat</div><div id="project-status" class="project-status">General chat</div><div id="runtime-status" class="runtime-status">Starting runtime…</div></div>
       <div class="topbar-actions">
         <button id="mode-toggle" type="button" class="control-pill" title="Switch this chat between Build and Plan mode">Build</button>
+        <button id="undo-button" type="button" class="control-pill" title="Undo the latest Cuppet-owned reversible workspace mutation">Undo</button>
         <button id="orchestrator-toggle" type="button" class="control-pill" title="Primary model curates context explicitly when enabled">Orchestrator off</button>
         <button id="background-toggle" type="button" class="control-pill" title="Pause or resume background memory enrichment">Background on</button>
         <span id="tst-pill" class="provider-pill">TST off</span>
@@ -56,5 +57,5 @@
 <label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
 <label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
 <label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
-<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script><script src="permissions.js" defer></script><script src="remote.js" defer></script>
+<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script>
 </body></html>
