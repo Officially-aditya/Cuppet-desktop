@@ -14,7 +14,7 @@ test('background model only emits model_candidate observations and explicit user
     async recordEvidence(...args) { calls.push(['evidence', ...args]); },
   };
   const output = JSON.stringify({ candidates: [{ key: 'package manager', value: 'Use pnpm', kind: 'preference', scope: 'project', source_ids: ['s0'], relation: 'support' }] });
-  const worker = new BackgroundEnricher({ providerFactory: providerFactory(output), tst, idleMs: 0, cooldownMs: 0 });
+  const worker = new BackgroundEnricher({ providerFactory: providerFactory(output), tst, idleMs: 60_000, cooldownMs: 0 });
   await worker.ready();
   worker.setProviderConfig({ apiKey: 'test', model: 'secondary' });
   await worker.recordTurn({ sessionID: 's1', projectID: 'p1', userText: 'I prefer pnpm for this project', assistantText: 'Understood' });
@@ -30,10 +30,26 @@ test('background candidate containing secrets is rejected before TST observation
   const calls = [];
   const tst = { configured: true, async observeMemory(...args) { calls.push(args); } };
   const output = JSON.stringify({ candidates: [{ key: 'api_key', value: 'sk-super-secret-value-123456789', kind: 'preference', source_ids: ['s0'] }] });
-  const worker = new BackgroundEnricher({ providerFactory: providerFactory(output), tst, idleMs: 0, cooldownMs: 0 });
+  const worker = new BackgroundEnricher({ providerFactory: providerFactory(output), tst, idleMs: 60_000, cooldownMs: 0 });
   await worker.ready(); worker.setProviderConfig({ apiKey: 'test', model: 'secondary' });
   await worker.recordTurn({ sessionID: 's1', projectID: 'p1', userText: 'remember this token', assistantText: 'no' });
   await worker.flushNow('s1');
   assert.equal(calls.length, 0);
+  await worker.close();
+});
+
+test('background worker does not call a model when TST is unavailable', async () => {
+  let providerCalls = 0;
+  const worker = new BackgroundEnricher({
+    providerFactory: () => { providerCalls += 1; return { async stream() {} }; },
+    tst: { configured: false },
+    idleMs: 60_000,
+    cooldownMs: 0,
+  });
+  await worker.ready(); worker.setProviderConfig({ apiKey: 'test', model: 'secondary' });
+  await worker.recordTurn({ sessionID: 's1', projectID: 'p1', userText: 'hello', assistantText: 'hi' });
+  const result = await worker.flushNow('s1');
+  assert.equal(result.status, 'tst-unavailable');
+  assert.equal(providerCalls, 0);
   await worker.close();
 });
