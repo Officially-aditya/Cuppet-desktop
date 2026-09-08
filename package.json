@@ -1,7 +1,7 @@
 {
   "name": "cuppet-desktop",
   "private": true,
-  "version": "0.7.0-alpha.1",
+  "version": "0.8.0-alpha.1",
   "description": "Independent Cuppet desktop/runtime migration",
   "type": "module",
   "main": "src/main/main.mjs",
@@ -22,7 +22,8 @@
     "phaseb2:verify": "node scripts/verify-phaseb2.mjs",
     "phasec1:verify": "node scripts/verify-phasec1.mjs",
     "phasec2:verify": "node scripts/verify-phasec2.mjs",
-    "phased:verify": "node scripts/verify-phased.mjs"
+    "phased:verify": "node scripts/verify-phased.mjs",
+    "phasee:verify": "node scripts/verify-phasee.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0"
