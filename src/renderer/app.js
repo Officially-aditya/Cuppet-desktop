@@ -90,7 +90,9 @@ async function sendCurrentMessage() {
   try {
     if(!state.active) await createPersistedSessionForDraft(); if(!state.active)return;
     const project=state.projects.find((p)=>p.id===state.active.projectId);if(project?.missing){toast(`Relocate ${project.name} before continuing.`);return;}
-    const sessionId=state.active.id;els.prompt.value='';resizePrompt();await window.cuppet.sessions.send(sessionId,text);state.runningSessions.add(sessionId);renderRunState();
+    const sourceSessionId=state.active.id;els.prompt.value='';resizePrompt();const result=await window.cuppet.sessions.send(sourceSessionId,text);const targetSessionId=result?.sessionId||sourceSessionId;
+    if(targetSessionId!==sourceSessionId)state.runningSessions.delete(sourceSessionId);state.runningSessions.add(targetSessionId);
+    if(state.active?.id!==targetSessionId)await openSession(targetSessionId);renderRunState();
   } catch(error){toast(error.message||String(error));}
 }
 async function stopCurrent(){if(!state.active||!state.runningSessions.has(state.active.id))return;try{await window.cuppet.sessions.stop(state.active.id);}catch(error){toast(error.message||String(error));}}
@@ -114,6 +116,12 @@ function handleRuntimeEvent(event) {
   if(!event||typeof event.type!=='string')return;
   if(event.type==='run.started')state.runningSessions.add(event.sessionId);
   if(event.type==='run.finished')state.runningSessions.delete(event.sessionId);
+  if(event.type==='pe3.routed'&&event.targetSessionId&&event.targetSessionId!==event.sourceSessionId){
+    state.runningSessions.delete(event.sourceSessionId);
+    const action=event.action==='reactivate'?'Resumed earlier task context':'Started a separate task context';
+    toast(`${action}.`);
+    void openSession(event.targetSessionId).catch((error)=>toast(error.message||String(error)));
+  }
   if(event.type==='runtime.error')toast(event.message||'Runtime error');
   if(event.type==='cognitive.updated'&&event.cognitive){state.cognitive=event.cognitive;renderCognitive();}
   if(event.type==='context.compiled'&&event.tst){state.cognitive.tst=event.tst;renderCognitive();}
