@@ -19,7 +19,16 @@
     <div class="sidebar-bottom"><button id="settings-button" class="ghost-button full">Provider settings</button></div>
   </aside>
   <main class="main-pane">
-    <header class="topbar"><div><div id="conversation-title" class="conversation-title">New chat</div><div id="project-status" class="project-status">General chat</div><div id="runtime-status" class="runtime-status">Starting runtime…</div></div><div id="provider-pill" class="provider-pill">Provider not configured</div></header>
+    <header class="topbar">
+      <div><div id="conversation-title" class="conversation-title">New chat</div><div id="project-status" class="project-status">General chat</div><div id="runtime-status" class="runtime-status">Starting runtime…</div></div>
+      <div class="topbar-actions">
+        <button id="mode-toggle" type="button" class="control-pill" title="Switch this chat between Build and Plan mode">Build</button>
+        <button id="orchestrator-toggle" type="button" class="control-pill" title="Primary model curates context explicitly when enabled">Orchestrator off</button>
+        <button id="background-toggle" type="button" class="control-pill" title="Pause or resume background memory enrichment">Background on</button>
+        <span id="tst-pill" class="provider-pill">TST off</span>
+        <span id="provider-pill" class="provider-pill">Provider not configured</span>
+      </div>
+    </header>
     <section id="messages" class="messages" aria-live="polite"></section>
     <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button">Send</button></div></form></footer>
   </main>
@@ -33,6 +42,6 @@
   <section class="project-method picker-method"><h3>GitHub repositories</h3><p>Uses an existing authenticated GitHub CLI session; no second OAuth app is created.</p><div class="inline-row"><input id="github-search" type="search" placeholder="Filter repositories"/><button id="load-github-repos" class="ghost-button">Load</button></div><div id="github-repo-results" class="repo-results"></div></section>
 </div><div id="add-project-note" class="dialog-note dialog-pad"></div></dialog>
 
-<dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-header"><div><h2>Provider settings</h2><p>OpenAI-compatible chat-completions endpoint.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></div><label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label><label>Model<input id="provider-model" type="text" required placeholder="Your model ID" /></label><label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
+<dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-header"><div><h2>Provider settings</h2><p>OpenAI-compatible chat-completions endpoint.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></div><label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label><label>Primary model<input id="provider-model" type="text" required placeholder="Your model ID" /></label><label>Background model <span class="muted-inline">optional</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label><label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
 <div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script>
 </body></html>
