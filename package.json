@@ -1,13 +1,19 @@
 {
   "name": "cuppet-desktop",
   "private": true,
-  "version": "0.5.0-alpha.1",
+  "version": "0.6.0-alpha.1",
   "description": "Independent Cuppet desktop/runtime migration",
   "type": "module",
   "main": "src/main/main.mjs",
+  "bin": {
+    "cuppet": "src/cli/main.mjs"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "remote-control": "node src/cli/main.mjs remote-control",
+    "relay": "node src/cli/main.mjs relay",
+    "remote-enroll": "node src/cli/main.mjs remote-enroll",
     "phase0:verify": "node scripts/verify-phase0.mjs",
     "phase1:verify": "node scripts/verify-phase1.mjs",
     "phaseb:verify": "node scripts/verify-phaseb.mjs",
