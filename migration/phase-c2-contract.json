@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "phase": "C2",
+  "sourceBaseline": {
+    "repository": "Officially-aditya/Cuppet-code",
+    "ref": "840ed751b61c04afc881a393b7836d4d2c932f61",
+    "protocol": "docs/remote-protocol.md"
+  },
+  "authority": {
+    "conversation": "independent runtime SQLite",
+    "workspace": "filesystem",
+    "permissions": "C1 PermissionBroker",
+    "taskRouting": "PE3",
+    "providerSecrets": "local host only",
+    "deviceAuthorization": "host-side registry or locally verified managed token",
+    "relay": "transport/presence only"
+  },
+  "protocol": {
+    "version": 1,
+    "maxFrameBytes": 524288,
+    "scopes": [
+      "session.read",
+      "session.write",
+      "permission.write",
+      "question.write",
+      "model.write"
+    ],
+    "replaySafeCommands": true,
+    "monotonicEventSequence": true,
+    "hostReplacementResetsAuthority": true,
+    "unknownCommandsFailClosed": true
+  },
+  "security": {
+    "providerKeysCrossRelay": false,
+    "relayPerformsInference": false,
+    "relayPersistsTranscript": false,
+    "relayIsE2EEBoundary": false,
+    "pairingSingleUse": true,
+    "pairingDefaultTtlMs": 120000,
+    "managedTokenAlgorithm": "Ed25519/EdDSA",
+    "managedTokenHostDeviceBound": true,
+    "setupQrContainsPollSecret": false,
+    "setupQrContainsRelaySecret": false,
+    "defaultManagedApiBase": "https://connect.cuppet.in"
+  },
+  "entrypoints": [
+    "cuppet remote-control",
+    "cuppet relay",
+    "cuppet remote-enroll"
+  ],
+  "remoteLifecycleMethods": [
+    "remote.status",
+    "remote.configure",
+    "remote.start",
+    "remote.stop",
+    "remote.invite",
+    "remote.devices",
+    "remote.revoke"
+  ],
+  "reviewedCompatibilityGaps": [
+    {
+      "command": "session.undo",
+      "disposition": "replace-reviewed",
+      "reason": "No independent authoritative mutation journal exists yet; fail explicitly instead of simulating rollback."
+    },
+    {
+      "commands": ["question.list", "question.reply", "question.reject"],
+      "disposition": "replace-reviewed",
+      "reason": "No independent runtime question broker exists yet; fail explicitly rather than inventing answer authority."
+    }
+  ],
+  "focusedTests": [
+    "test/c2-remote-protocol.test.mjs",
+    "test/c2-remote-bridge.test.mjs",
+    "test/c2-relay.integration.test.mjs",
+    "test/c2-remote-commands.test.mjs"
+  ],
+  "inheritedGates": [
+    "phase0:verify",
+    "phase1:verify",
+    "phaseb:verify",
+    "phaseb1:verify",
+    "phaseb2:verify",
+    "phasec1:verify"
+  ]
+}
