@@ -32,16 +32,19 @@ expect(questions.includes('QuestionInteractionRequiredError') && questions.inclu
 expect(questionsDense.includes('if(!this.#interactive)thrownewQuestionInteractionRequiredError'), 'noninteractive question path no longer fails closed');
 expect(questions.includes("type: 'question.requested'") && questions.includes("type: 'question.resolved'"), 'question lifecycle events missing');
 
-const journal = text['src/runtime/mutation-journal.mjs'];
+const journal = text['src/runtime/mutation-journal.mjs']; const journalDense = dense['src/runtime/mutation-journal.mjs'];
 expect(journal.includes("createHash('sha256')") && journal.includes('UndoConflictError') && journal.includes('snapshotMatches(current, entry.after)'), 'hash-checked undo conflict boundary missing');
 expect(journal.includes("kind: 'barrier'") && journal.includes("entry.kind !== 'file'"), 'opaque mutation barrier missing');
 expect(journal.includes('mode: 0o700') && journal.includes('mode: 0o600') && journal.includes('rename(temporary, target)'), 'private atomic journal persistence missing');
 expect(journal.includes('MAX_SNAPSHOT_BYTES = 1024 * 1024') && journal.includes('MAX_ENTRIES = 256'), 'mutation journal bounds changed');
+expect(journal.includes('contentBase64') && journal.includes("Buffer.from(entry.before.contentBase64, 'base64')") && journal.includes('const content = await readFile(path);'), 'mutation journal no longer preserves raw preimage bytes');
+expect(journalDense.includes('if(entry.projectRoot!==currentRoot)thrownewUndoConflictError'), 'undo is not bound to the original canonical workspace');
 expect(!/git\s+(?:reset|checkout|clean|restore)\b/i.test(journal), 'mutation journal contains a destructive Git restoration path');
 
 const wrapper = text['src/runtime/journaled-tool-runtime.mjs'];
 expect(wrapper.includes("call?.name === 'workspace_edit' || call?.name === 'workspace_write'") && wrapper.includes('this.#journal.beginFile'), 'pre-mutation file snapshot hook missing');
 expect(wrapper.includes("call?.name === 'bash'") && wrapper.includes('recordBarrier'), 'opaque shell mutation barrier hook missing');
+expect(wrapper.includes('finished.event.executionId') && wrapper.includes('finished.pending.token.executionId'), 'journal entries are not bound to durable tool execution ids');
 
 const service = text['src/runtime/service.mjs'];
 expect(service.includes("new QuestionBroker({ emit: this.#emit, interactive })") && service.includes("new MutationJournal(join(dataDir, 'mutation-journal'))") && service.includes('new JournaledToolRuntime'), 'runtime does not own question/journal authorities');
@@ -78,8 +81,8 @@ expect(text['src/remote-app/sw.js'].includes("CACHE='cuppet-remote-v3'"), 'Remot
 
 const contract = JSON.parse(text['migration/phase-e-contract.json']);
 expect(contract.phase === 'E' && contract.version === '0.8.0-alpha.1', 'E machine contract identity invalid');
-expect(contract.requirements?.sessionForkCopiesToolAudit === false && contract.requirements?.questionsNoninteractiveFailClosed === true && contract.requirements?.undoHashChecked === true && contract.requirements?.undoCrossesOpaqueShellBarrier === false && contract.requirements?.undoOverwritesExternalEdits === false, 'E machine contract safety requirements invalid');
-expect(contract.security?.undoUsesGitResetHard === false && contract.security?.undoUsesGitCheckoutRestore === false && contract.security?.undoUsesGitClean === false && contract.security?.undoRequiresCurrentPostimageMatch === true, 'E undo security contract invalid');
+expect(contract.requirements?.sessionForkCopiesToolAudit === false && contract.requirements?.questionsNoninteractiveFailClosed === true && contract.requirements?.undoHashChecked === true && contract.requirements?.undoRestoresRawBytes === true && contract.requirements?.undoRequiresOriginalWorkspace === true && contract.requirements?.undoCrossesOpaqueShellBarrier === false && contract.requirements?.undoOverwritesExternalEdits === false, 'E machine contract safety requirements invalid');
+expect(contract.security?.undoUsesGitResetHard === false && contract.security?.undoUsesGitCheckoutRestore === false && contract.security?.undoUsesGitClean === false && contract.security?.undoRequiresCurrentPostimageMatch === true && contract.security?.undoRequiresOriginalWorkspace === true && contract.security?.journalSnapshotEncoding === 'base64', 'E undo security contract invalid');
 
 expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /@opencode|opencode-ai|OpenCode-derived controller/i.test(value)), 'legacy runtime dependency leaked into E production source');
 
@@ -90,4 +93,4 @@ for (const script of ['src/renderer/questions.js','src/renderer/undo.js','src/re
 const tests = ['test/phase-e-session-control.test.mjs','test/c2-remote-commands.test.mjs'];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase E gate passed: durable continuation/fork semantics, diagnostics, bounded question brokerage, scoped Desktop/Remote controls, and hash-checked conflict-safe undo verified.');
+console.log('Phase E gate passed: durable continuation/fork semantics, diagnostics, bounded question brokerage, scoped Desktop/Remote controls, and byte-exact hash-checked conflict-safe undo verified.');
