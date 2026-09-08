@@ -34,7 +34,7 @@ export class RemoteCommandAdapter {
       case 'session.steer': return this.#sessionSteer(state,explicitSession,params);
       case 'session.abort': return this.#call('session.stop',{sessionId:this.#requireSession(state,explicitSession)});
       case 'session.compact': return this.#call('context.compact',{sessionId:this.#requireSession(state,explicitSession),provider:this.#selectedProvider(state)});
-      case 'session.undo': throw new Error('Undo is unavailable until the independent runtime has an authoritative mutation journal.');
+      case 'session.undo': return this.#call('session.undo',{sessionId:this.#requireSession(state,explicitSession)});
       case 'permission.list': return this.#call('permission.list',{...(explicitSession?{sessionId:explicitSession}:{})});
       case 'permission.reply': return this.#permissionReply(params);
       case 'question.list': return this.#call('question.list',{...(explicitSession?{sessionId:explicitSession}:{})});
@@ -147,7 +147,7 @@ export class RemoteCommandAdapter {
     if(state.selection&&!modelMatchesProvider(state.selection,provider))state.selection=null;
     return {id:provider.id,selected:true};
   }
-  async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return {mode:result.mode};}
+  async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return{mode:result.mode};}
   async #modeSet(state,explicit,params){const sessionId=this.#requireSession(state,explicit);const raw=String(params.agent??params.mode??'');if(!['plan','build'].includes(raw))throw new Error('agent/mode must be plan or build');return this.#call('session.mode.set',{sessionId,mode:raw});}
 
   #selectedProvider(state){
