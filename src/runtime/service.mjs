@@ -156,7 +156,7 @@ export class RuntimeService {
     const assistant = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId, role: 'assistant', content: '', status: 'streaming' });
     this.#emit({ type: 'message.created', message: assistant });
     const controller = new AbortController();
-    this.#runs.set(sessionId, { controller, assistantId: assistant.id, userId: user.id, userText: text, projectId: existing.projectId ?? null });
+    this.#runs.set(sessionId, { controller, assistantId: assistant.id, userId: user.id, userText: text, projectId:existing.projectId??null });
     this.#emit({ type: 'run.started', sessionId, messageId: assistant.id, projectId: existing.projectId ?? null, mode: this.#cognitive.mode(sessionId) });
     void this.#generate({ sessionId, assistantId: assistant.id, userId: user.id, provider: params.provider, signal: controller.signal });
     return { accepted: true, sessionId, messageId: assistant.id, projectId: existing.projectId ?? null, mode: this.#cognitive.mode(sessionId) };
