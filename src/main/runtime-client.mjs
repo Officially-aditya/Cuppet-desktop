@@ -9,6 +9,7 @@ export class RuntimeClient extends EventEmitter {
   #child;
   #pending = new Map();
   #stderr = '';
+  #readyEvent;
 
   constructor({ entry, dataDir }) {
     super();
@@ -18,6 +19,7 @@ export class RuntimeClient extends EventEmitter {
 
   async start() {
     if (this.#child) return;
+    this.#readyEvent = undefined;
     const child = spawn(process.execPath, [this.#entry], {
       env: {
         ...process.env,
@@ -41,6 +43,7 @@ export class RuntimeClient extends EventEmitter {
       for (const pending of this.#pending.values()) pending.reject(new Error(reason));
       this.#pending.clear();
       this.#child = undefined;
+      this.#readyEvent = undefined;
       this.emit('exit', { code, signal, stderr: this.#stderr });
     });
     child.once('error', (error) => this.emit('error', error));
@@ -49,6 +52,7 @@ export class RuntimeClient extends EventEmitter {
   }
 
   waitForReady(timeoutMs = 8_000) {
+    if (this.#readyEvent) return Promise.resolve(this.#readyEvent);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup();
@@ -70,6 +74,10 @@ export class RuntimeClient extends EventEmitter {
       };
       this.on('event', ready);
       this.on('exit', exit);
+      if (this.#readyEvent) {
+        cleanup();
+        resolve(this.#readyEvent);
+      }
     });
   }
 
@@ -93,6 +101,7 @@ export class RuntimeClient extends EventEmitter {
     const child = this.#child;
     if (!child) return;
     this.#child = undefined;
+    this.#readyEvent = undefined;
     if (child.stdin.writable) child.stdin.end();
     if (!child.killed) child.kill('SIGTERM');
   }
@@ -106,6 +115,7 @@ export class RuntimeClient extends EventEmitter {
       return;
     }
     if (message.kind === 'event') {
+      if (message.event?.type === 'runtime.ready') this.#readyEvent = message.event;
       this.emit('event', message.event);
       return;
     }
