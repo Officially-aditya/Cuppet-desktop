@@ -146,7 +146,7 @@ export class RuntimeService {
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
     const prompt = typeof params.prompt === 'string' ? params.prompt : [...session.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(session.messages), userMessageId: [...session.messages].reverse().find((message) => message.role === 'user')?.id });
+    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider) });
   }
   async #queryMemory(params) {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
