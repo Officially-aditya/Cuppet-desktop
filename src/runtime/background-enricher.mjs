@@ -27,17 +27,19 @@ export class BackgroundEnricher {
     if (!batch.signals.some((signal) => signal.summary === summary)) batch.signals.push({ id: `s${batch.signals.length}`, summary: summary.slice(0, MAX_SIGNAL_CHARS), durableCue, correctionCue, contradictionCue, recordedAt: this.#now() });
     batch.signals = batch.signals.slice(-MAX_SIGNALS).map((signal, index) => ({ ...signal, id: `s${index}` })); batch.projectID = projectID; batch.idleAt = this.#now() + this.#idleMs; this.#batches.set(sessionID, batch); this.#schedule();
   }
-  async flushNow(sessionID) { await this.ready(); const batch = this.#batches.get(sessionID); if (!batch) return { status: 'empty', candidates: 0 }; batch.idleAt = 0; return this.#runBatch(batch); }
+  async flushNow(sessionID) { await this.ready(); const batch = this.#batches.get(sessionID); if (!batch) return { status: 'empty', candidates: 0 }; if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 }; batch.idleAt = 0; return this.#runBatch(batch); }
   async close() { this.#clearTimer(); this.#activeController?.abort(); await this.#ledger.close(); }
   #schedule() {
-    this.#clearTimer(); if (this.#paused || this.#running || !this.#batches.size) return;
+    this.#clearTimer(); if (this.#paused || this.#running || !this.#batches.size || !this.#tst?.configured) return;
     const now = this.#now(); const eligible = [...this.#batches.values()].sort((a, b) => a.idleAt - b.idleAt)[0]; if (!eligible) return;
     const cooldown = (this.#lastCompleted.get(eligible.sessionID) ?? 0) + this.#cooldownMs; const delay = Math.max(0, Math.max(eligible.idleAt, cooldown) - now);
     this.#timer = setTimeout(() => { this.#timer = undefined; void this.#runBatch(eligible).finally(() => this.#schedule()); }, delay);
+    this.#timer.unref?.();
   }
   #clearTimer() { if (this.#timer) clearTimeout(this.#timer); this.#timer = undefined; }
   async #runBatch(batch) {
     if (this.#paused || this.#running) return { status: 'deferred', candidates: 0 };
+    if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 };
     if (!this.#providerConfig?.apiKey || !this.#providerConfig?.model) return { status: 'unconfigured', candidates: 0 };
     this.#running = true; const controller = new AbortController(); this.#activeController = controller;
     try {
@@ -57,10 +59,8 @@ export class BackgroundEnricher {
         this.#ledger.observe({ key, claim: candidate.value, kind: candidate.kind, relation, sessionID: batch.sessionID, projectID: batch.projectID, sourceRef, timestampMs: this.#now(), trustedSupport, explicitUser, downstreamVerified: false });
         const admission = this.#ledger.admission(key, candidate.kind); if (admission.blocked) continue;
         admitted++;
-        if (this.#tst?.configured) {
-          const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', score: admission.score, scope: candidate.scope }).catch(() => undefined);
-          if (explicitUser && observed?.id) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
-        }
+        const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', score: admission.score, scope: candidate.scope }).catch(() => undefined);
+        if (explicitUser && observed?.id) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
       }
       this.#batches.delete(batch.sessionID); this.#lastCompleted.set(batch.sessionID, this.#now()); await this.#ledger.persist(); return { status: 'completed', candidates: admitted };
     } catch (error) {
