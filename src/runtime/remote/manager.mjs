@@ -52,5 +52,15 @@ export class RemoteManager {
   async createInvite({role='trusted',ttlMs}={}){const identity=await this.ready();const invite=await createPairingInvite(this.#remoteDir,{role,...(Number.isFinite(ttlMs)?{ttlMs}:{}),...(this.#relayUrl?{relayUrl:this.#relayUrl}:{}),hostId:identity.hostId});this.#emit({type:'remote.invite',invite:{code:invite.code,expiresAt:invite.expiresAt,role:invite.role,url:invite.url??null}});return invite;}
   async devices(){return listPairedDevices(this.#remoteDir);}
   async revoke(deviceId){const revoked=await revokeDevice(this.#remoteDir,deviceId);return {deviceId,revoked};}
-  async close(){await this.stop().catch(()=>undefined);}
+  async close(){
+    // Runtime shutdown must not lazily create remote identity/state when the
+    // user never opened or started remote control. `stop()` intentionally
+    // returns a full status snapshot and therefore calls `ready()`; avoid that
+    // side effect on the process teardown path.
+    if(this.#bridge) await this.stop().catch(()=>undefined);
+    else {
+      try{this.#transport?.close();}catch{}
+      this.#transport=undefined;this.#commands=undefined;this.#starting=undefined;
+    }
+  }
 }
