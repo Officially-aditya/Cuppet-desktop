@@ -164,8 +164,10 @@ function isEnvExampleResource(resource) {
   return normalized === '.env.example' || normalized.endsWith('/.env.example');
 }
 function isProtectedResource(resource) {
-  const normalized = String(resource).replaceAll('\\', '/').toLowerCase();
-  return normalized.endsWith('/.claude.json') || normalized === '.claude.json' || normalized.endsWith('/.cuppet/credentials.json') || normalized.endsWith('/.cuppet/ltm-trie.json');
+  const normalized = String(resource).replaceAll('\\', '/').toLowerCase().replace(/^\.\//, '');
+  return normalized === '.claude.json' || normalized.endsWith('/.claude.json') ||
+    normalized === '.cuppet/credentials.json' || normalized.endsWith('/.cuppet/credentials.json') ||
+    normalized === '.cuppet/ltm-trie.json' || normalized.endsWith('/.cuppet/ltm-trie.json');
 }
 
 async function nearestExistingAncestorIsInside(candidate, root) {
