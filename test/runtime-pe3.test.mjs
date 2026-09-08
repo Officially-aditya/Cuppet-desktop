@@ -71,7 +71,7 @@ test('runtime PE3 create handoff writes the new task only to its target SQLite s
     await waitFinished(events,source.id);
 
     const second = await service.handle('session.send',{sessionId:source.id,text:'New task: implement billing in src/billing.ts',provider:{model:'test'}});
-    assert.equal(second.pe3.action,'create');
+    assert.equal(second.pe3.action,'create',second.pe3.reason);
     assert.notEqual(second.sessionId,source.id);
     const target = await waitComplete(service,second.sessionId);
     await waitFinished(events,second.sessionId);
