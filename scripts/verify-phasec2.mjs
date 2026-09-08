@@ -31,7 +31,7 @@ const expect = (condition, message) => { if (!condition) throw new Error(message
 const protocol = text['src/runtime/remote/protocol.mjs'];
 expect(protocol.includes('PROTOCOL_VERSION = 1') && protocol.includes('MAX_FRAME_BYTES = 512 * 1024'), 'remote protocol version/frame cap changed');
 for (const scope of ['session.read', 'session.write', 'permission.write', 'question.write', 'model.write']) expect(protocol.includes(scope), `remote scope missing: ${scope}`);
-expect(protocol.includes("'session.submit': 'session.write'") && protocol.includes("'permission.reply': 'permission.write'"), 'remote command scope table incomplete');
+expect(/['"]session\.submit['"]\s*:\s*['"]session\.write['"]/.test(protocol) && /['"]permission\.reply['"]\s*:\s*['"]permission\.write['"]/.test(protocol), 'remote command scope table incomplete');
 expect(protocol.includes('unsupported command type'), 'unknown remote commands do not fail closed');
 
 const pairing = text['src/runtime/remote/pairing.mjs'];
