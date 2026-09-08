@@ -54,17 +54,19 @@ expect(bridge.includes('missing scope') && bridge.includes('duplicate: true'), '
 const commands = text['src/runtime/remote/commands.mjs'];
 expect(commands.includes("this.#call('session.send'") && commands.includes("this.#call('permission.reply'") && commands.includes("this.#call('session.stop'"), 'remote adapter bypasses independent runtime methods');
 expect(commands.includes('Host provider is not configured') && commands.includes('model is not configured on this host'), 'remote provider/model boundary missing');
+expect(commands.includes("#providerList(){return [{id:'openai-compatible',name:'OpenAI-compatible',connected:"), 'remote provider projection changed');
+expect(!commands.includes("baseUrl:this.#provider.baseUrl"), 'remote provider projection exposes local endpoint details');
 expect(commands.includes('Undo is unavailable until the independent runtime has an authoritative mutation journal.'), 'reviewed undo compatibility gap missing');
 expect(commands.includes('Interactive question requests are not implemented by the independent runtime.'), 'reviewed question compatibility gap missing');
 
 const manager = text['src/runtime/remote/manager.mjs'];
 expect(manager.includes("'https://connect.cuppet.in'") && manager.includes('verifyRemoteToken') && manager.includes('authenticateDevice'), 'remote manager setup/auth path incomplete');
 expect(manager.includes('WebSocketTransport') && manager.includes('buildAttachSnapshot'), 'remote outbound transport/snapshot bridge missing');
-expect(manager.includes('if(this.#bridge) await this.stop()') && manager.includes('must not lazily create remote identity/state'), 'unused remote shutdown may create persistent state');
+expect(manager.includes('provider configuration is pushed at ordinary desktop startup') && manager.includes('if(this.#bridge) await this.stop()'), 'unused remote configuration/shutdown may create persistent state');
 
 const relay = text['src/runtime/remote/relay.mjs'];
 expect(relay.includes('REPLAY_LIMIT') && relay.includes('RATE_LIMIT') && relay.includes('PAIR_ATTEMPT_LIMIT'), 'relay replay/rate/pairing limits missing');
-expect(relay.includes('client.accept') && relay.includes('device.authenticated') && relay.includes('room.replay.length = 0'), 'relay pre-auth/host replacement isolation missing');
+expect(relay.includes('client.accept') && relay.includes('device.authenticated') && relay.includes('room.replay.length=0'), 'relay pre-auth/host replacement isolation missing');
 
 const runtimeMain = text['src/runtime/main.mjs'];
 for (const method of ['remote.status', 'remote.provider-config', 'remote.start', 'remote.stop', 'remote.invite', 'remote.devices', 'remote.revoke']) expect(runtimeMain.includes(`case '${method}'`), `local remote runtime method missing: ${method}`);
@@ -85,7 +87,7 @@ expect(text['src/remote-app/index.html'].includes('Cuppet Remote') && text['src/
 expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /@opencode|opencode-ai|OpenCode-derived controller/i.test(value)), 'OpenCode leaked into C2 production source');
 
 const contract = JSON.parse(text['migration/phase-c2-contract.json']);
-expect(contract.phase === 'C2' && contract.protocol?.version === 1 && contract.security?.providerKeysCrossRelay === false && contract.security?.unusedShutdownCreatesRemoteState === false, 'C2 machine contract invalid');
+expect(contract.phase === 'C2' && contract.protocol?.version === 1 && contract.security?.providerKeysCrossRelay === false && contract.security?.providerEndpointCrossRelay === false && contract.security?.providerConfigCreatesRemoteState === false && contract.security?.unusedShutdownCreatesRemoteState === false, 'C2 machine contract invalid');
 
 const tests = [
   'test/c2-remote-protocol.test.mjs',
@@ -96,4 +98,4 @@ const tests = [
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, lifecycle cleanliness, desktop/CLI controls, and provider-secret boundary verified.');
+console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, lifecycle cleanliness, provider projection privacy, desktop/CLI controls, and provider-secret boundary verified.');
