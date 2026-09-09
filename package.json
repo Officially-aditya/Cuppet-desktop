@@ -4,13 +4,15 @@
   "version": "0.9.0-alpha.1",
   "description": "Independent Cuppet desktop/runtime migration",
   "type": "module",
-  "main": "src/main/main.mjs",
+  "main": "src/main/bootstrap.mjs",
   "bin": {
     "cuppet": "src/cli/main.mjs"
   },
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "pack:dir": "electron-builder --dir",
+    "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
     "remote-control": "node src/cli/main.mjs remote-control",
     "relay": "node src/cli/main.mjs relay",
     "remote-enroll": "node src/cli/main.mjs remote-enroll",
@@ -27,15 +29,45 @@
     "original-c1:verify": "node scripts/verify-original-c1.mjs",
     "original-c2:verify": "node scripts/verify-original-c2.mjs",
     "d1:verify": "node scripts/verify-d1.mjs",
-    "d3:verify": "node scripts/verify-d3.mjs"
+    "d3:verify": "node scripts/verify-d3.mjs",
+    "e1:verify": "node scripts/verify-e1.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0"
   },
   "devDependencies": {
-    "electron": "44.2.0"
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
   },
   "engines": {
     "node": ">=22"
+  },
+  "build": {
+    "appId": "com.cuppet.desktop",
+    "productName": "Cuppet",
+    "executableName": "cuppet",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@huggingface/transformers/**/*",
+      "node_modules/onnxruntime-*/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dir"]
+    },
+    "linux": {
+      "category": "Development",
+      "target": ["dir"]
+    },
+    "win": {
+      "target": ["dir"]
+    }
   }
 }
