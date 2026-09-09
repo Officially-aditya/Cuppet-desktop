@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { TaskAgentRouter } from './task-agents.mjs';
 import { SemanticTaskRouter } from './semantic-router.mjs';
-import { LocalTransformersEmbeddingProvider } from './local-embedding.mjs';
+import { LocalFeatureEmbeddingProvider } from './local-embedding.mjs';
 import { Pe3TaskRegistry } from './registry.mjs';
 
 const MAX_TRANSACTIONS=128, MAX_ATTACHMENTS=16, MAX_ATTACHMENT_NAME=240, MAX_MIME=128;
@@ -12,7 +12,7 @@ const RETURN_CUES=['go back to','return to','back to','resume the','resume that'
 export class Pe3ProjectRouter {
   #projectId; #projectRoot; #db; #tst; #router; #semantic; #registry; #transactions=new Map(); #ready; #stats={sequence:0,continuations:0,created:0,reactivated:0,switches:0,localizationQueries:0,localizationHits:0,semanticEscalations:0,semanticFallbacks:0,semanticFailures:0,lastAction:null,lastReason:null};
   constructor({ projectId, projectRoot, projectStore, db, tst, embeddingProvider, semanticRouter, now=Date.now }) {
-    this.#projectId=projectId;this.#projectRoot=projectRoot;this.#db=db;this.#tst=tst;this.#router=new TaskAgentRouter({now});this.#semantic=semanticRouter??new SemanticTaskRouter(embeddingProvider??new LocalTransformersEmbeddingProvider());this.#registry=new Pe3TaskRegistry(projectStore??join(process.cwd(),'.cuppet-pe3',String(projectId)),projectRoot);this.#ready=this.#restore();
+    this.#projectId=projectId;this.#projectRoot=projectRoot;this.#db=db;this.#tst=tst;this.#router=new TaskAgentRouter({now});this.#semantic=semanticRouter??new SemanticTaskRouter(embeddingProvider??new LocalFeatureEmbeddingProvider());this.#registry=new Pe3TaskRegistry(projectStore??join(process.cwd(),'.cuppet-pe3',String(projectId)),projectRoot);this.#ready=this.#restore();
   }
   async ready(){await this.#ready;}
   status(){return{projectId:this.#projectId,active:this.#router.active,agents:this.#router.list(),stats:{...this.#stats},pendingTransactions:this.#transactions.size,semanticModelID:this.#semantic.modelID};}

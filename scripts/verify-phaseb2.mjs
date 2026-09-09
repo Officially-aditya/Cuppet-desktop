@@ -16,6 +16,7 @@ const required = [
   'src/renderer/app.js',
   'migration/phase-b2-contract.json',
   'docs/phase-b2-pe3-routing.md',
+  'package.json',
 ];
 const text = Object.fromEntries(await Promise.all(required.map(async (path) => [path, await readFile(join(root, path), 'utf8')])));
 const expect = (condition, message) => { if (!condition) throw new Error(message); };
@@ -26,7 +27,13 @@ expect(text['src/runtime/pe3/router.mjs'].includes('prepare({sourceSessionId') &
 expect(text['src/runtime/pe3/router.mjs'].includes('explicitReturn') && text['src/runtime/pe3/router.mjs'].includes('semanticReturnOnly'), 'explicit dormant-task return behavior missing');
 expect(text['src/runtime/pe3/router.mjs'].includes('normalizeAttachments') && text['src/runtime/pe3/router.mjs'].includes('MAX_ATTACHMENTS=16'), 'bounded attachment routing missing');
 expect(text['src/runtime/pe3/semantic-router.mjs'].includes('dormantMatchMin') && text['src/runtime/pe3/semantic-router.mjs'].includes('fallback'), 'conservative semantic routing policy missing');
-expect(text['src/runtime/pe3/local-embedding.mjs'].includes("@huggingface/transformers") && text['src/runtime/pe3/local-embedding.mjs'].includes('Xenova/all-MiniLM-L6-v2'), 'local PE3 embedding provider missing');
+const localEmbedding = text['src/runtime/pe3/local-embedding.mjs'];
+expect(localEmbedding.includes('LocalFeatureEmbeddingProvider') && localEmbedding.includes('cuppet/subword-hash-v1'), 'built-in PE3 feature embedding provider missing');
+expect(localEmbedding.includes('subwordGrams') && localEmbedding.includes('fnv1a') && localEmbedding.includes('Float32Array'), 'bounded deterministic PE3 feature hashing missing');
+expect(!/@huggingface|onnxruntime|sharp/i.test(localEmbedding), 'PE3 local embedding source regained an external model/native dependency');
+expect(text['src/runtime/pe3/router.mjs'].includes('new LocalFeatureEmbeddingProvider()'), 'PE3 router does not default to the built-in feature embedding provider');
+const packageJson = JSON.parse(text['package.json']);
+expect(!packageJson.dependencies?.['@huggingface/transformers'], 'Hugging Face runtime remains a production dependency');
 expect(text['src/runtime/pe3/registry.mjs'].includes('MAX_AGENTS=32') && text['src/runtime/pe3/registry.mjs'].includes("pe3-task-agents.json"), 'bounded project-local PE3 registry missing');
 expect(text['src/runtime/pe3/registry.mjs'].includes('fileSignatures') && text['src/runtime/pe3/registry.mjs'].includes('recoveredFromCorruption'), 'offline staleness/corruption recovery missing');
 expect(text['src/runtime/database.mjs'].includes('transaction(') && text['src/runtime/database.mjs'].includes('BEGIN IMMEDIATE') && text['src/runtime/database.mjs'].includes('COMMIT') && text['src/runtime/database.mjs'].includes('ROLLBACK'), 'SQLite transaction boundary missing');
@@ -41,6 +48,7 @@ expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && 
 const tests = [
   'test/pe3-task-agents.test.mjs',
   'test/pe3-semantic-router.test.mjs',
+  'test/pe3-local-embedding.test.mjs',
   'test/pe3-registry.test.mjs',
   'test/pe3-transaction.test.mjs',
   'test/pe3-reactivation.test.mjs',
@@ -48,4 +56,4 @@ const tests = [
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase B2 gate passed: deterministic/local PE3 routing, persistence, staleness, attachments, transactional task handoff, and target-session following verified.');
+console.log('Phase B2 gate passed: deterministic/local PE3 routing, dependency-free feature embeddings, persistence, staleness, attachments, transactional task handoff, and target-session following verified.');

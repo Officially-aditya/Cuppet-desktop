@@ -1,6 +1,7 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
+import { dirname, basename, join } from 'node:path';
 import { safeStorage } from 'electron';
+import { credentialStorageStatus } from './credential-storage.mjs';
 import {
   DEFAULT_BASE_URL,
   DEFAULT_PROVIDER_ID,
@@ -37,12 +38,15 @@ export class ProviderSettingsStore {
 
   rendererValue() {
     const projection = providerProjection(this.#value, { includeEndpoint: true });
+    const storage = credentialStorageStatus(safeStorage);
     const apiKeyConfigured = Boolean(this.#encryptedApiKey);
     return {
       ...projection,
-      configured: apiKeyConfigured && Boolean(projection.primary?.modelID),
+      configured: storage.available && apiKeyConfigured && Boolean(projection.primary?.modelID),
       apiKeyConfigured,
-      encryptionAvailable: safeStorage.isEncryptionAvailable(),
+      encryptionAvailable: storage.available,
+      encryptionBackend: storage.backend,
+      encryptionUnavailableReason: storage.reason,
     };
   }
 
@@ -80,18 +84,31 @@ export class ProviderSettingsStore {
 
     if (source.clearApiKey === true) this.#encryptedApiKey = undefined;
     else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('OS credential encryption is unavailable; Cuppet will not persist the API key in plaintext');
+      const storage = credentialStorageStatus(safeStorage);
+      if (!storage.available) throw new Error(`${storage.reason}; Cuppet will not persist the API key in plaintext`);
       this.#encryptedApiKey = safeStorage.encryptString(source.apiKey.trim()).toString('base64');
     }
 
-    await mkdir(dirname(this.#path), { recursive: true });
-    await writeFile(this.#path, `${JSON.stringify({ ...this.#value, apiKey: this.#encryptedApiKey }, null, 2)}\n`, { mode: 0o600 });
+    await writeSettingsAtomically(this.#path, `${JSON.stringify({ ...this.#value, apiKey: this.#encryptedApiKey }, null, 2)}\n`);
     return this.rendererValue();
   }
 
   #decryptApiKey() {
-    if (!this.#encryptedApiKey || !safeStorage.isEncryptionAvailable()) return '';
+    const storage = credentialStorageStatus(safeStorage);
+    if (!this.#encryptedApiKey || !storage.available) return '';
     try { return safeStorage.decryptString(Buffer.from(this.#encryptedApiKey, 'base64')); } catch { return ''; }
+  }
+}
+
+async function writeSettingsAtomically(path, content) {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporary = join(directory, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    await writeFile(temporary, content, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
   }
 }
 
