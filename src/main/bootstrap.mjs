@@ -1,4 +1,5 @@
 import { app, BrowserWindow, session, shell } from 'electron';
+import { installCodexAuthIpc } from './codex-auth.mjs';
 
 const singleInstance = app.requestSingleInstanceLock();
 
@@ -6,6 +7,7 @@ if (!singleInstance) {
   app.quit();
 } else {
   installSecurityGuards();
+  installCodexAuthIpc();
   app.on('second-instance', () => {
     const window = BrowserWindow.getAllWindows()[0];
     if (!window) return;
