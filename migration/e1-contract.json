@@ -19,6 +19,7 @@
     "apiKeysAreNeverPersistedInPlaintext": true,
     "productionRuntimeDependenciesAreAuditedForHighSeverityAdvisories": true,
     "pe3ProductionEmbeddingHasNoExternalModelOrNativeRuntimeDependency": true,
+    "ciCancelsSupersededBranchRuns": true,
     "incompatibleTstControlPlaneIsNotFalselyBundled": true,
     "currentCuppetTstBridgeRemainsOptionalAndExternal": true,
     "e1HasPermanentVerificationGate": true
