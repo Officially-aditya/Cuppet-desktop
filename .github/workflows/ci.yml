@@ -25,3 +25,4 @@ jobs:
       - run: npm run phased:verify
       - run: npm run phasee:verify
       - run: npm run original-c1:verify
+      - run: npm run original-c2:verify
