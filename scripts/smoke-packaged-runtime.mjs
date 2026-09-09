@@ -5,8 +5,9 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const executable = resolve(process.argv[2] || defaultExecutable(root));
 const resources = resourcesDirectory(executable);
 const runtimeEntry = join(resources, 'app.asar', 'src', 'runtime', 'main.mjs');
