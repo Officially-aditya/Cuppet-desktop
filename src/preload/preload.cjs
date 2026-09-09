@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('cuppet', {
     devices: () => ipcRenderer.invoke('cuppet:remote:devices'),
     revoke: (deviceId) => ipcRenderer.invoke('cuppet:remote:revoke', deviceId),
   },
+  codexAuth: {
+    status: () => ipcRenderer.invoke('cuppet:codex-auth:status'),
+    login: () => ipcRenderer.invoke('cuppet:codex-auth:login'),
+    logout: () => ipcRenderer.invoke('cuppet:codex-auth:logout'),
+  },
   pe3: {
     status: (sessionId) => ipcRenderer.invoke('cuppet:pe3:status', sessionId),
     observePaths: (sessionId, paths) => ipcRenderer.invoke('cuppet:pe3:observe-paths', sessionId, paths),
