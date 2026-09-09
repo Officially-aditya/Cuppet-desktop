@@ -22,3 +22,5 @@
 .command-dialog-form input[type=checkbox]{width:auto;justify-self:start}
 .command-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .composer-wrap{position:relative}
+.topbar{display:none!important}
+.main-pane{grid-template-rows:minmax(0,1fr) auto}
