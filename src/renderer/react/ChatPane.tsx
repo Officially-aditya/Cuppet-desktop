@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
+import { ModelPicker } from './ModelPicker';
 import { renderMarkdown } from './markdown';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -26,7 +27,7 @@ type Props = {
   onToggleMode: () => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, running, commands, activity, onSend, onStop, onToggleMode }: Props) {
+export function ChatPane({ session, draft, project, mode, running, commands, activity, onSend, onStop }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
@@ -214,7 +215,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
               </div>
             )}
             <div className="composer-actions-spacer" aria-hidden="true" />
-            <button type="button" className={`mode-inline-button${mode === 'plan' ? ' active' : ''}`} onClick={() => void onToggleMode()} disabled={running} title="Switch between Build and Plan mode">{mode === 'plan' ? 'Plan' : 'Build'}</button>
+            <ModelPicker disabled={running} />
             {running && <button type="button" className="stop-button" onClick={() => void onStop()}>Stop</button>}
             <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim() && !attachments.length}>
               <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
