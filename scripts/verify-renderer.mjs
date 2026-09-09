@@ -28,7 +28,7 @@ assert.ok(!pkg.build.files.includes('src/renderer/**/*'), 'raw renderer source m
 assert.match(main, /dist-renderer.*index\.html/s, 'Electron does not load compiled Vite renderer');
 assert.doesNotMatch(main, /join\(here, '\.\.', 'renderer', 'index\.html'\)/, 'Electron still loads legacy renderer source');
 assert.match(index, /id="root"/);
-assert.match(index, /type="module" src="\/src\/renderer\/main\.tsx"/);
+assert.match(index, /type="module"\s+src="(?:\.\/)?main\.tsx"/, 'Vite mount shell does not load the TypeScript entry');
 assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|execution-ui\.mjs/);
 assert.match(entry, /createRoot/);
 assert.match(entry, /<App\s*\/>/);
