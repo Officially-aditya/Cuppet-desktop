@@ -3,11 +3,13 @@ import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/c
 import { parseCodexAccount } from '../runtime/codex-account.mjs';
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_CODEX_MODELS = 256;
 let activeLogin = null;
 let lastMessage = '';
 
 export function installCodexAuthIpc() {
   ipcMain.handle('cuppet:codex-auth:status', () => codexAuthStatus());
+  ipcMain.handle('cuppet:codex-auth:models', () => listCodexModels());
   ipcMain.handle('cuppet:codex-auth:login', () => startCodexLogin());
   ipcMain.handle('cuppet:codex-auth:logout', () => logoutCodex());
 }
@@ -36,6 +38,58 @@ async function codexAuthStatus() {
     });
   } catch (error) {
     return { ...unavailableStatus(), available: true, loginRunning: Boolean(activeLogin), message: cleanError(error) };
+  }
+}
+
+async function listCodexModels() {
+  const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
+  if (!launch) return { available: false, loggedIn: false, models: [], defaultModel: null };
+  try {
+    return await withClient(launch, async (client) => {
+      const account = parseCodexAccount(await client.request('account/read', {}));
+      if (!account.loggedIn) return { available: true, loggedIn: false, models: [], defaultModel: null };
+
+      const models = [];
+      let cursor = null;
+      do {
+        const response = record(await client.request('model/list', {
+          cursor,
+          limit: 100,
+          includeHidden: false,
+        }));
+        for (const entry of Array.isArray(response.data) ? response.data : []) {
+          const item = record(entry);
+          if (item.hidden === true) continue;
+          const id = safeText(item.model ?? item.id, 240);
+          if (!id) continue;
+          const efforts = Array.isArray(item.supportedReasoningEfforts)
+            ? item.supportedReasoningEfforts.flatMap((value) => {
+                const effort = safeText(record(value).reasoningEffort, 80);
+                return effort ? [effort] : [];
+              })
+            : [];
+          models.push({
+            id,
+            label: safeText(item.displayName ?? item.id ?? id, 160) || id,
+            description: safeText(item.description, 600),
+            isDefault: item.isDefault === true,
+            efforts,
+          });
+          if (models.length >= MAX_CODEX_MODELS) break;
+        }
+        cursor = models.length < MAX_CODEX_MODELS ? safeText(response.nextCursor, 512) || null : null;
+      } while (cursor);
+
+      const deduped = [...new Map(models.map((model) => [model.id, model])).values()];
+      return {
+        available: true,
+        loggedIn: true,
+        models: deduped,
+        defaultModel: deduped.find((model) => model.isDefault)?.id ?? null,
+      };
+    });
+  } catch (error) {
+    return { available: true, loggedIn: true, models: [], defaultModel: null, error: cleanError(error) };
   }
 }
 
