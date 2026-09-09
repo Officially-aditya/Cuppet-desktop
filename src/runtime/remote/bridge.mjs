@@ -5,12 +5,13 @@ const DEDUPE_CAPACITY=512;
 const OFFLINE_EVENT_LIMIT=256;
 
 export class RemoteBridge {
-  #hostId; #transport; #commands; #authenticateDevice; #claimPairingInvite; #buildAttachSnapshot; #seq=0; #connectionId=randomUUID(); #seen=new Map(); #offline=[]; #devices=new Map(); #timers=new Map(); #started=false; #off=[];
-  constructor({hostId,transport,commandAdapter,authenticateDevice,claimPairingInvite,buildAttachSnapshot}){
-    this.#hostId=hostId;this.#transport=transport;this.#commands=commandAdapter;this.#authenticateDevice=authenticateDevice;this.#claimPairingInvite=claimPairingInvite;this.#buildAttachSnapshot=buildAttachSnapshot;
+  #hostId; #transport; #commands; #authenticateDevice; #claimPairingInvite; #buildAttachSnapshot; #onDeviceChange; #seq=0; #connectionId=randomUUID(); #seen=new Map(); #offline=[]; #devices=new Map(); #timers=new Map(); #started=false; #off=[];
+  constructor({hostId,transport,commandAdapter,authenticateDevice,claimPairingInvite,buildAttachSnapshot,onDeviceChange}){
+    this.#hostId=hostId;this.#transport=transport;this.#commands=commandAdapter;this.#authenticateDevice=authenticateDevice;this.#claimPairingInvite=claimPairingInvite;this.#buildAttachSnapshot=buildAttachSnapshot;this.#onDeviceChange=onDeviceChange;
   }
   get connected(){return Boolean(this.#transport.connected);}
   get sequence(){return this.#seq;}
+  get activeDevices(){return [...this.#devices.entries()].map(([deviceId,device])=>({deviceId,name:device.name??'device',scopes:[...device.scopes]}));}
   start(){
     if(this.#started)return;this.#started=true;this.#transport.start?.();
     this.#off.push(this.#transport.onMessage((data)=>void this.#handleIncoming(data).catch((error)=>this.#publish('bridge.error',{message:cleanError(error)}))));
@@ -62,14 +63,15 @@ export class RemoteBridge {
   async #hello(raw,deviceId){
     const secret=String(raw.payload?.secret??'');if(!this.#authenticateDevice||!deviceId||!secret){this.#clearDevice(deviceId);return this.#rejectDevice(deviceId,'authentication unavailable');}
     const device=await this.#authenticateDevice(deviceId,secret).catch(()=>undefined);if(!device){this.#clearDevice(deviceId);return this.#rejectDevice(deviceId,'unknown device credentials');}
-    this.#clearDevice(deviceId);this.#devices.set(deviceId,{scopes:[...device.scopes],name:device.name??'device',...(device.expiresAt!==undefined?{expiresAt:device.expiresAt}:{})});this.#scheduleExpiry(deviceId,device.expiresAt);
+    this.#clearDevice(deviceId);this.#devices.set(deviceId,{scopes:[...device.scopes],name:device.name??'device',...(device.expiresAt!==undefined?{expiresAt:device.expiresAt}:{})});this.#scheduleExpiry(deviceId,device.expiresAt);this.#notifyDeviceChange();
     this.#send({version:PROTOCOL_VERSION,seq:0,hostId:this.#hostId,ts:Date.now(),type:'client.accept',payload:{},deviceId});
     this.#send({version:PROTOCOL_VERSION,replyTo:'device-hello',ok:true,result:{deviceId,name:device.name??'',scopes:[...device.scopes]},deviceId});
   }
   #rejectDevice(deviceId,message){if(deviceId)this.#send({version:PROTOCOL_VERSION,seq:0,hostId:this.#hostId,ts:Date.now(),type:'client.reject',payload:{},deviceId});this.#send({version:PROTOCOL_VERSION,replyTo:'device-hello',ok:false,error:message,...(deviceId?{deviceId}:{})});}
   #scheduleExpiry(deviceId,expiresAt){if(expiresAt===undefined||!Number.isFinite(expiresAt))return;const timer=setTimeout(()=>{const current=this.#devices.get(deviceId);if(!current||current.expiresAt!==expiresAt)return;this.#clearDevice(deviceId);this.#rejectDevice(deviceId,'remote credential expired');},Math.max(0,expiresAt*1000-Date.now()));timer.unref?.();this.#timers.set(deviceId,timer);}
-  #clearDevice(deviceId){const timer=this.#timers.get(deviceId);if(timer)clearTimeout(timer);this.#timers.delete(deviceId);this.#devices.delete(deviceId);this.#commands.detachDevice?.(deviceId);}
+  #clearDevice(deviceId){const existed=this.#devices.has(deviceId);const timer=this.#timers.get(deviceId);if(timer)clearTimeout(timer);this.#timers.delete(deviceId);this.#devices.delete(deviceId);this.#commands.detachDevice?.(deviceId);if(existed)this.#notifyDeviceChange();}
   #clearDevices(){for(const id of [...this.#devices.keys()])this.#clearDevice(id);for(const timer of this.#timers.values())clearTimeout(timer);this.#timers.clear();}
+  #notifyDeviceChange(){try{this.#onDeviceChange?.(this.activeDevices);}catch{}}
   #remember(id){this.#seen.set(id,true);if(this.#seen.size>DEDUPE_CAPACITY)this.#seen.delete(this.#seen.keys().next().value);}
   #resultError(replyTo,message,deviceId){this.#send({version:PROTOCOL_VERSION,replyTo,ok:false,error:String(message).slice(0,1000),...(deviceId?{deviceId}:{})});}
 }
