@@ -1,8 +1,10 @@
 import { OpenAICompatibleChatProvider } from './provider.mjs';
 import { providerRequest } from './provider-policy.mjs';
 import { createNativeProvider, nativeProviderKind } from './native-provider.mjs';
+import { CodexSubscriptionProvider } from './codex-provider.mjs';
 
 export function createChatProvider(configuration = {}) {
+  if (String(configuration?.providerID ?? '').toLowerCase() === 'codex') return new CodexSubscriptionProvider(configuration);
   const kind = resolvedNativeKind(configuration);
   if (kind) {
     const sourceFetch = configuration?.fetchImpl ?? globalThis.fetch;
