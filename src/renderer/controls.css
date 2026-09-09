@@ -44,7 +44,7 @@ input[type="search"]::-webkit-search-cancel-button,
 input[type="search"]::-webkit-search-results-button,
 input[type="search"]::-webkit-search-results-decoration{-webkit-appearance:none;appearance:none}
 
-/* Closed select field uses Cuppet chrome instead of the native macOS bevel/arrow. */
+/* Native select fallback is still skinned. Primary React dropdowns use SelectControl below. */
 select{
   cursor:pointer;
   padding-right:32px;
@@ -55,6 +55,67 @@ select{
 }
 select:disabled{cursor:not-allowed}
 select option{background:#11161c;color:#e8ecf1}
+
+/* Fully custom dropdown. This avoids the native macOS select popup as well as native field chrome. */
+.cuppet-select{position:relative;width:100%;font-size:12px;color:#e8ecf1}
+.cuppet-select-trigger{
+  width:100%;
+  min-height:34px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border:1px solid #303741;
+  border-radius:8px;
+  background:#0c1014;
+  color:#e8ecf1;
+  padding:7px 9px 7px 10px;
+  text-align:left;
+  outline:0;
+  box-shadow:none;
+  -webkit-appearance:none;
+  appearance:none;
+  transition:border-color .12s ease,background .12s ease,box-shadow .12s ease;
+}
+.cuppet-select-trigger>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cuppet-select-trigger svg{width:15px;height:15px;flex:0 0 auto;color:#7e8996;transition:transform .12s ease}
+.cuppet-select.open .cuppet-select-trigger svg{transform:rotate(180deg)}
+.cuppet-select-trigger:hover{border-color:#3a424e;background:#0e1217}
+.cuppet-select-trigger:focus-visible,.cuppet-select.open .cuppet-select-trigger{border-color:#596575;background:#0e1217;box-shadow:0 0 0 2px rgba(130,145,165,.12)}
+.cuppet-select-trigger:disabled{opacity:.55;cursor:not-allowed}
+.cuppet-select-menu{
+  position:absolute;
+  z-index:260;
+  top:calc(100% + 5px);
+  left:0;
+  right:0;
+  max-height:240px;
+  overflow:auto;
+  padding:5px;
+  border:1px solid #303741;
+  border-radius:9px;
+  background:#11161c;
+  box-shadow:0 16px 40px rgba(0,0,0,.42);
+}
+.cuppet-select-option{
+  width:100%;
+  min-height:30px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border:0;
+  border-radius:6px;
+  background:transparent;
+  color:#cbd2dc;
+  padding:6px 8px;
+  text-align:left;
+  font-size:12px;
+}
+.cuppet-select-option:hover,.cuppet-select-option.active{background:#1a2027;color:#f0f3f6}
+.cuppet-select-option.selected{color:#f5f7fa}
+.cuppet-select-option:disabled{opacity:.45;cursor:not-allowed}
+.cuppet-select-check{color:#aeb8c5;font-size:11px}
 
 /* App-wide checkbox/radio skin. Settings switches remain overridden by settings.css specificity. */
 input[type="checkbox"],input[type="radio"]{
