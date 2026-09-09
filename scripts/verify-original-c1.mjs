@@ -60,7 +60,7 @@ expect(journal.includes("const files = entry.kind === 'batch' ? entry.files") &&
 expect(journal.includes('contentBase64') && !/git\s+(?:reset|checkout|clean|restore)\b/i.test(journal), 'undo must remain byte-exact and non-destructive');
 
 const permissions = text['src/runtime/permissions.mjs'];
-expect(permissions.includes('fingerprintKey') && permissions.includes('permissionFingerprint(action, normalized, fingerprintKey)'), 'exact batch/diff permission fingerprinting is missing');
+expect(permissions.includes("fingerprintKey = ''") && permissions.includes('boundedFingerprintKey = String(fingerprintKey') && permissions.includes('permissionFingerprint(action, normalized, boundedFingerprintKey)') && permissions.includes('approvals.add(pending.fingerprint)'), 'exact batch/diff permission fingerprinting is missing');
 
 const service = text['src/runtime/service.mjs']; const serviceDense = dense['src/runtime/service.mjs'];
 expect(service.includes('new ProjectWriter()'), 'runtime does not own shared project writer');
