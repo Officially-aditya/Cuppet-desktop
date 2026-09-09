@@ -102,11 +102,8 @@ export function Sidebar(props: Props) {
         {props.projects.map((project) => (
           <section className="project-group" key={project.id}>
             <div className={`project-row${props.selectedProjectId === project.id ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
-              <button type="button" className="project-button" onClick={() => void props.onProject(project.id)}>
+              <button type="button" className="project-button" title={projectMetadata(project)} onClick={() => void props.onProject(project.id)}>
                 <span className="project-name">{project.name}</span>
-                <span className={`project-meta${project.missing ? ' missing' : ''}`}>
-                  {project.missing ? 'Folder missing' : [project.branch, project.dirty ? 'modified' : null].filter(Boolean).join(' · ') || 'Local folder'}
-                </span>
               </button>
               <button
                 type="button"
@@ -212,6 +209,11 @@ function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRem
 
 function clamp(value: number) {
   return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
+}
+
+function projectMetadata(project: Project) {
+  if (project.missing) return 'Folder missing';
+  return [project.branch, project.dirty ? 'modified' : null].filter(Boolean).join(' · ') || 'Local folder';
 }
 
 function relativeTime(timestamp?: number) {
