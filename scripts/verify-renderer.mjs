@@ -4,13 +4,16 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, index, entry, controls, selectControl, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
+const [pkgText, main, codexAuth, providerSettings, index, entry, controls, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
+  read('src/main/codex-auth.mjs'),
+  read('src/main/provider-settings.mjs'),
   read('src/renderer/index.html'),
   read('src/renderer/main.tsx'),
   read('src/renderer/controls.css'),
   read('src/renderer/react/SelectControl.tsx'),
+  read('src/renderer/react/ModelPicker.tsx'),
   read('src/renderer/react/App.tsx'),
   read('src/renderer/react/ChatPane.tsx'),
   read('src/renderer/react/Sidebar.tsx'),
@@ -40,6 +43,7 @@ assert.match(controls, /-webkit-appearance:none/, 'native Chromium/macOS form ap
 assert.match(controls, /input\[type="checkbox"\].*input\[type="radio"\]/s, 'checkbox/radio controls are not custom skinned');
 assert.match(controls, /\.cuppet-select-menu/, 'custom dropdown surface is not styled');
 assert.match(controls, /\.composer textarea/, 'chat composer textarea is not covered by the app-wide control skin');
+assert.match(controls, /\.model-picker-menu/, 'composer model picker surface is not styled');
 assert.match(selectControl, /role="listbox"/, 'custom dropdown does not expose a listbox');
 assert.match(selectControl, /aria-haspopup="listbox"/, 'custom dropdown trigger does not expose listbox semantics');
 assert.doesNotMatch(settings, /<select\b/, 'Settings returned to a native select control');
@@ -60,7 +64,17 @@ assert.match(chat, /aria-label=.*Send/s, 'arrow send action missing');
 assert.match(chat, /aria-label="Attach files"/, 'composer attachment action missing');
 assert.match(chat, /type="file"\s+multiple/, 'composer attachment action is not backed by the native OS file picker');
 assert.match(chat, /composer-attachments/, 'selected attachment chips missing');
+assert.match(chat, /<ModelPicker disabled=\{running\}\s*\/>/, 'composer does not expose the active model picker');
+assert.doesNotMatch(chat, /className=\{`mode-inline-button/, 'Build/Plan button returned to the permanent composer controls');
 assert.match(chat, /data-message-id=\{message\.id\}/, 'messages are not addressable for exact search navigation');
+assert.match(modelPicker, /aria-label="Select model"/, 'model picker trigger is not accessible');
+assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does not read the authoritative current model');
+assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
+assert.match(modelPicker, /window\.cuppet\.codexAuth\.models/, 'Codex model picker does not use the app-server catalog');
+assert.match(modelPicker, /codex-default/, 'Codex automatic default selection is not preserved');
+assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
+assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
+assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
@@ -96,4 +110,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker is host-backed and Codex-catalog-aware, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
