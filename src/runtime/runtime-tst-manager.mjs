@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ManagedTstManager } from './tst-supervisor.mjs';
 
 export class RuntimeTstManager {
-  #manager; #context = new AsyncLocalStorage();
+  #manager; #context = new AsyncLocalStorage(); #closing;
 
   constructor(options = {}) { this.#manager = options.manager ?? new ManagedTstManager(options); }
   get configured() { return this.#manager.configured; }
@@ -16,7 +16,10 @@ export class RuntimeTstManager {
   }
 
   unregisterProject(projectId) { return this.#manager.unregisterProject(projectId); }
-  close() { return this.#manager.close(); }
+  close() {
+    if (!this.#closing) this.#closing = Promise.resolve(this.#manager.close());
+    return this.#closing;
+  }
   forProject(projectId, projectRoot) { return this.#manager.forProject(projectId, projectRoot); }
   forProjectRoot(projectRoot) { return this.#manager.forProjectRoot(projectRoot); }
 
