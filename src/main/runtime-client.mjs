@@ -133,9 +133,9 @@ export class RuntimeClient extends EventEmitter {
     if (child.stdin.writable) child.stdin.end();
     if (await settleBefore(gracefulExit, GRACEFUL_SHUTDOWN_MS)) return;
 
-    if (!child.killed) child.kill('SIGTERM');
+    if (child.exitCode === null) child.kill('SIGTERM');
     if (await settleBefore(gracefulExit, TERMINATE_SHUTDOWN_MS)) return;
-    if (!child.killed) child.kill('SIGKILL');
+    if (child.exitCode === null) child.kill('SIGKILL');
   }
 
   #handleLine(line) {
