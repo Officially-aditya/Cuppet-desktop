@@ -36,7 +36,7 @@ export class RemoteManager {
     return this.#starting;
   }
   async #start({relayUrl,apiBase,authToken,setup,provider,createInvite,signal}){
-    let identity=await this.ready();if(provider)this.setProviderConfig(provider);let resolvedRelay=relayUrl;const connectBase=apiBase||DEFAULT_CUPPET_API_BASE;
+    let identity=await this.ready();if(provider)this.setProviderConfig(provider);let resolvedRelay=relayUrl||this.#relayUrl;const connectBase=apiBase||DEFAULT_CUPPET_API_BASE;
     if(authToken){
       const enrollment=await registerHost({apiBase:connectBase,token:authToken,identity,relaySecret:identity.relaySecret});resolvedRelay??=enrollment.relayUrl;
       if(enrollment.remoteTokenPublicKey)identity=await setRemoteTokenPublicKey(this.#remoteDir,enrollment.remoteTokenPublicKey);
