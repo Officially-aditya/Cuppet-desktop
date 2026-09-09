@@ -76,14 +76,24 @@ function renderMessage(message){const wrap=document.createElement('article');wra
 
 async function sendCurrentMessage() {
   const text=els.prompt.value.trim();if(!text)return;
-  if(!text.startsWith('/')&&(!state.provider?.apiKeyConfigured||!state.provider?.configured||!state.provider?.primary?.modelID)){await openSettings();toast('Configure a provider and primary coding model before sending.');return;}
+  const isSlashCommand=text.startsWith('/');
+  if(!isSlashCommand&&(!state.provider?.apiKeyConfigured||!state.provider?.configured||!state.provider?.primary?.modelID)){await openSettings();toast('Configure a provider and primary coding model before sending.');return;}
   try {
     if(!state.active) await createPersistedSessionForDraft(); if(!state.active)return;
     const project=state.projects.find((p)=>p.id===state.active.projectId);if(project?.missing){toast(`Relocate ${project.name} before continuing.`);return;}
-    const sourceSessionId=state.active.id;els.prompt.value='';resizePrompt();const result=await window.cuppet.sessions.send(sourceSessionId,text);const targetSessionId=result?.sessionId||sourceSessionId;
+    const sourceSessionId=state.active.id;els.prompt.value='';resizePrompt();
+    if(isSlashCommand){
+      const commandResult=await window.cuppet.commands.execute(sourceSessionId,text);
+      state.runningSessions.delete(sourceSessionId);
+      const mode=commandResult?.result?.mode;
+      if((commandResult?.id==='plan'||commandResult?.id==='cuppet.plan.agent')&&['plan','build'].includes(mode)){state.sessionMode=mode;renderCognitive();}
+      renderRunState();
+      return;
+    }
+    const result=await window.cuppet.sessions.send(sourceSessionId,text);const targetSessionId=result?.sessionId||sourceSessionId;
     if(targetSessionId!==sourceSessionId)state.runningSessions.delete(sourceSessionId);state.runningSessions.add(targetSessionId);
     if(state.active?.id!==targetSessionId)await openSession(targetSessionId);renderRunState();
-  } catch(error){toast(error.message||String(error));}
+  } catch(error){state.active?.id&&state.runningSessions.delete(state.active.id);renderRunState();toast(error.message||String(error));}
 }
 async function stopCurrent(){if(!state.active||!state.runningSessions.has(state.active.id))return;try{await window.cuppet.sessions.stop(state.active.id);}catch(error){toast(error.message||String(error));}}
 async function toggleMode(){const next=state.sessionMode==='plan'?'build':'plan';try{if(state.active)await window.cuppet.cognitive.modeSet(state.active.id,next);else if(state.draft)state.draft.mode=next;state.sessionMode=next;renderCognitive();toast(`${next==='plan'?'Plan':'Build'} mode enabled.`);}catch(error){toast(error.message||String(error));}}
