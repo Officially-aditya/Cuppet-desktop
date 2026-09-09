@@ -81,7 +81,7 @@ assert.match(modelPicker, /codex-default/, 'Codex automatic default selection is
 assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
 assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
 assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
-for (const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','claude-fable-5','claude-opus-5','claude-sonnet-5','qwen3.8-max','qwen3.8-flash','deepseek-v4-pro','deepseek-v4-flash','kimi-k2.6','kimi-k2.5','glm-5.1','glm-5-turbo','glm-5','gemini-3.8-flash','gemini-3.1-pro-preview','gemini-3.5-flash-lite','muse-spark-1.3']) {
+for (const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','claude-fable-5','claude-opus-5','claude-sonnet-5','qwen3.8-max','qwen3.8-flash','deepseek-v4-pro','deepseek-v4-flash','kimi-k3','kimi-k2.6','kimi-k2.5','glm-5.3','glm-5.3-flash','glm-5.1','glm-5-turbo','glm-5','gemini-3.8-flash','gemini-3.1-pro-preview','gemini-3.5-flash-lite','muse-spark-1.3']) {
   assert.ok(providerPresets.includes(id), `latest provider-family model missing from picker catalog: ${id}`);
 }
 assert.match(providerPresets, /id:\s*'kimi'.*baseUrl:\s*'https:\/\/api\.moonshot\.ai\/v1'/s, 'Kimi provider preset or standard API endpoint missing');
@@ -101,7 +101,10 @@ assert.match(sidebar, /SIDEBAR_COLLAPSED_KEY/, 'macOS sidebar collapse persisten
 assert.match(sidebar, /sidebar-toggle-button/, 'macOS sidebar collapse button missing');
 assert.match(sidebar, /event\.metaKey.*event\.altKey.*event\.key\.toLowerCase\(\) !== 's'/s, 'macOS sidebar toggle shortcut is missing');
 assert.match(sidebar, /window\.cuppet\.native\.platform === 'darwin'/, 'sidebar collapse control is not scoped to macOS');
-assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:12px/, 'chat/session sidebar text does not match Settings sidebar font size');
+assert.match(reactCss, /\.react-sidebar \.nav-button\{[^}]*font-size:13px/, 'primary sidebar navigation text is not 13px');
+assert.match(reactCss, /\.react-sidebar \.project-name\{[^}]*font-size:13px/, 'project sidebar text is not 13px');
+assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:13px/, 'chat/session sidebar text is not 13px');
+assert.match(reactCss, /\.react-sidebar \.sidebar-bottom \.ghost-button\{[^}]*font-size:13px/, 'sidebar footer action text is not 13px');
 assert.match(settingsCss, /\.settings-hub-nav button\{[^}]*font-size:12px/, 'Settings navigation baseline font size changed unexpectedly');
 assert.match(reactCss, /\.react-sidebar\.collapsed\{[^}]*42px/, 'collapsed macOS sidebar rail styling missing');
 assert.match(settings, /Account/);
@@ -130,4 +133,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker exposes current provider families including Kimi and Z.ai plus the Codex catalog, the macOS sidebar has a persisted collapse control with Settings-sized item text, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker exposes current provider families including Kimi and Z.ai plus the Codex catalog, the macOS sidebar has a persisted collapse control with 13px item text, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
