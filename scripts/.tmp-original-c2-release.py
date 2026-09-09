@@ -7,14 +7,6 @@ pkg['version'] = '0.9.0-alpha.1'
 pkg.setdefault('scripts', {})['original-c2:verify'] = 'node scripts/verify-original-c2.mjs'
 pkg_path.write_text(json.dumps(pkg, indent=2) + '\n')
 
-ci = Path('.github/workflows/ci.yml')
-s = ci.read_text()
-needle = '      - run: npm run original-c1:verify\n'
-if s.count(needle) != 1:
-    raise SystemExit(f'CI original-c1 marker count: {s.count(needle)}')
-s = s.replace(needle, needle + '      - run: npm run original-c2:verify\n', 1)
-ci.write_text(s)
-
 for name in ['src/runtime/main.mjs', 'src/runtime/remote/commands.mjs', 'src/cli/main.mjs']:
     path = Path(name)
     text = path.read_text()
