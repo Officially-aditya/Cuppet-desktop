@@ -45,7 +45,9 @@ test('package metadata makes bootstrap security and ASAR packaging authoritative
   assert.equal(pkg.build.appId, 'com.cuppet.desktop');
   assert.equal(pkg.build.productName, 'Cuppet');
   assert.equal(pkg.build.asar, true);
+  assert.equal(pkg.build.allowMissingDependencies, false);
   assert.ok(pkg.build.files.includes('src/**/*'));
+  assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
   assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir');
   assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
