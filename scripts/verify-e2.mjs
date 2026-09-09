@@ -9,7 +9,7 @@ const [provider, auth, factory, toolRuntime, journaled, settings, presets, pkg] 
   read('src/runtime/provider-factory.mjs'),
   read('src/runtime/tool-runtime.mjs'),
   read('src/runtime/journaled-tool-runtime.mjs'),
-  read('src/renderer/settings-hub.js'),
+  read('src/renderer/react/SettingsModal.tsx'),
   read('src/main/provider-presets.mjs'),
   read('package.json'),
 ]);
@@ -29,8 +29,11 @@ assert.match(factory, /CodexSubscriptionProvider/);
 assert.match(toolRuntime, /executeTool/);
 assert.match(journaled, /executeTool/);
 assert.match(settings, /Continue with ChatGPT/);
-assert.match(settings, /providerApiKeyField.*hidden/s);
-assert.match(settings, /stopImmediatePropagation/);
+assert.match(settings, /window\.cuppet\.codexAuth\.login\(\)/, 'React settings surface does not start Codex-owned OAuth');
+assert.match(settings, /window\.cuppet\.codexAuth\.logout\(\)/, 'React settings surface does not expose Codex sign-out');
+assert.match(settings, /apiKey:\s*isCodex\s*\?\s*''\s*:\s*apiKey/, 'Codex provider must not persist a Cuppet-owned API key');
+assert.match(settings, /isCodex\s*\?\s*\(/, 'React provider form does not branch to the Codex subscription surface');
+assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/, 'advanced provider internals returned to the React settings surface');
 assert.match(presets, /authType: 'chatgpt'/);
 
 const packageJson = JSON.parse(pkg);
