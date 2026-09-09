@@ -20,6 +20,7 @@ export class CodexAppServerClient extends EventEmitter {
   #started = false;
 
   constructor({ command, args = [], env = process.env } = {}) {
+    super();
     if (!command) throw new Error('Codex app-server command is required');
     this.#command = command;
     this.#args = Array.isArray(args) ? [...args] : [];
