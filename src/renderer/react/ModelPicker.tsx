@@ -5,7 +5,6 @@ type ModelOption = {
   id: string;
   label: string;
   description?: string;
-  isDefault?: boolean;
 };
 
 type Props = {
@@ -16,7 +15,6 @@ const EMPTY_CODEX: CodexModelCatalog = { available: false, models: [], defaultMo
 
 export function ModelPicker({ disabled = false }: Props) {
   const root = useRef<HTMLDivElement | null>(null);
-  const customInput = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState<ProviderSettings | null>(null);
@@ -61,7 +59,6 @@ export function ModelPicker({ disabled = false }: Props) {
         id: model.id,
         label: model.label || model.id,
         description: model.description,
-        isDefault: model.isDefault,
       }));
       const defaultModel = codex.defaultModel;
       const defaultEntry = defaultModel ? dynamic.find((item) => item.id === defaultModel) : null;
@@ -69,7 +66,6 @@ export function ModelPicker({ disabled = false }: Props) {
         id: 'codex-default',
         label: defaultEntry ? `${defaultEntry.label} · Default` : 'Codex default',
         description: 'Follow the default model selected by your Codex account.',
-        isDefault: true,
       };
       return [special, ...dynamic];
     }
@@ -161,9 +157,8 @@ export function ModelPicker({ disabled = false }: Props) {
             </button>
           )) : <div className="model-picker-empty">No advertised model list. Enter a model ID below.</div>}
 
-          <form className="model-picker-custom" onSubmit={(event) => { event.preventDefault(); void choose(customModel); }}>
+          <div className="model-picker-custom">
             <input
-              ref={customInput}
               type="text"
               value={customModel}
               maxLength={240}
@@ -172,9 +167,15 @@ export function ModelPicker({ disabled = false }: Props) {
               placeholder="Model ID"
               aria-label="Custom model ID"
               onChange={(event) => setCustomModel(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (customModel.trim() && !busy) void choose(customModel);
+              }}
             />
-            <button type="submit" disabled={busy || !customModel.trim()}>Use</button>
-          </form>
+            <button type="button" disabled={busy || !customModel.trim()} onClick={() => void choose(customModel)}>Use</button>
+          </div>
           {error && <div className="model-picker-error" role="status">{error}</div>}
         </div>
       )}
