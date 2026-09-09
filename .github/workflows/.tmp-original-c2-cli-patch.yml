@@ -1,29 +1,11 @@
 name: Temporary original C2 CLI patch
 
 on:
-  push:
-    branches:
-      - original-c2-command-surface
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  patch:
-    if: github.actor != 'github-actions[bot]'
+  disabled:
+    if: false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: original-c2-command-surface
-      - run: python3 scripts/.tmp-original-c2-cli-patch.py
-      - name: Commit patched CLI
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/cli/main.mjs
-          git commit -m "feat(commands): share registry with headless CLI"
-          git push origin HEAD:original-c2-command-surface
+      - run: echo disabled
