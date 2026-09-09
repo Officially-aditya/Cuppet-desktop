@@ -85,7 +85,7 @@ export class RemoteCommandAdapter {
       if(required&&!actor.scopes?.includes?.(required))throw new Error(`missing scope '${required}' for /${parsed.name}`);
       return executeCommand(parsed,{
         sessionId,
-        call:async(method,value={})=>method==='session.steer'?this.#sessionSteer(state,sessionId,{instruction:value.text}):this.#call(method,value),
+        call:(method,value={})=>this.#call(method,value),
         providerRequest:this.#selectedProvider(state),
         host:{
           status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.8.0-alpha.1'}),
@@ -99,8 +99,7 @@ export class RemoteCommandAdapter {
   }
   async #sessionSteer(state,explicit,params){
     const sessionId=this.#requireSession(state,explicit); const instruction=String(params.instruction??params.prompt??'').trim(); if(!instruction)throw new Error('instruction is required');
-    await this.#call('session.stop',{sessionId}).catch(()=>undefined); await waitUntilIdle(this.#call,sessionId);
-    const result=await this.#call('session.send',{sessionId,text:instruction,provider:this.#selectedProvider(state)}); state.sessionId=result.sessionId; return {...result,steered:true};
+    const result=await this.#call('session.steer',{sessionId,text:instruction,provider:this.#selectedProvider(state)}); state.sessionId=result.sessionId; return {...result,steered:true};
   }
   async #permissionReply(params){
     const request=record(params.request); const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id); const reply=String(params.reply??'reject');

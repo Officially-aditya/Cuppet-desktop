@@ -17,7 +17,7 @@ async function init() {
 }
 
 function startDraft(projectId) {
-  state.active = null; state.draft = { projectId: projectId || null, title: 'New chat', messages: [], mode: 'build' }; state.selectedProjectId = projectId || null; state.sessionMode = 'build';
+  state.active = null; state.draft = { projectId: projectId || null, title: 'New chat', messages: [], mode: 'build' }; state.selectedProjectId = projectId || null; state.sessionMode = 'build'; delete document.body.dataset.cuppetSessionId;
   renderSidebar(); renderConversation(); renderCognitive(); els.prompt.focus();
 }
 async function openNewChatDialog() { renderProjectOptions(); els.newChatProject.value = state.selectedProjectId || ''; els.newChatDialog.showModal(); }
@@ -25,12 +25,12 @@ async function createPersistedSessionForDraft() {
   if (!state.draft) return state.active;
   const draft = state.draft; const session = await window.cuppet.sessions.create(draft.projectId);
   if (draft.mode === 'plan') await window.cuppet.cognitive.modeSet(session.id, 'plan');
-  upsertSession(session); state.draft = null; state.active = { ...session, messages: [] }; state.selectedProjectId = session.projectId || null; state.sessionMode = draft.mode || 'build';
+  upsertSession(session); state.draft = null; state.active = { ...session, messages: [] }; state.selectedProjectId = session.projectId || null; state.sessionMode = draft.mode || 'build'; document.body.dataset.cuppetSessionId = session.id;
   renderSidebar(); renderCognitive(); return state.active;
 }
 async function openSession(id) {
   const [session, mode] = await Promise.all([window.cuppet.sessions.get(id), window.cuppet.cognitive.modeGet(id)]);
-  state.active = session; state.draft = null; state.selectedProjectId = session.projectId || null; state.sessionMode = mode.mode || 'build';
+  state.active = session; state.draft = null; state.selectedProjectId = session.projectId || null; state.sessionMode = mode.mode || 'build'; document.body.dataset.cuppetSessionId = session.id;
   if (session.messages.some((message) => message.status === 'streaming')) state.runningSessions.add(session.id); else state.runningSessions.delete(session.id);
   if (session.projectId) void window.cuppet.projects.open(session.projectId).catch(() => {});
   renderSidebar(); renderConversation(); renderCognitive();
@@ -76,7 +76,7 @@ function renderMessage(message){const wrap=document.createElement('article');wra
 
 async function sendCurrentMessage() {
   const text=els.prompt.value.trim();if(!text)return;
-  if(!state.provider?.apiKeyConfigured||!state.provider?.configured||!state.provider?.primary?.modelID){await openSettings();toast('Configure a provider and primary coding model before sending.');return;}
+  if(!text.startsWith('/')&&(!state.provider?.apiKeyConfigured||!state.provider?.configured||!state.provider?.primary?.modelID)){await openSettings();toast('Configure a provider and primary coding model before sending.');return;}
   try {
     if(!state.active) await createPersistedSessionForDraft(); if(!state.active)return;
     const project=state.projects.find((p)=>p.id===state.active.projectId);if(project?.missing){toast(`Relocate ${project.name} before continuing.`);return;}

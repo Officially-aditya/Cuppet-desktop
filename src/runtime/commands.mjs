@@ -25,7 +25,7 @@ const DEFINITIONS = Object.freeze([
   palette('cuppet.background.pause', 'Pause background memory', 'Pause background enrichment.', 'session.write', 'runtime'),
   palette('cuppet.background.resume', 'Resume background memory', 'Resume background enrichment.', 'session.write', 'runtime'),
   palette('cuppet.steer.interrupt', 'Interrupt and steer', 'Stop active work and immediately steer the session.', 'session.write', 'runtime'),
-  palette('cuppet.plan.agent', 'Plan / Build mode', 'Reviewed replacement for the old OpenCode plan-agent picker.', 'session.write', 'runtime'),
+  palette('cuppet.plan.agent', 'Plan / Build mode', 'Reviewed replacement for the legacy plan-agent picker.', 'session.write', 'runtime'),
 ]);
 
 const BY_SLASH = new Map();

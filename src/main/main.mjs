@@ -93,10 +93,7 @@ async function executeDesktopCommand(request, sessionId, value) {
   const parsed = typeof value === 'string' ? parseSlashCommand(value) : value;
   if (parsed?.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
   if (parsed?.kind !== 'command') throw new Error('A recognized Cuppet command is required');
-  const runtimeCall = async (method, params = {}) => {
-    if (method === 'session.steer') return steerSession(request, params.sessionId, params.text);
-    return request(method, params);
-  };
+  const runtimeCall = (method, params = {}) => request(method, params);
   const result = await executeCommand(parsed, {
     sessionId: boundedId(sessionId),
     call: runtimeCall,
@@ -156,20 +153,6 @@ function desktopProviderAuthority(request) {
       return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
     },
   };
-}
-
-async function steerSession(request, sessionId, text) {
-  if (!sessionId) throw new Error('/steer requires an active session');
-  const instruction = String(text ?? '').trim();
-  if (!instruction) throw new Error('/steer requires an instruction');
-  await request('session.stop', { sessionId }).catch(() => undefined);
-  for (let i = 0; i < 250; i++) {
-    const session = await request('session.get', { sessionId });
-    const last = [...(session.messages ?? [])].reverse().find((message) => message.role === 'assistant');
-    if (!last || last.status !== 'streaming') return request('session.send', { sessionId, text: instruction, provider: settings.runtimeValue() });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error('Session did not stop before steer');
 }
 
 function validateProjectPayload(value) {
