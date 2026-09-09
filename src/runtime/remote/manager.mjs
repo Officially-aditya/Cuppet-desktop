@@ -23,7 +23,11 @@ export class RemoteManager {
     return {providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model)};
   }
   handleRuntimeEvent(event){this.#bridge?.onRuntimeEvent(event);}
-  async status(){const identity=await this.ready();return {running:Boolean(this.#bridge),connected:Boolean(this.#transport?.connected),hostId:identity.hostId,name:identity.deviceName,relayUrl:this.#relayUrl??null,startedAt:this.#startedAt??null,pairedDevices:(await listPairedDevices(this.#remoteDir)).length,providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model),protocolVersion:1};}
+  async status(){
+    const identity=await this.ready();
+    const activeDevices=this.#bridge?.activeDevices??[];
+    return {running:Boolean(this.#bridge),connected:Boolean(this.#transport?.connected),deviceConnected:activeDevices.length>0,activeDevice:activeDevices[0]??null,activeDevices,hostId:identity.hostId,name:identity.deviceName,relayUrl:this.#relayUrl??null,startedAt:this.#startedAt??null,pairedDevices:(await listPairedDevices(this.#remoteDir)).length,providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model),protocolVersion:1};
+  }
 
   async start({relayUrl,apiBase,authToken,setup=false,provider,createInvite=true,signal}={}){
     if(this.#bridge)return {status:await this.status(),invite:createInvite?await this.createInvite({role:'trusted'}):null};
@@ -50,6 +54,7 @@ export class RemoteManager {
       authenticateDevice:async(deviceId,secret)=>{const local=await authenticateDevice(this.#remoteDir,deviceId,secret);if(local)return local;if(!identity.remoteTokenPublicKey)return undefined;return verifyRemoteToken(secret,identity.remoteTokenPublicKey,identity.hostId,deviceId);},
       claimPairingInvite:(code,name)=>claimPairingInvite(this.#remoteDir,code,name),
       buildAttachSnapshot:async()=>({host:await commands.execute({deviceID:'attach'},'host.get',{},{}),workspaces:await commands.execute({deviceID:'attach'},'workspace.list',{},{}),permissions:await this.#call('permission.list',{}),questions:[]}),
+      onDeviceChange:(devices)=>this.#emit({type:'remote.device',devices}),
     });
     this.#transport=transport;this.#commands=commands;this.#bridge=bridge;this.#startedAt=Date.now();bridge.start();
     try{await transport.waitUntilConnected();}catch(error){bridge.stop();this.#bridge=undefined;this.#transport=undefined;this.#commands=undefined;this.#startedAt=undefined;throw error;}
