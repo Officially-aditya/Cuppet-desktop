@@ -26,9 +26,10 @@
     button.addEventListener('click', () => activate(button.dataset.settingsSection));
   }
 
-  // Manual Settings opens to the broader account overview. Provider-required flows still
-  // land on Platform because that is the markup default before this click handler runs.
+  // Manual Settings opens on the broader account overview. After closing, restore Platform
+  // as the default so provider-required flows still land on the configuration form.
   settingsButton?.addEventListener('click', () => requestAnimationFrame(() => activate('account')));
+  dialog.addEventListener('close', () => activate('platform'));
 
   openRemote?.addEventListener('click', () => {
     dialog.close();
