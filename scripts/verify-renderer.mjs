@@ -21,7 +21,7 @@ const [pkgText, main, index, entry, app, chat, sidebar, search, settings, remote
 const pkg = JSON.parse(pkgText);
 
 assert.equal(pkg.dependencies && Object.keys(pkg.dependencies).length, 0, 'React/Vite must stay build-time only so packaged runtime has no npm production dependencies');
-for (const dependency of ['react','react-dom','vite','typescript','@vitejs/plugin-react']) assert.ok(pkg.devDependencies?.[dependency], `renderer build dependency missing: ${dependency}`);
+for (const dependency of ['react','react-dom','vite','typescript','@vitejs/plugin-react','qrcode']) assert.ok(pkg.devDependencies?.[dependency], `renderer build dependency missing: ${dependency}`);
 assert.equal(pkg.scripts?.['renderer:verify'], 'tsc --noEmit && vite build && node scripts/verify-renderer.mjs');
 assert.ok(pkg.build.files.includes('dist-renderer/**/*'), 'compiled Vite renderer is not packaged');
 assert.ok(!pkg.build.files.includes('src/renderer/**/*'), 'raw renderer source must not be packaged');
@@ -58,7 +58,11 @@ assert.match(settings, /Continue with ChatGPT/, 'Codex subscription connection U
 assert.match(settings, /API key/, 'API-key provider credential UI missing');
 assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/, 'advanced provider endpoint/model fields returned to the React UI');
 assert.match(remote, /remote\.start/);
-assert.match(remote, /remote\.revoke/);
+assert.match(remote, /remote\.stop/);
+assert.match(remote, /QRCode\.toDataURL/, 'Remote pairing QR is not rendered locally');
+assert.match(remote, /Connected to \{activeDevice\?\.name/, 'Remote active session does not show the authenticated device name');
+assert.match(remote, /deviceConnected|activeDevice/, 'Remote UI does not distinguish an authenticated device from relay connectivity');
+assert.doesNotMatch(remote, /remote\.revoke|remote\.devices|Paired devices|New code|Start remote/, 'Remote modal returned to device-management/start-stop plumbing instead of the pairing-or-session flow');
 assert.doesNotMatch(remote, /relayUrl|apiBase|viewer/, 'consumer Remote UI exposes advanced relay/API/viewer configuration');
 assert.match(permission, /onResolve/);
 assert.match(permission, /Enable guarded auto/);
@@ -71,4 +75,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, slash dispatch is single-path, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, slash dispatch is single-path, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
