@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CommandDefinition, CommandResult, Project, Session } from '../types';
+import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { renderMarkdown } from './markdown';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -21,17 +21,19 @@ type Props = {
   running: boolean;
   commands: CommandDefinition[];
   activity: ActivityEntry[];
-  onSend: (text: string, deliveryMode: DeliveryMode) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
+  onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
   onToggleMode: () => void | Promise<void>;
 };
 
 export function ChatPane({ session, draft, project, mode, running, commands, activity, onSend, onStop, onToggleMode }: Props) {
   const [value, setValue] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('queue');
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const palette = useMemo(() => {
@@ -44,6 +46,11 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   }, [commands, value]);
 
   useEffect(() => setSelected(0), [value]);
+
+  useEffect(() => {
+    setAttachments([]);
+    if (fileInput.current) fileInput.current.value = '';
+  }, [session?.id, draft?.projectId]);
 
   useEffect(() => {
     const node = messagesRef.current;
@@ -70,14 +77,39 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 
   const submit = async () => {
     const raw = value.trim();
-    if (!raw) return;
-    const result = await onSend(raw, deliveryMode);
+    if (!raw && !attachments.length) return;
+    const result = await onSend(raw, deliveryMode, attachments);
     if (result.commandResult) setCommandResult(result.commandResult);
     if (result.clear) {
       setValue('');
+      setAttachments([]);
+      if (fileInput.current) fileInput.current.value = '';
       resize(textarea.current);
       textarea.current?.focus();
     }
+  };
+
+  const addFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    if (!files.length) return;
+    setAttachments((current) => {
+      const next = [...current];
+      const seen = new Set(next.map(attachmentKey));
+      for (const file of files) {
+        if (next.length >= 16) break;
+        const attachment: Attachment = {
+          name: file.name,
+          ...(file.type ? { mime: file.type } : {}),
+          size: file.size,
+        };
+        const key = attachmentKey(attachment);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(attachment);
+      }
+      return next;
+    });
+    event.currentTarget.value = '';
   };
 
   const choose = async (item: CommandDefinition) => {
@@ -149,6 +181,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
         {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={addFiles} />
           <textarea
             ref={textarea}
             rows={1}
@@ -158,16 +191,32 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             onChange={(event) => { setValue(event.target.value); resize(event.target); }}
             onKeyDown={onKeyDown}
           />
+          {attachments.length > 0 && (
+            <div className="composer-attachments" aria-label="Attached files">
+              {attachments.map((attachment, index) => (
+                <div className="composer-attachment" key={`${attachmentKey(attachment)}:${index}`}>
+                  <span title={attachment.name}>{attachment.name}</span>
+                  <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="composer-actions react-composer-actions">
+            <button type="button" className="composer-attach-button" aria-label="Attach files" title="Attach files" onClick={() => fileInput.current?.click()}>
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
+            </button>
             {running && (
               <div className="delivery-controls react-delivery-controls" aria-label="While running">
                 <button type="button" className={`delivery-mode-button${deliveryMode === 'queue' ? ' active' : ''}`} onClick={() => setDeliveryMode('queue')}>Queue</button>
                 <button type="button" className={`delivery-mode-button${deliveryMode === 'steer' ? ' active' : ''}`} onClick={() => setDeliveryMode('steer')}>Steer</button>
               </div>
             )}
+            <div className="composer-actions-spacer" aria-hidden="true" />
             <button type="button" className={`mode-inline-button${mode === 'plan' ? ' active' : ''}`} onClick={() => void onToggleMode()} disabled={running} title="Switch between Build and Plan mode">{mode === 'plan' ? 'Plan' : 'Build'}</button>
             {running && <button type="button" className="stop-button" onClick={() => void onStop()}>Stop</button>}
-            <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim()}>
+            <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim() && !attachments.length}>
               <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -284,6 +333,10 @@ function currentSlashQuery(value: string) {
 function exactSlash(value: string, item: CommandDefinition) {
   const trimmed = value.trim().toLowerCase();
   return trimmed === `/${item.slash}` || item.aliases?.some((alias) => trimmed === `/${alias}`);
+}
+
+function attachmentKey(value: Attachment) {
+  return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
 }
 
 function resize(node: HTMLTextAreaElement | null) {
