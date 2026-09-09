@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build:renderer": "vite build",
-    "renderer:verify": "tsc --noEmit && vite build",
+    "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test",
@@ -45,16 +45,15 @@
     "d3:verify": "node scripts/verify-d3.mjs",
     "e1:verify": "node scripts/verify-e1.mjs"
   },
-  "dependencies": {
-    "react": "19.1.1",
-    "react-dom": "19.1.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/react": "19.1.12",
     "@types/react-dom": "19.1.9",
     "@vitejs/plugin-react": "5.0.2",
     "electron": "44.3.0",
     "electron-builder": "26.15.3",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
     "typescript": "5.9.2",
     "vite": "7.1.5"
   },
