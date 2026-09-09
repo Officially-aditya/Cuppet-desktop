@@ -77,9 +77,18 @@ export class ProviderSettingsStore {
       : this.#value.providerID || DEFAULT_PROVIDER_ID;
     const preset = providerPreset(requestedProviderID);
     const providerID = preset?.id ?? requestedProviderID;
+    const previousProviderID = this.#value.providerID;
+    const providerChanged = Boolean(previousProviderID && previousProviderID !== providerID);
     const baseUrl = preset?.baseUrl ?? (typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '');
-    const model = preset?.model ?? (typeof source.model === 'string' ? source.model.trim() : '');
-    const backgroundModel = preset?.model ?? (typeof source.backgroundModel === 'string' ? source.backgroundModel.trim() : '');
+    const requestedModel = modelID(source.model);
+    const requestedBackgroundModel = modelID(source.backgroundModel);
+    const currentPrimaryModel = !providerChanged ? modelID(this.#value.primary?.modelID ?? this.#value.model) : '';
+    const currentSecondaryModel = !providerChanged ? modelID(this.#value.secondary?.modelID ?? this.#value.backgroundModel) : '';
+    // Provider presets own endpoint/auth defaults, but the active model is user-selectable.
+    // When the provider itself changes, fall back to that provider's preset model instead of
+    // accidentally carrying a model id across providers.
+    const model = requestedModel || currentPrimaryModel || modelID(preset?.model);
+    const backgroundModel = requestedBackgroundModel || currentSecondaryModel || model;
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
     const secondaryEffort = preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
     const chatGPTProvider = preset?.authType === 'chatgpt';
@@ -92,7 +101,6 @@ export class ProviderSettingsStore {
     }
     if (!model) throw new Error('Primary model is required');
 
-    const previousProviderID = this.#value.providerID;
     let next = normalizeProviderConfiguration({
       ...this.#value,
       providerID,
@@ -107,7 +115,6 @@ export class ProviderSettingsStore {
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
 
-    const providerChanged = Boolean(previousProviderID && previousProviderID !== providerID);
     if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
     } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
@@ -139,4 +146,11 @@ async function writeSettingsAtomically(path, content) {
   }
 }
 
+function modelID(value) {
+  if (typeof value !== 'string') return '';
+  const id = value.trim().slice(0, 240);
+  if (!id) return '';
+  if (/\s|[\u0000-\u001f\u007f]/.test(id)) throw new Error('Model ID contains unsupported characters');
+  return id;
+}
 function isLocalhost(hostname) { return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'; }
