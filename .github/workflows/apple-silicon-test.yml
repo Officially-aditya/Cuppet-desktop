@@ -6,6 +6,9 @@ on:
     branches:
       - feat/e2-apple-silicon-test
 
+permissions:
+  contents: write
+
 concurrency:
   group: apple-silicon-test-${{ github.ref }}
   cancel-in-progress: true
@@ -125,7 +128,8 @@ jobs:
           - project isolation
           EOF
 
-      - uses: actions/upload-artifact@v6
+      - name: Upload Actions artifact
+        uses: actions/upload-artifact@v6
         with:
           name: Cuppet-Apple-Silicon-Test-${{ github.sha }}
           path: |
@@ -135,3 +139,21 @@ jobs:
             dist/TESTING.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub prerelease assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="apple-silicon-test-${GITHUB_SHA:0:12}"
+          TITLE="Cuppet Apple Silicon Test ${GITHUB_SHA:0:12}"
+          gh release create "$TAG" \
+            dist/*-apple-silicon-test.dmg \
+            dist/*-apple-silicon-test.zip \
+            dist/SHA256SUMS.txt \
+            dist/TESTING.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes "Unsigned/notarized test candidate for Apple Silicon. The DMG is the recommended download for manual testing. Built on native arm64 macOS and passed E1/F1 packaged acceptance." \
+            --prerelease
