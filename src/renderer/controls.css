@@ -1,0 +1,129 @@
+/* App-wide form control skin.
+   Electron/Chromium otherwise inherits native macOS field, select and checkbox chrome. */
+
+:where(input,textarea,select){font:inherit;color:var(--text);color-scheme:dark}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),textarea,select){
+  min-height:34px;
+  border:1px solid #303741;
+  border-radius:8px;
+  background:#0c1014;
+  color:#e8ecf1;
+  padding:7px 10px;
+  outline:0;
+  box-shadow:none;
+  caret-color:#e8ecf1;
+  -webkit-appearance:none;
+  appearance:none;
+  transition:border-color .12s ease,background .12s ease,box-shadow .12s ease;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),textarea,select):hover{
+  border-color:#3a424e;
+  background:#0e1217;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),textarea,select):focus,
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),textarea,select):focus-visible{
+  border-color:#596575;
+  background:#0e1217;
+  outline:0;
+  box-shadow:0 0 0 2px rgba(130,145,165,.12);
+}
+
+:where(input,textarea)::placeholder{color:#59636f;opacity:1}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),textarea,select):disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+/* Chromium search controls can otherwise expose native macOS affordances. */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration{-webkit-appearance:none;appearance:none}
+
+/* Closed select field uses Cuppet chrome instead of the native macOS bevel/arrow. */
+select{
+  cursor:pointer;
+  padding-right:32px;
+  background-image:linear-gradient(45deg,transparent 50%,#7e8996 50%),linear-gradient(135deg,#7e8996 50%,transparent 50%);
+  background-position:calc(100% - 15px) 14px,calc(100% - 11px) 14px;
+  background-size:4px 4px,4px 4px;
+  background-repeat:no-repeat;
+}
+select:disabled{cursor:not-allowed}
+select option{background:#11161c;color:#e8ecf1}
+
+/* App-wide checkbox/radio skin. Settings switches remain overridden by settings.css specificity. */
+input[type="checkbox"],input[type="radio"]{
+  position:relative;
+  flex:0 0 auto;
+  width:16px;
+  height:16px;
+  margin:0;
+  border:1px solid #3b4450;
+  background:#10151a;
+  outline:0;
+  box-shadow:none;
+  cursor:pointer;
+  -webkit-appearance:none;
+  appearance:none;
+  transition:border-color .12s ease,background .12s ease,box-shadow .12s ease;
+}
+input[type="checkbox"]{border-radius:5px}
+input[type="radio"]{border-radius:50%}
+input[type="checkbox"]:hover,input[type="radio"]:hover{border-color:#687484;background:#151b22}
+input[type="checkbox"]:focus-visible,input[type="radio"]:focus-visible{box-shadow:0 0 0 2px rgba(130,145,165,.18)}
+input[type="checkbox"]:checked{
+  border-color:#dfe4ea;
+  background-color:#dfe4ea;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.1 4.8 8.5 9.8 3.4' fill='none' stroke='%2311151a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position:center;
+  background-repeat:no-repeat;
+  background-size:11px 11px;
+}
+input[type="radio"]:checked{border-color:#dfe4ea;background:#dfe4ea;box-shadow:inset 0 0 0 4px #11161c}
+input[type="checkbox"]:disabled,input[type="radio"]:disabled{opacity:.5;cursor:not-allowed}
+
+/* The composer shell is the visible input surface. The textarea itself must stay borderless. */
+.composer textarea,
+.react-composer textarea{
+  display:block;
+  width:100%;
+  min-height:54px;
+  max-height:180px;
+  resize:none;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  color:var(--text);
+  padding:5px 7px;
+  line-height:1.5;
+  outline:0;
+  box-shadow:none;
+  -webkit-appearance:none;
+  appearance:none;
+}
+.composer textarea:hover,.composer textarea:focus,.composer textarea:focus-visible,
+.react-composer textarea:hover,.react-composer textarea:focus,.react-composer textarea:focus-visible{
+  border:0;
+  background:transparent;
+  outline:0;
+  box-shadow:none;
+}
+
+/* Search owns its border on the wrapper, not on the text field. */
+.search-input{
+  min-height:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  padding:11px 0;
+  box-shadow:none;
+}
+.search-input:hover,.search-input:focus,.search-input:focus-visible{border:0;background:transparent;box-shadow:none}
+
+/* Keep the native file chooser invisible; it is only a bridge to the OS file picker. */
+.composer-file-input{display:none!important}
