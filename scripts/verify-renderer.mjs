@@ -4,17 +4,19 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, index, entry, controls, app, chat, sidebar, search, settings, remote, permission, question] = await Promise.all([
+const [pkgText, main, index, entry, controls, selectControl, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/renderer/index.html'),
   read('src/renderer/main.tsx'),
   read('src/renderer/controls.css'),
+  read('src/renderer/react/SelectControl.tsx'),
   read('src/renderer/react/App.tsx'),
   read('src/renderer/react/ChatPane.tsx'),
   read('src/renderer/react/Sidebar.tsx'),
   read('src/renderer/react/SearchModal.tsx'),
   read('src/renderer/react/SettingsModal.tsx'),
+  read('src/renderer/react/NewChatModal.tsx'),
   read('src/renderer/react/RemoteModal.tsx'),
   read('src/renderer/react/PermissionModal.tsx'),
   read('src/renderer/react/QuestionModal.tsx'),
@@ -36,8 +38,14 @@ assert.match(entry, /<App\s*\/>/);
 assert.match(entry, /import '\.\/controls\.css'/, 'app-wide control skin is not loaded by the React renderer');
 assert.match(controls, /-webkit-appearance:none/, 'native Chromium/macOS form appearance is not disabled');
 assert.match(controls, /input\[type="checkbox"\].*input\[type="radio"\]/s, 'checkbox/radio controls are not custom skinned');
-assert.match(controls, /select\{[\s\S]*background-image:/, 'select controls do not use custom Cuppet chrome');
+assert.match(controls, /\.cuppet-select-menu/, 'custom dropdown surface is not styled');
 assert.match(controls, /\.composer textarea/, 'chat composer textarea is not covered by the app-wide control skin');
+assert.match(selectControl, /role="listbox"/, 'custom dropdown does not expose a listbox');
+assert.match(selectControl, /aria-haspopup="listbox"/, 'custom dropdown trigger does not expose listbox semantics');
+assert.doesNotMatch(settings, /<select\b/, 'Settings returned to a native select control');
+assert.doesNotMatch(newChat, /<select\b/, 'New Chat returned to a native select control');
+assert.match(settings, /<SelectControl/, 'Settings provider dropdown is not using the shared custom control');
+assert.match(newChat, /<SelectControl/, 'New Chat project dropdown is not using the shared custom control');
 
 assert.match(app, /if \((?:value|trimmed)\.startsWith\('\/'\)\)/, 'slash commands are not handled by the single React send path');
 assert.match(app, /window\.cuppet\.commands\.execute/, 'React command path does not use the bounded preload command API');
@@ -88,4 +96,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
