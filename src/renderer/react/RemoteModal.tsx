@@ -1,79 +1,140 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { RemoteDevice, RemoteInvite, RemoteStatus } from '../types';
+import QRCode from 'qrcode';
+import type { RemoteInvite, RemoteStatus } from '../types';
 
 export function RemoteModal({ onClose, onError }: { onClose: () => void; onError: (error: unknown) => void }) {
   const [status, setStatus] = useState<RemoteStatus>({});
-  const [devices, setDevices] = useState<RemoteDevice[]>([]);
-  const [invite, setInvite] = useState<RemoteInvite | null>(null);
+  const [pairing, setPairing] = useState<RemoteInvite | null>(null);
+  const [qrCode, setQrCode] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const applyPairing = useCallback((value: RemoteInvite | null | undefined) => {
+    if (!value?.url) return;
+    setPairing(value);
+    setNote('');
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
-      const [nextStatus, nextDevices] = await Promise.all([window.cuppet.remote.status(), window.cuppet.remote.devices()]);
-      setStatus(nextStatus);
-      setDevices(nextDevices ?? []);
-      if (nextStatus.running && nextStatus.connected && note.startsWith('Open Cuppet')) setNote('');
-    } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
-  }, [note, onError]);
+      const next = await window.cuppet.remote.status();
+      setStatus(next);
+      if (next.deviceConnected || next.activeDevice) {
+        setPairing(null);
+        setQrCode('');
+        setNote('');
+      }
+      return next;
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
+      onError(error);
+      return null;
+    }
+  }, [onError]);
+
+  const preparePairing = useCallback(async () => {
+    setBusy(true);
+    try {
+      const current = await window.cuppet.remote.status();
+      setStatus(current);
+      if (current.deviceConnected || current.activeDevice) {
+        setPairing(null);
+        setQrCode('');
+        setNote('');
+        return;
+      }
+
+      setNote('Preparing pairing…');
+      if (current.running) {
+        applyPairing(await window.cuppet.remote.invite('trusted'));
+      } else {
+        const result = await window.cuppet.remote.start({ setup: true, createInvite: true });
+        if (result?.status) setStatus(result.status);
+        applyPairing(result?.invite);
+      }
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  }, [applyPairing, onError]);
 
   useEffect(() => {
-    void refresh();
+    void preparePairing();
     return window.cuppet.onEvent((event) => {
       if (event?.type === 'remote.setup') {
         const setup = event.setup ?? {};
-        const code = setup.code ? `Code ${setup.code}` : 'Setup ready';
-        setNote(setup.url ? `${code} · ${setup.url}` : code);
+        if (typeof setup.url === 'string' && setup.url) applyPairing({ url: setup.url, code: setup.code, expiresAt: setup.expiresAt });
       }
-      if (event?.type === 'remote.invite') setInvite(event.invite ?? null);
-      if (event?.type === 'remote.started' || event?.type === 'remote.stopped') void refresh();
+      if (event?.type === 'remote.invite') applyPairing(event.invite ?? null);
+      if (event?.type === 'remote.started' || event?.type === 'remote.stopped' || event?.type === 'remote.device') void refresh();
     });
-  }, [refresh]);
+  }, [applyPairing, preparePairing, refresh]);
 
-  const run = async (action: () => Promise<void>) => {
+  useEffect(() => {
+    let cancelled = false;
+    setQrCode('');
+    if (!pairing?.url) return () => { cancelled = true; };
+    void QRCode.toDataURL(pairing.url, { width: 232, margin: 1, errorCorrectionLevel: 'M' })
+      .then((value) => { if (!cancelled) setQrCode(value); })
+      .catch((error) => { if (!cancelled) { setNote(error instanceof Error ? error.message : String(error)); onError(error); } });
+    return () => { cancelled = true; };
+  }, [onError, pairing?.url]);
+
+  const stop = async () => {
     setBusy(true);
-    try { await action(); await refresh(); }
-    catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
-    finally { setBusy(false); }
+    try {
+      await window.cuppet.remote.stop();
+      setStatus({});
+      setPairing(null);
+      setQrCode('');
+      setNote('');
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
+      onError(error);
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    void preparePairing();
   };
 
-  const start = () => run(async () => {
-    setNote('Open Cuppet on your phone to link this computer…');
-    const result = await window.cuppet.remote.start({ setup: true, createInvite: true });
-    setInvite(result?.invite ?? null);
-  });
-
-  const stop = () => run(async () => {
-    await window.cuppet.remote.stop();
-    setInvite(null);
-    setNote('');
-  });
-
-  const newCode = () => run(async () => setInvite(await window.cuppet.remote.invite('trusted')));
-
-  const statusLabel = status.running ? (status.connected ? 'Connected' : 'Connecting…') : 'Off';
+  const activeDevice = status.activeDevice ?? status.activeDevices?.[0] ?? null;
+  const connected = Boolean(status.deviceConnected || activeDevice);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="remote-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="react-modal settings-dialog remote-dialog" role="dialog" aria-modal="true" aria-labelledby="remote-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <div><h2 id="remote-title">Remote</h2><p>Control Cuppet from your signed-in Cuppet app.</p></div>
+          <div><h2 id="remote-title">Remote</h2><p>{connected ? 'Your Cuppet session is available on this device.' : 'Scan to pair this computer with Cuppet on your device.'}</p></div>
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button>
         </div>
-        <div className="remote-simple">
-          <div className="remote-simple-status">{statusLabel}</div>
-          <div className="inline-row">
-            {!status.running ? <button type="button" className="primary-button" disabled={busy} onClick={() => void start()}>Start remote</button> : <button type="button" className="ghost-button" disabled={busy} onClick={() => void stop()}>Stop</button>}
-          </div>
-          {note && <div className="settings-note">{note}</div>}
-          {invite?.code && <div className="settings-note">Pairing code {invite.code} · expires {Number.isFinite(invite.expiresAt) ? new Date(invite.expiresAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'soon'}</div>}
-          {(status.running || devices.length > 0) && <div className="remote-devices-wrap">
-            <div className="remote-devices-header"><span>Paired devices</span>{status.running && <button type="button" className="text-button" disabled={busy} onClick={() => void newCode()}>New code</button>}</div>
-            <div className="repo-results">
-              {!devices.length ? <div className="settings-empty">No paired devices yet.</div> : devices.map((device) => <div className="repo-result" key={device.deviceId}><strong>{device.name || 'Cuppet device'}</strong><button type="button" className="text-button" disabled={busy} onClick={() => void run(async () => { await window.cuppet.remote.revoke(device.deviceId); })}>Revoke</button></div>)}
+
+        {connected ? (
+          <div className="remote-active-session">
+            <div className="remote-active-indicator" aria-hidden="true" />
+            <div className="remote-active-copy">
+              <span>Active remote session</span>
+              <strong>Connected to {activeDevice?.name || 'your device'}</strong>
             </div>
-          </div>}
-        </div>
+            <button type="button" className="ghost-button remote-stop-button" disabled={busy} onClick={() => void stop()}>Stop</button>
+          </div>
+        ) : (
+          <div className="remote-pairing">
+            <div className="remote-qr-frame" aria-label="Remote pairing QR code">
+              {qrCode ? <img src={qrCode} alt="Scan this QR code with Cuppet to pair this computer" /> : <div className="remote-qr-loading">{busy ? 'Preparing QR…' : 'QR unavailable'}</div>}
+            </div>
+            <div className="remote-pairing-copy">
+              <strong>Scan with Cuppet</strong>
+              <span>Open Remote on your device and scan this code.</span>
+              {pairing?.code && <code>{pairing.code}</code>}
+              {pairing?.expiresAt && Number.isFinite(pairing.expiresAt) && <small>Expires {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>}
+            </div>
+          </div>
+        )}
+
+        {note && <div className="settings-note remote-note">{note}</div>}
       </section>
     </div>
   );
