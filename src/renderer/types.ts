@@ -105,19 +105,25 @@ export type CognitiveStatus = {
   tst?: { configured?: boolean; connected?: boolean };
 };
 
+export type RemoteDevice = {
+  deviceId: string;
+  name?: string;
+  scopes?: string[];
+};
+
 export type RemoteStatus = {
   running?: boolean;
   connected?: boolean;
+  deviceConnected?: boolean;
+  activeDevice?: RemoteDevice | null;
+  activeDevices?: RemoteDevice[];
 };
 
 export type RemoteInvite = {
   code?: string;
   expiresAt?: number;
-};
-
-export type RemoteDevice = {
-  deviceId: string;
-  name?: string;
+  url?: string | null;
+  role?: string;
 };
 
 export type PermissionRequest = {
@@ -172,7 +178,7 @@ export type CuppetApi = {
   };
   remote: {
     status: () => Promise<RemoteStatus>;
-    start: (value?: Record<string, unknown>) => Promise<any>;
+    start: (value?: Record<string, unknown>) => Promise<{ status?: RemoteStatus; invite?: RemoteInvite | null }>;
     stop: () => Promise<any>;
     invite: (role?: string) => Promise<RemoteInvite>;
     devices: () => Promise<RemoteDevice[]>;
