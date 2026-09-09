@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { runtimeKey } from '../src/runtime/tst-supervisor.mjs';
+import { MANAGED_TST_SOURCE_REVISION } from '../src/runtime/tst-release.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const executable = resolve(process.argv[2] || defaultExecutable(root));
@@ -22,7 +23,11 @@ try {
   assert.ok(managedRuntime, `managed TST is unsupported on ${process.platform}-${process.arch}`);
   await access(executable);
   await access(join(resources, 'app.asar'));
-  await access(join(resources, 'tst', managedRuntime, 'tst-daemon'));
+  const packagedTstDir = join(resources, 'tst', managedRuntime);
+  await access(join(packagedTstDir, 'tst-daemon'));
+  const packagedMetadata = JSON.parse(await readFile(join(packagedTstDir, 'tst-runtime.json'), 'utf8'));
+  assert.equal(packagedMetadata.protocol, 'cuppet.tst.v3');
+  assert.equal(packagedMetadata.sourceRevision, MANAGED_TST_SOURCE_REVISION);
   await mkdir(projectAPath, { recursive: true });
   await mkdir(projectBPath, { recursive: true });
   await writeFile(join(projectAPath, 'alpha.js'), 'export function alphaOne() { return 1; }\n');
@@ -53,17 +58,17 @@ try {
   const refreshed = await first.request('tst.graph.refresh', { projectId: projectA.id, paths: ['alpha.js'] });
   assert.ok(Array.isArray(refreshed.paths) && refreshed.paths.some((item) => item.path === 'alpha.js'));
   await waitForGraph(first, projectA.id, 'alphaTwo');
-  assert.equal(hasGraphMatch(await first.request('tst.graph.locate', { projectB.id, pattern: 'betaOne' }), 'betaOne'), true, 'refreshing project A must not disturb project B graph');
+  assert.equal(hasGraphMatch(await first.request('tst.graph.locate', { projectId: projectB.id, pattern: 'betaOne' }), 'betaOne'), true, 'refreshing project A must not disturb project B graph');
 
   await first.stop();
 
   const second = await startRuntime(executable, runtimeEntry, dataDir, resources);
-  const aMemory = await second.request('memory.query', { sessionId: sessionA.id, query: 'workspace marker', limit: 10 });
-  const bMemory = await second.request('memory.query', { sessionId: sessionB.id, query: 'workspace marker', limit: 10 });
-  assert.ok(aMemory.records.some((record) => record.value === 'alpha-memory'), 'project A memory must persist across runtime restart');
-  assert.ok(bMemory.records.some((record) => record.value === 'beta-memory'), 'project B memory must persist across runtime restart');
-  assert.equal(aMemory.records.some((record) => record.value === 'beta-memory'), false, 'project-scoped memory must remain isolated');
-  assert.equal(bMemory.records.some((record) => record.value === 'alpha-memory'), false, 'project-scoped memory must remain isolated');
+  const aMemory = memoryRecords(await second.request('memory.query', { sessionId: sessionA.id, query: 'workspace marker', limit: 10 }));
+  const bMemory = memoryRecords(await second.request('memory.query', { sessionId: sessionB.id, query: 'workspace marker', limit: 10 }));
+  assert.ok(aMemory.some((record) => record.value === 'alpha-memory'), 'project A memory must persist across runtime restart');
+  assert.ok(bMemory.some((record) => record.value === 'beta-memory'), 'project B memory must persist across runtime restart');
+  assert.equal(aMemory.some((record) => record.value === 'beta-memory'), false, 'project-scoped memory must remain isolated');
+  assert.equal(bMemory.some((record) => record.value === 'alpha-memory'), false, 'project-scoped memory must remain isolated');
   await waitForGraph(second, projectA.id, 'alphaTwo');
   await second.stop();
 
@@ -72,6 +77,11 @@ try {
   await rm(workspace, { recursive: true, force: true });
 }
 
+function memoryRecords(result) {
+  const payload = result?.records;
+  if (Array.isArray(payload)) return payload;
+  return [...(Array.isArray(payload?.stm) ? payload.stm : []), ...(Array.isArray(payload?.ltm) ? payload.ltm : [])];
+}
 function hasGraphMatch(result, symbol) {
   return (result?.matches ?? []).some((match) => match?.symbol === symbol || match?.name === symbol || match?.node?.name === symbol);
 }
