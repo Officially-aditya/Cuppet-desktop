@@ -111,19 +111,21 @@ export type RemoteDevice = {
   scopes?: string[];
 };
 
-export type RemoteStatus = {
-  running?: boolean;
-  connected?: boolean;
-  deviceConnected?: boolean;
-  activeDevice?: RemoteDevice | null;
-  activeDevices?: RemoteDevice[];
-};
-
 export type RemoteInvite = {
   code?: string;
   expiresAt?: number;
   url?: string | null;
   role?: string;
+};
+
+export type RemoteStatus = {
+  running?: boolean;
+  starting?: boolean;
+  connected?: boolean;
+  deviceConnected?: boolean;
+  activeDevice?: RemoteDevice | null;
+  activeDevices?: RemoteDevice[];
+  setup?: RemoteInvite | null;
 };
 
 export type PermissionRequest = {
