@@ -18,9 +18,9 @@ export class JournaledToolRuntime {
       const result = await this.#inner.run({
         ...options,
         adapter: capture,
-        onPaths: async (paths, mutation) => {
+        onPaths: async (paths, mutation, details = null) => {
           await capture.onPaths(paths, mutation);
-          await options.onPaths?.(paths, mutation);
+          await options.onPaths?.(paths, mutation, details);
         },
       });
       capture.assertHealthy();

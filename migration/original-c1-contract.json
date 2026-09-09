@@ -1,0 +1,47 @@
+{
+  "phase": "original-C1",
+  "status": "implemented-candidate",
+  "sourceBaseline": "Officially-aditya/Cuppet-code@840ed751b61c04afc881a393b7836d4d2c932f61",
+  "tstProtocol": "cuppet.tst.v3",
+  "requirements": {
+    "revisionBoundStructuralTargets": true,
+    "utf8ByteOffsets": true,
+    "stagedTreeSitterParse": true,
+    "prepareWritesFilesystem": false,
+    "multiFileBatchApply": true,
+    "staleTargetWritesNothing": true,
+    "ambiguousTargetWritesNothing": true,
+    "overlappingTargetWritesNothing": true,
+    "permissionBoundToBatchAndDiffDigest": true,
+    "sharedProjectWriter": true,
+    "singleBatchUndoBoundary": true,
+    "graphRefreshReceiptRequired": true,
+    "validationBoundToPostEditHashes": true,
+    "verifierCommandEvidence": true,
+    "preparedBatchCreatesMutationEvidence": false,
+    "genericTextMutationIsFallback": true,
+    "externalEditsOverwrittenByUndo": false
+  },
+  "authority": {
+    "filesystem": "code truth",
+    "tstTreeSitter": "structural target and staged parse authority",
+    "sqliteToolExecutions": "tool audit truth",
+    "mutationJournal": "Cuppet-owned reversible mutation preimage/postimage authority",
+    "projectWriter": "in-process project mutation serialization",
+    "tstGraph": "structural projection trusted only after current-hash refresh acknowledgement",
+    "tstLtm": "verified reusable memory; validation claims require verifier evidence",
+    "renderer": "projection only"
+  },
+  "tstCapabilities": [
+    "edit.resolve_targets",
+    "edit.parse_staged",
+    "graph.refresh_paths"
+  ],
+  "modelTools": [
+    "tst_explore",
+    "tst_read",
+    "tst_edit_batch",
+    "tst_validate"
+  ],
+  "next": "original-C"
+}

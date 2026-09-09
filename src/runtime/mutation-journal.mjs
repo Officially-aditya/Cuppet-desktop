@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 const SCHEMA_VERSION = 1;
 const MAX_ENTRIES = 256;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
+const MAX_BATCH_FILES = 64;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 export class UndoConflictError extends Error {
@@ -26,18 +27,39 @@ export class MutationJournal {
     const afterPath = await resolveWorkspacePath(token.projectRoot, token.path, false);
     const after = await snapshotFile(afterPath.absolute);
     const entry = {
-      id: `mutation_${Date.now().toString(36)}_${randomBytes(5).toString('hex')}`,
-      schema: SCHEMA_VERSION,
-      sessionId: token.sessionId,
-      executionId: token.executionId,
-      tool: token.tool,
-      kind: 'file',
-      projectRoot: token.projectRoot,
-      path: token.path,
-      before: token.before,
-      after: { exists: after.exists, hash: after.exists ? after.hash : null },
-      state: 'applied',
-      createdAt: Date.now(),
+      id: mutationId(), schema: SCHEMA_VERSION, sessionId: token.sessionId, executionId: token.executionId,
+      tool: token.tool, kind: 'file', projectRoot: token.projectRoot, path: token.path,
+      before: token.before, after, state: 'applied', createdAt: Date.now(),
+    };
+    await this.#append(entry);
+    return structuredClone(entry);
+  }
+
+  async beginBatch({ sessionId, executionId, tool = 'tst_edit_batch', projectRoot, paths }) {
+    const unique = [...new Set((Array.isArray(paths) ? paths : []).map(String))];
+    if (!sessionId || !executionId || !projectRoot || !unique.length) throw new Error('batch mutation snapshot requires session, execution, workspace, and paths');
+    if (unique.length > MAX_BATCH_FILES) throw new Error(`Batch journal exceeds ${MAX_BATCH_FILES} file limit`);
+    let canonicalRoot;
+    const files = [];
+    for (const path of unique) {
+      const safe = await resolveWorkspacePath(projectRoot, path, false);
+      canonicalRoot ??= safe.root;
+      if (safe.root !== canonicalRoot) throw new Error('Batch journal paths do not share one canonical workspace');
+      files.push({ path: safe.relative, before: await snapshotFile(safe.absolute) });
+    }
+    return { sessionId, executionId, tool, projectRoot: canonicalRoot, files };
+  }
+
+  async commitBatch(token) {
+    const files = [];
+    for (const item of token.files) {
+      const safe = await resolveWorkspacePath(token.projectRoot, item.path, false);
+      files.push({ path: item.path, before: item.before, after: await snapshotFile(safe.absolute) });
+    }
+    const entry = {
+      id: mutationId(), schema: SCHEMA_VERSION, sessionId: token.sessionId, executionId: token.executionId,
+      tool: token.tool, kind: 'batch', projectRoot: token.projectRoot, files,
+      state: 'applied', createdAt: Date.now(),
     };
     await this.#append(entry);
     return structuredClone(entry);
@@ -45,16 +67,9 @@ export class MutationJournal {
 
   async recordBarrier({ sessionId, executionId, tool = 'bash', paths = [], reason = 'opaque workspace mutation' }) {
     const entry = {
-      id: `mutation_${Date.now().toString(36)}_${randomBytes(5).toString('hex')}`,
-      schema: SCHEMA_VERSION,
-      sessionId,
-      executionId,
-      tool,
-      kind: 'barrier',
+      id: mutationId(), schema: SCHEMA_VERSION, sessionId, executionId, tool, kind: 'barrier',
       paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 512)))].slice(0, 128),
-      reason: String(reason).slice(0, 500),
-      state: 'applied',
-      createdAt: Date.now(),
+      reason: String(reason).slice(0, 500), state: 'applied', createdAt: Date.now(),
     };
     await this.#append(entry);
     return structuredClone(entry);
@@ -71,26 +86,42 @@ export class MutationJournal {
     const index = findLatestApplied(entries);
     if (index < 0) return { undone: false, sessionId, reason: 'No reversible workspace mutation is recorded for this session.' };
     const entry = entries[index];
-    if (entry.kind !== 'file') throw new UndoConflictError(`The latest workspace mutation (${entry.tool}) is opaque and cannot be safely undone. ${entry.reason || ''}`.trim());
+    if (entry.kind === 'barrier') throw new UndoConflictError(`The latest workspace mutation (${entry.tool}) is opaque and cannot be safely undone. ${entry.reason || ''}`.trim());
 
     const currentRoot = await realpath(projectRoot).catch(() => resolve(projectRoot));
     if (entry.projectRoot !== currentRoot) throw new UndoConflictError('Cannot undo this mutation because the session is no longer attached to the original project workspace.');
-    const target = await resolveWorkspacePath(currentRoot, entry.path, false);
-    const current = await snapshotFile(target.absolute);
-    if (!snapshotMatches(current, entry.after)) throw new UndoConflictError(`Cannot undo ${entry.path}: the file changed after Cuppet's recorded mutation.`);
 
-    if (entry.before.exists) {
-      await mkdir(dirname(target.absolute), { recursive: true });
-      await writeFile(target.absolute, Buffer.from(entry.before.contentBase64, 'base64'));
-    } else {
-      await rm(target.absolute, { force: true });
+    const files = entry.kind === 'batch' ? entry.files : [{ path: entry.path, before: entry.before, after: entry.after }];
+    const checked = [];
+    for (const item of files) {
+      const target = await resolveWorkspacePath(currentRoot, item.path, false);
+      const current = await snapshotFile(target.absolute);
+      if (!snapshotMatches(current, item.after)) throw new UndoConflictError(`Cannot undo ${item.path}: the file changed after Cuppet's recorded mutation.`);
+      checked.push({ item, target, current });
     }
-    const restored = await snapshotFile(target.absolute);
-    if (!snapshotMatches(restored, entry.before)) throw new UndoConflictError(`Undo verification failed for ${entry.path}; the restored bytes do not match the recorded pre-mutation snapshot.`);
+
+    const restored = [];
+    try {
+      for (const record of checked) {
+        await restoreSnapshot(record.target.absolute, record.item.before);
+        const verified = await snapshotFile(record.target.absolute);
+        if (!snapshotMatches(verified, record.item.before)) throw new UndoConflictError(`Undo verification failed for ${record.item.path}; the restored bytes do not match the recorded pre-mutation snapshot.`);
+        restored.push(record);
+      }
+    } catch (error) {
+      for (const record of restored.reverse()) {
+        try { await restoreSnapshot(record.target.absolute, record.item.after); } catch { /* best-effort recovery; original failure remains authoritative */ }
+      }
+      throw error;
+    }
 
     entries[index] = { ...entry, state: 'undone', undoneAt: Date.now() };
     await this.#save(sessionId, entries);
-    return { undone: true, sessionId, mutationId: entry.id, executionId: entry.executionId, tool: entry.tool, path: entry.path };
+    const paths = files.map((item) => item.path);
+    return {
+      undone: true, sessionId, mutationId: entry.id, executionId: entry.executionId, tool: entry.tool,
+      path: paths.length === 1 ? paths[0] : null, paths,
+    };
   }
 
   async #append(entry) {
@@ -132,6 +163,15 @@ export class MutationJournal {
   #path(sessionId) { return join(this.#directory, `${hash(sessionId)}.json`); }
 }
 
+async function restoreSnapshot(path, snapshot) {
+  if (snapshot.exists) {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, Buffer.from(snapshot.contentBase64, 'base64'));
+  } else {
+    await rm(path, { force: true });
+  }
+}
+
 async function snapshotFile(path) {
   try {
     const metadata = await stat(path);
@@ -147,17 +187,24 @@ async function snapshotFile(path) {
 function snapshotMatches(actual, expected) { return Boolean(actual?.exists) === Boolean(expected?.exists) && (!expected?.exists || actual?.hash === expected?.hash); }
 function findLatestApplied(entries) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i]?.state === 'applied') return i; return -1; }
 function validEntry(entry) {
-  if (!entry || entry.schema !== SCHEMA_VERSION || typeof entry.sessionId !== 'string' || !['file', 'barrier'].includes(entry.kind) || !['applied', 'undone'].includes(entry.state)) return false;
+  if (!entry || entry.schema !== SCHEMA_VERSION || typeof entry.sessionId !== 'string' || !['file', 'batch', 'barrier'].includes(entry.kind) || !['applied', 'undone'].includes(entry.state)) return false;
   if (entry.kind === 'barrier') return true;
-  return typeof entry.projectRoot === 'string' && entry.projectRoot.length > 0 && typeof entry.path === 'string' && entry.path.length > 0 && validSnapshot(entry.before, true) && validSnapshot(entry.after, false);
+  if (typeof entry.projectRoot !== 'string' || entry.projectRoot.length === 0) return false;
+  if (entry.kind === 'batch') return Array.isArray(entry.files) && entry.files.length > 0 && entry.files.length <= MAX_BATCH_FILES && entry.files.every(validJournalFile);
+  return validJournalFile({ path: entry.path, before: entry.before, after: entry.after });
 }
+function validJournalFile(item) { return typeof item?.path === 'string' && item.path.length > 0 && validSnapshot(item.before, true) && validSnapshot(item.after, false); }
 function validSnapshot(value, withContent) {
   if (!value || typeof value.exists !== 'boolean') return false;
   if (!value.exists) return value.hash === null;
   if (typeof value.hash !== 'string' || !SHA256_HEX.test(value.hash)) return false;
   return !withContent || typeof value.contentBase64 === 'string';
 }
-function publicEntry(entry) { return { id: entry.id, executionId: entry.executionId, tool: entry.tool, kind: entry.kind, state: entry.state, path: entry.path ?? null, paths: entry.paths ?? [], createdAt: entry.createdAt }; }
+function publicEntry(entry) {
+  const paths = entry.kind === 'batch' ? entry.files.map((item) => item.path) : entry.path ? [entry.path] : entry.paths ?? [];
+  return { id: entry.id, executionId: entry.executionId, tool: entry.tool, kind: entry.kind, state: entry.state, path: paths.length === 1 ? paths[0] : null, paths, createdAt: entry.createdAt };
+}
+function mutationId() { return `mutation_${Date.now().toString(36)}_${randomBytes(5).toString('hex')}`; }
 function hash(value) { return createHash('sha256').update(Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8')).digest('hex'); }
 
 async function resolveWorkspacePath(projectRoot, resource, mustExist) {
