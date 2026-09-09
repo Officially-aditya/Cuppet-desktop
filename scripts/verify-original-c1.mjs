@@ -40,7 +40,7 @@ expect(batches.includes('refreshGraphPaths(paths)') && batches.includes('!return
 expect(batches.includes('this.#writer?.withProject') && !batches.includes('#projectLocks'), 'batch publication does not use the shared project writer');
 
 const writer = text['src/runtime/project-writer.mjs'];
-expect(writer.includes('withProject(projectRoot, operation)') && writer.includes('#queues'), 'shared per-project writer is missing');
+expect(writer.includes('withProject(projectRoot, operation)') && writer.includes('new Map()') && writer.includes('await prior.catch') && writer.includes('this.#tails.set(root, tail)') && writer.includes('this.#tails.delete(root)'), 'shared per-project writer is missing');
 
 const tools = text['src/runtime/tool-runtime.mjs']; const toolsDense = dense['src/runtime/tool-runtime.mjs'];
 for (const name of ['tst_explore','tst_read','tst_edit_batch','tst_validate']) expect(tools.includes(`'${name}'`), `model-facing original C1 tool missing: ${name}`);
