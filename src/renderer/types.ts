@@ -99,11 +99,25 @@ export type ProviderSettings = {
   baseUrl?: string;
   primary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
   secondary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
-  models?: Array<{ providerID?: string; modelID?: string; variants?: string[] }>;
+  models?: Array<{ providerID?: string; modelID?: string; name?: string; variants?: string[] }>;
   catalog?: Array<{ id?: string; label?: string; integrationIds?: string[] }>;
   encryptionAvailable?: boolean;
   encryptionBackend?: string;
   encryptionUnavailableReason?: string;
+};
+
+export type CodexModelCatalog = {
+  available: boolean;
+  loggedIn?: boolean;
+  defaultModel?: string | null;
+  error?: string;
+  models: Array<{
+    id: string;
+    label?: string;
+    description?: string;
+    isDefault?: boolean;
+    efforts?: string[];
+  }>;
 };
 
 export type CognitiveStatus = {
@@ -195,6 +209,7 @@ export type CuppetApi = {
   };
   codexAuth: {
     status: () => Promise<any>;
+    models: () => Promise<CodexModelCatalog>;
     login: () => Promise<any>;
     logout: () => Promise<any>;
   };
