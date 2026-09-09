@@ -1,28 +1,42 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+
+const DEFAULT_STARTUP_TIMEOUT_MS = 12_000;
+const GRACEFUL_SHUTDOWN_MS = 3_000;
+const TERMINATE_SHUTDOWN_MS = 1_000;
 
 export class RuntimeClient extends EventEmitter {
   #entry;
   #dataDir;
+  #execPath;
+  #environment;
+  #startupTimeoutMs;
   #child;
   #pending = new Map();
   #stderr = '';
   #readyEvent;
 
-  constructor({ entry, dataDir }) {
+  constructor({ entry, dataDir, execPath = process.execPath, environment = {}, startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS }) {
     super();
     this.#entry = entry;
     this.#dataDir = dataDir;
+    this.#execPath = execPath;
+    this.#environment = environment && typeof environment === 'object' ? { ...environment } : {};
+    this.#startupTimeoutMs = Number.isFinite(startupTimeoutMs) ? Math.max(1_000, Math.trunc(startupTimeoutMs)) : DEFAULT_STARTUP_TIMEOUT_MS;
   }
 
   async start() {
     if (this.#child) return;
+    await mkdir(this.#dataDir, { recursive: true });
     this.#readyEvent = undefined;
-    const child = spawn(process.execPath, [this.#entry], {
+    this.#stderr = '';
+    const child = spawn(this.#execPath, [this.#entry], {
       env: {
         ...process.env,
+        ...this.#environment,
         ELECTRON_RUN_AS_NODE: '1',
         CUPPET_DATA_DIR: this.#dataDir,
       },
@@ -42,16 +56,22 @@ export class RuntimeClient extends EventEmitter {
       const reason = `Cuppet runtime exited (${code ?? 'null'}${signal ? `, ${signal}` : ''})`;
       for (const pending of this.#pending.values()) pending.reject(new Error(reason));
       this.#pending.clear();
-      this.#child = undefined;
+      if (this.#child === child) this.#child = undefined;
       this.#readyEvent = undefined;
       this.emit('exit', { code, signal, stderr: this.#stderr });
     });
     child.once('error', (error) => this.emit('error', error));
 
-    await this.waitForReady();
+    try {
+      await this.waitForReady(this.#startupTimeoutMs);
+    } catch (error) {
+      await this.stop().catch(() => undefined);
+      const detail = this.#stderr.trim();
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail.slice(-1000)}` : ''}`);
+    }
   }
 
-  waitForReady(timeoutMs = 8_000) {
+  waitForReady(timeoutMs = DEFAULT_STARTUP_TIMEOUT_MS) {
     if (this.#readyEvent) return Promise.resolve(this.#readyEvent);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -67,13 +87,19 @@ export class RuntimeClient extends EventEmitter {
         cleanup();
         reject(new Error(`Cuppet runtime exited before ready (${code ?? 'unknown'})`));
       };
+      const failed = (error) => {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      };
       const cleanup = () => {
         clearTimeout(timer);
         this.off('event', ready);
         this.off('exit', exit);
+        this.off('error', failed);
       };
       this.on('event', ready);
       this.on('exit', exit);
+      this.on('error', failed);
       if (this.#readyEvent) {
         cleanup();
         resolve(this.#readyEvent);
@@ -102,8 +128,14 @@ export class RuntimeClient extends EventEmitter {
     if (!child) return;
     this.#child = undefined;
     this.#readyEvent = undefined;
+
+    const gracefulExit = once(child, 'exit').then(() => true).catch(() => true);
     if (child.stdin.writable) child.stdin.end();
+    if (await settleBefore(gracefulExit, GRACEFUL_SHUTDOWN_MS)) return;
+
     if (!child.killed) child.kill('SIGTERM');
+    if (await settleBefore(gracefulExit, TERMINATE_SHUTDOWN_MS)) return;
+    if (!child.killed) child.kill('SIGKILL');
   }
 
   #handleLine(line) {
@@ -129,4 +161,11 @@ export class RuntimeClient extends EventEmitter {
     }
     if (message.kind === 'protocol-error') this.emit('protocol-error', new Error(message.error || 'runtime protocol error'));
   }
+}
+
+async function settleBefore(promise, timeoutMs) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
 }
