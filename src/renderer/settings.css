@@ -41,7 +41,23 @@
 .settings-row span,.settings-toggle-row span{color:#7d8794;font-size:10px;line-height:1.45}
 .settings-value{white-space:nowrap!important;color:#aab2bd!important}
 .settings-toggle-row{margin:0!important;color:inherit!important;cursor:pointer}
-.settings-toggle-row input{width:16px;height:16px;margin:0}
+
+/* Settings hub owns its field skin. Do not fall back to native Electron/macOS controls. */
+.settings-hub-dialog input:not([type="checkbox"]),.settings-hub-dialog select,.settings-hub-dialog textarea{width:100%;min-height:34px;border:1px solid #303741;border-radius:8px;background:#0c1014;color:#e8ecf1;padding:7px 10px;outline:none;box-shadow:none;font-size:12px;line-height:18px;transition:border-color .12s ease,background .12s ease,box-shadow .12s ease;-webkit-appearance:none;appearance:none}
+.settings-hub-dialog input:not([type="checkbox"]):hover,.settings-hub-dialog select:hover,.settings-hub-dialog textarea:hover{border-color:#3a424e;background:#0e1217}
+.settings-hub-dialog input:not([type="checkbox"]):focus,.settings-hub-dialog select:focus,.settings-hub-dialog textarea:focus{border-color:#596575;background:#0e1217;box-shadow:0 0 0 2px rgba(130,145,165,.12)}
+.settings-hub-dialog input::placeholder,.settings-hub-dialog textarea::placeholder{color:#59636f}
+.settings-hub-dialog input:disabled,.settings-hub-dialog select:disabled,.settings-hub-dialog textarea:disabled{opacity:.55;cursor:not-allowed}
+.settings-hub-dialog select{cursor:pointer;padding-right:32px;background-image:linear-gradient(45deg,transparent 50%,#7e8996 50%),linear-gradient(135deg,#7e8996 50%,transparent 50%);background-position:calc(100% - 15px) 14px,calc(100% - 11px) 14px;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+
+/* Compact custom switches replace raw square checkboxes. */
+.settings-toggle-row input[type="checkbox"]{position:relative;flex:0 0 auto;width:30px;height:18px;margin:0;border:1px solid #343c47;border-radius:999px;background:#191f26;outline:none;cursor:pointer;-webkit-appearance:none;appearance:none;transition:background .14s ease,border-color .14s ease}
+.settings-toggle-row input[type="checkbox"]::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#7b8591;transition:transform .14s ease,background .14s ease}
+.settings-toggle-row input[type="checkbox"]:hover{border-color:#46505d}
+.settings-toggle-row input[type="checkbox"]:focus-visible{box-shadow:0 0 0 2px rgba(130,145,165,.18)}
+.settings-toggle-row input[type="checkbox"]:checked{border-color:#737f8e;background:#dfe4ea}
+.settings-toggle-row input[type="checkbox"]:checked::after{transform:translateX(12px);background:#11151a}
+
 .settings-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}
 .settings-grid-full{grid-column:1/-1}
 .settings-hub-dialog .settings-form-grid label{margin:8px 0}
