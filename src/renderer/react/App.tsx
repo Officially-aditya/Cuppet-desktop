@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  Attachment,
   CognitiveStatus,
   CommandDefinition,
   CommandResult,
@@ -236,14 +237,16 @@ export function App() {
     return result;
   }, [active?.id, commands, ensureActiveSession]);
 
-  const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue') => {
-    const value = text.trim();
+  const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue', attachments: Attachment[] = []) => {
+    const trimmed = text.trim();
+    const value = trimmed || (attachments.length ? `Attached: ${attachments.map((item) => item.name).join(', ')}` : '');
     if (!value) return { clear: false };
     try {
-      if (value.startsWith('/')) {
-        const definition = commandForRaw(commands, value);
-        if (!definition) throw new Error(`Unknown Cuppet command: ${value.split(/\s/, 1)[0]}`);
-        const result = await executeCommand(value, definition);
+      if (trimmed.startsWith('/')) {
+        if (attachments.length) throw new Error('Attachments cannot be sent with slash commands.');
+        const definition = commandForRaw(commands, trimmed);
+        if (!definition) throw new Error(`Unknown Cuppet command: ${trimmed.split(/\s/, 1)[0]}`);
+        const result = await executeCommand(trimmed, definition);
         return { clear: true, commandResult: result };
       }
 
@@ -259,15 +262,15 @@ export function App() {
       if (project?.missing) throw new Error(`Relocate ${project.name} before continuing.`);
 
       if (running.has(session.id)) {
-        if (deliveryMode === 'steer') {
+        if (deliveryMode === 'steer' && !attachments.length) {
           await window.cuppet.commands.execute(session.id, { id: 'cuppet.steer.interrupt', input: { text: value.slice(0, 8192) } });
         } else {
-          await window.cuppet.sessions.send(session.id, value);
+          await window.cuppet.sessions.send(session.id, value, attachments);
         }
         return { clear: true };
       }
 
-      const result = await window.cuppet.sessions.send(session.id, value);
+      const result = await window.cuppet.sessions.send(session.id, value, attachments);
       const target = String(result?.sessionId || session.id);
       setRunning((current) => new Set(current).add(target));
       if (target !== session.id) await openSession(target);
@@ -377,6 +380,7 @@ export function App() {
         activeSessionId={active?.id ?? null}
         selectedProjectId={activeProjectId}
         onNewChat={() => setModal('new-chat')}
+        onNewProjectChat={(projectId) => startDraft(projectId)}
         onSearch={() => setModal('search')}
         onRemote={() => setModal('remote')}
         onSettings={() => { setSettingsSection('account'); setModal('settings'); }}
