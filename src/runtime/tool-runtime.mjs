@@ -56,7 +56,7 @@ export class ToolRuntime {
       for (const call of toolCalls) {
         const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, mode, signal });
         conversation.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output });
-        if (result.success && result.paths.length) await onPaths(result.paths, result.mutation).catch(() => undefined);
+        if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
         if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
       }
     }
@@ -79,8 +79,8 @@ export class ToolRuntime {
       const output = capText(result.output ?? '', MAX_TOOL_OUTPUT);
       this.#db.finishToolExecution(executionId, { status: 'complete', output, permissionSource });
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation) });
-      await this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? '').catch(() => undefined);
-      return { output, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null };
+      if (result.details?.prepared !== true) await this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? '').catch(() => undefined);
+      return { output, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;
       const rejected = error?.name === 'PermissionDeniedError';
@@ -219,13 +219,14 @@ export class ToolRuntime {
     const action = args.action === 'apply' ? 'apply' : 'prepare';
     if (action === 'prepare') {
       const batch = await this.#batchEdits.prepare({ sessionId, projectRoot, operations: args.operations });
-      return { output: `TST EDIT BATCH PREPARED (no files written)\nbatch_id: ${batch.id}\ndiff_digest: ${batch.diffDigest}\npaths: ${batch.paths.join(', ')}\n\n${batch.diff}`, paths: [], mutation: false };
+      return { output: `TST EDIT BATCH PREPARED (no files written)\nbatch_id: ${batch.id}\ndiff_digest: ${batch.diffDigest}\npaths: ${batch.paths.join(', ')}\n\n${batch.diff}`, paths: [], mutation: false, details: { prepared: true, batchId: batch.id, diffDigest: batch.diffDigest } };
     }
     const batchId = String(args.batch_id ?? '').trim(); if (!batchId) throw new Error('batch_id is required for action=apply');
     const result = await this.#batchEdits.apply({ batchId, sessionId, projectRoot, executionId, authorize });
     return {
       output: `TST EDIT BATCH APPLIED\nbatch_id: ${result.id}\ndiff_digest: ${result.diffDigest}\ngraph_ready: ${result.graphReady}${result.graphError ? `\ngraph_error: ${result.graphError}` : ''}\npaths: ${result.paths.join(', ')}\n\n${result.diff}`,
       paths: result.paths, mutation: true,
+      details: { graphHandled: true, graphReady: result.graphReady, batchId: result.id, diffDigest: result.diffDigest },
     };
   }
 

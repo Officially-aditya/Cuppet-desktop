@@ -52,7 +52,7 @@ export class RuntimeService {
     this.#questions = questionBroker ?? new QuestionBroker({ emit: this.#emit, interactive });
     this.#journal = mutationJournal ?? new MutationJournal(join(dataDir, 'mutation-journal'));
     this.#writer = projectWriter ?? new ProjectWriter();
-    this.#batchEdits = batchEdits ?? new TstBatchEditManager({ tst: this.#tst, journal: this.#journal, emit: this.#emit });
+    this.#batchEdits = batchEdits ?? new TstBatchEditManager({ tst: this.#tst, journal: this.#journal, writer: this.#writer, emit: this.#emit });
     this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
@@ -194,10 +194,15 @@ export class RuntimeService {
     const observed = await this.#tst.observeMemory(sessionId, {
       key: `validation:${Object.keys(fileHashes).sort().join(',').slice(0, 120)}`,
       value: `Validation passed for current workspace hashes using: ${commandText}`,
-      kind: 'behavioral_claim', scope: 'session', provenance: 'tool', file_hashes: fileHashes,
+      kind: 'behavioral_claim', scope: 'session', provenance: 'verifier', file_hashes: fileHashes,
     });
     const memoryId = observed?.id;
     if (!memoryId) return { recorded: false };
+    for (const item of validation.commands ?? []) {
+      if (item?.exitCode === 0 && item?.command) {
+        await this.#tst.recordEvidence(sessionId, memoryId, 'command_success', `validation:${String(item.command).slice(0, 420)}`, true).catch(() => undefined);
+      }
+    }
     for (const [path, hash] of Object.entries(fileHashes)) {
       await this.#tst.recordEvidence(sessionId, memoryId, 'content_hash', `validation:${path}:${commandText}`, true, hash).catch(() => undefined);
     }
@@ -345,8 +350,8 @@ export class RuntimeService {
           const message = this.#db.appendMessageContent(assistantId, delta);
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
         },
-        onPaths: async (paths, mutation) => {
-          if (mutation) await this.#refreshMutationGraph(paths);
+        onPaths: async (paths, mutation, details = null) => {
+          if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(paths);
           if (!projectId || process.env.CUPPET_PE3 === '0') return;
           await this.#pe3Observe(sessionId, paths, mutation);
         },

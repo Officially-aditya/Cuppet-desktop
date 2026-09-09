@@ -135,7 +135,7 @@ export class TstBatchEditManager {
       try {
         refresh = await this.#tst.refreshGraphPaths(paths);
         const returned = new Map((refresh?.paths ?? []).map((item) => [String(item.path), item.content_hash ?? null]));
-        const mismatches = freshBatch.files.filter((file) => returned.has(file.path) && returned.get(file.path) !== file.afterHash).map((file) => file.path);
+        const mismatches = freshBatch.files.filter((file) => !returned.has(file.path) || returned.get(file.path) !== file.afterHash).map((file) => file.path);
         if (mismatches.length) {
           graphReady = false; graphError = `Graph refresh observed different post-edit hashes for: ${mismatches.join(', ')}`;
           this.#graphStale.set(freshBatch.projectRoot, paths);
