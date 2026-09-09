@@ -117,7 +117,7 @@ select option{background:#11161c;color:#e8ecf1}
 .cuppet-select-option:disabled{opacity:.45;cursor:not-allowed}
 .cuppet-select-check{color:#aeb8c5;font-size:11px}
 
-/* App-wide checkbox/radio skin. Settings switches remain overridden by settings.css specificity. */
+/* App-wide checkbox/radio skin. */
 input[type="checkbox"],input[type="radio"]{
   position:relative;
   flex:0 0 auto;
@@ -147,6 +147,8 @@ input[type="checkbox"]:checked{
 }
 input[type="radio"]:checked{border-color:#dfe4ea;background:#dfe4ea;box-shadow:inset 0 0 0 4px #11161c}
 input[type="checkbox"]:disabled,input[type="radio"]:disabled{opacity:.5;cursor:not-allowed}
+/* Settings uses pill switches; keep the global checkbox tick out of that control. */
+.settings-toggle-row input[type="checkbox"],.settings-toggle-row input[type="checkbox"]:checked{background-image:none}
 
 /* The composer shell is the visible input surface. The textarea itself must stay borderless. */
 .composer textarea,
