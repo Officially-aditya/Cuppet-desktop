@@ -11,6 +11,7 @@ concurrency:
 jobs:
   phase-gates:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
@@ -37,6 +38,7 @@ jobs:
 
   packaged-runtime-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
