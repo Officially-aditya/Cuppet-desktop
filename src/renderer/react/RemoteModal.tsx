@@ -23,6 +23,8 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
         setPairing(null);
         setQrCode('');
         setNote('');
+      } else if (next.setup?.url) {
+        applyPairing(next.setup);
       }
       return next;
     } catch (error) {
@@ -30,7 +32,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
       onError(error);
       return null;
     }
-  }, [onError]);
+  }, [applyPairing, onError]);
 
   const preparePairing = useCallback(async () => {
     setBusy(true);
@@ -41,6 +43,12 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
         setPairing(null);
         setQrCode('');
         setNote('');
+        return;
+      }
+
+      if (current.setup?.url) applyPairing(current.setup);
+      if (current.starting) {
+        if (!current.setup?.url) setNote('Preparing pairing…');
         return;
       }
 
@@ -65,7 +73,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
     return window.cuppet.onEvent((event) => {
       if (event?.type === 'remote.setup') {
         const setup = event.setup ?? {};
-        if (typeof setup.url === 'string' && setup.url) applyPairing({ url: setup.url, code: setup.code, expiresAt: setup.expiresAt });
+        if (typeof setup.url === 'string' && setup.url) applyPairing({ url: setup.url, code: setup.code, expiresAt: typeof setup.expiresAt === 'string' ? Date.parse(setup.expiresAt) : setup.expiresAt });
       }
       if (event?.type === 'remote.invite') applyPairing(event.invite ?? null);
       if (event?.type === 'remote.started' || event?.type === 'remote.stopped' || event?.type === 'remote.device') void refresh();
@@ -123,7 +131,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
         ) : (
           <div className="remote-pairing">
             <div className="remote-qr-frame" aria-label="Remote pairing QR code">
-              {qrCode ? <img src={qrCode} alt="Scan this QR code with Cuppet to pair this computer" /> : <div className="remote-qr-loading">{busy ? 'Preparing QR…' : 'QR unavailable'}</div>}
+              {qrCode ? <img src={qrCode} alt="Scan this QR code with Cuppet to pair this computer" /> : <div className="remote-qr-loading">{busy || status.starting ? 'Preparing QR…' : 'QR unavailable'}</div>}
             </div>
             <div className="remote-pairing-copy">
               <strong>Scan with Cuppet</strong>
