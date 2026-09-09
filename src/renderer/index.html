@@ -31,7 +31,7 @@
       </div>
     </header>
     <section id="messages" class="messages" aria-live="polite" tabindex="0"></section>
-    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline · / for commands</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button" aria-label="Send" title="Send"><span aria-hidden="true">↑</span></button></div></form></footer>
+    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button" aria-label="Send" title="Send"><span aria-hidden="true">↑</span></button></div></form></footer>
   </main>
 </div>
 
@@ -66,26 +66,32 @@
       </nav>
     </aside>
     <div class="settings-hub-main">
-      <header class="settings-hub-header"><div><h2 id="settings-section-title">Platform</h2><p id="settings-section-description">Choose the models Cuppet uses on this computer.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></header>
+      <header class="settings-hub-header"><div><h2 id="settings-section-title">Platform</h2><p id="settings-section-description">Choose the provider Cuppet uses on this computer.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></header>
       <div class="settings-hub-content">
         <section class="settings-panel" data-settings-panel="account">
           <div class="settings-card"><div class="settings-card-heading"><div><h3>Cuppet account</h3><p>Your account will connect desktop identity, Agents, and synced Cuppet services.</p></div><span class="settings-status-pill">Not connected</span></div><div class="settings-row"><div><strong>Desktop mode</strong><span>This build currently runs independently with local projects and conversations.</span></div></div></div>
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>ChatGPT / Codex</h3><p>Sign in through the official OpenAI Codex client. Codex owns and refreshes the OAuth credentials; Cuppet never reads or copies the tokens.</p></div><span id="codex-auth-status" class="settings-status-pill muted">Checking…</span></div>
+            <div class="settings-row codex-auth-row"><div><strong>Official Codex OAuth</strong><span id="codex-auth-note">Checking for an installed Codex client…</span></div><div class="codex-auth-actions"><button id="codex-auth-login" type="button" class="primary-button">Continue with ChatGPT</button><button id="codex-auth-logout" type="button" class="ghost-button hidden">Sign out</button></div></div>
+          </div>
         </section>
 
         <section class="settings-panel active" data-settings-panel="platform">
           <form id="settings-form" method="dialog" class="platform-settings-form">
-            <div class="settings-card"><div class="settings-card-heading"><div><h3>AI platform</h3><p>Provider credentials stay local. Choose primary and secondary models for execution.</p></div></div>
-              <div class="settings-form-grid">
-                <label>Provider ID<input id="provider-id" type="text" required placeholder="openai-compatible" /></label>
-                <label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label>
-                <label>Primary model<input id="provider-model" type="text" required placeholder="Your foreground model ID" /></label>
-                <label>Primary effort<select id="provider-primary-effort"><option value="">Default model effort</option></select></label>
-                <label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
-                <label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
-                <label class="settings-grid-full">API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label>
+            <div class="settings-card"><div class="settings-card-heading"><div><h3>AI provider</h3><p>Select a provider and add its API key. Cuppet fills the official endpoint and default coding model automatically.</p></div></div>
+              <div class="provider-simple-form">
+                <label>Provider<select id="provider-id" required><option value="">Choose provider</option></select></label>
+                <div id="provider-preset-note" class="provider-preset-note">Cuppet configures the provider endpoint and model automatically.</div>
+                <label><span id="provider-api-key-label">API key</span><input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Enter API key" /></label>
+              </div>
+              <div class="provider-internal-fields" hidden aria-hidden="true">
+                <input id="provider-base-url" type="url" tabindex="-1" />
+                <input id="provider-model" type="text" tabindex="-1" />
+                <select id="provider-primary-effort" tabindex="-1"><option value="">Default model effort</option></select>
+                <input id="provider-background-model" type="text" tabindex="-1" />
+                <select id="provider-secondary-effort" tabindex="-1"><option value="">Default model effort</option></select>
               </div>
               <div id="settings-note" class="settings-note"></div>
-              <div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save platform</button></div>
+              <div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div>
             </div>
           </form>
         </section>
@@ -94,7 +100,6 @@
           <div class="settings-card"><div class="settings-card-heading"><div><h3>Interface</h3><p>These preferences are stored only on this computer.</p></div></div>
             <label class="settings-toggle-row"><div><strong>Compact sidebar</strong><span>Reduce vertical spacing for projects and conversations.</span></div><input id="pref-compact-sidebar" type="checkbox" /></label>
             <label class="settings-toggle-row"><div><strong>Reduce motion</strong><span>Minimise interface animations and smooth scrolling.</span></div><input id="pref-reduce-motion" type="checkbox" /></label>
-            <label class="settings-toggle-row"><div><strong>Hide composer shortcuts</strong><span>Remove the Enter / Shift+Enter helper text below the composer.</span></div><input id="pref-hide-hints" type="checkbox" /></label>
           </div>
         </section>
 
