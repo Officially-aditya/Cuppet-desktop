@@ -24,6 +24,6 @@ jobs:
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json .github/workflows/ci.yml README.md src/runtime/main.mjs src/runtime/remote/commands.mjs src/cli/main.mjs
-          git commit -m "chore(commands): register Original C2 release gate"
+          git add package.json README.md src/runtime/main.mjs src/runtime/remote/commands.mjs src/cli/main.mjs
+          git commit -m "chore(commands): register Original C2 release metadata"
           git push origin HEAD:original-c2-command-surface
