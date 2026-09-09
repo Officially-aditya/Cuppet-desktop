@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Cuppet</title><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="commands.css" />
+  <title>Cuppet</title><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="commands.css" /><link rel="stylesheet" href="navigation.css" />
 </head>
 <body>
 <div class="app-shell">
@@ -12,7 +12,7 @@
     <div class="sidebar-top">
       <div class="brand-row"><div class="brand-mark" aria-hidden="true">C</div><div><div class="brand-title">Cuppet</div><div class="brand-subtitle">Desktop alpha</div></div></div>
       <button id="new-chat" class="primary-button full">New chat</button>
-      <nav class="primary-nav" aria-label="Primary"><button class="nav-button" disabled>Search</button><button class="nav-button" disabled>Agents</button><button id="remote-button" class="nav-button">Remote</button></nav>
+      <nav class="primary-nav" aria-label="Primary"><button id="search-button" class="nav-button">Search</button><button class="nav-button" disabled>Agents</button><button id="remote-button" class="nav-button">Remote</button></nav>
     </div>
     <div class="projects-header"><span>Projects</span><button id="add-project" class="text-button">Add</button></div>
     <div id="project-list" class="project-list" aria-label="Projects and conversations"></div>
@@ -30,7 +30,7 @@
         <span id="provider-pill" class="provider-pill">Provider not configured</span>
       </div>
     </header>
-    <section id="messages" class="messages" aria-live="polite"></section>
+    <section id="messages" class="messages" aria-live="polite" tabindex="0"></section>
     <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline · / for commands</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button">Send</button></div></form></footer>
   </main>
 </div>
@@ -57,5 +57,5 @@
 <label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
 <label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
 <label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
-<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script><script src="commands.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script>
+<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script><script src="commands.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script><script src="d1-navigation.js" defer></script><script type="module" src="execution-ui.mjs"></script>
 </body></html>
