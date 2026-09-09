@@ -113,10 +113,10 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             </nav>
           </aside>
           <div className="settings-hub-main">
-            <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button></header>
+            <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
-              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onAccount={() => setSection('account')} />}
+              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <UsagePanel current={current} />}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
@@ -134,21 +134,34 @@ function AccountPanel({ codex, busy, onConnect, onDisconnect }: { codex: any; bu
   return <>
     <div className="settings-card"><div className="settings-card-heading"><div><h3>Cuppet account</h3><p>Your Cuppet account will connect desktop identity, Agents, and synced services.</p></div><span className="settings-status-pill">Not connected</span></div><div className="settings-row"><div><strong>Desktop mode</strong><span>Projects and conversations remain local in this build.</span></div><span className="settings-value">Local</span></div></div>
     <div className="settings-card"><div className="settings-card-heading"><div><h3>ChatGPT / Codex</h3><p>Uses the official OpenAI Codex app-server. Codex owns and refreshes the OAuth credentials; Cuppet never reads or copies them.</p></div><span className={`settings-status-pill${codex.loggedIn ? '' : ' muted'}`}>{codex.loggedIn ? 'Connected' : codex.loginRunning ? 'Connecting…' : 'Not connected'}</span></div>
-      <div className="settings-row codex-auth-row"><div><strong>{codex.email || 'Official Codex OAuth'}</strong><span>{codex.message || 'Use your existing ChatGPT Codex subscription.'}{codex.planType ? ` · ${codex.planType}` : ''}</span></div><div className="codex-auth-actions">{codex.loggedIn ? <button type="button" className="ghost-button" disabled={busy} onClick={() => void onDisconnect()}>Sign out</button> : <button type="button" className="primary-button" disabled={busy || codex.loginRunning || codex.available === false} onClick={() => void onConnect()}>Continue with ChatGPT</button>}</div></div>
+      <div className="settings-row codex-auth-row"><div><strong>{codex.email || 'Official Codex OAuth'}</strong><span>{codex.message || 'Use your existing ChatGPT Codex subscription.'}{codex.planType ? ` · ${codex.planType}` : ''}</span></div><div className="codex-auth-actions">{codex.loggedIn ? <button type="button" className="ghost-button settings-action-button" disabled={busy} onClick={() => void onDisconnect()}>Sign out</button> : <button type="button" className="primary-button settings-action-button" disabled={busy || codex.loginRunning || codex.available === false} onClick={() => void onConnect()}>Continue with ChatGPT</button>}</div></div>
     </div>
   </>;
 }
 
-function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, codex, note, busy, onProvider, onApiKey, onSave, onAccount }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onAccount: () => void }) {
+function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, codex, note, busy, onProvider, onApiKey, onSave, onClose, onConnect, onDisconnect }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void> }) {
   return <form className="platform-settings-form" onSubmit={(event) => void onSave(event)}>
-    <div className="settings-card"><div className="settings-card-heading"><div><h3>AI provider</h3><p>Choose a provider. Cuppet pins its endpoint and default coding model automatically.</p></div></div>
+    <div className="settings-card platform-provider-card">
+      <div className="settings-card-heading"><div><h3>AI provider</h3><p>Select a provider and add its API key. Cuppet fills the official endpoint and default coding model automatically.</p></div></div>
       <div className="provider-simple-form">
         <label>Provider<select required value={providerID} onChange={(event) => onProvider(event.target.value)}><option value="">Choose provider</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label || preset.id}</option>)}</select></label>
-        {selected && <div className="provider-preset-note"><strong>{selected.label || selected.id}</strong><span>{isCodex ? 'Uses your ChatGPT Codex subscription through the official Codex runtime.' : 'Official endpoint and model are configured automatically.'}</span></div>}
-        {isCodex ? <div className="provider-auth-card"><div><strong>{codex.loggedIn ? 'ChatGPT connected' : 'ChatGPT connection required'}</strong><span>{codex.loggedIn ? (codex.email || codex.message) : 'Connect your ChatGPT account before saving Codex.'}</span></div>{!codex.loggedIn && <button type="button" className="ghost-button" onClick={onAccount}>Open Account</button>}</div> : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
+        {selected && <div className="provider-preset-note"><strong>{selected.label || selected.id}</strong><span>{isCodex ? 'Uses your existing ChatGPT Codex subscription through the official OpenAI Codex app-server. Cuppet never reads or stores Codex OAuth credentials.' : 'Official endpoint and default coding model are configured automatically.'}</span></div>}
+        {isCodex ? (
+          <div className="provider-auth-card">
+            <div className="provider-auth-copy">
+              <div className="provider-auth-title-row"><strong>ChatGPT subscription</strong><span className={`settings-status-pill compact${codex.loggedIn ? '' : ' muted'}`}>{codex.loggedIn ? 'Connected' : codex.loginRunning ? 'Connecting…' : 'Not connected'}</span></div>
+              <span>{codex.loggedIn ? `Connected${codex.email ? ` as ${codex.email}` : ' with ChatGPT'}${codex.planType ? ` · ${codex.planType}` : ''}. Codex owns and refreshes your subscription credentials.` : 'Connect ChatGPT to use Codex without storing OAuth credentials in Cuppet.'}</span>
+            </div>
+            <div className="provider-auth-actions">
+              {codex.loggedIn ? <button type="button" className="ghost-button settings-action-button" disabled={busy} onClick={() => void onDisconnect()}>Sign out</button> : <button type="button" className="primary-button settings-action-button" disabled={busy || codex.loginRunning || codex.available === false} onClick={() => void onConnect()}>Continue with ChatGPT</button>}
+            </div>
+          </div>
+        ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
       </div>
-      <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
-      <div className="dialog-actions"><button type="submit" className="primary-button" disabled={busy || !selected}>Save</button></div>
+      <div className="settings-form-footer">
+        <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store. Primary drives foreground work; secondary drives background/worker work.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
+        <div className="dialog-actions"><button type="button" className="ghost-button settings-action-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button settings-action-button" disabled={busy || !selected}>Save</button></div>
+      </div>
     </div>
   </form>;
 }
@@ -166,7 +179,7 @@ function UsagePanel({ current }: { current: ProviderSettings | null }) {
 }
 
 function DevicesPanel({ devices, onOpenRemote }: { devices: RemoteDevice[]; onOpenRemote: () => void }) {
-  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Connected devices</h3><p>Devices paired through Cuppet Remote.</p></div><button type="button" className="ghost-button" onClick={onOpenRemote}>Open Remote</button></div><div className="settings-device-list">{devices.length ? devices.map((device) => <div className="settings-row" key={device.deviceId}><div><strong>{device.name || 'Cuppet device'}</strong><span>{device.deviceId.slice(0, 18)}</span></div></div>) : <div className="settings-empty">No paired devices.</div>}</div></div>;
+  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Connected devices</h3><p>Devices paired through Cuppet Remote.</p></div><button type="button" className="ghost-button settings-action-button" onClick={onOpenRemote}>Open Remote</button></div><div className="settings-device-list">{devices.length ? devices.map((device) => <div className="settings-row" key={device.deviceId}><div><strong>{device.name || 'Cuppet device'}</strong><span>{device.deviceId.slice(0, 18)}</span></div></div>) : <div className="settings-empty">No paired devices.</div>}</div></div>;
 }
 
 function PrivacyPanel() {
