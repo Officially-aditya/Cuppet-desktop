@@ -1,7 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "phase": "B2",
   "preparedAt": "2026-09-08",
+  "updatedAt": "2026-09-09",
   "source": {
     "repository": "Officially-aditya/Cuppet-code",
     "ref": "840ed751b61c04afc881a393b7836d4d2c932f61",
@@ -22,12 +23,16 @@
   "routingOrder": [
     "deterministic task affinity",
     "TST graph localization for ambiguous prompts",
-    "local semantic embedding fallback",
+    "local feature embedding fallback",
     "conservative continue/create/reactivate decision"
   ],
   "semantic": {
-    "provider": "@huggingface/transformers",
-    "defaultModel": "Xenova/all-MiniLM-L6-v2",
+    "provider": "built-in deterministic subword feature hashing",
+    "defaultModel": "cuppet/subword-hash-v1",
+    "dimensions": 512,
+    "networkDependency": false,
+    "nativeDependency": false,
+    "modelDownload": false,
     "remoteRoutingInference": false,
     "failureFallback": "continue active task",
     "vectorsPersisted": false,
@@ -58,10 +63,7 @@
   },
   "runtimeControls": {
     "disableEnv": "CUPPET_PE3=0",
-    "modelEnv": "CUPPET_PE3_EMBED_MODEL",
-    "cacheEnv": "CUPPET_PE3_MODEL_CACHE",
-    "localModelDirEnv": "CUPPET_PE3_MODEL_DIR",
-    "strictOfflineEnv": "CUPPET_PE3_ALLOW_MODEL_DOWNLOAD=0"
+    "embeddingProviderOverride": "constructor injection only; production default has no external model/runtime dependency"
   },
   "deferred": [
     "tool/permission execution loop",
