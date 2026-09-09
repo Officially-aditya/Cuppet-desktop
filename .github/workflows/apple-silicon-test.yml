@@ -2,6 +2,11 @@ name: Apple Silicon Test Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/e2-apple-silicon-test
+    paths:
+      - .github/release-trigger
 
 permissions:
   contents: write
