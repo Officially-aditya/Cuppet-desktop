@@ -13,6 +13,7 @@ type Props = {
   activeSessionId: string | null;
   selectedProjectId: string | null;
   onNewChat: () => void;
+  onNewProjectChat: (projectId: string) => void;
   onSearch: () => void;
   onRemote: () => void;
   onSettings: () => void;
@@ -107,6 +108,16 @@ export function Sidebar(props: Props) {
                   {project.missing ? 'Folder missing' : [project.branch, project.dirty ? 'modified' : null].filter(Boolean).join(' · ') || 'Local folder'}
                 </span>
               </button>
+              <button
+                type="button"
+                className="project-new-chat-button"
+                aria-label={`New chat in ${project.name}`}
+                title={`New chat in ${project.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onNewProjectChat(project.id);
+                }}
+              >+</button>
               <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
             </div>
             {(sessionsByProject.get(project.id) ?? []).map((session) => (
