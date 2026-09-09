@@ -56,7 +56,7 @@ expect(wrapper.includes('onPaths: async (paths, mutation, details = null)') && w
 
 const journal = text['src/runtime/mutation-journal.mjs'];
 expect(journal.includes("kind: 'batch'") && journal.includes('beginBatch(') && journal.includes('commitBatch('), 'multi-file mutation journal entries are missing');
-expect(journal.includes('for (const file of entry.files)') && journal.includes('snapshotMatches(current, file.after)'), 'batch undo does not precheck every current postimage');
+expect(journal.includes("const files = entry.kind === 'batch' ? entry.files") && journal.includes('for (const item of files)') && journal.includes('snapshotMatches(current, item.after)') && journal.includes('checked.push({ item, target, current })'), 'batch undo does not precheck every current postimage');
 expect(journal.includes('contentBase64') && !/git\s+(?:reset|checkout|clean|restore)\b/i.test(journal), 'undo must remain byte-exact and non-destructive');
 
 const permissions = text['src/runtime/permissions.mjs'];
