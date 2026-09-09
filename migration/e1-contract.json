@@ -1,0 +1,30 @@
+{
+  "phase": "E1",
+  "title": "Production packaging/runtime foundation",
+  "status": "implemented-candidate",
+  "targetVersion": "0.9.0-alpha.1",
+  "requirements": {
+    "productionElectronBootstrapIsExplicit": true,
+    "singleInstanceIsEnforced": true,
+    "rendererNavigationIsRestricted": true,
+    "rendererCreatedWindowsAreDenied": true,
+    "rendererPermissionsAreDeniedByDefault": true,
+    "asarPackagingIsEnabled": true,
+    "packagedRuntimeUsesThePackagedElectronExecutableInNodeMode": true,
+    "runtimeDataDirectoryIsCreatedBeforeLaunch": true,
+    "runtimeShutdownPrefersStdinEofBeforeSignals": true,
+    "packagedRuntimeSmokeProvesRestartPersistence": true,
+    "providerSettingsWritesAreAtomic": true,
+    "linuxBasicTextCredentialBackendIsRejected": true,
+    "apiKeysAreNeverPersistedInPlaintext": true,
+    "incompatibleTstControlPlaneIsNotFalselyBundled": true,
+    "currentCuppetTstBridgeRemainsOptionalAndExternal": true,
+    "e1HasPermanentVerificationGate": true
+  },
+  "tst": {
+    "desktopProtocol": "cuppet.tst.v3",
+    "packagedMode": "optional-external-daemon",
+    "upstreamTstV03AutoBundled": false,
+    "note": "The current upstream TST v0.3 control plane is HTTP/unix /v1 and does not expose Cuppet desktop's cuppet.tst.v3 JSON-line socket handshake. E1 fails honest rather than packaging an incompatible daemon."
+  }
+}
