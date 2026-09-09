@@ -43,7 +43,7 @@ const service = {
     if ((method === 'project.remove' || method === 'project.relocate') && params.projectId) await tst.unregisterProject(params.projectId).catch(() => undefined);
     return result;
   },
-  close() { return runtimeService.close(); },
+  async close() { await Promise.all([runtimeService.close(), tst.close()]); },
 };
 remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
 
@@ -70,7 +70,7 @@ async function handle(method, params = {}) {
 }
 
 function tstContext(method, params = {}) {
-  let sessionId = boundedId(params.sessionId ?? params.sourceSessionId);
+  const sessionId = boundedId(params.sessionId ?? params.sourceSessionId);
   let projectId = boundedId(params.projectId);
   if (sessionId) {
     const session = localState.getSessionSummary(sessionId);
@@ -78,7 +78,7 @@ function tstContext(method, params = {}) {
   }
   if (!projectId && method === 'session.create') projectId = boundedId(params.projectId);
   const project = projectId ? localState.getProject(projectId) : null;
-  return { sessionId: sessionId || null, projectId: project?.id ?? projectId || null, projectRoot: project?.canonicalPath ?? null };
+  return { sessionId: sessionId || null, projectId: project?.id ?? (projectId || null), projectRoot: project?.canonicalPath ?? null };
 }
 
 function renameSession(params = {}) {
@@ -133,7 +133,7 @@ async function sendOrQueue(params = {}) {
   if (!activeSessions.has(sessionId)) return service.handle('session.send', params);
 
   const queue = queuedTurns.get(sessionId) ?? [];
-  if (queue.length >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages`);
+  if (queue.length >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
   const item = {
     id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
     params: { ...params, sessionId },
