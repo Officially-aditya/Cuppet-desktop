@@ -37,9 +37,20 @@
 .sidebar-resizer::after{content:'';position:absolute;top:0;bottom:0;left:2px;width:1px;background:transparent;transition:background .12s ease}
 .sidebar-resizer:hover::after,.sidebar-resizer:focus-visible::after,body.sidebar-resizing .sidebar-resizer::after{background:#59616d}
 body.sidebar-resizing{cursor:col-resize;user-select:none}
-.remote-simple{display:grid;gap:14px;padding-top:0}
-.remote-simple-status{font-size:13px;font-weight:600;color:#dfe3e9}
-.remote-devices-wrap{display:grid;gap:8px;padding-top:12px;border-top:1px solid #252b33}
-.remote-devices-header{display:flex;align-items:center;justify-content:space-between;color:#858f9d;font-size:11px}
-.remote-simple .settings-note{min-height:0}
+.remote-dialog{width:min(480px,calc(100vw - 40px))}
+.remote-pairing{display:grid;justify-items:center;gap:16px;padding:4px 0 2px;text-align:center}
+.remote-qr-frame{width:248px;height:248px;display:grid;place-items:center;border-radius:16px;background:#fff;padding:8px;overflow:hidden}
+.remote-qr-frame img{display:block;width:232px;height:232px}
+.remote-qr-loading{display:grid;place-items:center;width:232px;height:232px;color:#68717d;background:#f3f5f7;font-size:12px}
+.remote-pairing-copy{display:grid;justify-items:center;gap:5px;max-width:320px}
+.remote-pairing-copy strong{font-size:14px;color:#eef1f5}
+.remote-pairing-copy span,.remote-pairing-copy small{color:#818b98;font-size:11px;line-height:1.45}
+.remote-pairing-copy code{margin-top:4px;padding:5px 8px;border-radius:7px;background:#171b21;color:#dfe4ea;font-size:11px;letter-spacing:.08em}
+.remote-active-session{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px;border-radius:12px;background:#171b21}
+.remote-active-indicator{width:8px;height:8px;border-radius:999px;background:#62c985;box-shadow:0 0 0 4px rgba(98,201,133,.1)}
+.remote-active-copy{display:grid;gap:3px;min-width:0}
+.remote-active-copy span{color:#818b98;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.remote-active-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:#eef1f5}
+.remote-stop-button{height:32px;padding:6px 10px;font-size:11px}
+.remote-note{min-height:0;margin-top:12px;text-align:center}
 @media(max-width:900px){.command-palette{left:16px;right:16px}}
