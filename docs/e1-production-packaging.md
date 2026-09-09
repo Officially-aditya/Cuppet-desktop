@@ -11,10 +11,20 @@ E1 turns the source-only Electron application into a reproducible packaged-app c
 - Executable: `cuppet`
 - ASAR: enabled
 - Production application files: `src/**` and `package.json`
-- Transformers/ONNX runtime assets are unpacked so model/runtime assets that require real filesystem access do not depend on ASAR behavior.
+- Runtime production dependencies: none; Electron and electron-builder remain development/build dependencies.
 - `npm run pack:dir` creates an unpacked platform application for acceptance testing. Signing, notarization, installers, and release publication remain E2.
 
 The packaged Electron executable is also the runtime host. `RuntimeClient` starts the same executable with `ELECTRON_RUN_AS_NODE=1` and points it at `src/runtime/main.mjs` inside the application bundle. That preserves the independent runtime and avoids adding a second Node distribution.
+
+## Production dependency audit
+
+E1 treats the packaged dependency graph as part of the acceptance contract. The packaged-runtime CI job runs `npm run e1:audit-runtime`, which is `npm audit --omit=dev --audit-level=high`, before packaging.
+
+During E1 this gate exposed high-severity transitive advisories under the former PE3 `@huggingface/transformers` dependency through `onnxruntime-node`/`adm-zip` and `sharp`, with no upstream fix available in the audited graph. The gate was not relaxed. Instead, PE3's optional ambiguity breaker was replaced with the built-in dependency-free `cuppet/subword-hash-v1` feature embedding.
+
+That provider performs bounded deterministic word/subword hashing in JavaScript and requires no model download, native runtime, archive extraction, image codec, network access, or model cache. Deterministic task affinity and TST remain higher-authority routing signals, and PE3 still preserves the active task on low-confidence/failure paths.
+
+As a result, Cuppet's packaged runtime currently has zero npm production dependencies. Dev/build dependencies are deliberately excluded from the production audit because they are not shipped as runtime application dependencies.
 
 ## Durable state and restart behavior
 
@@ -72,6 +82,6 @@ This is an explicit compatibility boundary, not an omitted packaging step.
 
 `npm run e1:verify` permanently checks the source/package/security contract and runs E1 tests.
 
-CI also has a separate packaged-app smoke job that performs a normal dependency install, builds the unpacked Linux application, and runs `npm run e1:package-smoke`. The normal phase-gate job retains `ELECTRON_SKIP_BINARY_DOWNLOAD=1` so source gates remain fast.
+CI also has a separate packaged-app smoke job that performs a normal dependency install, runs the production dependency audit, builds the unpacked Linux application, and runs `npm run e1:package-smoke`. The normal phase-gate job retains `ELECTRON_SKIP_BINARY_DOWNLOAD=1` so source gates remain fast.
 
 E2 is responsible for distribution mechanics: macOS signing/notarization, DMG/ZIP production, release workflow, and published artifacts.
