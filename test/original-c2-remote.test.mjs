@@ -19,15 +19,10 @@ function fixture() {
     call,
     identity: { hostId: 'host_1', deviceName: 'Laptop' },
     providerConfig: {
-      providerID: 'openai-compatible',
       baseUrl: 'https://api.example.test/v1',
       model: 'model-a',
       backgroundModel: 'model-b',
       apiKey: 'secret',
-      models: [
-        { providerID: 'openai-compatible', modelID: 'model-a', roles: ['primary'], variants: ['low', 'medium', 'high'] },
-        { providerID: 'openai-compatible', modelID: 'model-b', roles: ['secondary'], variants: [] },
-      ],
     },
   });
   return { adapter, calls };
@@ -66,5 +61,27 @@ test('remote slash steer delegates to canonical runtime session.steer and unknow
     () => adapter.execute(actor, 'session.submit', { prompt: '/unknown-cuppet-command' }, { sessionId: 's1' }),
     /Unknown Cuppet command/,
   );
+  assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
+});
+
+
+test('remote provider-free status slash stays provider-free', async () => {
+  const calls = [];
+  const call = async (method, params = {}) => {
+    calls.push({ method, params });
+    switch (method) {
+      case 'health': return { ok: true, activeRuns: 0 };
+      case 'project.list': return [];
+      case 'session.list': return [];
+      case 'permission.list': return [];
+      case 'cognitive.status': return { orchestratorEnabled: false, backgroundPaused: false, tst: { configured: false, connected: false }, roles: {} };
+      default: throw new Error(`unexpected runtime call: ${method}`);
+    }
+  };
+  const adapter = new RemoteCommandAdapter({ call, identity: { hostId: 'host_1', deviceName: 'Laptop' }, providerConfig: {} });
+  const actor = { deviceID: 'viewer', scopes: ['session.read'] };
+  const result = await adapter.execute(actor, 'session.submit', { prompt: '/status' }, { sessionId: 's1' });
+  assert.equal(result.command, true);
+  assert.equal(result.id, 'status');
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 });

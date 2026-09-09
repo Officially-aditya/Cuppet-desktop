@@ -99,12 +99,12 @@ export async function executeCommand(parsedOrId, context = {}, input = {}) {
     case 'effort': result = await executeEffort(provider, args); break;
     case 'steer': {
       if (!rawArguments) throw new Error('/steer requires an instruction');
-      result = await call('session.steer', { sessionId, text: rawArguments, provider: context.providerRequest ?? {} });
+      result = await call('session.steer', { sessionId, text: rawArguments, provider: await resolveProviderRequest(context.providerRequest) });
       break;
     }
     case 'abort': result = await call('session.stop', { sessionId }); break;
     case 'plan': result = await executePlan(call, sessionId, args); break;
-    case 'compact': result = await call('context.compact', { sessionId, provider: context.providerRequest ?? {} }); break;
+    case 'compact': result = await call('context.compact', { sessionId, provider: await resolveProviderRequest(context.providerRequest) }); break;
     case 'undo': result = await call('session.undo', { sessionId }); break;
     case 'models': result = await requiredFunction(provider.models, 'model catalog authority')(); break;
     case 'cuppet.memory.remember': result = await executeMemoryRemember(call, sessionId, input); break;
@@ -115,7 +115,7 @@ export async function executeCommand(parsedOrId, context = {}, input = {}) {
     case 'cuppet.steer.interrupt': {
       const text = String(input.text ?? '').trim();
       if (!text) throw new Error('interrupt-and-steer requires text');
-      result = await call('session.steer', { sessionId, text, provider: context.providerRequest ?? {}, interrupt: true });
+      result = await call('session.steer', { sessionId, text, provider: await resolveProviderRequest(context.providerRequest), interrupt: true });
       break;
     }
     case 'cuppet.plan.agent': result = await executePlan(call, sessionId, [String(input.mode ?? '')]); break;
@@ -239,6 +239,7 @@ function normalizeToggle(value) {
   if (raw === 'toggle') return 'toggle';
   throw new Error('expected status, on, off, or toggle');
 }
+async function resolveProviderRequest(value) { return typeof value === 'function' ? await value() : (value ?? {}); }
 function requiredFunction(value, label) { if (typeof value !== 'function') throw new Error(`${label} is unavailable on this surface`); return value; }
 function summarize(id, result) {
   if (id === 'auto') return `Guarded auto: ${result?.enabled ? 'on' : 'off'}`;

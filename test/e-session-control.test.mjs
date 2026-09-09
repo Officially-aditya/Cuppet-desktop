@@ -116,7 +116,7 @@ test('Remote status/doctor stay read-scoped and use host-local provider configur
   const actor = { deviceID: 'viewer' };
   const status = await adapter.execute(actor, 'status');
   const doctor = await adapter.execute(actor, 'doctor');
-  assert.equal(status.version, '0.8.0-alpha.1');
+  assert.equal(status.version, '0.9.0-alpha.1');
   assert.equal(doctor.ok, true);
   assert.equal(JSON.stringify({ status, doctor }).includes('sk-must-remain-local'), false);
   assert.equal(JSON.stringify({ status, doctor }).includes('example.invalid'), false);

@@ -86,7 +86,7 @@ export class RemoteCommandAdapter {
       return executeCommand(parsed,{
         sessionId,
         call:(method,value={})=>this.#call(method,value),
-        providerRequest:this.#selectedProvider(state),
+        providerRequest:()=>this.#selectedProvider(state),
         host:{
           status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.9.0-alpha.1'}),
           doctor:()=>buildRuntimeDoctor({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.9.0-alpha.1'}),
