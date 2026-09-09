@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Session } from '../types';
 
 const SIDEBAR_WIDTH_KEY = 'cuppet.desktop.sidebar-width';
+const SIDEBAR_COLLAPSED_KEY = 'cuppet.desktop.sidebar-collapsed';
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 286;
+const COLLAPSED_WIDTH = 42;
 
 type Props = {
   projects: Project[];
@@ -29,8 +31,11 @@ type Props = {
 
 export function Sidebar(props: Props) {
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   const [menu, setMenu] = useState<{ kind: 'project' | 'session'; id: string; x: number; y: number } | null>(null);
   const dragging = useRef(false);
+  const isMac = window.cuppet.native.platform === 'darwin';
+  const sidebarCollapsed = isMac && collapsed;
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -50,6 +55,23 @@ export function Sidebar(props: Props) {
       window.removeEventListener('pointerup', onUp);
     };
   }, [width]);
+
+  useEffect(() => {
+    if (!isMac) return;
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
+  }, [collapsed, isMac]);
+
+  useEffect(() => {
+    if (!isMac) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.altKey || event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      setCollapsed((current) => !current);
+      setMenu(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isMac]);
 
   useEffect(() => {
     const close = () => setMenu(null);
@@ -78,94 +100,118 @@ export function Sidebar(props: Props) {
     setMenu({ kind, id, x: Math.min(event.clientX || event.currentTarget.getBoundingClientRect().right, window.innerWidth - 200), y: Math.min(event.clientY || event.currentTarget.getBoundingClientRect().bottom, window.innerHeight - 180) });
   };
 
+  const toggleSidebar = () => {
+    setCollapsed((current) => !current);
+    setMenu(null);
+  };
+
+  const sidebarWidth = sidebarCollapsed ? COLLAPSED_WIDTH : width;
+
   return (
-    <aside className="sidebar react-sidebar" style={{ width, minWidth: width }}>
-      <div className="sidebar-top">
-        <div className="brand-row">
-          <div className="brand-mark" aria-hidden="true">C</div>
-          <div className="brand-title">Cuppet</div>
+    <aside className={`sidebar react-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+      {isMac && (
+        <button
+          type="button"
+          className="sidebar-toggle-button"
+          aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+          title={`${sidebarCollapsed ? 'Show' : 'Hide'} sidebar (⌥⌘S)`}
+          onClick={toggleSidebar}
+        >
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <rect x="2.5" y="3" width="13" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.25" />
+            <path d="M7 3v12" stroke="currentColor" strokeWidth="1.25" />
+          </svg>
+        </button>
+      )}
+
+      {!sidebarCollapsed && <>
+        <div className="sidebar-top">
+          <div className="brand-row">
+            <div className="brand-mark" aria-hidden="true">C</div>
+            <div className="brand-title">Cuppet</div>
+          </div>
+          <nav className="primary-nav" aria-label="Primary">
+            <button type="button" className="nav-button" onClick={props.onNewChat}>New chat</button>
+            <button type="button" className="nav-button" onClick={props.onSearch}>Search</button>
+            <button type="button" className="nav-button" disabled>Agents</button>
+            <button type="button" className="nav-button" onClick={props.onRemote}>Remote</button>
+          </nav>
         </div>
-        <nav className="primary-nav" aria-label="Primary">
-          <button type="button" className="nav-button" onClick={props.onNewChat}>New chat</button>
-          <button type="button" className="nav-button" onClick={props.onSearch}>Search</button>
-          <button type="button" className="nav-button" disabled>Agents</button>
-          <button type="button" className="nav-button" onClick={props.onRemote}>Remote</button>
-        </nav>
-      </div>
 
-      <div className="projects-header">
-        <span>Projects</span>
-        <button type="button" className="project-add-button" aria-label="Add project" title="Add project" onClick={props.onAddProject}>+</button>
-      </div>
+        <div className="projects-header">
+          <span>Projects</span>
+          <button type="button" className="project-add-button" aria-label="Add project" title="Add project" onClick={props.onAddProject}>+</button>
+        </div>
 
-      <div className="project-list" aria-label="Projects and conversations">
-        {props.projects.map((project) => (
-          <section className="project-group" key={project.id}>
-            <div className={`project-row${props.selectedProjectId === project.id ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
-              <button type="button" className="project-button" title={projectMetadata(project)} onClick={() => void props.onProject(project.id)}>
-                <span className="project-name">{project.name}</span>
-              </button>
-              <button
-                type="button"
-                className="project-new-chat-button"
-                aria-label={`New chat in ${project.name}`}
-                title={`New chat in ${project.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onNewProjectChat(project.id);
-                }}
-              >+</button>
-              <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
-            </div>
-            {(sessionsByProject.get(project.id) ?? []).map((session) => (
-              <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
-            ))}
-          </section>
-        ))}
+        <div className="project-list" aria-label="Projects and conversations">
+          {props.projects.map((project) => (
+            <section className="project-group" key={project.id}>
+              <div className={`project-row${props.selectedProjectId === project.id ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
+                <button type="button" className="project-button" title={projectMetadata(project)} onClick={() => void props.onProject(project.id)}>
+                  <span className="project-name">{project.name}</span>
+                </button>
+                <button
+                  type="button"
+                  className="project-new-chat-button"
+                  aria-label={`New chat in ${project.name}`}
+                  title={`New chat in ${project.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onNewProjectChat(project.id);
+                  }}
+                >+</button>
+                <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
+              </div>
+              {(sessionsByProject.get(project.id) ?? []).map((session) => (
+                <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+              ))}
+            </section>
+          ))}
 
-        {props.generalSessions.length > 0 && (
-          <section className="project-group general-group">
-            <div className="general-label">General</div>
-            {props.generalSessions.map((session) => (
-              <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
-            ))}
-          </section>
-        )}
+          {props.generalSessions.length > 0 && (
+            <section className="project-group general-group">
+              <div className="general-label">General</div>
+              {props.generalSessions.map((session) => (
+                <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+              ))}
+            </section>
+          )}
 
-        {!props.projects.length && !props.generalSessions.length && (
-          <div className="sidebar-empty">No projects yet. Add a folder or clone a repository.</div>
-        )}
-      </div>
+          {!props.projects.length && !props.generalSessions.length && (
+            <div className="sidebar-empty">No projects yet. Add a folder or clone a repository.</div>
+          )}
+        </div>
 
-      <div className="sidebar-bottom">
-        <button type="button" className="ghost-button full" onClick={props.onSettings}>Settings</button>
-      </div>
+        <div className="sidebar-bottom">
+          <button type="button" className="ghost-button full" onClick={props.onSettings}>Settings</button>
+        </div>
 
-      <div
-        className="sidebar-resizer"
-        role="separator"
-        aria-label="Resize sidebar"
-        aria-orientation="vertical"
-        aria-valuemin={MIN_WIDTH}
-        aria-valuemax={MAX_WIDTH}
-        tabIndex={0}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          dragging.current = true;
-          document.body.classList.add('sidebar-resizing');
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-        }}
-        onDoubleClick={() => {
-          setWidth(DEFAULT_WIDTH);
-          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(DEFAULT_WIDTH));
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowLeft') setWidth((value) => clamp(value - 10));
-          if (event.key === 'ArrowRight') setWidth((value) => clamp(value + 10));
-        }}
-      />
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_WIDTH}
+          aria-valuemax={MAX_WIDTH}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            dragging.current = true;
+            document.body.classList.add('sidebar-resizing');
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+          }}
+          onDoubleClick={() => {
+            setWidth(DEFAULT_WIDTH);
+            localStorage.setItem(SIDEBAR_WIDTH_KEY, String(DEFAULT_WIDTH));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') setWidth((value) => clamp(value - 10));
+            if (event.key === 'ArrowRight') setWidth((value) => clamp(value + 10));
+          }}
+        />
 
-      {menu && <ContextMenu {...props} menu={menu} onClose={() => setMenu(null)} />}
+        {menu && <ContextMenu {...props} menu={menu} onClose={() => setMenu(null)} />}
+      </>}
     </aside>
   );
 }
