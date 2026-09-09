@@ -31,7 +31,7 @@
   const codexLogout = document.getElementById('codex-auth-logout');
   const platformCodex = createPlatformCodexAuth();
   let codexPoll = null;
-  let lastCodexState = null;
+  let codexSubmitBypass = false;
 
   const sections = {
     account: ['Account', 'Cuppet identity and connected account services.'],
@@ -138,23 +138,30 @@
     if (chatGPTProvider) void refreshCodexAuth();
   }
 
-  async function guardProviderSubmit(event) {
+  function guardProviderSubmit(event) {
     const preset = providerPresets.find((item) => item.id === providerSelect?.value);
     if (preset?.authType !== 'chatgpt') return;
+    if (codexSubmitBypass) {
+      codexSubmitBypass = false;
+      return;
+    }
     event.preventDefault();
+    event.stopImmediatePropagation();
+    void completeCodexSubmit(event.submitter);
+  }
+
+  async function completeCodexSubmit(submitter) {
     let auth;
     try { auth = await window.cuppet?.codexAuth?.status?.(); }
     catch (error) {
-      event.stopImmediatePropagation();
       if (settingsNote) settingsNote.textContent = error?.message || 'Codex authentication unavailable.';
       return;
     }
     if (auth?.loggedIn === true) {
-      // app.js owns persistence; submit a fresh event after the async auth check.
-      settingsForm?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: event.submitter }));
+      codexSubmitBypass = true;
+      settingsForm?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter }));
       return;
     }
-    event.stopImmediatePropagation();
     if (settingsNote) settingsNote.textContent = 'Continue with ChatGPT before saving Codex as the active provider.';
     activate('platform');
     await refreshCodexAuth();
@@ -191,7 +198,6 @@
     if (!window.cuppet?.codexAuth?.status) return;
     try {
       const value = await window.cuppet.codexAuth.status();
-      lastCodexState = value;
       const label = value.loggedIn ? 'Connected' : value.loginRunning ? 'Signing in…' : value.available ? 'Not connected' : 'Unavailable';
       for (const status of [codexStatus, platformCodex.status].filter(Boolean)) {
         status.textContent = label;
@@ -209,7 +215,6 @@
       if (value.loginRunning) startCodexPolling();
       else if (value.loggedIn || !value.available) stopCodexPolling();
     } catch (error) {
-      lastCodexState = null;
       for (const status of [codexStatus, platformCodex.status].filter(Boolean)) {
         status.textContent = 'Unavailable';
         status.classList.add('muted');
