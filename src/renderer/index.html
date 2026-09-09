@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Cuppet</title><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="commands.css" /><link rel="stylesheet" href="navigation.css" />
+  <title>Cuppet</title><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="commands.css" /><link rel="stylesheet" href="navigation.css" /><link rel="stylesheet" href="settings.css" />
 </head>
 <body>
 <div class="app-shell">
@@ -15,7 +15,7 @@
     </div>
     <div class="projects-header"><span>Projects</span><button id="add-project" class="project-add-button" type="button" aria-label="Add project" title="Add project">+</button></div>
     <div id="project-list" class="project-list" aria-label="Projects and conversations"></div>
-    <div class="sidebar-bottom"><button id="settings-button" class="ghost-button full">Provider settings</button></div>
+    <div class="sidebar-bottom"><button id="settings-button" class="ghost-button full">Settings</button></div>
     <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="420" tabindex="0"></div>
   </aside>
   <main class="main-pane">
@@ -31,7 +31,7 @@
       </div>
     </header>
     <section id="messages" class="messages" aria-live="polite" tabindex="0"></section>
-    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline · / for commands</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button">Send</button></div></form></footer>
+    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline · / for commands</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button" aria-label="Send" title="Send"><span aria-hidden="true">↑</span></button></div></form></footer>
   </main>
 </div>
 
@@ -51,13 +51,77 @@
   <div id="remote-devices-wrap" class="remote-devices-wrap hidden"><div class="remote-devices-header"><span>Paired devices</span><button id="remote-invite-trusted" type="button" class="text-button hidden">New code</button></div><div id="remote-devices" class="repo-results"></div></div>
 </div></dialog>
 
-<dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-header"><div><h2>Provider settings</h2><p>The endpoint and API key stay local. Model roles and effort are stored as non-secret request policy.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></div>
-<label>Provider ID<input id="provider-id" type="text" required placeholder="openai-compatible" /></label>
-<label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label>
-<label>Primary model<input id="provider-model" type="text" required placeholder="Your foreground model ID" /></label>
-<label>Primary effort<select id="provider-primary-effort"><option value="">Default model effort</option></select></label>
-<label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
-<label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
-<label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
-<div id="toast" class="toast hidden" role="status"></div><script src="sidebar-resize.js" defer></script><script src="app.js" defer></script><script src="commands.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script><script src="d1-navigation.js" defer></script><script type="module" src="execution-ui.mjs"></script>
+<dialog id="settings-dialog" class="settings-dialog settings-hub-dialog">
+  <div class="settings-hub-shell">
+    <aside class="settings-hub-sidebar">
+      <div class="settings-hub-brand"><div class="settings-hub-mark" aria-hidden="true">C</div><div><strong>Settings</strong><span>Cuppet Desktop</span></div></div>
+      <nav class="settings-hub-nav" aria-label="Settings sections">
+        <button type="button" data-settings-section="account">Account</button>
+        <button type="button" data-settings-section="platform" class="active">Platform</button>
+        <button type="button" data-settings-section="personalisation">Personalisation</button>
+        <button type="button" data-settings-section="usage">Token usage</button>
+        <button type="button" data-settings-section="devices">Connected devices</button>
+        <button type="button" data-settings-section="privacy">Data & privacy</button>
+        <button type="button" data-settings-section="about">About</button>
+      </nav>
+    </aside>
+    <div class="settings-hub-main">
+      <header class="settings-hub-header"><div><h2 id="settings-section-title">Platform</h2><p id="settings-section-description">Choose the models Cuppet uses on this computer.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></header>
+      <div class="settings-hub-content">
+        <section class="settings-panel" data-settings-panel="account">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Cuppet account</h3><p>Your account will connect desktop identity, Agents, and synced Cuppet services.</p></div><span class="settings-status-pill">Not connected</span></div><div class="settings-row"><div><strong>Desktop mode</strong><span>This build currently runs independently with local projects and conversations.</span></div></div></div>
+        </section>
+
+        <section class="settings-panel active" data-settings-panel="platform">
+          <form id="settings-form" method="dialog" class="platform-settings-form">
+            <div class="settings-card"><div class="settings-card-heading"><div><h3>AI platform</h3><p>Provider credentials stay local. Choose primary and secondary models for execution.</p></div></div>
+              <div class="settings-form-grid">
+                <label>Provider ID<input id="provider-id" type="text" required placeholder="openai-compatible" /></label>
+                <label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label>
+                <label>Primary model<input id="provider-model" type="text" required placeholder="Your foreground model ID" /></label>
+                <label>Primary effort<select id="provider-primary-effort"><option value="">Default model effort</option></select></label>
+                <label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
+                <label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
+                <label class="settings-grid-full">API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label>
+              </div>
+              <div id="settings-note" class="settings-note"></div>
+              <div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save platform</button></div>
+            </div>
+          </form>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="personalisation">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Interface</h3><p>These preferences are stored only on this computer.</p></div></div>
+            <label class="settings-toggle-row"><div><strong>Compact sidebar</strong><span>Reduce vertical spacing for projects and conversations.</span></div><input id="pref-compact-sidebar" type="checkbox" /></label>
+            <label class="settings-toggle-row"><div><strong>Reduce motion</strong><span>Minimise interface animations and smooth scrolling.</span></div><input id="pref-reduce-motion" type="checkbox" /></label>
+            <label class="settings-toggle-row"><div><strong>Hide composer shortcuts</strong><span>Remove the Enter / Shift+Enter helper text below the composer.</span></div><input id="pref-hide-hints" type="checkbox" /></label>
+          </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="usage">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Token usage</h3><p>Understand model usage across local Cuppet conversations.</p></div><span class="settings-status-pill muted">Not tracked yet</span></div>
+            <div class="usage-placeholder"><strong id="usage-provider">Current provider</strong><span>This desktop runtime does not yet persist provider token counts, so Cuppet will not invent an estimate. Exact input/output usage can be added when provider response telemetry is stored.</span></div>
+          </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="devices">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Connected devices</h3><p>Devices paired through Cuppet Remote.</p></div><button id="settings-open-remote" type="button" class="ghost-button">Open Remote</button></div><div id="settings-devices" class="settings-device-list"><div class="settings-empty">Loading devices…</div></div></div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="privacy">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Data & privacy</h3><p>Local-first controls for desktop data and credentials.</p></div></div>
+            <div class="settings-row"><div><strong>Conversation storage</strong><span>Desktop conversations and project state are stored locally in Cuppet's runtime data.</span></div><span class="settings-value">Local</span></div>
+            <div class="settings-row"><div><strong>Provider credentials</strong><span>API keys use the operating system's secure credential storage when available.</span></div><span class="settings-value">On device</span></div>
+            <div class="settings-row"><div><strong>Remote control</strong><span>Your desktop remains authoritative; provider keys are not sent to paired devices.</span></div><span class="settings-value">Opt-in</span></div>
+          </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="about">
+          <div class="settings-card"><div class="settings-card-heading"><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and remote control.</p></div></div><div class="settings-row"><div><strong>Runtime</strong><span>Local Electron app with persistent local state.</span></div><span class="settings-value">Desktop</span></div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</dialog>
+<div id="toast" class="toast hidden" role="status"></div><script src="sidebar-resize.js" defer></script><script src="app.js" defer></script><script src="commands.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script><script src="d1-navigation.js" defer></script><script src="settings-hub.js" defer></script><script type="module" src="execution-ui.mjs"></script>
 </body></html>
