@@ -42,20 +42,31 @@ class ToolMutationCapture {
 
   async stream(messages, options) {
     if (this.#failure) throw this.#failure;
-    const response = await this.#adapter.stream(messages, options);
+    const executeTool = typeof options?.executeTool === 'function'
+      ? async (call) => {
+          await this.#prepareCall(call);
+          return options.executeTool(call);
+        }
+      : undefined;
+    const response = await this.#adapter.stream(messages, { ...options, ...(executeTool ? { executeTool } : {}) });
     if (!this.#journal || !this.#projectRoot) return response;
-    for (const call of Array.isArray(response?.toolCalls) ? response.toolCalls : []) {
-      if (call?.name === 'workspace_edit' || call?.name === 'workspace_write') {
-        const args = parseArguments(call.arguments);
-        const path = typeof args.path === 'string' ? args.path : '';
-        if (!path) continue;
-        const token = await this.#journal.beginFile({ sessionId: this.#sessionId, executionId: String(call.id || ''), tool: call.name, projectRoot: this.#projectRoot, path });
-        this.#pending.set(String(call.id || ''), { kind: 'file', token });
-      } else if (call?.name === 'bash') {
-        this.#pending.set(String(call.id || ''), { kind: 'barrier', tool: 'bash' });
-      }
-    }
+    for (const call of Array.isArray(response?.toolCalls) ? response.toolCalls : []) await this.#prepareCall(call);
     return response;
+  }
+
+  async #prepareCall(call) {
+    if (!this.#journal || !this.#projectRoot || this.#failure) return;
+    const callId = String(call?.id || '');
+    if (this.#pending.has(callId)) return;
+    if (call?.name === 'workspace_edit' || call?.name === 'workspace_write') {
+      const args = parseArguments(call.arguments);
+      const path = typeof args.path === 'string' ? args.path : '';
+      if (!path) return;
+      const token = await this.#journal.beginFile({ sessionId: this.#sessionId, executionId: callId, tool: call.name, projectRoot: this.#projectRoot, path });
+      this.#pending.set(callId, { kind: 'file', token });
+    } else if (call?.name === 'bash') {
+      this.#pending.set(callId, { kind: 'barrier', tool: 'bash' });
+    }
   }
 
   onToolEvent(event) {
