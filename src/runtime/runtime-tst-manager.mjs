@@ -1,10 +1,14 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ManagedTstManager } from './tst-supervisor.mjs';
+import { prepareManagedTstDataDir } from './tst-data-alias.mjs';
 
 export class RuntimeTstManager {
   #manager; #context = new AsyncLocalStorage(); #closing;
 
-  constructor(options = {}) { this.#manager = options.manager ?? new ManagedTstManager(options); }
+  constructor(options = {}) {
+    if (options.manager) this.#manager = options.manager;
+    else this.#manager = new ManagedTstManager({ ...options, dataDir: prepareManagedTstDataDir(options.dataDir) });
+  }
   get configured() { return this.#manager.configured; }
   get status() { return this.#manager.status; }
 
