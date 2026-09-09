@@ -6,6 +6,16 @@ const PROVIDER_OVERRIDES = Object.freeze({
     integrationIds: Object.freeze(['openai', 'azure', 'azure-openai']),
   }),
   google: Object.freeze({ label: 'Google', description: 'Gemini API models' }),
+  kimi: Object.freeze({
+    label: 'Kimi',
+    description: 'Moonshot AI Kimi models',
+    integrationIds: Object.freeze(['kimi', 'moonshot', 'moonshot-ai']),
+  }),
+  zai: Object.freeze({
+    label: 'Z.ai',
+    description: 'Z.ai GLM models',
+    integrationIds: Object.freeze(['zai', 'z-ai', 'z.ai']),
+  }),
   vertex: Object.freeze({
     label: 'Vertex AI',
     description: 'Google Cloud ADC models',
