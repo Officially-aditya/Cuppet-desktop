@@ -1,0 +1,83 @@
+{
+  "phase": "original-C2",
+  "status": "implemented-candidate",
+  "sourceBaseline": "Officially-aditya/Cuppet-code@840ed751b61c04afc881a393b7836d4d2c932f61",
+  "targetVersion": "0.9.0-alpha.1",
+  "previousGate": "original-C1",
+  "slashCommands": [
+    "status",
+    "doctor",
+    "remote",
+    "remote-stop",
+    "memory",
+    "auto",
+    "background",
+    "orchestrator",
+    "platform",
+    "effort",
+    "steer",
+    "abort",
+    "plan",
+    "compact",
+    "undo",
+    "models"
+  ],
+  "aliases": {
+    "remote-control": "remote",
+    "login": "platform"
+  },
+  "excludedSlashCommands": [
+    "model"
+  ],
+  "paletteActions": [
+    "cuppet.memory.remember",
+    "cuppet.memory.forget",
+    "cuppet.memory.clear",
+    "cuppet.background.pause",
+    "cuppet.background.resume",
+    "cuppet.steer.interrupt",
+    "cuppet.plan.agent"
+  ],
+  "requirements": {
+    "canonicalRegistrySharedAcrossSurfaces": true,
+    "recognizedSlashBypassesProviderInference": true,
+    "unknownSlashBypassesProviderInference": true,
+    "commandExecutionDoesNotCreateVisibleTranscriptMessages": true,
+    "desktopLocalCommandsDoNotRequireConfiguredProvider": true,
+    "desktopPaletteUsesBoundedStructuredInputs": true,
+    "remoteInnerCommandScopeReauthorization": true,
+    "runtimeOwnsSteerAuthority": true,
+    "runtimeOwnsSessionCognitiveMemoryUndoAuthority": true,
+    "providerSurfaceOwnsModelSelectionAuthority": true,
+    "remoteManagerOwnsRemoteLifecycle": true,
+    "rendererIsProjectionAndInputOnly": true,
+    "noSecondSessionOrSettingsStore": true
+  },
+  "authority": {
+    "registry": "command metadata, parsing, aliases, scope declarations and dispatch contract",
+    "runtimeService": "session, cognitive mode, guarded auto, background, memory, compaction, abort, steer and undo execution",
+    "providerSurface": "provider/model catalog and effort selection using each surface existing host-local provider policy",
+    "remoteManager": "Remote host lifecycle",
+    "tst": "explicit memory mutation/query substrate",
+    "sqlite": "conversation truth; command control results are not synthetic chat messages",
+    "renderer": "command discovery, bounded forms and presentation only"
+  },
+  "limits": {
+    "commandTextBytesApproxUtf16CodeUnits": 8192,
+    "commandArguments": 32,
+    "memoryKeyCharacters": 240,
+    "memoryValueCharacters": 4000,
+    "steerTextCharacters": 8192,
+    "sessionIdCharacters": 256,
+    "memoryScopes": ["session", "project", "global"],
+    "modes": ["plan", "build"]
+  },
+  "remoteScopes": {
+    "status": "session.read",
+    "models": "session.read",
+    "effort": "model.write",
+    "platform": "model.write",
+    "mutatingSessionCommands": "session.write"
+  },
+  "next": "remaining original-plan migration inventory"
+}

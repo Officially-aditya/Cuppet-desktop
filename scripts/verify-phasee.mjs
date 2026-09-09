@@ -14,7 +14,8 @@ const dense = Object.fromEntries(Object.entries(text).map(([path, value]) => [pa
 const expect = (condition, message) => { if (!condition) throw new Error(message); };
 
 const pkg = JSON.parse(text['package.json']);
-expect(pkg.version === '0.8.0-alpha.1', 'Phase E package version is not 0.8.0-alpha.1');
+const release = /^0\.(\d+)\.0-alpha\.1$/.exec(pkg.version ?? '');
+expect(release && Number(release[1]) >= 8, 'Phase E requires package release 0.8.0-alpha.1 or later in the current alpha lineage');
 expect(pkg.scripts?.['phasee:verify'] === 'node scripts/verify-phasee.mjs', 'Phase E verifier script is not registered');
 
 const database = text['src/runtime/database.mjs'];

@@ -15,6 +15,7 @@ import { MutationJournal } from './mutation-journal.mjs';
 import { JournaledToolRuntime } from './journaled-tool-runtime.mjs';
 import { TstBatchEditManager } from './tst-edit-batches.mjs';
 import { ProjectWriter } from './project-writer.mjs';
+import { parseSlashCommand } from './commands.mjs';
 
 export class RuntimeService {
   #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
@@ -98,6 +99,9 @@ export class RuntimeService {
       case 'context.compact': return this.#compact(params);
       case 'plan.get': return this.#plans.toolResult(params.sessionId, params.request ?? { action: 'overview' });
       case 'memory.query': return this.#queryMemory(params);
+      case 'memory.remember': return this.#rememberMemory(params);
+      case 'memory.forget': return this.#forgetMemory(params);
+      case 'memory.clear': return this.#clearMemory(params);
       case 'pe3.status': return this.#pe3Status(params.sessionId ?? null, params.projectId ?? null);
       case 'pe3.observe-paths': return this.#pe3Observe(params.sessionId, params.paths, false);
       case 'pe3.workspace-mutation': return this.#pe3Observe(params.sessionId, params.paths, true);
@@ -123,6 +127,7 @@ export class RuntimeService {
       case 'session.create': return this.createSession(params.projectId ?? null);
       case 'session.get': return this.requireSession(params.sessionId);
       case 'session.send': return this.send(params);
+      case 'session.steer': return this.#steer(params);
       case 'session.stop': return this.stop(params.sessionId);
       case 'session.undo.status': return this.#journal.status(this.requireSession(params.sessionId).id);
       case 'session.undo': return this.#undo(params.sessionId);
@@ -164,6 +169,26 @@ export class RuntimeService {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
     try { return { available: true, records: await this.#tst.queryMemory(params.sessionId, String(params.query ?? ''), params.limit ?? 20) }; }
     catch (error) { return { available: false, records: [], reason: cleanError(error) }; }
+  }
+  async #rememberMemory(params) {
+    const session = this.requireSession(params.sessionId);
+    if (!this.#tst.configured) throw new Error('TST is not configured');
+    const key = String(params.key ?? '').trim().slice(0, 240);
+    const value = String(params.value ?? '').trim().slice(0, 4000);
+    if (!key || !value) throw new Error('memory remember requires key and value');
+    return this.#tst.rememberMemory(session.id, { key, value, scope: memoryScope(params.scope), pinned: params.pinned === true });
+  }
+  async #forgetMemory(params) {
+    const session = this.requireSession(params.sessionId);
+    if (!this.#tst.configured) throw new Error('TST is not configured');
+    const key = String(params.key ?? '').trim().slice(0, 240);
+    if (!key) throw new Error('memory forget requires key');
+    return this.#tst.forgetMemory(session.id, key);
+  }
+  async #clearMemory(params) {
+    const session = this.requireSession(params.sessionId);
+    if (!this.#tst.configured) throw new Error('TST is not configured');
+    return this.#tst.clearMemory(session.id, memoryScope(params.scope));
   }
   async #flushBackground(sessionId) {
     const session = this.requireSession(sessionId);
@@ -246,6 +271,9 @@ export class RuntimeService {
   async send(params) {
     const sourceSessionId = params.sessionId; const text = typeof params.text === 'string' ? params.text.trim() : '';
     if (!text) throw new Error('message text is required');
+    const slash = parseSlashCommand(text);
+    if (slash.kind === 'command') throw new Error(`Slash command /${slash.name} must be executed through the command registry`);
+    if (slash.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${slash.name}`);
     if (this.#runs.has(sourceSessionId)) throw new Error('this session is already generating');
     const existing = this.requireSession(sourceSessionId);
     const projectBinding={projectId:existing.projectId??null};
@@ -327,6 +355,20 @@ export class RuntimeService {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
     const run = this.#runs.get(sessionId); if (!run) return { stopped: false, sessionId };
     run.controller.abort(); return { stopped: true, sessionId, messageId: run.assistantId, projectId: run.projectId };
+  }
+
+  async #steer(params) {
+    const sessionId = String(params.sessionId ?? '');
+    const text = typeof params.text === 'string' ? params.text.trim() : '';
+    if (!sessionId) throw new Error('sessionId is required');
+    if (!text) throw new Error('steer text is required');
+    this.requireSession(sessionId);
+    if (this.#runs.has(sessionId)) this.stop(sessionId);
+    for (let attempt = 0; attempt < 250; attempt++) {
+      if (!this.#runs.has(sessionId)) return this.send({ sessionId, text, provider: params.provider ?? {} });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('session did not stop before steer');
   }
 
   async #generate({ sessionId, assistantId, userId, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [] }) {
@@ -428,3 +470,4 @@ function abortError() { const error = new Error('Generation stopped'); error.nam
 function contextWindow(provider) { const value = Number(provider?.contextWindow ?? process.env.CUPPET_CONTEXT_WINDOW_TOKENS ?? 128000); return Number.isFinite(value) ? Math.min(Math.max(Math.floor(value), 4096), 2_000_000) : 128000; }
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }
 function safeStoreName(value) { return String(value ?? 'general').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 160) || 'general'; }
+function memoryScope(value) { const scope = String(value ?? 'session').toLowerCase(); return ['session', 'project', 'global'].includes(scope) ? scope : 'session'; }

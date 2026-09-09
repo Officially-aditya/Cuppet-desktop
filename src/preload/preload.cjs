@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('cuppet', {
     planGet: (sessionId, request = { action: 'overview' }) => ipcRenderer.invoke('cuppet:plan:get', sessionId, request),
     memoryQuery: (sessionId, query) => ipcRenderer.invoke('cuppet:memory:query', sessionId, query),
   },
+  commands: {
+    list: () => ipcRenderer.invoke('cuppet:command:list'),
+    execute: (sessionId, value) => ipcRenderer.invoke('cuppet:command:execute', sessionId, value),
+  },
   permissions: {
     list: (sessionId = null) => ipcRenderer.invoke('cuppet:permission:list', sessionId),
     reply: (requestId, reply) => ipcRenderer.invoke('cuppet:permission:reply', requestId, reply),

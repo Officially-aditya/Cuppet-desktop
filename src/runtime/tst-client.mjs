@@ -76,6 +76,11 @@ export class TstBridge {
   async turnCompleted(sessionID) { return this.call('turn.completed', { session_id: sessionID }); }
   async observeMemory(sessionID, observation) { return this.call('memory.observe', { session_id: sessionID, ...observation }); }
   async queryMemory(sessionID, query, limit = 20) { return this.call('memory.query', { session_id: sessionID, query, limit: Math.min(Math.max(limit, 1), 40) }); }
+  async rememberMemory(sessionID, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) {
+    return this.call('memory.remember', { session_id: sessionID, key: String(key ?? '').slice(0, 240), value: String(value ?? '').slice(0, 4000), scope: normalizeMemoryScope(scope), pinned: Boolean(pinned), file_hashes: boundedHashes(fileHashes) });
+  }
+  async forgetMemory(sessionID, key) { return this.call('memory.forget', { session_id: sessionID, key: String(key ?? '').slice(0, 240) }); }
+  async clearMemory(sessionID, scope = 'session') { return this.call('memory.forget', { session_id: sessionID, clear_scope: normalizeMemoryScope(scope) }); }
   async recordEvidence(sessionID, memoryID, kind, reference, success = true, contentHash = undefined) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }); }
   async graphQuery(query, prefix, limit = 12) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 32) }); }
   async graphLocate(pattern, prefix, limit = 12) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
@@ -114,4 +119,6 @@ function boundedRefresh(input = {}) {
     explicit_paths: input.explicit_paths?.slice?.(0, 128), tool_paths: input.tool_paths?.slice?.(0, 128), validated_paths: input.validated_paths?.slice?.(0, 128), graph_paths: input.graph_paths?.slice?.(0, 128), file_evidence: input.file_evidence?.slice?.(0, 128),
   };
 }
+function normalizeMemoryScope(value) { const scope = String(value ?? 'session').toLowerCase(); return ['session', 'project', 'global'].includes(scope) ? scope : 'session'; }
+function boundedHashes(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return {}; return Object.fromEntries(Object.entries(value).slice(0, 64).flatMap(([path, hash]) => typeof path === 'string' && typeof hash === 'string' ? [[path.slice(0, 512), hash.slice(0, 128)]] : [])); }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error)).slice(0, 300); }
