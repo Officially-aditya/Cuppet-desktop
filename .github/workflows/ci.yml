@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/e2-apple-silicon-test
+    paths:
+      - .github/test-trigger
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref_name }}
