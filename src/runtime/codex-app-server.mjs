@@ -84,9 +84,7 @@ export class CodexAppServerClient extends EventEmitter {
   }
 
   notify(method, params = {}) { this.#write({ method, params }); }
-
   respond(id, result) { this.#write({ id, result }); }
-
   respondError(id, message, code = -32000) {
     this.#write({ id, error: { code, message: String(message || 'Cuppet tool failed').slice(0, 2000) } });
   }
@@ -140,9 +138,7 @@ export async function resolveCodexAppServerCommand({ resourcesPath = process.env
   const packaged = resourcesPath && runtimeKey ? join(resourcesPath, 'codex', runtimeKey, executableName(platform)) : null;
   if (packaged && await executable(packaged)) return { command: packaged, args: [], source: 'packaged' };
 
-  for (const candidate of ['codex-app-server']) {
-    if (await commandWorks(candidate, ['--help'], env)) return { command: candidate, args: [], source: 'path' };
-  }
+  if (await commandWorks('codex-app-server', ['--help'], env)) return { command: 'codex-app-server', args: [], source: 'path' };
   const codexOverride = String(env.CUPPET_CODEX_BIN || '').trim();
   for (const candidate of [codexOverride, 'codex'].filter(Boolean)) {
     if (await commandWorks(candidate, ['--version'], env)) return { command: candidate, args: ['app-server'], source: 'codex-cli' };
@@ -155,6 +151,8 @@ export function codexRuntimeKey(platform = process.platform, arch = process.arch
   if (platform === 'darwin' && arch === 'x64') return 'darwin-x64';
   if (platform === 'linux' && arch === 'x64') return 'linux-x64';
   if (platform === 'linux' && arch === 'arm64') return 'linux-arm64';
+  if (platform === 'win32' && arch === 'x64') return 'win32-x64';
+  if (platform === 'win32' && arch === 'arm64') return 'win32-arm64';
   return null;
 }
 
