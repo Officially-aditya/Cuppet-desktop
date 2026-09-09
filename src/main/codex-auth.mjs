@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 import { parseCodexAccount } from '../runtime/codex-account.mjs';
 
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 let activeLogin = null;
 let lastMessage = '';
 
@@ -56,7 +57,12 @@ async function startCodexLogin() {
     const loginId = safeText(result.loginId, 256);
     if (!authUrl || !loginId) throw new Error('Codex did not return a complete ChatGPT sign-in request.');
 
-    activeLogin = { client, loginId };
+    const timeout = setTimeout(() => {
+      if (activeLogin?.client !== client) return;
+      lastMessage = 'ChatGPT sign-in expired. Start the connection again.';
+      void closeActiveLogin(client);
+    }, LOGIN_TIMEOUT_MS);
+    activeLogin = { client, loginId, timeout };
     lastMessage = 'Complete the ChatGPT sign-in in your browser. Cuppet never receives the OAuth tokens.';
     const finish = (message) => {
       if (message?.method !== 'account/login/completed') return;
@@ -67,7 +73,11 @@ async function startCodexLogin() {
       void closeActiveLogin(client);
     };
     client.on('notification', finish);
-    client.once('exit', () => { if (activeLogin?.client === client) activeLogin = null; });
+    client.once('exit', () => {
+      if (activeLogin?.client !== client) return;
+      clearTimeout(activeLogin.timeout);
+      activeLogin = null;
+    });
     await shell.openExternal(authUrl);
     return { started: true, running: true, loginId };
   } catch (error) {
@@ -86,7 +96,11 @@ async function logoutCodex() {
 }
 
 async function closeActiveLogin(client) {
-  if (activeLogin?.client === client) activeLogin = null;
+  const active = activeLogin?.client === client ? activeLogin : null;
+  if (active) {
+    clearTimeout(active.timeout);
+    activeLogin = null;
+  }
   await client.close().catch(() => undefined);
 }
 
