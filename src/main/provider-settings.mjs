@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, basename, join } from 'node:path';
 import { safeStorage } from 'electron';
 import { credentialStorageStatus } from './credential-storage.mjs';
+import { providerPreset, providerPresetList } from './provider-presets.mjs';
 import {
   DEFAULT_BASE_URL,
   DEFAULT_PROVIDER_ID,
@@ -40,10 +41,13 @@ export class ProviderSettingsStore {
     const projection = providerProjection(this.#value, { includeEndpoint: true });
     const storage = credentialStorageStatus(safeStorage);
     const apiKeyConfigured = Boolean(this.#encryptedApiKey);
+    const selectedPreset = providerPreset(projection.providerID ?? this.#value.providerID);
     return {
       ...projection,
       configured: storage.available && apiKeyConfigured && Boolean(projection.primary?.modelID),
       apiKeyConfigured,
+      presetID: selectedPreset?.id ?? null,
+      presets: providerPresetList(),
       encryptionAvailable: storage.available,
       encryptionBackend: storage.backend,
       encryptionUnavailableReason: storage.reason,
@@ -56,18 +60,24 @@ export class ProviderSettingsStore {
 
   async save(input) {
     const source = input && typeof input === 'object' ? input : {};
-    const baseUrl = typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '';
-    const providerID = typeof source.providerID === 'string' && source.providerID.trim() ? source.providerID.trim() : this.#value.providerID || DEFAULT_PROVIDER_ID;
-    const model = typeof source.model === 'string' ? source.model.trim() : '';
-    const backgroundModel = typeof source.backgroundModel === 'string' ? source.backgroundModel.trim() : '';
-    const primaryEffort = typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '';
-    const secondaryEffort = typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '';
+    const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim()
+      ? source.providerID.trim()
+      : this.#value.providerID || DEFAULT_PROVIDER_ID;
+    const preset = providerPreset(requestedProviderID);
+    const providerID = preset?.id ?? requestedProviderID;
+    const baseUrl = preset?.baseUrl ?? (typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '');
+    const model = preset?.model ?? (typeof source.model === 'string' ? source.model.trim() : '');
+    const backgroundModel = preset?.model ?? (typeof source.backgroundModel === 'string' ? source.backgroundModel.trim() : '');
+    const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
+    const secondaryEffort = preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
+
     if (!baseUrl) throw new Error('Provider base URL is required');
     let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
     if (parsed.username || parsed.password) throw new Error('Provider base URL must not contain embedded credentials');
     if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
     if (!model) throw new Error('Primary model is required');
 
+    const previousProviderID = this.#value.providerID;
     let next = normalizeProviderConfiguration({
       ...this.#value,
       providerID,
@@ -82,8 +92,10 @@ export class ProviderSettingsStore {
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
 
-    if (source.clearApiKey === true) this.#encryptedApiKey = undefined;
-    else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
+    const providerChanged = Boolean(previousProviderID && previousProviderID !== providerID);
+    if (source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
+      this.#encryptedApiKey = undefined;
+    } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
       const storage = credentialStorageStatus(safeStorage);
       if (!storage.available) throw new Error(`${storage.reason}; Cuppet will not persist the API key in plaintext`);
       this.#encryptedApiKey = safeStorage.encryptString(source.apiKey.trim()).toString('base64');
