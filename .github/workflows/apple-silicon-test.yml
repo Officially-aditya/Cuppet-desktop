@@ -2,9 +2,6 @@ name: Apple Silicon Test Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feat/e2-apple-silicon-test
 
 permissions:
   contents: write
@@ -78,7 +75,7 @@ jobs:
           npm run e2:verify
 
       - name: Build Apple Silicon app bundle
-        run: npx electron-builder --mac dir --arm64 --publish never
+        run: npm run build:renderer && npx electron-builder --mac dir --arm64 --publish never
 
       - name: Locate and verify arm64 app
         shell: bash
