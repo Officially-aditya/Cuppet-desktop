@@ -40,6 +40,6 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm install
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run e1:audit-runtime
       - run: npm run pack:dir
       - run: npm run e1:package-smoke
