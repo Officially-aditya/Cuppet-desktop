@@ -33,9 +33,13 @@ export class RuntimeClient extends EventEmitter {
     await mkdir(this.#dataDir, { recursive: true });
     this.#readyEvent = undefined;
     this.#stderr = '';
+    const resourceEnvironment = typeof process.resourcesPath === 'string' && process.resourcesPath
+      ? { CUPPET_RESOURCES_PATH: process.resourcesPath }
+      : {};
     const child = spawn(this.#execPath, [this.#entry], {
       env: {
         ...process.env,
+        ...resourceEnvironment,
         ...this.#environment,
         ELECTRON_RUN_AS_NODE: '1',
         CUPPET_DATA_DIR: this.#dataDir,

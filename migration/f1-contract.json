@@ -1,0 +1,48 @@
+{
+  "phase": "F1",
+  "title": "Managed native TST runtime",
+  "status": "implemented-candidate",
+  "targetVersion": "0.9.0-alpha.1",
+  "requirements": {
+    "packagedNativeTstArtifactIsRequired": true,
+    "packagedTstProtocolIsPinnedToCuppetTstV3": true,
+    "standaloneArtifactSourceRevisionIsPinned": true,
+    "standaloneArtifactChecksumIsVerifiedBeforePackaging": true,
+    "desktopDoesNotDependOnPathInstalledTst": true,
+    "desktopOwnsNativeTstLifecycle": true,
+    "projectBoundOperationsUseProjectScopedDaemon": true,
+    "pe3CreatedSessionsInheritProjectTstContext": true,
+    "crossProjectGraphIsolationIsAcceptanceTested": true,
+    "projectMemoryIsolationIsAcceptanceTested": true,
+    "durableMemoryRestoresAfterRuntimeRestart": true,
+    "launchTokenIsRandomAndNotPersisted": true,
+    "socketDirectoryIsPrivateAndLaunchScoped": true,
+    "gracefulShutdownIsAttemptedBeforeSignals": true,
+    "idleDaemonsCanStopAndRestartOnDemand": true,
+    "externalSocketOverrideIsDeveloperOnly": true,
+    "opencodeIsNotBundledIntoDesktop": true,
+    "packagedAcceptanceUsesRealNativeDaemon": true,
+    "f1HasPermanentVerificationGate": true
+  },
+  "tst": {
+    "protocol": "cuppet.tst.v3",
+    "sourceRepository": "Officially-aditya/Cuppet-code",
+    "sourceRevision": "9f2a8ae63555b7534ee1ccfe211efce1ad46f630",
+    "artifactKind": "cuppet-tst-runtime",
+    "packagedMode": "managed-native-per-project",
+    "sharedGlobalStore": true,
+    "supportedPackagedRuntimes": [
+      "darwin-arm64",
+      "darwin-x64",
+      "linux-arm64-gnu",
+      "linux-x64-gnu"
+    ],
+    "windowsBundled": false
+  },
+  "security": {
+    "tokenBytes": 32,
+    "socketDirectoryMode": "0700",
+    "tokenPersisted": false,
+    "socketPathExposedInStatus": false
+  }
+}

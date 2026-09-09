@@ -35,17 +35,36 @@ jobs:
       - run: npm run d1:verify
       - run: npm run d3:verify
       - run: npm run e1:verify
+      - run: npm run f1:verify
 
   packaged-runtime-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/Cuppet-code
+          ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+          path: .f1/cuppet-code
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88'
+      - name: Build pinned native TST daemon
+        run: cargo build --locked -p tst-daemon --release --manifest-path .f1/cuppet-code/Cargo.toml
+      - name: Build standalone TST artifact from pinned Cuppet-code
+        working-directory: .f1/cuppet-code
+        run: GITHUB_SHA=9f2a8ae63555b7534ee1ccfe211efce1ad46f630 node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output=${{ github.workspace }}/.f1/tst-runtime
+      - name: Stage verified TST resource for desktop
+        run: npm run f1:stage-tst -- --source=.f1/tst-runtime
+      - run: npm run f1:verify-staged-tst
       - run: npm install
       - run: npm run e1:audit-runtime
       - run: npm run pack:dir
       - run: npm run e1:package-smoke
+      - run: npm run f1:package-smoke

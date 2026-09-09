@@ -51,7 +51,7 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
   assert.equal(pkg.build.asarUnpack, undefined);
   assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
-  assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir --publish never');
+  assert.match(pkg.scripts['pack:dir'], /electron-builder --dir --publish never$/);
   assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --omit=dev --audit-level=high');
   assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
 

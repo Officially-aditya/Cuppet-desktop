@@ -12,9 +12,13 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "pack:dir": "electron-builder --dir --publish never",
+    "pack:dir": "node scripts/verify-staged-tst.mjs && electron-builder --dir --publish never",
     "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
+    "f1:stage-tst": "node scripts/stage-tst-runtime.mjs",
+    "f1:verify-staged-tst": "node scripts/verify-staged-tst.mjs",
+    "f1:package-smoke": "node scripts/smoke-packaged-tst.mjs",
+    "f1:verify": "node scripts/verify-f1.mjs",
     "remote-control": "node src/cli/main.mjs remote-control",
     "relay": "node src/cli/main.mjs relay",
     "remote-enroll": "node src/cli/main.mjs remote-enroll",
@@ -50,6 +54,13 @@
     "files": [
       "src/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/tst",
+        "to": "tst",
+        "filter": ["**/*"]
+      }
     ],
     "directories": {
       "output": "dist"

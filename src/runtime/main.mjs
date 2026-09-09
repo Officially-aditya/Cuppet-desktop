@@ -6,6 +6,7 @@ import { ConversationDatabase } from './database.mjs';
 import { RemoteManager } from './remote/manager.mjs';
 import { normalizeProviderConfiguration } from './provider-policy.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
+import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -27,8 +28,23 @@ const emit = (event) => {
   write({ kind: 'event', event });
   remote?.handleRuntimeEvent(event);
 };
-const service = new RuntimeService({ databasePath, dataDir, emit });
 const localState = new ConversationDatabase(databasePath);
+const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
+const runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst });
+const service = {
+  async handle(method, params = {}) {
+    const context = tstContext(method, params);
+    const result = await tst.runWithProject(context, async () => {
+      if (method === 'tst.status') return tst.status;
+      if (method === 'tst.graph.locate') return tst.graphLocate(String(params.pattern ?? '').slice(0, 512), typeof params.prefix === 'string' ? params.prefix.slice(0, 512) : undefined, Math.min(12, Math.max(1, Number(params.limit) || 12)));
+      if (method === 'tst.graph.refresh') return tst.refreshGraphPaths(Array.isArray(params.paths) ? params.paths.slice(0, 64) : []);
+      return runtimeService.handle(method, params);
+    });
+    if ((method === 'project.remove' || method === 'project.relocate') && params.projectId) await tst.unregisterProject(params.projectId).catch(() => undefined);
+    return result;
+  },
+  async close() { await Promise.all([runtimeService.close(), tst.close()]); },
+};
 remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
 
 async function handle(method, params = {}) {
@@ -51,6 +67,18 @@ async function handle(method, params = {}) {
     case 'remote.provider-config': return remote.setProviderConfig(boundedProvider(params.provider));
     default: return service.handle(method, params);
   }
+}
+
+function tstContext(method, params = {}) {
+  const sessionId = boundedId(params.sessionId ?? params.sourceSessionId);
+  let projectId = boundedId(params.projectId);
+  if (sessionId) {
+    const session = localState.getSessionSummary(sessionId);
+    if (session?.projectId) projectId = session.projectId;
+  }
+  if (!projectId && method === 'session.create') projectId = boundedId(params.projectId);
+  const project = projectId ? localState.getProject(projectId) : null;
+  return { sessionId: sessionId || null, projectId: project?.id ?? (projectId || null), projectRoot: project?.canonicalPath ?? null };
 }
 
 function renameSession(params = {}) {
