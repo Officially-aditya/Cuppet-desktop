@@ -40,13 +40,18 @@ export class ProviderSettingsStore {
   rendererValue() {
     const projection = providerProjection(this.#value, { includeEndpoint: true });
     const storage = credentialStorageStatus(safeStorage);
-    const apiKeyConfigured = Boolean(this.#encryptedApiKey);
     const selectedPreset = providerPreset(projection.providerID ?? this.#value.providerID);
     const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
+    const encryptedApiKeyConfigured = Boolean(this.#encryptedApiKey);
+    const credentialConfigured = chatGPTProvider || (storage.available && encryptedApiKeyConfigured);
     return {
       ...projection,
-      configured: chatGPTProvider ? true : storage.available && apiKeyConfigured && Boolean(projection.primary?.modelID),
-      apiKeyConfigured,
+      configured: credentialConfigured && Boolean(projection.primary?.modelID),
+      // Compatibility for the current renderer send gate. For Codex this means the provider's
+      // credential requirement is satisfied by its separate ChatGPT OAuth flow; no API key exists.
+      apiKeyConfigured: chatGPTProvider ? true : encryptedApiKeyConfigured,
+      credentialConfigured,
+      credentialMode: chatGPTProvider ? 'chatgpt' : 'api-key',
       authType: selectedPreset?.authType ?? 'api-key',
       requiresChatGPTAuth: chatGPTProvider,
       presetID: selectedPreset?.id ?? null,
