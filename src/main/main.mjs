@@ -60,6 +60,11 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
+  ipcMain.handle('cuppet:session:search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
+  ipcMain.handle('cuppet:session:rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));
+  ipcMain.handle('cuppet:session:archive', (_event, sessionId) => request('session.archive', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:restore', (_event, sessionId) => request('session.restore', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:delete', (_event, sessionId) => request('session.delete', { sessionId: boundedId(sessionId) }));
   ipcMain.handle('cuppet:session:send', async (_event, sessionId, text, attachments) => {
     const parsed = parseSlashCommand(text);
     if (parsed.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
@@ -73,6 +78,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:project:list', () => request('project.list'));
   ipcMain.handle('cuppet:project:get', (_event, projectId) => request('project.get', { projectId }));
   ipcMain.handle('cuppet:project:open', (_event, projectId) => request('project.open', { projectId }));
+  ipcMain.handle('cuppet:project:rename', (_event, projectId, name) => request('project.rename', { projectId: boundedId(projectId), name: typeof name === 'string' ? name.trim().slice(0, 120) : '' }));
   ipcMain.handle('cuppet:project:add-local', (_event, value) => request('project.add-local', validateProjectPayload(value)));
   ipcMain.handle('cuppet:project:clone-url', (_event, value) => request('project.clone-url', validateClonePayload(value, true)));
   ipcMain.handle('cuppet:project:github-list', (_event, query) => request('project.github-list', { query: typeof query === 'string' ? query.slice(0, 120) : '' }));
@@ -196,6 +202,7 @@ function validateQuestionAnswers(values) {
   return values.slice(0, 8).map((group) => Array.isArray(group) ? group.slice(0, 12).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []);
 }
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
+function clampLimit(value){ const numeric=Number(value); return Number.isFinite(numeric)?Math.min(Math.max(Math.trunc(numeric),1),100):50; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
 function validateAttachments(values) {
   if (!Array.isArray(values)) return [];

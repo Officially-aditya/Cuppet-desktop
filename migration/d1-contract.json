@@ -1,0 +1,23 @@
+{
+  "phase": "D1",
+  "status": "implemented-candidate",
+  "targetVersion": "0.9.0-alpha.1",
+  "scope": "local search and desktop navigation polish",
+  "requirements": {
+    "sqliteFtsOwnsLocalConversationSearch": true,
+    "searchCoversChatTitlesAndVisibleMessages": true,
+    "streamingAssistantTextIndexesOnlyAtTerminalState": true,
+    "archivedChatsExcludedByDefault": true,
+    "archivedChatsRecoverableFromSearch": true,
+    "chatRenameArchiveRestoreDeleteRuntimeOwned": true,
+    "projectRenameRuntimeOwned": true,
+    "activeOrQueuedChatsCannotArchiveOrDelete": true,
+    "searchResultNavigatesToExactMessage": true,
+    "lastConversationRestoredLocally": true,
+    "perConversationScrollRestoredLocally": true,
+    "liveStreamingDoesNotForceBottomWhenUserScrolledUp": true,
+    "keyboardSearchShortcut": true,
+    "executionMarkdownModuleLoaded": true,
+    "rendererDoesNotOwnPersistentSearchIndex": true
+  }
+}

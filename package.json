@@ -25,7 +25,8 @@
     "phased:verify": "node scripts/verify-phased.mjs",
     "phasee:verify": "node scripts/verify-phasee.mjs",
     "original-c1:verify": "node scripts/verify-original-c1.mjs",
-    "original-c2:verify": "node scripts/verify-original-c2.mjs"
+    "original-c2:verify": "node scripts/verify-original-c2.mjs",
+    "d1:verify": "node scripts/verify-d1.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0"
