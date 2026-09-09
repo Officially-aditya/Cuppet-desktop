@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProviderPreset, ProviderSettings, RemoteDevice } from '../types';
+import { SelectControl } from './SelectControl';
 
 const SECTION_META: Record<string, [string, string]> = {
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
@@ -144,7 +145,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
     <div className="settings-card platform-provider-card">
       <div className="settings-card-heading"><div><h3>AI provider</h3><p>Select a provider and add its API key. Cuppet fills the official endpoint and default coding model automatically.</p></div></div>
       <div className="provider-simple-form">
-        <label>Provider<select required value={providerID} onChange={(event) => onProvider(event.target.value)}><option value="">Choose provider</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label || preset.id}</option>)}</select></label>
+        <label>Provider<SelectControl ariaLabel="Provider" value={providerID} onChange={onProvider} options={[{ value: '', label: 'Choose provider' }, ...presets.map((preset) => ({ value: preset.id, label: preset.label || preset.id }))]} /></label>
         {selected && <div className="provider-preset-note"><strong>{selected.label || selected.id}</strong><span>{isCodex ? 'Uses your existing ChatGPT Codex subscription through the official OpenAI Codex app-server. Cuppet never reads or stores Codex OAuth credentials.' : 'Official endpoint and default coding model are configured automatically.'}</span></div>}
         {isCodex ? (
           <div className="provider-auth-card">
