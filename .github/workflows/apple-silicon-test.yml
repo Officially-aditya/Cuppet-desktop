@@ -70,9 +70,10 @@ jobs:
       - name: Install desktop dependencies
         run: npm install
 
-      - name: Verify runtime and packaging contracts
+      - name: Verify runtime and renderer contracts
         run: |
           npm run e1:audit-runtime
+          npm run renderer:verify
           npm run f1:verify
           npm run e2:verify
 
@@ -101,6 +102,7 @@ jobs:
           lipo -archs "$APP_EXEC" | grep -qw arm64
           lipo -archs "$TST_BIN" | grep -qw arm64
           lipo -archs "$CODEX_BIN" | grep -qw arm64
+          test -f "$APP/Contents/Resources/app.asar"
           echo "APP=$APP" >> "$GITHUB_ENV"
           echo "APP_EXEC=$APP_EXEC" >> "$GITHUB_ENV"
           echo "CODEX_BIN=$CODEX_BIN" >> "$GITHUB_ENV"
@@ -132,12 +134,13 @@ jobs:
           If macOS blocks the first launch, right-click the app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
 
           Please test:
-          - app launch
-          - Settings > Platform > Codex: API-key field is replaced by Continue with ChatGPT
+          - app launch and React renderer load
+          - type /status, /doctor, /plan, /models and verify slash commands execute without starting a model generation
+          - Settings > Platform > Codex: API-key field is replaced by the ChatGPT account flow
           - complete ChatGPT sign-in in the browser and confirm Settings reports Connected
           - send a general Codex-backed chat and restart the app
           - open a project and ask Codex to read a file through Cuppet tools
-          - approve a small edit, run validation, then verify Undo restores it
+          - approve a small edit, run validation, then verify /undo restores it
           - confirm permission prompts/audit activity still appear for Codex tool calls
           - create/open two local projects
           - TST-backed graph/context behavior in both projects
@@ -172,5 +175,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed E1/F1/E2 packaged acceptance, including the bundled official OpenAI Codex app-server handshake." \
+            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance, including the bundled official OpenAI Codex app-server handshake." \
             --prerelease
