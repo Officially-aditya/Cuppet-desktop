@@ -36,6 +36,13 @@ export type Session = {
   toolExecutions?: ToolExecution[];
 };
 
+export type Attachment = {
+  name: string;
+  mime?: string;
+  size?: number;
+  path?: string;
+};
+
 export type SearchResult = {
   sessionId: string;
   projectId?: string | null;
@@ -205,7 +212,7 @@ export type CuppetApi = {
     archive: (sessionId: string) => Promise<any>;
     restore: (sessionId: string) => Promise<any>;
     delete: (sessionId: string) => Promise<any>;
-    send: (sessionId: string, text: string, attachments?: unknown[]) => Promise<any>;
+    send: (sessionId: string, text: string, attachments?: Attachment[]) => Promise<any>;
     stop: (sessionId: string) => Promise<any>;
     undoStatus: (sessionId: string) => Promise<any>;
     undo: (sessionId: string) => Promise<any>;
