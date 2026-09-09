@@ -101,7 +101,8 @@ expect(app.includes('document.body.dataset.cuppetSessionId') && app.includes('de
 const renderer = text['src/renderer/commands.js'];
 expect(renderer.includes("composer.addEventListener('submit'") && renderer.includes('stopImmediatePropagation()'), 'renderer slash submit interception is missing');
 expect(renderer.includes("window.cuppet.commands.execute") && renderer.includes("{ id: item.id, input }"), 'renderer structured palette execution is missing');
-for (const id of expectedPalette) expect(renderer.includes(`'${id}'`), `renderer palette action UI missing: ${id}`);
+expect(renderer.includes('if (item.paletteOnly)') && renderer.includes("item.paletteOnly ? 'action'"), 'renderer does not generically project palette-only registry actions');
+for (const id of ['cuppet.memory.remember','cuppet.memory.forget','cuppet.memory.clear','cuppet.steer.interrupt','cuppet.plan.agent']) expect(renderer.includes(`'${id}'`), `renderer custom-input palette action UI missing: ${id}`);
 expect(renderer.includes('window.confirm') && renderer.includes('Clear memory scope'), 'memory clear confirmation is missing');
 expect(renderer.includes('commandForm') && renderer.includes('maxLength: 8192'), 'bounded command form controls are missing');
 
