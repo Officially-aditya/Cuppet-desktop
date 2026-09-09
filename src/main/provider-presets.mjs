@@ -62,6 +62,33 @@ export const PROVIDER_PRESETS = Object.freeze({
     authType: 'api-key',
     authLabel: 'DeepSeek API key',
   }),
+  kimi: Object.freeze({
+    id: 'kimi',
+    label: 'Kimi',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    model: 'kimi-k2.6',
+    models: Object.freeze([
+      Object.freeze({ id: 'kimi-k2.6', label: 'Kimi K2.6', description: 'Latest Kimi flagship for agentic coding, reasoning, and multimodal work.' }),
+      Object.freeze({ id: 'kimi-k2.5', label: 'Kimi K2.5', description: 'Previous Kimi multimodal flagship, still available on the Kimi API.' }),
+    ]),
+    authType: 'api-key',
+    authLabel: 'Kimi API key',
+    note: 'Uses the standard Kimi Open Platform API. Kimi Code membership uses a separate endpoint and quota.',
+  }),
+  zai: Object.freeze({
+    id: 'zai',
+    label: 'Z.ai',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    model: 'glm-5.1',
+    models: Object.freeze([
+      Object.freeze({ id: 'glm-5.1', label: 'GLM-5.1', description: 'Latest Z.ai flagship for agentic engineering and long-running coding work.' }),
+      Object.freeze({ id: 'glm-5-turbo', label: 'GLM-5 Turbo', description: 'Fast GLM-5 tier optimized for agent execution continuity.' }),
+      Object.freeze({ id: 'glm-5', label: 'GLM-5', description: 'GLM-5 flagship family model for coding, planning, and debugging.' }),
+    ]),
+    authType: 'api-key',
+    authLabel: 'Z.ai API key',
+    note: 'Uses Z.ai’s general API endpoint. GLM Coding Plan keys use a separate coding-only endpoint and are not interchangeable.',
+  }),
   google: Object.freeze({
     id: 'google',
     label: 'Gemini',
