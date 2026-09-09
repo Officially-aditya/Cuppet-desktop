@@ -13,6 +13,7 @@ import { runRelayServer, DEFAULT_RELAY_BIND, DEFAULT_RELAY_PORT } from '../runti
 import { normalizeProviderConfiguration, providerProjection } from '../runtime/provider-policy.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from '../runtime/diagnostics.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
+import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 
 const here=dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_BASE='https://connect.cuppet.in';
@@ -25,6 +26,8 @@ try{
   else if(command==='relay')await relay(flags);
   else if(command==='remote-enroll')await enroll(flags);
   else if(command==='models')showModels(flags);
+  else if(command==='commands')showCommands();
+  else if(command==='command')await headlessCommand(flags);
   else if(command==='commands')showCommands();
   else if(command==='command')await headlessCommand(flags);
   else if(command==='status')await showStatus(flags);
@@ -58,6 +61,7 @@ async function enroll(flags){
 }
 function showModels(flags){console.log(JSON.stringify(providerProjection(providerFromEnv(flags)),null,2));}
 function showCommands(){console.log(JSON.stringify(listCommands(),null,2));}
+function showCommands(){console.log(JSON.stringify(listCommands(),null,2));}
 async function showStatus(flags){
   const {service,provider}=runtimeForCli(flags);
   try{console.log(JSON.stringify(await buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),null,2));}
@@ -83,6 +87,9 @@ async function headlessPrompt(flags){
   const slash=parseSlashCommand(prompt);
   if(slash.kind==='unknown')throw new Error(`Unknown Cuppet command: /${slash.name}`);
   if(slash.kind==='command'){await headlessCommand(flags,slash);return;}
+  const slash=parseSlashCommand(prompt);
+  if(slash.kind==='unknown')throw new Error(`Unknown Cuppet command: /${slash.name}`);
+  if(slash.kind==='command'){await headlessCommand(flags,slash);return;}
   const dataDir=dataDirectory(flags);const databasePath=join(dataDir,'conversations.sqlite3');
   const selected=prepareHeadlessSession({databasePath,dataDir,flags});
   if(selected.pendingPlanFork)await selected.pendingPlanFork.plans.fork(selected.sourceSessionId,selected.sessionId,selected.pendingPlanFork.messageMap);
@@ -95,6 +102,49 @@ async function headlessPrompt(flags){
     else if(message.content)process.stdout.write(`${message.content}\n`);
     if(message.status==='error')process.exitCode=1;
   }finally{await service.close();}
+}
+
+async function headlessCommand(flags,prepared=null){
+  const raw=prepared?prepared.raw:String(flags.command??flags._?.join(' ')??'').trim();
+  const parsed=prepared??parseSlashCommand(raw);
+  if(parsed.kind==='unknown')throw new Error(`Unknown Cuppet command: /${parsed.name}`);
+  if(parsed.kind!=='command')throw new Error('command requires a recognized slash command, for example: cuppet command "/status"');
+  const dataDir=dataDirectory(flags);const databasePath=join(dataDir,'conversations.sqlite3');
+  let sessionId=null;
+  if(parsed.definition?.requiresSession)sessionId=resolveExistingSession(databasePath,flags,{latestByDefault:true});
+  else if(stringFlag(flags.session)||flags.continue===true)sessionId=resolveExistingSession(databasePath,flags,{latestByDefault:false});
+  const provider=providerFromEnv(flags);const service=new RuntimeService({databasePath,dataDir,interactive:false});
+  try{
+    const result=await executeCommand(parsed,{
+      sessionId,
+      call:(method,params)=>service.handle(method,params),
+      providerRequest:provider,
+      host:{
+        status:()=>buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),
+        doctor:()=>buildRuntimeDoctor({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),
+        remoteStatus:async()=>{throw new Error('Remote lifecycle belongs to a long-running host; use `cuppet remote-control`.');},
+        remoteStart:async()=>{throw new Error('Use `cuppet remote-control` to start a headless Remote host.');},
+        remoteStop:async()=>{throw new Error('Stop the long-running `cuppet remote-control` process directly.');},
+      },
+      provider:headlessProviderAuthority(provider),
+    });
+    if(flags.json===true)console.log(JSON.stringify(result,null,2));
+    else console.log(result.presentation??formatCommandResult(result));
+  }finally{await service.close();}
+}
+function headlessProviderAuthority(provider){
+  return{
+    models:async()=>providerProjection(provider),
+    providers:async()=>{const value=providerProjection(provider);return{configured:value.configured,selectedProvider:value.primary?.providerID??null,catalog:value.catalog};},
+    selectProvider:async(providerID)=>{const current=providerProjection(provider).primary?.providerID??null;if(String(providerID)!==String(current))throw new Error('Use --provider-id/CUPPET_PROVIDER_ID so provider credentials remain explicit in headless mode.');return{selected:true,providerID:current};},
+    effort:async()=>{const value=providerProjection(provider);const model=value.models.find((item)=>item.providerID===value.primary?.providerID&&item.modelID===value.primary?.modelID);return{providerID:value.primary?.providerID??null,modelID:value.primary?.modelID??null,variant:value.primary?.variant??null,variants:model?.variants??[]};},
+    setEffort:async()=>{throw new Error('Use --effort or CUPPET_EFFORT for headless commands so selection remains explicit.');},
+  };
+}
+function formatCommandResult(value){
+  if(value?.result===undefined)return 'Command completed.';
+  if(typeof value.result==='string')return value.result;
+  return JSON.stringify(value.result,null,2);
 }
 
 async function headlessCommand(flags,prepared=null){
@@ -209,4 +259,4 @@ function stringFlag(value){return typeof value==='string'&&value?value:null;}
 function listFlag(value){if(value===undefined)return[];return(Array.isArray(value)?value:[value]).map(String).slice(0,32);}
 function integer(value,fallback){const parsed=Number(value);return Number.isInteger(parsed)&&parsed>=0&&parsed<=65535?parsed:fallback;}
 function waitForSignal(){return new Promise((resolve)=>{const done=()=>{process.off('SIGINT',done);process.off('SIGTERM',done);resolve();};process.once('SIGINT',done);process.once('SIGTERM',done);});}
-function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet undo [--session id|-s id] [--json]\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}
+function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet undo [--session id|-s id] [--json]\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}
