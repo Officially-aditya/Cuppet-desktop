@@ -1,0 +1,132 @@
+name: Apple Silicon Test Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/e2-apple-silicon-test
+
+concurrency:
+  group: apple-silicon-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-artifact:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/Cuppet-code
+          ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+          path: .e2/cuppet-code
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify Apple Silicon runner
+        run: |
+          test "$(uname -m)" = "arm64"
+          sw_vers
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.88 --profile minimal --no-self-update
+          rustup default 1.88
+          rustc --version
+
+      - name: Build pinned native TST daemon
+        run: cargo build --locked -p tst-daemon --release --manifest-path .e2/cuppet-code/Cargo.toml
+
+      - name: Build standalone TST artifact
+        working-directory: .e2/cuppet-code
+        run: |
+          GITHUB_SHA="$TST_SOURCE_REVISION" node scripts/package-tst-runtime.mjs \
+            --source=target/release/tst-daemon \
+            --output="${GITHUB_WORKSPACE}/.e2/tst-runtime"
+
+      - name: Stage and verify native TST runtime
+        run: |
+          npm run f1:stage-tst -- --source=.e2/tst-runtime
+          npm run f1:verify-staged-tst
+
+      - name: Install desktop dependencies
+        run: npm install
+
+      - name: Verify runtime and packaging contracts
+        run: |
+          npm run e1:audit-runtime
+          npm run f1:verify
+
+      - name: Build Apple Silicon app bundle
+        run: npx electron-builder --mac dir --arm64 --publish never
+
+      - name: Locate and verify arm64 app
+        shell: bash
+        run: |
+          APP="$(find dist -type d -name 'Cuppet.app' -print -quit)"
+          if [[ -z "$APP" ]]; then
+            echo "Cuppet.app was not produced" >&2
+            exit 1
+          fi
+          APP_EXEC="$APP/Contents/MacOS/cuppet"
+          TST_BIN="$APP/Contents/Resources/tst/darwin-arm64/tst-daemon"
+          test -x "$APP_EXEC"
+          test -x "$TST_BIN"
+          lipo -archs "$APP_EXEC" | grep -qw arm64
+          lipo -archs "$TST_BIN" | grep -qw arm64
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "APP_EXEC=$APP_EXEC" >> "$GITHUB_ENV"
+
+      - name: Run packaged runtime acceptance
+        run: |
+          node scripts/smoke-packaged-runtime.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-tst.mjs "$APP_EXEC"
+
+      - name: Ad-hoc sign test app
+        run: |
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create ZIP and DMG test packages
+        shell: bash
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          ZIP="dist/Cuppet-${VERSION}-apple-silicon-test.zip"
+          DMG="dist/Cuppet-${VERSION}-apple-silicon-test.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+          hdiutil create -volname "Cuppet Test" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          shasum -a 256 "$ZIP" "$DMG" > dist/SHA256SUMS.txt
+          cat > dist/TESTING.txt <<'EOF'
+          Cuppet Apple Silicon test build
+
+          This build is ARM64 and ad-hoc signed for testing, but it is NOT Developer ID signed or notarized yet.
+          If macOS blocks the first launch, right-click Cuppet.app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
+
+          Please test:
+          - app launch
+          - create/open two local projects
+          - normal chat/session persistence after restart
+          - TST-backed graph/context behavior in both projects
+          - memory persistence after restart
+          - project isolation
+          EOF
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Cuppet-Apple-Silicon-Test-${{ github.sha }}
+          path: |
+            dist/*-apple-silicon-test.zip
+            dist/*-apple-silicon-test.dmg
+            dist/SHA256SUMS.txt
+            dist/TESTING.txt
+          if-no-files-found: error
+          retention-days: 14
