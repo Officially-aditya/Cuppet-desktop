@@ -100,14 +100,17 @@ expect(app.includes('document.body.dataset.cuppetSessionId') && app.includes('de
 
 const renderer = text['src/renderer/commands.js'];
 expect(renderer.includes("composer.addEventListener('submit'") && renderer.includes('stopImmediatePropagation()'), 'renderer slash submit interception is missing');
+expect(renderer.includes("prompt.addEventListener('input'") && renderer.includes('currentQuery()') && renderer.includes("value.startsWith('/')"), 'typed slash command palette activation is missing');
 expect(renderer.includes("window.cuppet.commands.execute") && renderer.includes("{ id: item.id, input }"), 'renderer structured palette execution is missing');
 expect(renderer.includes('if (item.paletteOnly)') && renderer.includes("item.paletteOnly ? 'action'"), 'renderer does not generically project palette-only registry actions');
 for (const id of ['cuppet.memory.remember','cuppet.memory.forget','cuppet.memory.clear','cuppet.steer.interrupt','cuppet.plan.agent']) expect(renderer.includes(`'${id}'`), `renderer custom-input palette action UI missing: ${id}`);
 expect(renderer.includes('window.confirm') && renderer.includes('Clear memory scope'), 'memory clear confirmation is missing');
 expect(renderer.includes('commandForm') && renderer.includes('maxLength: 8192'), 'bounded command form controls are missing');
 
-const index = text['src/renderer/index.html'];
-expect(index.includes('commands.css') && index.includes('commands.js') && index.includes('/ for commands'), 'visible command surface is not loaded');
+const index = text['src/renderer/index.html']; const commandCssDense = dense['src/renderer/commands.css'];
+expect(index.includes('commands.css') && index.includes('commands.js'), 'command surface assets are not loaded');
+expect(!index.includes('/ for commands') && !index.includes('composer-hint'), 'removed composer command hint returned');
+expect(commandCssDense.includes('.command-trigger{display:none!important}'), 'visible slash trigger must remain hidden while typed slash activation stays available');
 
 for (const script of [
   'src/runtime/commands.mjs','src/runtime/service.mjs','src/runtime/remote/commands.mjs',
@@ -125,4 +128,4 @@ const tests = [
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
 
-console.log('Original C2 gate passed: canonical command inventory, inference/transcript isolation, Desktop/headless/Remote reuse, bounded palette actions, inner Remote scopes, and runtime-owned steer verified.');
+console.log('Original C2 gate passed: canonical command inventory, typed slash/palette surface, inference/transcript isolation, Desktop/headless/Remote reuse, bounded palette actions, inner Remote scopes, and runtime-owned steer verified.');
