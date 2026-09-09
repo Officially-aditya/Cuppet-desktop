@@ -59,9 +59,7 @@ jobs:
         run: cargo build --locked -p tst-daemon --release --manifest-path .f1/cuppet-code/Cargo.toml
       - name: Build standalone TST artifact from pinned Cuppet-code
         working-directory: .f1/cuppet-code
-        env:
-          GITHUB_SHA: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
-        run: node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output=${{ github.workspace }}/.f1/tst-runtime
+        run: GITHUB_SHA=9f2a8ae63555b7534ee1ccfe211efce1ad46f630 node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output=${{ github.workspace }}/.f1/tst-runtime
       - name: Stage verified TST resource for desktop
         run: npm run f1:stage-tst -- --source=.f1/tst-runtime
       - run: npm run f1:verify-staged-tst
