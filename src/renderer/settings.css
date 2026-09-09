@@ -43,6 +43,14 @@
 .settings-grid-full{grid-column:1/-1}
 .settings-hub-dialog .settings-form-grid label{margin:8px 0}
 .platform-settings-form .dialog-actions{margin-top:14px}
+.provider-simple-form{display:grid;gap:12px;max-width:560px}
+.settings-hub-dialog .provider-simple-form label{margin:0;display:grid;gap:7px}
+.settings-hub-dialog .provider-simple-form select,.settings-hub-dialog .provider-simple-form input{width:100%}
+.provider-preset-note{margin-top:-2px;padding:9px 11px;border-radius:8px;background:#14191f;color:#7e8895;font-size:10px;line-height:1.5}
+.provider-internal-fields{display:none!important}
+.codex-auth-row{align-items:flex-start}
+.codex-auth-actions{display:flex!important;grid-auto-flow:column;gap:8px;align-items:center;justify-content:end}
+.codex-auth-actions button{white-space:nowrap}
 .usage-placeholder{display:grid;gap:6px;padding:14px;border-radius:9px;background:#14191f}
 .usage-placeholder strong{font-size:12px}
 .usage-placeholder span{color:#7e8895;font-size:11px;line-height:1.55}
@@ -54,6 +62,5 @@
 .settings-empty{padding:12px 2px}
 body.compact-sidebar .project-button{padding-top:6px;padding-bottom:6px}
 body.compact-sidebar .session-item{padding-top:5px;padding-bottom:5px}
-body.hide-composer-hints .composer-hint{display:none}
 body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
-@media(max-width:760px){.settings-hub-dialog{width:calc(100vw - 24px);height:calc(100vh - 24px)}.settings-hub-shell{grid-template-columns:150px minmax(0,1fr)}.settings-hub-sidebar{padding-inline:8px}.settings-hub-content,.settings-hub-header{padding-left:18px;padding-right:18px}.settings-form-grid{grid-template-columns:1fr}.settings-grid-full{grid-column:auto}}
+@media(max-width:760px){.settings-hub-dialog{width:calc(100vw - 24px);height:calc(100vh - 24px)}.settings-hub-shell{grid-template-columns:150px minmax(0,1fr)}.settings-hub-sidebar{padding-inline:8px}.settings-hub-content,.settings-hub-header{padding-left:18px;padding-right:18px}.settings-form-grid{grid-template-columns:1fr}.settings-grid-full{grid-column:auto}.codex-auth-row{display:grid;gap:12px}.codex-auth-actions{justify-content:start}}
