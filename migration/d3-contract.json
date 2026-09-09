@@ -1,0 +1,22 @@
+{
+  "phase": "D3",
+  "status": "implemented-candidate",
+  "targetVersion": "0.9.0-alpha.1",
+  "scope": "native provider execution",
+  "requirements": {
+    "singleNormalizedRuntimeAdapterContract": true,
+    "nativeOpenAIResponses": true,
+    "nativeAnthropicMessages": true,
+    "nativeGeminiInteractions": true,
+    "nativeVertexGemini": true,
+    "openAICompatibleFallbackPreserved": true,
+    "foregroundAndBackgroundShareFactory": true,
+    "nativeToolCallsNormalizeToExistingRuntime": true,
+    "providerCredentialsStayHostLocal": true,
+    "vertexApiKeyExcludedFromRequestUrl": true,
+    "stopUsesAbortSignalAcrossAdapters": true,
+    "variantMetadataDoesNotOverrideAuthOrConversationAuthority": true,
+    "unknownProvidersRemainSupportedByFallback": true,
+    "unreviewedVendorSpecializationsDoNotAutoRouteNative": true
+  }
+}
