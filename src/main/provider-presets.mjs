@@ -42,6 +42,14 @@ export const PROVIDER_PRESETS = Object.freeze({
     model: 'muse-spark-1.3',
     authLabel: 'Meta Model API key',
   }),
+  openrouter: Object.freeze({
+    id: 'openrouter',
+    label: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/auto',
+    authLabel: 'OpenRouter API key',
+    note: 'Uses OpenRouter Auto so model routing stays current without another model setting.',
+  }),
 });
 
 export const DEFAULT_PROVIDER_PRESET_ID = 'openai';
