@@ -8,6 +8,7 @@ import {
 } from '../provider-policy.mjs';
 import { modelMatchesProvider } from '../provider-catalog.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from '../diagnostics.mjs';
+import { executeCommand, parseSlashCommand } from '../commands.mjs';
 
 export class RemoteCommandAdapter {
   #call; #identity; #provider=normalizeProviderConfiguration({}); #states=new Map();
@@ -30,7 +31,7 @@ export class RemoteCommandAdapter {
       case 'session.messages': return this.#sessionMessages(state,explicitSession);
       case 'session.new': return this.#sessionNew(state,params);
       case 'session.resume': return this.#sessionResume(state,explicitSession);
-      case 'session.submit': return this.#sessionSubmit(state,explicitSession,params);
+      case 'session.submit': return this.#sessionSubmit(actor,state,explicitSession,params);
       case 'session.steer': return this.#sessionSteer(state,explicitSession,params);
       case 'session.abort': return this.#call('session.stop',{sessionId:this.#requireSession(state,explicitSession)});
       case 'session.compact': return this.#call('context.compact',{sessionId:this.#requireSession(state,explicitSession),provider:this.#selectedProvider(state)});
@@ -75,8 +76,24 @@ export class RemoteCommandAdapter {
     const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId}); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
   }
   async #sessionResume(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});state.sessionId=session.id;state.projectId=session.projectId??state.projectId;return session;}
-  async #sessionSubmit(state,explicit,params){
+  async #sessionSubmit(actor,state,explicit,params){
     const sessionId=this.#requireSession(state,explicit); const prompt=String(params.prompt??params.text??'').trim(); if(!prompt)throw new Error('prompt is required');
+    const parsed=parseSlashCommand(prompt);
+    if(parsed.kind==='unknown')throw new Error(`Unknown Cuppet command: /${parsed.name}`);
+    if(parsed.kind==='command'){
+      const required=parsed.definition?.scope;
+      if(required&&!actor.scopes?.includes?.(required))throw new Error(`missing scope '${required}' for /${parsed.name}`);
+      return executeCommand(parsed,{
+        sessionId,
+        call:async(method,value={})=>method==='session.steer'?this.#sessionSteer(state,sessionId,{instruction:value.text}):this.#call(method,value),
+        providerRequest:this.#selectedProvider(state),
+        host:{
+          status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.8.0-alpha.1'}),
+          doctor:()=>buildRuntimeDoctor({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.8.0-alpha.1'}),
+        },
+        provider:this.#slashProviderAuthority(state),
+      });
+    }
     if(params.delivery==='steer')return this.#sessionSteer(state,sessionId,{instruction:prompt});
     const result=await this.#call('session.send',{sessionId,text:prompt,attachments:boundedAttachments(params.attachments),provider:this.#selectedProvider(state)}); state.sessionId=result.sessionId; return result;
   }
@@ -150,6 +167,22 @@ export class RemoteCommandAdapter {
   async #modeGet(state,explicit){const sessionId=this.#requireSession(state,explicit);const result=await this.#call('session.mode.get',{sessionId});return{mode:result.mode};}
   async #modeSet(state,explicit,params){const sessionId=this.#requireSession(state,explicit);const raw=String(params.agent??params.mode??'');if(!['plan','build'].includes(raw))throw new Error('agent/mode must be plan or build');return this.#call('session.mode.set',{sessionId,mode:raw});}
 
+  #slashProviderAuthority(state){
+    return {
+      models:async()=>({models:this.#modelList(state),provider:this.#providerStatus(state)}),
+      providers:async()=>({catalog:this.#providerList(state),provider:this.#providerStatus(state)}),
+      selectProvider:async(providerID)=>this.#providerSelect(state,{providerID}),
+      effort:async()=>{
+        const selected=state.selection??this.#defaultSelection(state);
+        const model=this.#modelList(state).find((item)=>selected&&sameSelection(selected,item));
+        return {providerID:selected?.providerID??null,modelID:selected?.modelID??null,variant:selected?.variant??null,variants:model?.variants??[]};
+      },
+      setEffort:async(variant)=>{
+        const selected=state.selection??this.#defaultSelection(state);if(!selected)throw new Error('no model is selected');
+        return this.#modelSelect(state,{providerID:selected.providerID,modelID:selected.modelID,variant:String(variant??'')});
+      },
+    };
+  }
   #selectedProvider(state){
     const projection=providerProjection(this.#provider);
     if(!projection.configured)throw new Error('Host provider is not configured');
