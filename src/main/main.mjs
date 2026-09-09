@@ -90,7 +90,10 @@ function registerIpc() {
 }
 
 async function executeDesktopCommand(request, sessionId, value) {
-  const parsed = typeof value === 'string' ? parseSlashCommand(value) : value;
+  const structured = value && typeof value === 'object' && !Array.isArray(value) && typeof value.id === 'string' ? value : null;
+  const parsed = structured
+    ? { kind: 'command', id: boundedId(structured.id), name: null, alias: null, args: [], rawArguments: '', raw: null }
+    : typeof value === 'string' ? parseSlashCommand(value) : value;
   if (parsed?.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
   if (parsed?.kind !== 'command') throw new Error('A recognized Cuppet command is required');
   const runtimeCall = (method, params = {}) => request(method, params);
@@ -106,7 +109,7 @@ async function executeDesktopCommand(request, sessionId, value) {
       remoteStop: () => request('remote.stop'),
     },
     provider: desktopProviderAuthority(request),
-  });
+  }, structured ? validateCommandInput(structured.input) : {});
   mainWindow?.webContents.send('cuppet:event', { type: 'command.completed', ...result });
   return result;
 }
@@ -152,6 +155,18 @@ function desktopProviderAuthority(request) {
       await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
       return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
     },
+  };
+}
+
+function validateCommandInput(value) {
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    ...(typeof record.key === 'string' ? { key: record.key.trim().slice(0, 240) } : {}),
+    ...(typeof record.value === 'string' ? { value: record.value.trim().slice(0, 4000) } : {}),
+    ...(typeof record.text === 'string' ? { text: record.text.trim().slice(0, 8192) } : {}),
+    ...(['session', 'project', 'global'].includes(record.scope) ? { scope: record.scope } : {}),
+    ...(['plan', 'build'].includes(record.mode) ? { mode: record.mode } : {}),
+    ...(record.pinned === true ? { pinned: true } : {}),
   };
 }
 
