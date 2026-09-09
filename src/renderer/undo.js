@@ -30,3 +30,5 @@
   window.cuppet.onEvent(() => update());
   update();
 })();
+
+void import('./execution-ui.mjs').catch((error) => console.error('Failed to load Cuppet execution UI', error));
