@@ -1,13 +1,8 @@
-import { spawn, execFile } from 'node:child_process';
-import { access } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
+import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 
-let resolvedBinaryPromise;
-let activeLogin = null;
-let lastLoginMessage = '';
+let loginInFlight = false;
+let lastMessage = '';
 
 export function installCodexAuthIpc() {
   ipcMain.handle('cuppet:codex-auth:status', () => codexAuthStatus());
@@ -16,114 +11,88 @@ export function installCodexAuthIpc() {
 }
 
 async function codexAuthStatus() {
-  const binary = await resolveCodexBinary();
-  if (!binary) {
-    return {
-      available: false,
-      loggedIn: false,
-      loginRunning: Boolean(activeLogin),
-      method: null,
-      message: 'Official Codex CLI was not found. Install @openai/codex, then reopen Settings.',
-    };
+  const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
+  if (!launch) return unavailableStatus();
+  try {
+    return await withClient(launch, async (client) => {
+      const result = record(await client.request('account/read', {}));
+      const account = record(result.account);
+      const authMode = String(account.authMode ?? result.authMode ?? '').toLowerCase();
+      const planType = String(account.planType ?? result.planType ?? '').toLowerCase();
+      const email = safeText(account.email ?? result.email, 320);
+      const name = safeText(account.name ?? account.displayName ?? result.name ?? result.displayName, 160);
+      const loggedIn = authMode === 'chatgpt';
+      return {
+        available: true,
+        loggedIn,
+        loginRunning: loginInFlight,
+        method: authMode || null,
+        planType: planType || null,
+        email: email || null,
+        name: name || null,
+        source: launch.source,
+        message: loggedIn
+          ? `Connected with ChatGPT${planType ? ` · ${planType}` : ''}. Codex owns and refreshes your subscription credentials.`
+          : (lastMessage || 'Not connected to ChatGPT.'),
+      };
+    });
+  } catch (error) {
+    return { ...unavailableStatus(), available: true, message: cleanError(error) };
   }
-
-  const version = await run(binary, ['--version'], 5_000).catch(() => ({ stdout: '' }));
-  const result = await run(binary, ['login', 'status'], 8_000).catch((error) => ({ stdout: '', stderr: error?.message ?? '' }));
-  const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim();
-  const loggedIn = /logged in using/i.test(text);
-  const method = /chatgpt/i.test(text) ? 'chatgpt' : /api key/i.test(text) ? 'api-key' : null;
-  return {
-    available: true,
-    loggedIn,
-    loginRunning: Boolean(activeLogin),
-    method,
-    version: String(version.stdout ?? '').trim().slice(0, 120),
-    message: loggedIn ? (method === 'chatgpt' ? 'Connected with ChatGPT through official Codex OAuth.' : 'Codex is authenticated with an API key.') : (lastLoginMessage || 'Not connected to ChatGPT.'),
-  };
 }
 
 async function startCodexLogin() {
-  const binary = await resolveCodexBinary();
-  if (!binary) throw new Error('Official Codex CLI was not found. Install @openai/codex first.');
-  if (activeLogin) return { started: false, running: true };
-
-  lastLoginMessage = 'Complete the ChatGPT sign-in in your browser.';
-  const child = spawn(binary, ['login'], {
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  activeLogin = child;
-  let output = '';
-  const capture = (chunk) => { output = `${output}${chunk.toString('utf8')}`.slice(-8_192); };
-  child.stdout?.on('data', capture);
-  child.stderr?.on('data', capture);
-  child.once('error', (error) => {
-    lastLoginMessage = error?.message || 'Codex login could not start.';
-    activeLogin = null;
-  });
-  child.once('exit', (code) => {
-    lastLoginMessage = code === 0 ? 'ChatGPT sign-in completed.' : (output.trim() || `Codex login exited with code ${code ?? 'unknown'}.`);
-    activeLogin = null;
-  });
-  return { started: true, running: true };
+  const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
+  if (!launch) throw new Error('Official Codex app-server is unavailable in this Cuppet build.');
+  if (loginInFlight) return { started: false, running: true };
+  loginInFlight = true;
+  try {
+    const result = await withClient(launch, async (client) => client.request('account/login/start', {
+      type: 'chatgpt',
+      useHostedLoginSuccessPage: true,
+      appBrand: 'chatgpt',
+    }));
+    const authUrl = safeUrl(record(result).authUrl);
+    const loginId = safeText(record(result).loginId, 256);
+    if (!authUrl) throw new Error('Codex did not return a ChatGPT sign-in URL.');
+    lastMessage = 'Complete the ChatGPT sign-in in your browser. Cuppet never receives the OAuth tokens.';
+    await shell.openExternal(authUrl);
+    return { started: true, running: false, loginId: loginId || null };
+  } finally {
+    loginInFlight = false;
+  }
 }
 
 async function logoutCodex() {
-  if (activeLogin) {
-    activeLogin.kill('SIGTERM');
-    activeLogin = null;
-  }
-  const binary = await resolveCodexBinary();
-  if (!binary) throw new Error('Official Codex CLI was not found.');
-  await run(binary, ['logout'], 10_000);
-  lastLoginMessage = 'Signed out of ChatGPT in Codex.';
+  const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
+  if (!launch) throw new Error('Official Codex app-server is unavailable in this Cuppet build.');
+  await withClient(launch, async (client) => client.request('account/logout', {}));
+  lastMessage = 'Signed out of ChatGPT in Codex.';
   return codexAuthStatus();
 }
 
-async function resolveCodexBinary() {
-  if (!resolvedBinaryPromise) resolvedBinaryPromise = findCodexBinary();
-  return resolvedBinaryPromise;
+async function withClient(launch, fn) {
+  const client = new CodexAppServerClient(launch);
+  try { await client.start(); return await fn(client); }
+  finally { await client.close().catch(() => undefined); }
 }
 
-async function findCodexBinary() {
-  const home = homedir();
-  const candidates = [
-    process.env.CUPPET_CODEX_BIN,
-    '/Applications/Codex.app/Contents/Resources/codex',
-    '/Applications/ChatGPT.app/Contents/Resources/codex',
-    '/opt/homebrew/bin/codex',
-    '/usr/local/bin/codex',
-    join(home, '.local', 'bin', 'codex'),
-    join(home, '.npm-global', 'bin', 'codex'),
-    'codex',
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (candidate.includes('/') || candidate.includes('\\')) {
-      try { await access(candidate, constants.X_OK); } catch { continue; }
-    }
-    try {
-      await run(candidate, ['--version'], 4_000);
-      return candidate;
-    } catch {
-      // Try the next official Codex installation location.
-    }
-  }
-  return null;
+function unavailableStatus() {
+  return {
+    available: false,
+    loggedIn: false,
+    loginRunning: loginInFlight,
+    method: null,
+    planType: null,
+    email: null,
+    name: null,
+    message: 'Official Codex app-server was not found. Reinstall this Cuppet build or set CUPPET_CODEX_APP_SERVER_BIN for development.',
+  };
 }
-
-function run(binary, args, timeout) {
-  return new Promise((resolve, reject) => {
-    execFile(binary, args, { env: process.env, timeout, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        const message = String(stderr || stdout || error.message || 'Codex command failed').trim();
-        const wrapped = new Error(message);
-        wrapped.cause = error;
-        reject(wrapped);
-        return;
-      }
-      resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
-    });
-  });
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function safeText(value, max) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
+function safeUrl(value) {
+  try { const url = new URL(String(value ?? '')); return url.protocol === 'https:' ? url.toString() : ''; }
+  catch { return ''; }
 }
+function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 2000); }
