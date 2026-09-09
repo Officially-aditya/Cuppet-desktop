@@ -12,8 +12,8 @@ const SHA256_HEX = /^[a-f0-9]{64}$/;
 const STRUCTURAL_OPS = new Set(['replace_node', 'insert_before_node', 'insert_after_node', 'delete_node']);
 
 export class TstBatchEditManager {
-  #tst; #journal; #emit; #batches = new Map(); #graphStale = new Map(); #projectLocks = new Map();
-  constructor({ tst, journal, emit = () => {} }) { this.#tst = tst; this.#journal = journal; this.#emit = emit; }
+  #tst; #journal; #emit; #writer; #batches = new Map(); #graphStale = new Map();
+  constructor({ tst, journal, writer = null, emit = () => {} }) { this.#tst = tst; this.#journal = journal; this.#writer = writer; this.#emit = emit; }
 
   async resolveTargets({ path, query, expectedHash, limit = 12 }) {
     return this.#tst.resolveEditTargets(path, query, expectedHash, limit);
@@ -87,7 +87,7 @@ export class TstBatchEditManager {
   async apply({ batchId, sessionId, projectRoot, executionId, authorize }) {
     const batch = this.#require(batchId, sessionId, projectRoot);
     if (batch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
-    return this.#withProjectLock(batch.projectRoot, async () => {
+    return this.#withWriter(batch.projectRoot, async () => {
       const freshBatch = this.#require(batchId, sessionId, projectRoot);
       const paths = freshBatch.files.map((file) => file.path);
       await authorize({
@@ -166,13 +166,7 @@ export class TstBatchEditManager {
 
   #remember(batch) { this.#prune(); this.#batches.set(batch.id, batch); while (this.#batches.size > MAX_BATCHES) this.#batches.delete(this.#batches.keys().next().value); }
   #prune() { const now = Date.now(); for (const [id, batch] of this.#batches) if (batch.expiresAt < now) this.#batches.delete(id); }
-  async #withProjectLock(root, fn) {
-    const prior = this.#projectLocks.get(root) ?? Promise.resolve();
-    let release; const turn = new Promise((resolvePromise) => { release = resolvePromise; });
-    const wait = prior.catch(() => undefined).then(() => turn); this.#projectLocks.set(root, wait);
-    await prior.catch(() => undefined);
-    try { return await fn(); } finally { release(); if (this.#projectLocks.get(root) === wait) this.#projectLocks.delete(root); }
-  }
+  async #withWriter(root, fn) { return this.#writer?.withProject ? this.#writer.withProject(root, fn) : fn(); }
 }
 
 async function stageOperation({ root, operation, index, files }) {
