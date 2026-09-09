@@ -225,7 +225,7 @@ async function chooseFolder(options) {
 function createWindow() {
   mainWindow = new BrowserWindow({ width: 1180, height: 800, minWidth: 860, minHeight: 620, show: false, backgroundColor: '#0d0f12', title: 'Cuppet', webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow.setMenuBarVisibility(false);
-  mainWindow.loadFile(join(here, '..', 'renderer', 'index.html'));
+  mainWindow.loadFile(join(here, '..', '..', 'dist-renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = undefined; });
 }
