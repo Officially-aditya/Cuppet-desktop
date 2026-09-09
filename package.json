@@ -13,6 +13,7 @@
     "start": "electron .",
     "test": "node --test",
     "pack:dir": "electron-builder --dir",
+    "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
     "remote-control": "node src/cli/main.mjs remote-control",
     "relay": "node src/cli/main.mjs relay",
@@ -33,9 +34,7 @@
     "d3:verify": "node scripts/verify-d3.mjs",
     "e1:verify": "node scripts/verify-e1.mjs"
   },
-  "dependencies": {
-    "@huggingface/transformers": "4.2.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "electron": "44.3.0",
     "electron-builder": "26.15.3"
@@ -52,10 +51,6 @@
     "files": [
       "src/**/*",
       "package.json"
-    ],
-    "asarUnpack": [
-      "node_modules/@huggingface/transformers/**/*",
-      "node_modules/onnxruntime-*/**/*"
     ],
     "directories": {
       "output": "dist"
