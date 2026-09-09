@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { ConversationDatabase } from './database.mjs';
-import { OpenAICompatibleChatProvider } from './provider.mjs';
+import { createChatProvider } from './provider-factory.mjs';
 import { ProjectManager } from './projects.mjs';
 import { TstBridge } from './tst-client.mjs';
 import { LosslessPlanStore } from './lossless-plan.mjs';
@@ -24,7 +24,7 @@ export class RuntimeService {
     databasePath,
     dataDir = dirname(databasePath),
     emit = () => {},
-    providerFactory = (config) => new OpenAICompatibleChatProvider(config),
+    providerFactory = createChatProvider,
     projectManagerFactory = (db) => new ProjectManager({ db }),
     tst = new TstBridge(),
     planStore,

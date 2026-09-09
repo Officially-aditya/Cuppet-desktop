@@ -27,3 +27,4 @@ jobs:
       - run: npm run original-c1:verify
       - run: npm run original-c2:verify
       - run: npm run d1:verify
+      - run: npm run d3:verify
