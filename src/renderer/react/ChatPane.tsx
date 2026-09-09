@@ -167,7 +167,11 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             )}
             <button type="button" className={`mode-inline-button${mode === 'plan' ? ' active' : ''}`} onClick={() => void onToggleMode()} disabled={running} title="Switch between Build and Plan mode">{mode === 'plan' ? 'Plan' : 'Build'}</button>
             {running && <button type="button" className="stop-button" onClick={() => void onStop()}>Stop</button>}
-            <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim()}><span aria-hidden="true">↑</span></button>
+            <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim()}>
+              <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
         </form>
       </footer>
