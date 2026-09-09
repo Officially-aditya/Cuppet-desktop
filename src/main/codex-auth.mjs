@@ -1,7 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 
-let loginInFlight = false;
+let activeLogin = null;
 let lastMessage = '';
 
 export function installCodexAuthIpc() {
@@ -25,7 +25,7 @@ async function codexAuthStatus() {
       return {
         available: true,
         loggedIn,
-        loginRunning: loginInFlight,
+        loginRunning: Boolean(activeLogin),
         method: authMode || null,
         planType: planType || null,
         email: email || null,
@@ -37,38 +37,59 @@ async function codexAuthStatus() {
       };
     });
   } catch (error) {
-    return { ...unavailableStatus(), available: true, message: cleanError(error) };
+    return { ...unavailableStatus(), available: true, loginRunning: Boolean(activeLogin), message: cleanError(error) };
   }
 }
 
 async function startCodexLogin() {
   const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
   if (!launch) throw new Error('Official Codex app-server is unavailable in this Cuppet build.');
-  if (loginInFlight) return { started: false, running: true };
-  loginInFlight = true;
+  if (activeLogin) return { started: false, running: true, loginId: activeLogin.loginId };
+
+  const client = new CodexAppServerClient(launch);
+  await client.start();
   try {
-    const result = await withClient(launch, async (client) => client.request('account/login/start', {
+    const result = record(await client.request('account/login/start', {
       type: 'chatgpt',
       useHostedLoginSuccessPage: true,
       appBrand: 'chatgpt',
     }));
-    const authUrl = safeUrl(record(result).authUrl);
-    const loginId = safeText(record(result).loginId, 256);
-    if (!authUrl) throw new Error('Codex did not return a ChatGPT sign-in URL.');
+    const authUrl = safeUrl(result.authUrl);
+    const loginId = safeText(result.loginId, 256);
+    if (!authUrl || !loginId) throw new Error('Codex did not return a complete ChatGPT sign-in request.');
+
+    activeLogin = { client, loginId };
     lastMessage = 'Complete the ChatGPT sign-in in your browser. Cuppet never receives the OAuth tokens.';
+    const finish = (message) => {
+      if (message?.method !== 'account/login/completed') return;
+      const params = record(message.params);
+      if (params.loginId && String(params.loginId) !== loginId) return;
+      const success = params.success !== false && !params.error;
+      lastMessage = success ? 'ChatGPT sign-in completed through Codex.' : safeText(params.error?.message ?? params.error, 1000) || 'ChatGPT sign-in did not complete.';
+      void closeActiveLogin(client);
+    };
+    client.on('notification', finish);
+    client.once('exit', () => { if (activeLogin?.client === client) activeLogin = null; });
     await shell.openExternal(authUrl);
-    return { started: true, running: false, loginId: loginId || null };
-  } finally {
-    loginInFlight = false;
+    return { started: true, running: true, loginId };
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw error;
   }
 }
 
 async function logoutCodex() {
+  if (activeLogin) await closeActiveLogin(activeLogin.client);
   const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
   if (!launch) throw new Error('Official Codex app-server is unavailable in this Cuppet build.');
   await withClient(launch, async (client) => client.request('account/logout', {}));
   lastMessage = 'Signed out of ChatGPT in Codex.';
   return codexAuthStatus();
+}
+
+async function closeActiveLogin(client) {
+  if (activeLogin?.client === client) activeLogin = null;
+  await client.close().catch(() => undefined);
 }
 
 async function withClient(launch, fn) {
@@ -81,7 +102,7 @@ function unavailableStatus() {
   return {
     available: false,
     loggedIn: false,
-    loginRunning: loginInFlight,
+    loginRunning: Boolean(activeLogin),
     method: null,
     planType: null,
     email: null,
