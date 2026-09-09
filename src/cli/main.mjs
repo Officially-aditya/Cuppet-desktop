@@ -60,12 +60,12 @@ function showModels(flags){console.log(JSON.stringify(providerProjection(provide
 function showCommands(){console.log(JSON.stringify(listCommands(),null,2));}
 async function showStatus(flags){
   const {service,provider}=runtimeForCli(flags);
-  try{console.log(JSON.stringify(await buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),null,2));}
+  try{console.log(JSON.stringify(await buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.9.0-alpha.1'}),null,2));}
   finally{await service.close();}
 }
 async function showDoctor(flags){
   const {service,provider}=runtimeForCli(flags);
-  try{const result=await buildRuntimeDoctor({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'});console.log(JSON.stringify(result,null,2));if(!result.ok)process.exitCode=1;}
+  try{const result=await buildRuntimeDoctor({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.9.0-alpha.1'});console.log(JSON.stringify(result,null,2));if(!result.ok)process.exitCode=1;}
   finally{await service.close();}
 }
 function showSessions(flags){
@@ -113,8 +113,8 @@ async function headlessCommand(flags,prepared=null){
       call:(method,params)=>service.handle(method,params),
       providerRequest:provider,
       host:{
-        status:()=>buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),
-        doctor:()=>buildRuntimeDoctor({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.8.0-alpha.1'}),
+        status:()=>buildRuntimeStatus({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.9.0-alpha.1'}),
+        doctor:()=>buildRuntimeDoctor({call:(method,params)=>service.handle(method,params),providerConfig:provider,version:'0.9.0-alpha.1'}),
         remoteStatus:async()=>{throw new Error('Remote lifecycle belongs to a long-running host; use `cuppet remote-control`.');},
         remoteStart:async()=>{throw new Error('Use `cuppet remote-control` to start a headless Remote host.');},
         remoteStop:async()=>{throw new Error('Stop the long-running `cuppet remote-control` process directly.');},

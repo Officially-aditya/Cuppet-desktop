@@ -22,8 +22,8 @@ export class RemoteCommandAdapter {
     const explicitSession=stringOr(envelope.sessionId) ?? stringOr(params.sessionID) ?? stringOr(params.sessionId);
     switch(type){
       case 'host.get': return this.#hostGet(state);
-      case 'status': return buildRuntimeStatus({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.8.0-alpha.1' });
-      case 'doctor': return buildRuntimeDoctor({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.8.0-alpha.1' });
+      case 'status': return buildRuntimeStatus({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.9.0-alpha.1' });
+      case 'doctor': return buildRuntimeDoctor({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.9.0-alpha.1' });
       case 'workspace.list': return this.#workspaceList(state);
       case 'workspace.attach': return this.#workspaceAttach(state,params.workspaceId ?? params.projectId);
       case 'session.list': return this.#call('session.list',state.projectId?{projectId:state.projectId}:{});
@@ -54,7 +54,7 @@ export class RemoteCommandAdapter {
 
   async #hostGet(state){
     const workspaces=await this.#workspaceList(state);
-    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.8.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
+    return { hostId:this.#identity.hostId,name:this.#identity.deviceName,platform:process.platform,version:'0.9.0-alpha.1',protocolVersion:PROTOCOL_VERSION,online:true,connectedAt:Date.now(),workspace:workspaces.find((item)=>item.workspaceId===state.projectId)??null,provider:this.#providerStatus(state) };
   }
   async #workspaceList(state){
     const projects=await this.#call('project.list',{});
@@ -88,8 +88,8 @@ export class RemoteCommandAdapter {
         call:(method,value={})=>this.#call(method,value),
         providerRequest:this.#selectedProvider(state),
         host:{
-          status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.8.0-alpha.1'}),
-          doctor:()=>buildRuntimeDoctor({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.8.0-alpha.1'}),
+          status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.9.0-alpha.1'}),
+          doctor:()=>buildRuntimeDoctor({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.9.0-alpha.1'}),
         },
         provider:this.#slashProviderAuthority(state),
       });

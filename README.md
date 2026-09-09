@@ -4,20 +4,21 @@ Independent desktop/runtime migration for Cuppet.
 
 ## Current increment
 
-**Original C1 correction — structural editing contract: implemented candidate (`0.8.0-alpha.1`).**
+**Original C2 — command & interaction surface: implemented candidate (`0.9.0-alpha.1`).**
 
-Cuppet now closes the original C1 structural-editing gap without rebuilding an OpenCode-shaped controller:
+Cuppet now owns its command layer independently across Desktop, headless CLI, and authorized Remote devices:
 
-- revision-bound TST edit targets tied to current filesystem hashes and exact source bytes;
-- write-free multi-file `tst_edit_batch` prepare with staged Tree-sitter validation before publication;
-- one runtime-owned `ProjectWriter` across structural batches, generic mutations, mutating shell work, and Undo;
-- final-hash graph refresh receipts that fail closed when a changed path is omitted or stale;
-- `tst_validate` evidence bound to stable post-edit hashes, with verifier provenance and command-success evidence;
-- one conflict-safe `MutationJournal` checkpoint for an applied multi-file batch.
+- one canonical registry for the reviewed 16 slash commands, aliases, Remote scopes, bounded parsing, and dispatch contracts;
+- `/models` is canonical while `/model` remains intentionally excluded; `/remote-control` aliases `/remote` and `/login` aliases `/platform`;
+- recognized and unknown slash-prefixed input fails closed before provider inference and does not become synthetic transcript messages;
+- Desktop has visible `/` discovery plus structured palette actions for memory remember/forget/clear, background pause/resume, interrupt-and-steer, and Plan/Build mode;
+- local control commands work without inference credentials, while provider/model/effort commands continue to use host-local provider authority;
+- `RuntimeService.session.steer` is the single steer authority used by Desktop, headless, and Remote;
+- Remote `session.submit` reauthorizes the inner slash command's declared scope before dispatch, preventing a lower-scope wrapper from escalating authority.
 
-Phases A through E remain intact: SQLite conversation/project state, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned permissions, host-authoritative Remote, provider/model/effort policy, and shared session/control behavior.
+Original C1 and Phases A through E remain intact: SQLite conversation/project state, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned permissions/questions/undo, host-authoritative Remote, provider/model/effort policy, and revision-bound structural editing.
 
-The production source has **no OpenCode dependency**. The next migration increment is the remaining **original C** scope.
+The production source has **no legacy controller dependency**. The next increment should be selected from the remaining original-plan migration inventory rather than inventing a new authority layer.
 
 ## Run it
 
