@@ -26,7 +26,7 @@ assert.equal(pkg.scripts?.['renderer:verify'], 'tsc --noEmit && vite build && no
 assert.ok(pkg.build.files.includes('dist-renderer/**/*'), 'compiled Vite renderer is not packaged');
 assert.ok(!pkg.build.files.includes('src/renderer/**/*'), 'raw renderer source must not be packaged');
 assert.match(main, /dist-renderer.*index\.html/s, 'Electron does not load compiled Vite renderer');
-assert.doesNotMatch(main, /renderer', 'index\.html'/, 'Electron still loads legacy renderer source');
+assert.doesNotMatch(main, /join\(here, '\.\.', 'renderer', 'index\.html'\)/, 'Electron still loads legacy renderer source');
 assert.match(index, /id="root"/);
 assert.match(index, /type="module" src="\/src\/renderer\/main\.tsx"/);
 assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|execution-ui\.mjs/);
@@ -60,9 +60,9 @@ assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/,
 assert.match(remote, /remote\.start/);
 assert.match(remote, /remote\.revoke/);
 assert.doesNotMatch(remote, /relayUrl|apiBase|viewer/, 'consumer Remote UI exposes advanced relay/API/viewer configuration');
-assert.match(permission, /permissions\.reply/);
-assert.match(permission, /permissions\.autoSet/);
-assert.match(question, /questions|onAnswer/);
+assert.match(permission, /onResolve/);
+assert.match(permission, /Enable guarded auto/);
+assert.match(question, /onAnswer/);
 
 const deadControllers = [
   'src/renderer/app.js','src/renderer/commands.js','src/renderer/d1-navigation.js','src/renderer/execution-ui.mjs',
