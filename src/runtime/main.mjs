@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { RuntimeService } from './service.mjs';
+import { ConversationDatabase } from './database.mjs';
 import { RemoteManager } from './remote/manager.mjs';
 import { normalizeProviderConfiguration } from './provider-policy.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
@@ -27,6 +28,7 @@ const emit = (event) => {
   remote?.handleRuntimeEvent(event);
 };
 const service = new RuntimeService({ databasePath, dataDir, emit });
+const localState = new ConversationDatabase(databasePath);
 remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
 
 async function handle(method, params = {}) {
@@ -34,6 +36,12 @@ async function handle(method, params = {}) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'session.send': return sendOrQueue(params);
+    case 'session.search': return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true });
+    case 'session.rename': return renameSession(params);
+    case 'session.archive': return archiveSession(params, true);
+    case 'session.restore': return archiveSession(params, false);
+    case 'session.delete': return deleteSession(params);
+    case 'project.rename': return renameProject(params);
     case 'remote.status': return remote.status();
     case 'remote.start': return remote.start({ ...params, provider: boundedProvider(params.provider) });
     case 'remote.stop': return remote.stop();
@@ -43,6 +51,52 @@ async function handle(method, params = {}) {
     case 'remote.provider-config': return remote.setProviderConfig(boundedProvider(params.provider));
     default: return service.handle(method, params);
   }
+}
+
+function renameSession(params = {}) {
+  const sessionId = boundedId(params.sessionId);
+  const title = String(params.title ?? '').trim().slice(0, 160);
+  if (!sessionId) throw new Error('sessionId is required');
+  if (!title) throw new Error('chat title is required');
+  const session = localState.renameSession(sessionId, title);
+  if (!session) throw new Error(`unknown session: ${sessionId}`);
+  emit({ type: 'session.updated', session });
+  return session;
+}
+
+function archiveSession(params = {}, archived) {
+  const sessionId = boundedId(params.sessionId);
+  if (!sessionId) throw new Error('sessionId is required');
+  assertSessionIdle(sessionId, archived ? 'archive' : 'restore');
+  const session = localState.archiveSession(sessionId, archived);
+  emit({ type: archived ? 'session.archived' : 'session.restored', session, sessionId });
+  return session;
+}
+
+function deleteSession(params = {}) {
+  const sessionId = boundedId(params.sessionId);
+  if (!sessionId) throw new Error('sessionId is required');
+  assertSessionIdle(sessionId, 'delete');
+  if (!localState.getSessionSummary(sessionId)) throw new Error(`unknown session: ${sessionId}`);
+  const deleted = localState.deleteSession(sessionId);
+  emit({ type: 'session.deleted', sessionId });
+  return { deleted, sessionId };
+}
+
+function renameProject(params = {}) {
+  const projectId = boundedId(params.projectId);
+  const name = String(params.name ?? '').trim().slice(0, 120);
+  if (!projectId) throw new Error('projectId is required');
+  if (!name) throw new Error('project name is required');
+  const project = localState.renameProject(projectId, name);
+  if (!project) throw new Error(`unknown project: ${projectId}`);
+  emit({ type: 'project.updated', project });
+  return project;
+}
+
+function assertSessionIdle(sessionId, action) {
+  if (activeSessions.has(sessionId)) throw new Error(`cannot ${action} a chat while it is generating`);
+  if (queuedTurns.get(sessionId)?.length) throw new Error(`cannot ${action} a chat while it has queued messages`);
 }
 
 async function sendOrQueue(params = {}) {
@@ -106,7 +160,7 @@ input.on('line', async (line) => {
 let closing;
 async function shutdown() {
   if (closing) return closing;
-  closing = remote.close().catch(() => undefined).then(() => service.close()).catch(() => undefined).finally(() => process.exit(0));
+  closing = remote.close().catch(() => undefined).then(() => service.close()).catch(() => undefined).then(() => localState.close()).catch(() => undefined).finally(() => process.exit(0));
   return closing;
 }
 process.on('SIGTERM', () => void shutdown());
@@ -125,6 +179,7 @@ function boundedProvider(value) {
   return normalized;
 }
 
+function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function cleanError(error) {
   return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500);
 }
