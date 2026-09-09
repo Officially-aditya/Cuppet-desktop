@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Project } from '../types';
+import { SelectControl } from './SelectControl';
 
 export function NewChatModal({ projects, selectedProjectId, onClose, onStart }: { projects: Project[]; selectedProjectId: string | null; onClose: () => void; onStart: (projectId: string | null) => void }) {
   const [projectId, setProjectId] = useState(selectedProjectId ?? '');
@@ -11,10 +12,16 @@ export function NewChatModal({ projects, selectedProjectId, onClose, onStart }: 
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button>
         </div>
         <label>Project
-          <select value={projectId} onChange={(event) => setProjectId(event.target.value)} autoFocus>
-            <option value="">General chat</option>
-            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.missing ? ' (folder missing)' : ''}</option>)}
-          </select>
+          <SelectControl
+            value={projectId}
+            onChange={setProjectId}
+            ariaLabel="Project"
+            autoFocus
+            options={[
+              { value: '', label: 'General chat' },
+              ...projects.map((project) => ({ value: project.id, label: `${project.name}${project.missing ? ' (folder missing)' : ''}` })),
+            ]}
+          />
         </label>
         <div className="dialog-actions">
           <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
