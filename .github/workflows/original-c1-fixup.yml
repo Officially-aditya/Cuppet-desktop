@@ -16,10 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: original-c1-c-completion
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: node scripts/.tmp-apply-original-c1-fixes.mjs
+      - run: python3 scripts/.tmp-apply-original-c1-fixes.py
       - name: Commit fixup
         run: |
           if git diff --quiet; then
