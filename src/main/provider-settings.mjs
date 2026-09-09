@@ -42,10 +42,13 @@ export class ProviderSettingsStore {
     const storage = credentialStorageStatus(safeStorage);
     const apiKeyConfigured = Boolean(this.#encryptedApiKey);
     const selectedPreset = providerPreset(projection.providerID ?? this.#value.providerID);
+    const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
     return {
       ...projection,
-      configured: storage.available && apiKeyConfigured && Boolean(projection.primary?.modelID),
+      configured: chatGPTProvider ? true : storage.available && apiKeyConfigured && Boolean(projection.primary?.modelID),
       apiKeyConfigured,
+      authType: selectedPreset?.authType ?? 'api-key',
+      requiresChatGPTAuth: chatGPTProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
       encryptionAvailable: storage.available,
@@ -55,7 +58,11 @@ export class ProviderSettingsStore {
   }
 
   runtimeValue() {
-    return normalizeProviderConfiguration({ ...this.#value, apiKey: this.#decryptApiKey() });
+    const selectedPreset = providerPreset(this.#value.providerID);
+    return normalizeProviderConfiguration({
+      ...this.#value,
+      apiKey: selectedPreset?.authType === 'chatgpt' ? '' : this.#decryptApiKey(),
+    });
   }
 
   async save(input) {
@@ -70,18 +77,21 @@ export class ProviderSettingsStore {
     const backgroundModel = preset?.model ?? (typeof source.backgroundModel === 'string' ? source.backgroundModel.trim() : '');
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
     const secondaryEffort = preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
+    const chatGPTProvider = preset?.authType === 'chatgpt';
 
     if (!baseUrl) throw new Error('Provider base URL is required');
-    let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
-    if (parsed.username || parsed.password) throw new Error('Provider base URL must not contain embedded credentials');
-    if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
+    if (!chatGPTProvider) {
+      let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
+      if (parsed.username || parsed.password) throw new Error('Provider base URL must not contain embedded credentials');
+      if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
+    }
     if (!model) throw new Error('Primary model is required');
 
     const previousProviderID = this.#value.providerID;
     let next = normalizeProviderConfiguration({
       ...this.#value,
       providerID,
-      baseUrl: baseUrl.replace(/\/+$/, ''),
+      baseUrl: chatGPTProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
       model,
       backgroundModel: backgroundModel || model,
       primary: { providerID, modelID: model },
@@ -93,7 +103,7 @@ export class ProviderSettingsStore {
     this.#value = serializableProviderConfiguration(next);
 
     const providerChanged = Boolean(previousProviderID && previousProviderID !== providerID);
-    if (source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
+    if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
     } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
       const storage = credentialStorageStatus(safeStorage);
