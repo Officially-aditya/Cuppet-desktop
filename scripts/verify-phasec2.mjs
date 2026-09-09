@@ -48,8 +48,9 @@ const runtimeMain = text['src/runtime/main.mjs']; for (const method of ['remote.
 
 const main = text['src/main/main.mjs']; const preload = text['src/preload/preload.cjs']; const renderer = text['src/renderer/remote.js']; const rendererHtml = text['src/renderer/index.html'];
 expect(main.includes('cuppet:remote:start') && main.includes('settings.runtimeValue()'), 'Electron main remote/provider-local bridge missing'); expect(preload.includes('remote:') && preload.includes('invite:') && preload.includes('revoke:'), 'preload remote lifecycle bridge missing');
-for (const control of ['remote-start','remote-setup','remote-stop','remote-invite-trusted','remote-invite-viewer','remote-devices']) expect(rendererHtml.includes(`id="${control}"`), `desktop Remote control missing: ${control}`);
-expect(renderer.includes("window.cuppet.remote.start") && renderer.includes("window.cuppet.remote.invite('viewer')") && renderer.includes('window.cuppet.remote.revoke'), 'desktop Remote UI actions incomplete'); expect(rendererHtml.includes('remote.js'), 'desktop Remote UI is not loaded');
+for (const control of ['remote-start','remote-stop','remote-invite-trusted','remote-devices']) expect(rendererHtml.includes(`id="${control}"`), `desktop Remote control missing: ${control}`);
+expect(!rendererHtml.includes('remote-relay-url') && !rendererHtml.includes('remote-api-base') && !rendererHtml.includes('remote-invite-viewer'), 'desktop Remote exposes advanced relay/API/viewer configuration in the consumer UI');
+expect(renderer.includes('window.cuppet.remote.start({ setup: true') && renderer.includes("window.cuppet.remote.invite('trusted')") && renderer.includes('window.cuppet.remote.revoke'), 'desktop managed Remote UI actions incomplete'); expect(rendererHtml.includes('remote.js'), 'desktop Remote UI is not loaded');
 
 const cli = text['src/cli/main.mjs']; for (const command of ['remote-control','relay','remote-enroll']) expect(cli.includes(command), `independent CLI entrypoint missing: ${command}`); expect(cli.includes('https://connect.cuppet.in'), 'managed API default changed');
 expect(text['src/remote-app/index.html'].includes('Cuppet Remote') && text['src/remote-app/app.js'].includes('permission.reply'), 'relay browser client missing independent remote controls');
@@ -60,4 +61,4 @@ expect(contract.phase === 'C2' && contract.protocol?.version === 1 && contract.s
 
 const tests = ['test/c2-remote-protocol.test.mjs','test/c2-remote-bridge.test.mjs','test/c2-relay.integration.test.mjs','test/c2-remote-commands.test.mjs','test/c2-remote-lifecycle.test.mjs'];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' }); if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, lifecycle cleanliness, provider projection privacy, desktop/CLI controls, and provider-secret boundary verified.');
+console.log('Phase C2 gate passed: independent remote protocol, pairing/token/setup, scoped bridge, relay integration, runtime command routing, lifecycle cleanliness, provider projection privacy, simplified managed desktop controls, CLI controls, and provider-secret boundary verified.');
