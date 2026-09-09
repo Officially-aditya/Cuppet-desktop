@@ -1,5 +1,6 @@
 import { ipcMain, shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
+import { parseCodexAccount } from '../runtime/codex-account.mjs';
 
 let activeLogin = null;
 let lastMessage = '';
@@ -15,25 +16,21 @@ async function codexAuthStatus() {
   if (!launch) return unavailableStatus();
   try {
     return await withClient(launch, async (client) => {
-      const result = record(await client.request('account/read', {}));
-      const account = record(result.account);
-      const authMode = String(account.authMode ?? result.authMode ?? '').toLowerCase();
-      const planType = String(account.planType ?? result.planType ?? '').toLowerCase();
-      const email = safeText(account.email ?? result.email, 320);
-      const name = safeText(account.name ?? account.displayName ?? result.name ?? result.displayName, 160);
-      const loggedIn = authMode === 'chatgpt';
+      const account = parseCodexAccount(await client.request('account/read', {}));
       return {
         available: true,
-        loggedIn,
+        loggedIn: account.loggedIn,
         loginRunning: Boolean(activeLogin),
-        method: authMode || null,
-        planType: planType || null,
-        email: email || null,
-        name: name || null,
+        method: account.method,
+        planType: account.planType,
+        email: account.email,
+        name: null,
         source: launch.source,
-        message: loggedIn
-          ? `Connected with ChatGPT${planType ? ` · ${planType}` : ''}. Codex owns and refreshes your subscription credentials.`
-          : (lastMessage || 'Not connected to ChatGPT.'),
+        message: account.loggedIn
+          ? `Connected with ChatGPT${account.planType ? ` · ${account.planType}` : ''}. Codex owns and refreshes your subscription credentials.`
+          : (lastMessage || (account.method === 'apiKey'
+            ? 'Codex is currently authenticated with an API key. Sign in with ChatGPT to use the subscription provider.'
+            : 'Not connected to ChatGPT.')),
       };
     });
   } catch (error) {
@@ -54,6 +51,7 @@ async function startCodexLogin() {
       useHostedLoginSuccessPage: true,
       appBrand: 'chatgpt',
     }));
+    if (String(result.type ?? '').toLowerCase() !== 'chatgpt') throw new Error('Codex did not start a ChatGPT login flow.');
     const authUrl = safeUrl(result.authUrl);
     const loginId = safeText(result.loginId, 256);
     if (!authUrl || !loginId) throw new Error('Codex did not return a complete ChatGPT sign-in request.');
