@@ -21,7 +21,7 @@ deterministic affinity
 TST graph localization (when available)
         │ still ambiguous
         ▼
-local sentence embedding
+local feature embedding
         │
         ├─ decisive dormant winner → reactivate
         ├─ strong active match → continue
@@ -29,7 +29,9 @@ local sentence embedding
         └─ low confidence / failure → continue active task
 ```
 
-No remote LLM/classifier call is used for task routing. The semantic stage is lazy and uses `@huggingface/transformers` with `Xenova/all-MiniLM-L6-v2` by default. Deterministic turns do not load the embedding runtime.
+No remote LLM/classifier call is used for task routing. The final ambiguity breaker is Cuppet's built-in `cuppet/subword-hash-v1` feature embedding: a bounded 512-dimensional normalized vector built from word, word-order, and subword features using deterministic hashing. It performs no model download, network request, native-runtime loading, or disk cache write.
+
+This stage is deliberately lower authority than deterministic task evidence and TST localization. It is not presented as a neural sentence-embedding replacement. Its job is to break obvious lexical/subword ambiguity cheaply and locally; low-confidence cases preserve the active task because a false split is more damaging than a temporary missed split.
 
 ## Authority boundary
 
@@ -38,7 +40,7 @@ No remote LLM/classifier call is used for task routing. The semantic stage is la
 - PE3's project-local registry stores bounded routing metadata only.
 - Current filesystem state is authoritative for file contents and existence.
 - TST is optional localization evidence, not transcript authority.
-- Semantic vectors are process-local caches and are never persisted.
+- Feature vectors are process-local caches and are never persisted.
 - The renderer only follows runtime route events; it never chooses the target task itself.
 
 ## Weighted task identity
@@ -52,6 +54,14 @@ Task fingerprints favor concrete working-set evidence over incidental language:
 5. lexical terms.
 
 Weak prompt/localization signals decay as turns advance. Ambiguous routing falls back to the active task because a false split is more damaging than a temporary missed split.
+
+## Local feature embedding
+
+`LocalFeatureEmbeddingProvider` is dependency-free production code. It normalizes and bounds input, extracts at most 512 word-like tokens, adds weighted unigram/bigram/trigram and 3–4 character subword features, hashes them into a bounded power-of-two vector, then L2-normalizes the result.
+
+The provider is deterministic for the same normalized input and exposes model ID `cuppet/subword-hash-v1`. Production PE3 uses it by default, while tests/future adapters may inject another embedding provider through the existing constructor boundary. The conservative `SemanticTaskRouter` thresholds and fail-closed behavior remain unchanged.
+
+The previous `@huggingface/transformers`/ONNX default was removed from the production dependency graph during E1 packaging hardening after dependency audit surfaced high-severity transitive advisories with no upstream fix. PE3 therefore no longer needs `onnxruntime-node`, `sharp`, model downloads, or Transformers cache directories in packaged builds.
 
 ## Persistence and staleness
 
@@ -92,13 +102,11 @@ When PE3 creates or reactivates another task session, the runtime returns the ac
 ## Environment controls
 
 - `CUPPET_PE3=0` — disable automatic PE3 routing.
-- `CUPPET_PE3_EMBED_MODEL` — override the local embedding model.
-- `CUPPET_PE3_MODEL_CACHE` — override model cache location.
-- `CUPPET_PE3_MODEL_DIR` — use pre-staged local model assets.
-- `CUPPET_PE3_ALLOW_MODEL_DOWNLOAD=0` — strict offline mode; unavailable semantic routing falls back to the active task.
+
+The production feature embedding has no model/cache/download environment controls because it has no external model or network dependency. An alternate provider can still be injected through the runtime constructor boundary where needed for tests or a future intentionally reviewed adapter.
 
 ## Acceptance gate
 
-`npm run phaseb2:verify` checks the production routing invariants and runs focused tests for deterministic switching/reactivation, semantic conservative fallback, persisted staleness, transaction rollback, attachment bounds, dormant stale-task reactivation and full-runtime target-session ownership.
+`npm run phaseb2:verify` checks the production routing invariants and runs focused tests for deterministic switching/reactivation, conservative semantic fallback, the dependency-free local feature embedding, persisted staleness, transaction rollback, attachment bounds, dormant stale-task reactivation and full-runtime target-session ownership.
 
 All earlier gates remain mandatory. B2 is accepted only when Phase 0, A, B, B1 and B2 are green together.
