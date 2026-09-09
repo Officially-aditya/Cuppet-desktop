@@ -36,6 +36,7 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
         await onChanged();
       }
       await onOpen(result.sessionId);
+      if (result.kind === 'message' && result.itemId) focusMessage(result.itemId);
     } catch (error) { onError(error); }
   };
 
@@ -81,4 +82,21 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
       </section>
     </div>
   );
+}
+
+function focusMessage(messageId: string) {
+  const safeId = String(messageId).slice(0, 256);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const selector = `[data-message-id="${cssEscape(safeId)}"]`;
+    const node = document.querySelector<HTMLElement>(selector);
+    if (!node) return;
+    node.scrollIntoView({ block: 'center', behavior: document.body.classList.contains('reduce-motion') ? 'auto' : 'smooth' });
+    node.classList.remove('search-hit');
+    void node.offsetWidth;
+    node.classList.add('search-hit');
+  }));
+}
+
+function cssEscape(value: string) {
+  return window.CSS?.escape ? window.CSS.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
