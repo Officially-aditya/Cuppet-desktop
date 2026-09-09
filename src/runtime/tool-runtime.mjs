@@ -38,14 +38,21 @@ export class ToolRuntime {
     let toolSteps = 0;
     let usage = null;
 
+    const executeTool = async (call) => {
+      toolSteps += 1;
+      if (toolSteps > MAX_TOOL_STEPS) throw new Error(`Tool step limit exceeded (${MAX_TOOL_STEPS}).`);
+      const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, mode, signal });
+      if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
+      if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
+      return result;
+    };
+
     for (;;) {
       if (signal?.aborted) throw abortError();
-      const response = await adapter.stream(conversation, { signal, onDelta, tools: definitions });
+      const response = await adapter.stream(conversation, { signal, onDelta, tools: definitions, projectRoot, executeTool });
       usage = response?.usage ?? usage;
       const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
       if (!toolCalls.length) return { toolSteps, usage };
-      toolSteps += toolCalls.length;
-      if (toolSteps > MAX_TOOL_STEPS) throw new Error(`Tool step limit exceeded (${MAX_TOOL_STEPS}).`);
 
       conversation.push({
         role: 'assistant',
@@ -54,10 +61,8 @@ export class ToolRuntime {
       });
 
       for (const call of toolCalls) {
-        const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, mode, signal });
+        const result = await executeTool(call);
         conversation.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output });
-        if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
-        if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
       }
     }
   }
