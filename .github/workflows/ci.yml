@@ -10,10 +10,11 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm install --ignore-scripts
       - run: npm run phase0:verify
       - run: npm run phase1:verify
@@ -33,10 +34,12 @@ jobs:
   packaged-runtime-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm install
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run pack:dir
       - run: npm run e1:package-smoke
