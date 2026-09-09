@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('cuppet', {
   },
   codexAuth: {
     status: () => ipcRenderer.invoke('cuppet:codex-auth:status'),
+    models: () => ipcRenderer.invoke('cuppet:codex-auth:models'),
     login: () => ipcRenderer.invoke('cuppet:codex-auth:login'),
     logout: () => ipcRenderer.invoke('cuppet:codex-auth:logout'),
   },
