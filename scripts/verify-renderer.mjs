@@ -4,11 +4,12 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, index, entry, app, chat, sidebar, search, settings, remote, permission, question] = await Promise.all([
+const [pkgText, main, index, entry, controls, app, chat, sidebar, search, settings, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/renderer/index.html'),
   read('src/renderer/main.tsx'),
+  read('src/renderer/controls.css'),
   read('src/renderer/react/App.tsx'),
   read('src/renderer/react/ChatPane.tsx'),
   read('src/renderer/react/Sidebar.tsx'),
@@ -32,6 +33,11 @@ assert.match(index, /type="module"\s+src="(?:\.\/)?main\.tsx"/, 'Vite mount shel
 assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|execution-ui\.mjs/);
 assert.match(entry, /createRoot/);
 assert.match(entry, /<App\s*\/>/);
+assert.match(entry, /import '\.\/controls\.css'/, 'app-wide control skin is not loaded by the React renderer');
+assert.match(controls, /-webkit-appearance:none/, 'native Chromium/macOS form appearance is not disabled');
+assert.match(controls, /input\[type="checkbox"\].*input\[type="radio"\]/s, 'checkbox/radio controls are not custom skinned');
+assert.match(controls, /select\{[\s\S]*background-image:/, 'select controls do not use custom Cuppet chrome');
+assert.match(controls, /\.composer textarea/, 'chat composer textarea is not covered by the app-wide control skin');
 
 assert.match(app, /if \((?:value|trimmed)\.startsWith\('\/'\)\)/, 'slash commands are not handled by the single React send path');
 assert.match(app, /window\.cuppet\.commands\.execute/, 'React command path does not use the bounded preload command API');
@@ -82,4 +88,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
