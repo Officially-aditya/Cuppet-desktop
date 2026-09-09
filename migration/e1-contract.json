@@ -20,6 +20,7 @@
     "productionRuntimeDependenciesAreAuditedForHighSeverityAdvisories": true,
     "pe3ProductionEmbeddingHasNoExternalModelOrNativeRuntimeDependency": true,
     "ciCancelsSupersededBranchRuns": true,
+    "ciJobsHaveBoundedTimeouts": true,
     "incompatibleTstControlPlaneIsNotFalselyBundled": true,
     "currentCuppetTstBridgeRemainsOptionalAndExternal": true,
     "e1HasPermanentVerificationGate": true
