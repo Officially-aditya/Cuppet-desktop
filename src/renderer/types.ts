@@ -77,12 +77,19 @@ export type CommandResult = {
   presentation?: string;
 };
 
+export type ProviderPresetModel = {
+  id: string;
+  label?: string;
+  description?: string;
+};
+
 export type ProviderPreset = {
   id: string;
   label?: string;
   name?: string;
   baseUrl?: string;
   model?: string;
+  models?: ProviderPresetModel[];
   authType?: 'api-key' | 'chatgpt' | string;
 };
 
@@ -244,7 +251,10 @@ export type CuppetApi = {
     relocate: (projectId: string, path: string) => Promise<Project>;
     remove: (projectId: string) => Promise<any>;
   };
-  native: { chooseFolder: (options?: Record<string, unknown>) => Promise<string | null> };
+  native: {
+    platform: string;
+    chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
+  };
   settings: {
     get: () => Promise<ProviderSettings>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
