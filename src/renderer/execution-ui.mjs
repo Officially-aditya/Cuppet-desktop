@@ -10,7 +10,6 @@ const stopButton = document.querySelector('#stop-button');
 
 if (prompt && composer && composerWrap && actions && messages && sendButton && stopButton && window.cuppet) {
   const running = new Set();
-  const queues = new Map();
   const activity = new Map();
   let deliveryMode = 'queue';
   let rendering = false;
@@ -23,8 +22,8 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
   const controls = document.createElement('div');
   controls.className = 'delivery-controls hidden';
   controls.innerHTML = '<span>While running</span>';
-  const queueButton = modeButton('Queue', 'Queue this message until the current run finishes.', 'queue');
-  const steerButton = modeButton('Steer', 'Interrupt the current run and immediately apply this instruction.', 'steer');
+  const queueButton = modeButton('Queue', 'Run this message after the active turn.', 'queue');
+  const steerButton = modeButton('Steer', 'Interrupt the active turn and apply this instruction immediately.', 'steer');
   controls.append(queueButton, steerButton);
   actions.insertBefore(controls, actions.firstChild);
   setDeliveryMode('queue');
@@ -37,35 +36,26 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     event.stopImmediatePropagation();
     clearPrompt();
     if (deliveryMode === 'steer') void steer(sessionId, text);
-    else enqueue(sessionId, text);
-  }, true);
-
-  stopButton.addEventListener('click', () => {
-    const sessionId = currentSessionId();
-    if (!sessionId) return;
-    const removed = queues.get(sessionId)?.length ?? 0;
-    if (removed) {
-      queues.delete(sessionId);
-      addActivity(sessionId, { id: `queue-cleared-${Date.now()}`, kind: 'queue', status: 'stopped', label: `Cleared ${removed} queued message${removed === 1 ? '' : 's'}` });
-      renderActivity();
-    }
+    else void queueTurn(sessionId, text);
   }, true);
 
   window.cuppet.onEvent((event) => {
     if (!event || typeof event.type !== 'string') return;
     const sessionId = String(event.sessionId ?? event.message?.sessionId ?? '');
+
     if (event.type === 'run.started' && sessionId) running.add(sessionId);
-    if (event.type === 'run.finished' && sessionId) {
-      running.delete(sessionId);
-      setTimeout(() => void drainQueue(sessionId), 0);
-    }
-    if (event.type === 'tool.started' && sessionId) {
-      addActivity(sessionId, { id: event.executionId, kind: 'tool', tool: event.tool, status: 'running', label: startedLabel(event.tool) });
-    }
+    if (event.type === 'run.finished' && sessionId) running.delete(sessionId);
+    if (event.type === 'queue.queued' && sessionId) addActivity(sessionId, { id: event.queueId, kind: 'queue', status: 'queued', label: `Queued message${event.position ? ` #${event.position}` : ''}` });
+    if (event.type === 'queue.started' && sessionId) updateActivity(sessionId, event.queueId, { kind: 'queue', status: 'running', label: 'Starting queued message' });
+    if (event.type === 'queue.dispatched' && sessionId) updateActivity(sessionId, event.queueId, { kind: 'queue', status: 'complete', label: event.runSessionId && event.runSessionId !== sessionId ? 'Queued message routed to task' : 'Queued message started' });
+    if (event.type === 'queue.failed' && sessionId) updateActivity(sessionId, event.queueId, { kind: 'queue', status: 'error', label: 'Queued message failed', details: event.message || '' });
+    if (event.type === 'tool.started' && sessionId) addActivity(sessionId, { id: event.executionId, kind: 'tool', tool: event.tool, status: 'running', label: startedLabel(event.tool) });
     if (event.type === 'tool.finished' && sessionId) void finishTool(sessionId, event);
     if (event.type === 'validation.completed' && sessionId) addValidation(sessionId, event.validation);
+    if (event.type === 'graph.refresh.failed' && sessionId) addActivity(sessionId, { id: `graph-${Date.now()}`, kind: 'validation', status: 'error', label: 'TST graph refresh failed', details: event.message || '' });
     if (event.type === 'message.delta' && event.messageId && sessionId === currentSessionId()) renderMessageById(event.messageId, event.content ?? '');
     if ((event.type === 'message.created' || event.type === 'message.completed') && event.message?.role === 'assistant' && event.message.sessionId === currentSessionId()) renderMessageById(event.message.id, event.message.content ?? '');
+
     queueMicrotask(() => { syncComposer(); renderActivity(); });
   });
 
@@ -77,10 +67,7 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
   composerObserver.observe(sendButton, { attributes: true, attributeFilter: ['disabled'] });
   composerObserver.observe(stopButton, { attributes: true, attributeFilter: ['class'] });
 
-  const messageObserver = new MutationObserver(() => {
-    if (rendering) return;
-    renderVisibleMarkdown();
-  });
+  const messageObserver = new MutationObserver(() => { if (!rendering) renderVisibleMarkdown(); });
   messageObserver.observe(messages, { childList: true, subtree: true });
 
   syncComposer();
@@ -127,37 +114,14 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     prompt.focus();
   }
 
-  function enqueue(sessionId, text) {
-    const queue = queues.get(sessionId) ?? [];
-    if (queue.length >= 16) {
-      addActivity(sessionId, { id: `queue-limit-${Date.now()}`, kind: 'queue', status: 'error', label: 'Queue is full (16 messages)' });
-      renderActivity();
-      return;
-    }
-    const item = { id: `queued-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`, text: text.slice(0, 8192), createdAt: Date.now() };
-    queue.push(item); queues.set(sessionId, queue);
-    addActivity(sessionId, { id: item.id, kind: 'queue', status: 'queued', label: `Queued message #${queue.length}`, details: item.text });
-    renderActivity();
-  }
-
-  async function drainQueue(sessionId) {
-    if (isRunning(sessionId)) return;
-    const queue = queues.get(sessionId);
-    if (!queue?.length) return;
-    const item = queue.shift();
-    if (!queue.length) queues.delete(sessionId);
-    updateActivity(sessionId, item.id, { status: 'running', label: 'Sending queued message' });
-    renderActivity();
+  async function queueTurn(sessionId, text) {
     try {
-      const result = await window.cuppet.sessions.send(sessionId, item.text);
-      updateActivity(sessionId, item.id, { status: 'complete', label: 'Queued message sent' });
-      if (result?.sessionId) running.add(result.sessionId);
+      const result = await window.cuppet.sessions.send(sessionId, text);
+      if (!result?.queued && result?.sessionId) running.add(result.sessionId);
     } catch (error) {
-      const remaining = queues.get(sessionId) ?? [];
-      remaining.unshift(item); queues.set(sessionId, remaining);
-      updateActivity(sessionId, item.id, { status: 'error', label: 'Queued message could not start', details: error?.message || String(error) });
+      addActivity(sessionId, { id: `queue-error-${Date.now()}`, kind: 'queue', status: 'error', label: 'Could not queue message', details: error?.message || String(error) });
+      renderActivity();
     }
-    renderActivity();
   }
 
   async function steer(sessionId, text) {
@@ -174,21 +138,13 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
   }
 
   async function finishTool(sessionId, event) {
-    const existing = findActivity(sessionId, event.executionId) ?? { id: event.executionId, kind: 'tool', tool: event.tool };
-    const patch = { status: event.success ? 'complete' : 'error', label: finishedLabel(event) };
-    if (!event.success && event.message) patch.details = event.message;
-    updateActivity(sessionId, existing.id, patch, existing);
+    updateActivity(sessionId, event.executionId, { id: event.executionId, kind: 'tool', tool: event.tool, status: event.success ? 'complete' : 'error', label: finishedLabel(event), ...(event.message ? { details: event.message } : {}) });
     try {
       const session = await window.cuppet.sessions.get(sessionId);
       const execution = session?.toolExecutions?.find?.((item) => item.id === event.executionId);
       if (execution) {
-        const parsedOutput = parseOutput(execution.output);
-        updateActivity(sessionId, existing.id, {
-          arguments: prettyJson(execution.argumentsJson),
-          output: parsedOutput.output,
-          diff: parsedOutput.diff,
-          details: !event.success ? execution.output : undefined,
-        });
+        const parsed = parseOutput(execution.output);
+        updateActivity(sessionId, event.executionId, { arguments: prettyJson(execution.argumentsJson), output: parsed.output, diff: parsed.diff, ...(!event.success ? { details: execution.output } : {}) });
       }
     } catch {}
     renderActivity();
@@ -205,7 +161,6 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
       output: commands.map((item) => `${item.command ?? 'check'} → exit ${item.exitCode ?? '?'}`).join('\n'),
       details: JSON.stringify(validation, null, 2),
     });
-    renderActivity();
   }
 
   function addActivity(sessionId, entry) {
@@ -216,15 +171,13 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     activity.set(sessionId, list.slice(-30));
   }
 
-  function updateActivity(sessionId, id, patch, fallback = null) {
+  function updateActivity(sessionId, id, patch) {
     const list = activity.get(sessionId) ?? [];
     const index = list.findIndex((item) => item.id === id);
     if (index >= 0) list[index] = { ...list[index], ...patch };
-    else list.push({ ...(fallback ?? { id }), ...patch });
+    else list.push({ id, ...patch });
     activity.set(sessionId, list.slice(-30));
   }
-
-  function findActivity(sessionId, id) { return (activity.get(sessionId) ?? []).find((item) => item.id === id); }
 
   async function loadActivityForCurrent() {
     const sessionId = currentSessionId();
@@ -233,11 +186,7 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
       const session = await window.cuppet.sessions.get(sessionId);
       const entries = (session?.toolExecutions ?? []).slice(-20).map((execution) => {
         const parsed = parseOutput(execution.output);
-        return {
-          id: execution.id, kind: 'tool', tool: execution.toolName,
-          status: execution.status === 'complete' ? 'complete' : execution.status === 'running' ? 'running' : 'error',
-          label: historicalLabel(execution), arguments: prettyJson(execution.argumentsJson), output: parsed.output, diff: parsed.diff,
-        };
+        return { id: execution.id, kind: 'tool', tool: execution.toolName, status: execution.status === 'complete' ? 'complete' : execution.status === 'running' ? 'running' : 'error', label: `${execution.toolName || 'Tool'} ${execution.status === 'complete' ? 'completed' : execution.status}`, arguments: prettyJson(execution.argumentsJson), output: parsed.output, diff: parsed.diff };
       });
       if (entries.length) activity.set(sessionId, entries);
     } catch {}
@@ -245,12 +194,9 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
   }
 
   function renderActivity() {
-    const sessionId = currentSessionId();
-    const list = sessionId ? activity.get(sessionId) ?? [] : [];
-    const queued = sessionId ? queues.get(sessionId)?.length ?? 0 : 0;
-    if (!list.length && !queued) { panel.classList.add('hidden'); panel.replaceChildren(); return; }
-    const visible = list.slice(-12);
-    panel.replaceChildren(...visible.map(activityNode));
+    const list = activity.get(currentSessionId()) ?? [];
+    if (!list.length) { panel.classList.add('hidden'); panel.replaceChildren(); return; }
+    panel.replaceChildren(...list.slice(-12).map(activityNode));
     panel.classList.remove('hidden');
     panel.scrollTop = panel.scrollHeight;
   }
@@ -262,9 +208,8 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     const status = document.createElement('span'); status.className = 'activity-status'; status.textContent = statusGlyph(entry.status);
     const label = document.createElement('span'); label.className = 'activity-label'; label.textContent = entry.label || 'Agent activity';
     head.append(status, label); row.append(head);
-
     if (entry.diff) row.append(detailBlock('Show changes', entry.diff, 'diff'));
-    if (entry.output && !entry.diff) row.append(detailBlock(entry.kind === 'validation' ? 'Show checks' : 'Show output', entry.output));
+    if (entry.output) row.append(detailBlock(entry.kind === 'validation' ? 'Show checks' : entry.diff ? 'Show result' : 'Show output', entry.output));
     if (entry.arguments) row.append(detailBlock('Show arguments', entry.arguments));
     if (entry.details && !entry.output && !entry.diff) row.append(detailBlock('Details', entry.details));
     return row;
@@ -281,15 +226,13 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     rendering = true;
     try {
       for (const node of messages.querySelectorAll('.message.assistant .message-content')) {
-        if (node.dataset.markdownRendered === '1') continue;
-        renderMarkdownNode(node, node.textContent ?? '');
+        if (node.dataset.markdownRendered !== '1') renderMarkdownNode(node, node.textContent ?? '');
       }
     } finally { queueMicrotask(() => { rendering = false; }); }
   }
 
   function renderMessageById(messageId, source) {
-    const selector = `[data-message-id="${cssEscape(messageId)}"] .message-content`;
-    const node = messages.querySelector(selector);
+    const node = messages.querySelector(`[data-message-id="${cssEscape(messageId)}"] .message-content`);
     if (node) renderMarkdownNode(node, source);
   }
 
@@ -311,7 +254,12 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
       }
     } catch {}
     const fenced = text.match(/```diff\s*\n([\s\S]*?)```/i);
-    return { diff: fenced?.[1]?.trim() ?? '', output: fenced ? '' : text };
+    if (fenced) return { diff: fenced[1].trim(), output: '' };
+    if (/^TST EDIT BATCH (?:PREPARED|APPLIED)/.test(text)) {
+      const split = text.indexOf('\n\n');
+      if (split >= 0) return { diff: text.slice(split + 2).trim(), output: text.slice(0, split).trim() };
+    }
+    return { diff: '', output: text };
   }
 
   function prettyJson(raw) {
@@ -336,11 +284,6 @@ if (prompt && composer && composerWrap && actions && messages && sendButton && s
     return `${event.tool || 'Tool'} finished`;
   }
 
-  function historicalLabel(execution) {
-    const success = execution.status === 'complete';
-    return success ? `${execution.toolName || 'Tool'} completed` : `${execution.toolName || 'Tool'} ${execution.status || 'finished'}`;
-  }
-
-  function statusGlyph(status) { return status === 'running' ? '…' : status === 'error' ? '×' : status === 'queued' ? '↳' : status === 'stopped' ? '–' : '✓'; }
+  function statusGlyph(status) { return status === 'running' ? '…' : status === 'error' ? '×' : status === 'queued' ? '↳' : '✓'; }
   function cssEscape(value) { return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^A-Za-z0-9_-]/g, '\\$&'); }
 }
