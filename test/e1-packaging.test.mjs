@@ -26,7 +26,7 @@ test('Linux basic_text credential backend is rejected even when Electron reports
 test('RuntimeClient creates its data directory, speaks stdio RPC, and shuts down gracefully', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'cuppet-e1-runtime-client-'));
   await rm(dataDir, { recursive: true, force: true });
-  const fixture = fileURLToPath(new URL('./fixtures/runtime-client-child.mjs', import.meta.url));
+  const fixture = fileURLToPath(new URL('../test-support/runtime-client-child.mjs', import.meta.url));
   const client = new RuntimeClient({ entry: fixture, dataDir, execPath: process.execPath, startupTimeoutMs: 3_000 });
   try {
     const ready = await client.start().then(() => client.waitForReady());
@@ -45,13 +45,13 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
   assert.equal(pkg.build.appId, 'com.cuppet.desktop');
   assert.equal(pkg.build.productName, 'Cuppet');
   assert.equal(pkg.build.asar, true);
-  assert.equal(pkg.build.allowMissingDependencies, false);
+  assert.equal(pkg.build.allowMissingDependencies, undefined);
   assert.ok(pkg.build.files.includes('src/**/*'));
   assert.deepEqual(pkg.dependencies, {});
   assert.equal(pkg.build.asarUnpack, undefined);
   assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
-  assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir');
+  assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir --publish never');
   assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --omit=dev --audit-level=high');
   assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
 
