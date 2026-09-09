@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ const localEmbedding = await read('src/runtime/pe3/local-embedding.mjs');
 const smoke = await read('scripts/smoke-packaged-runtime.mjs');
 const ci = await read('.github/workflows/ci.yml');
 const docs = await read('docs/e1-production-packaging.md');
+const runtimeFixture = await read('test-support/runtime-client-child.mjs');
 
 assert.equal(contract.phase, 'E1');
 assert.equal(contract.status, 'implemented-candidate');
@@ -33,13 +34,13 @@ assert.equal(pkg.build.appId, 'com.cuppet.desktop');
 assert.equal(pkg.build.productName, 'Cuppet');
 assert.equal(pkg.build.executableName, 'cuppet');
 assert.equal(pkg.build.asar, true);
-assert.equal(pkg.build.allowMissingDependencies, false);
+assert.equal(pkg.build.allowMissingDependencies, undefined);
 assert.ok(pkg.build.files.includes('src/**/*'));
 assert.deepEqual(pkg.dependencies, {});
 assert.equal(pkg.build.asarUnpack, undefined);
 assert.equal(pkg.devDependencies.electron, '44.3.0');
 assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
-assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir');
+assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir --publish never');
 assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --omit=dev --audit-level=high');
 assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
 assert.equal(pkg.scripts['e1:verify'], 'node scripts/verify-e1.mjs');
@@ -60,6 +61,9 @@ assert.match(providerSettings, /mode: 0o600/);
 assert.match(localEmbedding, /LocalFeatureEmbeddingProvider/);
 assert.match(localEmbedding, /cuppet\/subword-hash-v1/);
 assert.doesNotMatch(localEmbedding, /@huggingface|onnxruntime|sharp/i);
+assert.match(runtimeFixture, /runtime\.ready/);
+assert.match(runtimeFixture, /createInterface/);
+await assert.rejects(access(join(root, 'test/fixtures/runtime-client-child.mjs')), { code: 'ENOENT' });
 assert.match(smoke, /app\.asar/);
 assert.match(smoke, /session\.create/);
 assert.match(smoke, /session\.list/);
@@ -80,7 +84,7 @@ assert.match(ci, /npm run e1:verify/);
 assert.match(ci, /npm run pack:dir/);
 assert.match(ci, /npm run e1:package-smoke/);
 
-for (const path of ['src/main/bootstrap.mjs', 'src/main/credential-storage.mjs', 'src/main/runtime-client.mjs', 'src/runtime/pe3/local-embedding.mjs', 'scripts/smoke-packaged-runtime.mjs']) {
+for (const path of ['src/main/bootstrap.mjs', 'src/main/credential-storage.mjs', 'src/main/runtime-client.mjs', 'src/runtime/pe3/local-embedding.mjs', 'test-support/runtime-client-child.mjs', 'scripts/smoke-packaged-runtime.mjs']) {
   run(process.execPath, ['--check', join(root, path)]);
 }
 run(process.execPath, ['--test', join(root, 'test/e1-packaging.test.mjs'), join(root, 'test/pe3-local-embedding.test.mjs')]);
