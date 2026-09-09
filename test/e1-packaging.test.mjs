@@ -39,7 +39,7 @@ test('RuntimeClient creates its data directory, speaks stdio RPC, and shuts down
   }
 });
 
-test('package metadata makes bootstrap security and ASAR packaging authoritative', async () => {
+test('package metadata makes bootstrap security, audit, and ASAR packaging authoritative', async () => {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'src/main/bootstrap.mjs');
   assert.equal(pkg.build.appId, 'com.cuppet.desktop');
@@ -47,9 +47,12 @@ test('package metadata makes bootstrap security and ASAR packaging authoritative
   assert.equal(pkg.build.asar, true);
   assert.equal(pkg.build.allowMissingDependencies, false);
   assert.ok(pkg.build.files.includes('src/**/*'));
+  assert.deepEqual(pkg.dependencies, {});
+  assert.equal(pkg.build.asarUnpack, undefined);
   assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
   assert.equal(pkg.scripts['pack:dir'], 'electron-builder --dir');
+  assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --omit=dev --audit-level=high');
   assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
 
   const bootstrap = await readFile(join(root, 'src/main/bootstrap.mjs'), 'utf8');
