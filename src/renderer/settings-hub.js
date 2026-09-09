@@ -18,8 +18,10 @@
   const providerBackgroundModel = document.getElementById('provider-background-model');
   const providerApiKey = document.getElementById('provider-api-key');
   const providerApiKeyLabel = document.getElementById('provider-api-key-label');
+  const providerApiKeyField = providerApiKey?.closest('label');
   const providerPresetNote = document.getElementById('provider-preset-note');
   const settingsForm = document.getElementById('settings-form');
+  const settingsNote = document.getElementById('settings-note');
   let providerState = null;
   let providerPresets = [];
 
@@ -27,7 +29,9 @@
   const codexNote = document.getElementById('codex-auth-note');
   const codexLogin = document.getElementById('codex-auth-login');
   const codexLogout = document.getElementById('codex-auth-logout');
+  const platformCodex = createPlatformCodexAuth();
   let codexPoll = null;
+  let lastCodexState = null;
 
   const sections = {
     account: ['Account', 'Cuppet identity and connected account services.'],
@@ -41,8 +45,6 @@
 
   for (const button of sectionButtons) button.addEventListener('click', () => activate(button.dataset.settingsSection));
 
-  // Manual Settings opens on the broad account overview. Provider-required flows from app.js
-  // still land on Platform because close restores that as the internal default.
   settingsButton?.addEventListener('click', () => requestAnimationFrame(() => {
     activate('account');
     void refreshCodexAuth();
@@ -67,9 +69,11 @@
   for (const input of [compact, reduceMotion].filter(Boolean)) input.addEventListener('change', savePreferences);
 
   providerSelect?.addEventListener('change', () => applySelectedProvider(providerSelect.value, true));
-  settingsForm?.addEventListener('submit', () => applySelectedProvider(providerSelect?.value, false), true);
+  settingsForm?.addEventListener('submit', guardProviderSubmit, true);
   codexLogin?.addEventListener('click', () => void startCodexLogin());
   codexLogout?.addEventListener('click', () => void logoutCodex());
+  platformCodex.login?.addEventListener('click', () => void startCodexLogin());
+  platformCodex.logout?.addEventListener('click', () => void logoutCodex());
 
   void refreshProviderForm();
   void refreshCodexAuth();
@@ -116,25 +120,56 @@
     if (providerApiKeyLabel) providerApiKeyLabel.textContent = preset.authLabel || 'API key';
     if (providerPresetNote) providerPresetNote.textContent = preset.note || `${preset.label} endpoint and default coding model are configured automatically.`;
 
-    const sameSavedProvider = providerState && (providerState.presetID || providerState.providerID) === preset.id;
-    const savedKey = Boolean(sameSavedProvider && providerState.apiKeyConfigured);
+    const chatGPTProvider = preset.authType === 'chatgpt';
+    providerApiKeyField?.classList.toggle('hidden', chatGPTProvider);
+    platformCodex.root?.classList.toggle('hidden', !chatGPTProvider);
     if (providerApiKey) {
       if (userChanged) providerApiKey.value = '';
-      providerApiKey.required = !savedKey || !sameSavedProvider;
-      providerApiKey.placeholder = savedKey ? 'Leave blank to keep the saved key' : `Enter ${preset.authLabel || `${preset.label} API key`}`;
+      if (chatGPTProvider) {
+        providerApiKey.required = false;
+        providerApiKey.placeholder = 'No API key required';
+      } else {
+        const sameSavedProvider = providerState && (providerState.presetID || providerState.providerID) === preset.id;
+        const savedKey = Boolean(sameSavedProvider && providerState.apiKeyConfigured);
+        providerApiKey.required = !savedKey || !sameSavedProvider;
+        providerApiKey.placeholder = savedKey ? 'Leave blank to keep the saved key' : `Enter ${preset.authLabel || `${preset.label} API key`}`;
+      }
     }
+    if (chatGPTProvider) void refreshCodexAuth();
+  }
+
+  async function guardProviderSubmit(event) {
+    const preset = providerPresets.find((item) => item.id === providerSelect?.value);
+    if (preset?.authType !== 'chatgpt') return;
+    event.preventDefault();
+    let auth;
+    try { auth = await window.cuppet?.codexAuth?.status?.(); }
+    catch (error) {
+      event.stopImmediatePropagation();
+      if (settingsNote) settingsNote.textContent = error?.message || 'Codex authentication unavailable.';
+      return;
+    }
+    if (auth?.loggedIn === true) {
+      // app.js owns persistence; submit a fresh event after the async auth check.
+      settingsForm?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: event.submitter }));
+      return;
+    }
+    event.stopImmediatePropagation();
+    if (settingsNote) settingsNote.textContent = 'Continue with ChatGPT before saving Codex as the active provider.';
+    activate('platform');
+    await refreshCodexAuth();
   }
 
   async function startCodexLogin() {
     if (!window.cuppet?.codexAuth?.login) return;
     setCodexBusy(true);
-    if (codexNote) codexNote.textContent = 'Opening the official ChatGPT sign-in through Codex…';
+    setCodexMessage('Opening the official ChatGPT sign-in through Codex…');
     try {
       await window.cuppet.codexAuth.login();
       startCodexPolling();
       await refreshCodexAuth();
     } catch (error) {
-      if (codexNote) codexNote.textContent = error?.message || String(error);
+      setCodexMessage(error?.message || String(error));
       setCodexBusy(false);
     }
   }
@@ -147,39 +182,50 @@
       stopCodexPolling();
       await refreshCodexAuth();
     } catch (error) {
-      if (codexNote) codexNote.textContent = error?.message || String(error);
+      setCodexMessage(error?.message || String(error));
       setCodexBusy(false);
     }
   }
 
   async function refreshCodexAuth() {
-    if (!codexStatus || !window.cuppet?.codexAuth?.status) return;
+    if (!window.cuppet?.codexAuth?.status) return;
     try {
       const value = await window.cuppet.codexAuth.status();
-      codexStatus.textContent = value.loggedIn ? 'Connected' : value.loginRunning ? 'Signing in…' : value.available ? 'Not connected' : 'Unavailable';
-      codexStatus.classList.toggle('muted', !value.loggedIn);
-      if (codexNote) codexNote.textContent = value.message || (value.available ? 'Not connected to ChatGPT.' : 'Official Codex client not found.');
-      if (codexLogin) {
-        codexLogin.classList.toggle('hidden', value.loggedIn === true);
-        codexLogin.disabled = value.available !== true || value.loginRunning === true;
+      lastCodexState = value;
+      const label = value.loggedIn ? 'Connected' : value.loginRunning ? 'Signing in…' : value.available ? 'Not connected' : 'Unavailable';
+      for (const status of [codexStatus, platformCodex.status].filter(Boolean)) {
+        status.textContent = label;
+        status.classList.toggle('muted', !value.loggedIn);
       }
-      if (codexLogout) {
-        codexLogout.classList.toggle('hidden', value.loggedIn !== true);
-        codexLogout.disabled = value.loginRunning === true;
+      setCodexMessage(value.message || (value.available ? 'Not connected to ChatGPT.' : 'Official Codex app-server not found.'));
+      for (const login of [codexLogin, platformCodex.login].filter(Boolean)) {
+        login.classList.toggle('hidden', value.loggedIn === true);
+        login.disabled = value.available !== true || value.loginRunning === true;
+      }
+      for (const logout of [codexLogout, platformCodex.logout].filter(Boolean)) {
+        logout.classList.toggle('hidden', value.loggedIn !== true);
+        logout.disabled = value.loginRunning === true;
       }
       if (value.loginRunning) startCodexPolling();
       else if (value.loggedIn || !value.available) stopCodexPolling();
     } catch (error) {
-      codexStatus.textContent = 'Unavailable';
-      codexStatus.classList.add('muted');
-      if (codexNote) codexNote.textContent = error?.message || 'Codex authentication unavailable.';
+      lastCodexState = null;
+      for (const status of [codexStatus, platformCodex.status].filter(Boolean)) {
+        status.textContent = 'Unavailable';
+        status.classList.add('muted');
+      }
+      setCodexMessage(error?.message || 'Codex authentication unavailable.');
       setCodexBusy(false);
     }
   }
 
+  function setCodexMessage(message) {
+    if (codexNote) codexNote.textContent = message;
+    if (platformCodex.note) platformCodex.note.textContent = message;
+  }
+
   function setCodexBusy(value) {
-    if (codexLogin) codexLogin.disabled = value;
-    if (codexLogout) codexLogout.disabled = value;
+    for (const button of [codexLogin, codexLogout, platformCodex.login, platformCodex.logout].filter(Boolean)) button.disabled = value;
   }
 
   function startCodexPolling() {
@@ -191,6 +237,32 @@
     if (!codexPoll) return;
     clearInterval(codexPoll);
     codexPoll = null;
+  }
+
+  function createPlatformCodexAuth() {
+    if (!providerPresetNote) return {};
+    const root = document.createElement('div');
+    root.className = 'settings-row codex-auth-row hidden';
+    root.dataset.providerCodexAuth = 'true';
+    const info = document.createElement('div');
+    const heading = document.createElement('strong');
+    heading.textContent = 'ChatGPT subscription';
+    const note = document.createElement('span');
+    note.textContent = 'Checking Codex authentication…';
+    info.append(heading, note);
+    const actions = document.createElement('div');
+    actions.className = 'codex-auth-actions';
+    const status = document.createElement('span');
+    status.className = 'settings-status-pill muted';
+    status.textContent = 'Checking…';
+    const login = document.createElement('button');
+    login.type = 'button'; login.className = 'primary-button'; login.textContent = 'Continue with ChatGPT';
+    const logout = document.createElement('button');
+    logout.type = 'button'; logout.className = 'ghost-button hidden'; logout.textContent = 'Sign out';
+    actions.append(status, login, logout);
+    root.append(info, actions);
+    providerPresetNote.insertAdjacentElement('afterend', root);
+    return { root, status, note, login, logout };
   }
 
   function readPreferences() {
@@ -257,8 +329,6 @@
     return div.innerHTML;
   }
 
-  // Remove the old inline project removal affordance entirely. Project lifecycle actions stay
-  // in the project hamburger menu.
   function cleanProjectRows() {
     projectList?.querySelectorAll('.remove-button').forEach((button) => button.remove());
   }
