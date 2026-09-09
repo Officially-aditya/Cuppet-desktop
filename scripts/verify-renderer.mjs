@@ -33,19 +33,26 @@ assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|ex
 assert.match(entry, /createRoot/);
 assert.match(entry, /<App\s*\/>/);
 
-assert.match(app, /if \(value\.startsWith\('\/'\)\)/, 'slash commands are not handled by the single React send path');
+assert.match(app, /if \((?:value|trimmed)\.startsWith\('\/'\)\)/, 'slash commands are not handled by the single React send path');
 assert.match(app, /window\.cuppet\.commands\.execute/, 'React command path does not use the bounded preload command API');
 assert.match(app, /const result = await window\.cuppet\.sessions\.send/, 'normal prompt send path missing');
+assert.match(app, /sessions\.send\(session\.id, value, attachments\)/, 'composer attachments are not forwarded through the bounded session send path');
+assert.match(app, /onNewProjectChat=\{\(projectId\) => startDraft\(projectId\)\}/, 'project hover new-chat action does not create a project-bound draft');
 assert.match(app, /result\?\.sessionId/, 'React send path does not follow PE3-selected target sessions');
 assert.match(app, /event\.type === 'pe3\.routed'/, 'React event path does not follow PE3 routing');
 assert.match(chat, /currentSlashQuery/, 'typed slash palette activation missing');
 assert.match(chat, /ArrowDown|ArrowUp/, 'slash palette keyboard navigation missing');
 assert.match(chat, /aria-label=.*Send/s, 'arrow send action missing');
+assert.match(chat, /aria-label="Attach files"/, 'composer attachment action missing');
+assert.match(chat, /type="file"\s+multiple/, 'composer attachment action is not backed by the native OS file picker');
+assert.match(chat, /composer-attachments/, 'selected attachment chips missing');
 assert.match(chat, /data-message-id=\{message\.id\}/, 'messages are not addressable for exact search navigation');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
 assert.match(search, /scrollIntoView/, 'exact message search result does not scroll into view');
+assert.match(sidebar, /project-new-chat-button/, 'project hover new-chat button missing');
+assert.match(sidebar, /New chat in \$\{project\.name\}/, 'project hover new-chat action is not labelled per project');
 assert.match(sidebar, /Remove project/, 'project hamburger remove action missing');
 assert.doesNotMatch(sidebar, /Remove registration/, 'legacy remove-registration wording returned');
 assert.match(sidebar, /SIDEBAR_WIDTH_KEY/, 'resizable sidebar persistence missing');
@@ -75,4 +82,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, slash dispatch is single-path, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
