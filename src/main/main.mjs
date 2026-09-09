@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
+import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let runtime;
@@ -53,10 +54,18 @@ function registerIpc() {
   ipcMain.handle('cuppet:remote:devices', () => request('remote.devices'));
   ipcMain.handle('cuppet:remote:revoke', (_event, deviceId) => request('remote.revoke', { deviceId: typeof deviceId === 'string' ? deviceId.slice(0, 128) : '' }));
 
+  ipcMain.handle('cuppet:command:list', () => listCommands());
+  ipcMain.handle('cuppet:command:execute', async (_event, sessionId, value) => executeDesktopCommand(request, sessionId, value));
+
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
-  ipcMain.handle('cuppet:session:send', (_event, sessionId, text, attachments) => request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() }));
+  ipcMain.handle('cuppet:session:send', async (_event, sessionId, text, attachments) => {
+    const parsed = parseSlashCommand(text);
+    if (parsed.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
+    if (parsed.kind === 'command') return executeDesktopCommand(request, sessionId, parsed);
+    return request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() });
+  });
   ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
   ipcMain.handle('cuppet:session:undo:status', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
   ipcMain.handle('cuppet:session:undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
@@ -78,6 +87,89 @@ function registerIpc() {
     await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
     return result;
   });
+}
+
+async function executeDesktopCommand(request, sessionId, value) {
+  const parsed = typeof value === 'string' ? parseSlashCommand(value) : value;
+  if (parsed?.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
+  if (parsed?.kind !== 'command') throw new Error('A recognized Cuppet command is required');
+  const runtimeCall = async (method, params = {}) => {
+    if (method === 'session.steer') return steerSession(request, params.sessionId, params.text);
+    return request(method, params);
+  };
+  const result = await executeCommand(parsed, {
+    sessionId: boundedId(sessionId),
+    call: runtimeCall,
+    providerRequest: settings.runtimeValue(),
+    host: {
+      status: () => request('status', { provider: settings.runtimeValue() }),
+      doctor: () => request('doctor', { provider: settings.runtimeValue() }),
+      remoteStatus: () => request('remote.status'),
+      remoteStart: () => request('remote.start', { setup: true, createInvite: true, provider: settings.runtimeValue() }),
+      remoteStop: () => request('remote.stop'),
+    },
+    provider: desktopProviderAuthority(request),
+  });
+  mainWindow?.webContents.send('cuppet:event', { type: 'command.completed', ...result });
+  return result;
+}
+
+function desktopProviderAuthority(request) {
+  return {
+    models: async () => {
+      const value = settings.rendererValue();
+      return { configured: value.configured, primary: value.primary, secondary: value.secondary, models: value.models, catalog: value.catalog };
+    },
+    providers: async () => {
+      const value = settings.rendererValue();
+      return { configured: value.configured, selectedProvider: value.primary?.providerID ?? value.providerID ?? null, catalog: value.catalog };
+    },
+    selectProvider: async (providerID) => {
+      const value = settings.rendererValue();
+      const requested = String(providerID ?? '').trim();
+      const current = value.primary?.providerID ?? value.providerID ?? null;
+      const entry = value.catalog?.find?.((item) => item.id === requested || item.integrationIds?.includes?.(requested));
+      if (!entry) throw new Error(`Unknown configured provider: ${requested}`);
+      if (current !== entry.id && !entry.integrationIds?.includes?.(current)) throw new Error('Switch providers in Provider settings so endpoint and credentials remain host-local.');
+      return { selected: true, providerID: current, requiresSettings: false };
+    },
+    effort: async () => {
+      const value = settings.rendererValue();
+      const model = value.models?.find?.((item) => item.providerID === value.primary?.providerID && item.modelID === value.primary?.modelID);
+      return { providerID: value.primary?.providerID ?? null, modelID: value.primary?.modelID ?? null, variant: value.primary?.variant ?? null, variants: model?.variants ?? [] };
+    },
+    setEffort: async (variant) => {
+      const value = settings.rendererValue();
+      if (!value.primary?.modelID || !value.baseUrl) throw new Error('Configure a primary model before selecting effort.');
+      const requested = String(variant ?? '').trim();
+      const model = value.models?.find?.((item) => item.providerID === value.primary.providerID && item.modelID === value.primary.modelID);
+      if (requested && requested !== 'default' && !model?.variants?.includes?.(requested)) throw new Error(`Effort variant is not advertised for ${value.primary.modelID}: ${requested}`);
+      const saved = await settings.save({
+        providerID: value.primary.providerID,
+        baseUrl: value.baseUrl,
+        model: value.primary.modelID,
+        backgroundModel: value.secondary?.modelID ?? value.primary.modelID,
+        primaryEffort: requested === 'default' ? '' : requested,
+        secondaryEffort: value.secondary?.variant ?? '',
+      });
+      await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+      return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
+    },
+  };
+}
+
+async function steerSession(request, sessionId, text) {
+  if (!sessionId) throw new Error('/steer requires an active session');
+  const instruction = String(text ?? '').trim();
+  if (!instruction) throw new Error('/steer requires an instruction');
+  await request('session.stop', { sessionId }).catch(() => undefined);
+  for (let i = 0; i < 250; i++) {
+    const session = await request('session.get', { sessionId });
+    const last = [...(session.messages ?? [])].reverse().find((message) => message.role === 'assistant');
+    if (!last || last.status !== 'streaming') return request('session.send', { sessionId, text: instruction, provider: settings.runtimeValue() });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('Session did not stop before steer');
 }
 
 function validateProjectPayload(value) {
