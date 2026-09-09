@@ -50,7 +50,8 @@ export function ModelPicker({ disabled = false }: Props) {
   }, [open]);
 
   const providerID = settings?.primary?.providerID || settings?.providerID || '';
-  const providerLabel = settings?.presets?.find((item) => item.id === providerID)?.label || providerID || 'Provider';
+  const providerPreset = settings?.presets?.find((item) => item.id === providerID);
+  const providerLabel = providerPreset?.label || providerID || 'Provider';
   const configuredModel = settings?.primary?.modelID || '';
 
   const options = useMemo<ModelOption[]>(() => {
@@ -70,13 +71,25 @@ export function ModelPicker({ disabled = false }: Props) {
       return [special, ...dynamic];
     }
 
+    const output: ModelOption[] = [];
     const seen = new Set<string>();
-    return (settings?.models ?? []).flatMap((model) => {
-      if (model.providerID !== providerID || !model.modelID || seen.has(model.modelID)) return [];
-      seen.add(model.modelID);
-      return [{ id: model.modelID, label: model.name || model.modelID }];
-    });
-  }, [codex, providerID, settings?.models]);
+    const add = (id?: string, label?: string, description?: string) => {
+      const value = String(id ?? '').trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      output.push({ id: value, label: label || value, ...(description ? { description } : {}) });
+    };
+
+    // Curated provider presets surface the current family first; runtime-advertised
+    // models remain available underneath so custom/provider-discovered entries are preserved.
+    for (const model of providerPreset?.models ?? []) add(model.id, model.label, model.description);
+    for (const model of settings?.models ?? []) {
+      if (model.providerID !== providerID) continue;
+      add(model.modelID, model.name);
+    }
+    add(configuredModel, configuredModel);
+    return output;
+  }, [codex, configuredModel, providerID, providerPreset?.models, settings?.models]);
 
   const displayModel = useMemo(() => {
     if (providerID === 'codex' && configuredModel === 'codex-default' && codex.defaultModel) {
@@ -140,7 +153,7 @@ export function ModelPicker({ disabled = false }: Props) {
 
       {open && (
         <div className="model-picker-menu" role="listbox" aria-label="Models">
-          <div className="model-picker-provider">{providerLabel}</div>
+          <div className="model-picker-provider">{providerID === 'codex' ? providerLabel : `${providerLabel} · Latest models`}</div>
           {options.length > 0 ? options.map((option) => (
             <button
               type="button"
