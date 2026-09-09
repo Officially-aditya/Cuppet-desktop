@@ -59,7 +59,7 @@ export function SelectControl({ value, options, onChange, ariaLabel, disabled = 
   };
 
   return (
-    <div className={`cuppet-select${open ? ' open' : ''}`} ref={root}>
+    <div className={`cuppet-select${open ? ' open' : ''}`} ref={root} onClick={(event) => event.stopPropagation()}>
       <button
         ref={trigger}
         type="button"
