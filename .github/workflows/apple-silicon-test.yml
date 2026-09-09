@@ -72,13 +72,18 @@ jobs:
       - name: Locate and verify arm64 app
         shell: bash
         run: |
-          APP="$(find dist -type d -name 'Cuppet.app' -print -quit)"
+          find dist -maxdepth 4 -print
+          APP="$(find dist -maxdepth 3 -type d -name '*.app' -print -quit)"
           if [[ -z "$APP" ]]; then
-            echo "Cuppet.app was not produced" >&2
+            echo "No macOS .app bundle was produced" >&2
             exit 1
           fi
-          APP_EXEC="$APP/Contents/MacOS/cuppet"
+          APP_EXEC="$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)"
           TST_BIN="$APP/Contents/Resources/tst/darwin-arm64/tst-daemon"
+          if [[ -z "$APP_EXEC" ]]; then
+            echo "No executable found inside $APP/Contents/MacOS" >&2
+            exit 1
+          fi
           test -x "$APP_EXEC"
           test -x "$TST_BIN"
           lipo -archs "$APP_EXEC" | grep -qw arm64
@@ -109,7 +114,7 @@ jobs:
           Cuppet Apple Silicon test build
 
           This build is ARM64 and ad-hoc signed for testing, but it is NOT Developer ID signed or notarized yet.
-          If macOS blocks the first launch, right-click Cuppet.app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
+          If macOS blocks the first launch, right-click the app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
 
           Please test:
           - app launch
