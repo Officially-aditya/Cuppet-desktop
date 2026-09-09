@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from './codex-app-server.mjs';
+import { parseCodexAccount } from './codex-account.mjs';
 
 const SAFE_CODEX_CWD = join(tmpdir(), 'cuppet-codex-runtime');
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -12,19 +13,20 @@ export class CodexSubscriptionProvider {
   constructor(configuration = {}) { this.#configuration = { ...configuration }; }
 
   async stream(messages, { signal, onDelta = () => {}, tools = [], executeTool } = {}) {
-    const launch = await resolveCodexAppServerCommand();
+    const launch = this.#configuration.codexLaunch ?? await resolveCodexAppServerCommand();
     if (!launch) throw new Error('Official Codex app-server is unavailable. Reinstall Cuppet or configure CUPPET_CODEX_APP_SERVER_BIN for development.');
     await mkdir(SAFE_CODEX_CWD, { recursive: true, mode: 0o700 });
 
-    const client = new CodexAppServerClient(launch);
+    const client = typeof this.#configuration.clientFactory === 'function'
+      ? this.#configuration.clientFactory(launch)
+      : new CodexAppServerClient(launch);
     let abortListener;
     let threadId = null;
     let turnId = null;
     try {
       await client.start();
-      const accountResult = await client.request('account/read', {});
-      const account = accountRecord(accountResult);
-      if (account.authMode !== 'chatgpt') throw new Error('Connect your ChatGPT account in Settings to use the Codex subscription provider.');
+      const account = parseCodexAccount(await client.request('account/read', {}));
+      if (!account.loggedIn) throw new Error('Connect your ChatGPT account in Settings to use the Codex subscription provider.');
 
       const dynamicTools = toDynamicTools(tools);
       if (dynamicTools.length && typeof executeTool !== 'function') throw new Error('Cuppet tool execution bridge is unavailable for Codex.');
@@ -148,14 +150,6 @@ function serializeConversation(messages) {
   return `${bytes.subarray(bytes.length - MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before Codex transport.]`;
 }
 
-function accountRecord(value) {
-  const root = record(value);
-  const account = record(root.account);
-  return {
-    authMode: String(account.authMode ?? root.authMode ?? '').toLowerCase(),
-    planType: String(account.planType ?? root.planType ?? ''),
-  };
-}
 function normalizeUsage(value) {
   const usage = record(value);
   if (!Object.keys(usage).length) return null;
