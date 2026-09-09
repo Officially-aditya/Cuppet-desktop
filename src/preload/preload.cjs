@@ -73,7 +73,10 @@ contextBridge.exposeInMainWorld('cuppet', {
     relocate: (projectId, path) => ipcRenderer.invoke('cuppet:project:relocate', projectId, path),
     remove: (projectId) => ipcRenderer.invoke('cuppet:project:remove', projectId),
   },
-  native: { chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options) },
+  native: {
+    platform: process.platform,
+    chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
+  },
   settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
   onEvent: (callback) => { if (typeof callback !== 'function') return () => {}; const listener = (_event, payload) => callback(payload); ipcRenderer.on('cuppet:event', listener); return () => ipcRenderer.removeListener('cuppet:event', listener); },
 });
