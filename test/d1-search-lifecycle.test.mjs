@@ -55,9 +55,11 @@ test('rename, archive, restore, project rename, and delete keep search coherent'
   assert.equal(db.search('Persistent', { includeArchived: true }).length, 0);
 }));
 
-test('FTS query input is bounded and special characters fail closed to useful terms', async () => fixture(async (db) => {
+test('FTS query input is bounded and search syntax is treated as inert text', async () => fixture(async (db) => {
   db.createSession({ id: 'session_1', title: 'Parser safety' });
   db.appendMessage({ id: 'user_1', sessionId: 'session_1', role: 'user', content: 'alpha beta gamma' });
-  assert.ok(db.search('alpha OR "unterminated').some((item) => item.sessionId === 'session_1'));
+
+  assert.ok(db.search('alpha /// beta').some((item) => item.sessionId === 'session_1'));
+  assert.deepEqual(db.search('alpha OR "unterminated'), []);
   assert.deepEqual(db.search('***'), []);
 }));
