@@ -4,14 +4,18 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, providerSettings, index, entry, controls, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
+const [pkgText, main, codexAuth, providerSettings, providerPresets, preload, index, entry, controls, reactCss, settingsCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
   read('src/main/provider-settings.mjs'),
+  read('src/main/provider-presets.mjs'),
+  read('src/preload/preload.cjs'),
   read('src/renderer/index.html'),
   read('src/renderer/main.tsx'),
   read('src/renderer/controls.css'),
+  read('src/renderer/react.css'),
+  read('src/renderer/settings.css'),
   read('src/renderer/react/SelectControl.tsx'),
   read('src/renderer/react/ModelPicker.tsx'),
   read('src/renderer/react/App.tsx'),
@@ -71,10 +75,17 @@ assert.match(modelPicker, /aria-label="Select model"/, 'model picker trigger is 
 assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does not read the authoritative current model');
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
 assert.match(modelPicker, /window\.cuppet\.codexAuth\.models/, 'Codex model picker does not use the app-server catalog');
+assert.match(modelPicker, /providerPreset\?\.models/, 'provider-family model choices are not merged into the picker');
+assert.match(modelPicker, /Latest models/, 'model picker does not identify the current provider family list');
 assert.match(modelPicker, /codex-default/, 'Codex automatic default selection is not preserved');
 assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
 assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
 assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
+for (const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','claude-fable-5','claude-opus-5','claude-sonnet-5','qwen3.8-max','qwen3.8-flash','deepseek-v4-pro','deepseek-v4-flash','gemini-3.8-flash','gemini-3.1-pro-preview','gemini-3.5-flash-lite','muse-spark-1.3']) {
+  assert.ok(providerPresets.includes(id), `latest provider-family model missing from picker catalog: ${id}`);
+}
+assert.match(providerPresets, /models:\s*models\.map/, 'provider preset projection does not expose its model family');
+assert.match(preload, /platform:\s*process\.platform/, 'renderer cannot detect macOS for native sidebar affordances');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
@@ -84,6 +95,13 @@ assert.match(sidebar, /New chat in \$\{project\.name\}/, 'project hover new-chat
 assert.match(sidebar, /Remove project/, 'project hamburger remove action missing');
 assert.doesNotMatch(sidebar, /Remove registration/, 'legacy remove-registration wording returned');
 assert.match(sidebar, /SIDEBAR_WIDTH_KEY/, 'resizable sidebar persistence missing');
+assert.match(sidebar, /SIDEBAR_COLLAPSED_KEY/, 'macOS sidebar collapse persistence missing');
+assert.match(sidebar, /sidebar-toggle-button/, 'macOS sidebar collapse button missing');
+assert.match(sidebar, /event\.metaKey.*event\.altKey.*event\.key\.toLowerCase\(\) !== 's'/s, 'macOS sidebar toggle shortcut is missing');
+assert.match(sidebar, /window\.cuppet\.native\.platform === 'darwin'/, 'sidebar collapse control is not scoped to macOS');
+assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:12px/, 'chat/session sidebar text does not match Settings sidebar font size');
+assert.match(settingsCss, /\.settings-hub-nav button\{[^}]*font-size:12px/, 'Settings navigation baseline font size changed unexpectedly');
+assert.match(reactCss, /\.react-sidebar\.collapsed\{[^}]*42px/, 'collapsed macOS sidebar rail styling missing');
 assert.match(settings, /Account/);
 assert.match(settings, /Personalisation/);
 assert.match(settings, /Token usage/);
@@ -110,4 +128,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker is host-backed and Codex-catalog-aware, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker exposes current provider families and the Codex catalog, the macOS sidebar has a persisted collapse control with Settings-sized item text, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
