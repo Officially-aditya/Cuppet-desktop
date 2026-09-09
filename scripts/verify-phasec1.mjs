@@ -28,7 +28,7 @@ expect(tools.includes('MAX_TOOL_STEPS = 64') && tools.includes('MAX_TOOL_OUTPUT 
 expect(tools.includes('graphWorkspace') && tools.includes('graphList') && tools.includes('graphLocate') && tools.includes('graphTraceSummary'), 'TST explore parity surface incomplete');
 expect(tools.includes('identical') && tools.includes('#graphCache'), 'duplicate TST exploration suppression missing');
 expect(tools.includes('resolveWorkspacePath') && tools.includes('realpath') && tools.includes('isAtOrInside'), 'filesystem containment boundary missing');
-expect(/onPaths\(result\.paths,\s*result\.mutation(?:,\s*result\.details)?\)/.test(tools), 'tool paths do not feed task-state callback');
+expect(tools.includes('onPaths(result.paths, result.mutation') && tools.includes('result.details ?? null'), 'tool paths or mutation metadata do not feed task-state callback');
 
 const permissions = text['src/runtime/permissions.mjs'];
 expect(permissions.includes('isSafeAutoBashCommand') && permissions.includes('PLAIN_COMMAND') && permissions.includes("case 'rev-parse'"), 'safe-bash classifier missing');
