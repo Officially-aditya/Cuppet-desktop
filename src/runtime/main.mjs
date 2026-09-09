@@ -8,20 +8,32 @@ import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
+const MAX_QUEUED_TURNS = 16;
 
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remote;
+const activeSessions = new Set();
+const queuedTurns = new Map();
+const queueOwnerByRun = new Map();
 const emit = (event) => {
+  if (event?.type === 'run.started' && event.sessionId) activeSessions.add(event.sessionId);
+  if (event?.type === 'run.finished' && event.sessionId) {
+    activeSessions.delete(event.sessionId);
+    const owner = queueOwnerByRun.get(event.sessionId) ?? event.sessionId;
+    queueOwnerByRun.delete(event.sessionId);
+    queueMicrotask(() => void drainQueued(owner));
+  }
   write({ kind: 'event', event });
   remote?.handleRuntimeEvent(event);
 };
 const service = new RuntimeService({ databasePath, dataDir, emit });
-remote = new RemoteManager({ dataDir, call: (method, params) => service.handle(method, params), emit });
+remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
 
 async function handle(method, params = {}) {
   switch (method) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
+    case 'session.send': return sendOrQueue(params);
     case 'remote.status': return remote.status();
     case 'remote.start': return remote.start({ ...params, provider: boundedProvider(params.provider) });
     case 'remote.stop': return remote.stop();
@@ -30,6 +42,43 @@ async function handle(method, params = {}) {
     case 'remote.revoke': return remote.revoke(String(params.deviceId ?? '').slice(0, 128));
     case 'remote.provider-config': return remote.setProviderConfig(boundedProvider(params.provider));
     default: return service.handle(method, params);
+  }
+}
+
+async function sendOrQueue(params = {}) {
+  const sessionId = String(params.sessionId ?? '');
+  if (!sessionId) return service.handle('session.send', params);
+  if (!activeSessions.has(sessionId)) return service.handle('session.send', params);
+
+  const queue = queuedTurns.get(sessionId) ?? [];
+  if (queue.length >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
+  const item = {
+    id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    params: { ...params, sessionId },
+    queuedAt: Date.now(),
+  };
+  queue.push(item);
+  queuedTurns.set(sessionId, queue);
+  emit({ type: 'queue.queued', sessionId, queueId: item.id, position: queue.length, queuedAt: item.queuedAt });
+  return { accepted: true, queued: true, sessionId, queueId: item.id, position: queue.length };
+}
+
+async function drainQueued(ownerSessionId) {
+  if (!ownerSessionId || activeSessions.has(ownerSessionId)) return;
+  const queue = queuedTurns.get(ownerSessionId);
+  if (!queue?.length) return;
+  const item = queue.shift();
+  if (!queue.length) queuedTurns.delete(ownerSessionId);
+  emit({ type: 'queue.started', sessionId: ownerSessionId, queueId: item.id, queuedAt: item.queuedAt });
+  try {
+    const result = await service.handle('session.send', item.params);
+    const runSessionId = result?.sessionId ?? ownerSessionId;
+    queueOwnerByRun.set(runSessionId, ownerSessionId);
+    emit({ type: 'queue.dispatched', sessionId: ownerSessionId, runSessionId, queueId: item.id });
+    if (!activeSessions.has(runSessionId)) queueMicrotask(() => void drainQueued(ownerSessionId));
+  } catch (error) {
+    emit({ type: 'queue.failed', sessionId: ownerSessionId, queueId: item.id, message: cleanError(error) });
+    queueMicrotask(() => void drainQueued(ownerSessionId));
   }
 }
 
@@ -74,4 +123,8 @@ function boundedProvider(value) {
     ...(Array.isArray(source.integrations) ? { integrations: source.integrations.slice(0, 256) } : {}),
   });
   return normalized;
+}
+
+function cleanError(error) {
+  return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500);
 }
