@@ -1,6 +1,6 @@
 {
   "phase": "original-C1",
-  "status": "correction-gate",
+  "status": "implemented-candidate",
   "sourceBaseline": "Officially-aditya/Cuppet-code@840ed751b61c04afc881a393b7836d4d2c932f61",
   "tstProtocol": "cuppet.tst.v3",
   "requirements": {
