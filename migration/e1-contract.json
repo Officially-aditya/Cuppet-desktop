@@ -17,9 +17,18 @@
     "providerSettingsWritesAreAtomic": true,
     "linuxBasicTextCredentialBackendIsRejected": true,
     "apiKeysAreNeverPersistedInPlaintext": true,
+    "productionRuntimeDependenciesAreAuditedForHighSeverityAdvisories": true,
+    "pe3ProductionEmbeddingHasNoExternalModelOrNativeRuntimeDependency": true,
     "incompatibleTstControlPlaneIsNotFalselyBundled": true,
     "currentCuppetTstBridgeRemainsOptionalAndExternal": true,
     "e1HasPermanentVerificationGate": true
+  },
+  "runtimeDependencies": {
+    "npmProductionDependencies": 0,
+    "auditCommand": "npm audit --omit=dev --audit-level=high",
+    "pe3Embedding": "cuppet/subword-hash-v1",
+    "pe3ExternalModelDownload": false,
+    "pe3NativeRuntimeDependency": false
   },
   "tst": {
     "desktopProtocol": "cuppet.tst.v3",
