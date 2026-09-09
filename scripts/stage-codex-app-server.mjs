@@ -8,10 +8,12 @@ import { codexRuntimeKey } from '../src/runtime/codex-app-server.mjs';
 const RELEASE = 'rust-v0.153.4';
 const VERSION = '0.153.4';
 const ARTIFACTS = Object.freeze({
-  'darwin-arm64': { asset: 'codex-app-server-aarch64-apple-darwin.tar.gz', sha256: '1c68b24d3191fb7d5f57e1c15472fd87a5aa06c18160dd0430b21f10c6abe7f6' },
-  'darwin-x64': { asset: 'codex-app-server-x86_64-apple-darwin.tar.gz', sha256: '1c7bcc3037d204305a81976227153250b58e546109b882649fee5420a14b7591' },
-  'linux-x64': { asset: 'codex-app-server-x86_64-unknown-linux-musl.tar.gz', sha256: 'ace0e794c53d0c1abe2fdb9248684904d04b08aca5a7851bc4a7ce0887773cf0' },
-  'linux-arm64': { asset: 'codex-app-server-aarch64-unknown-linux-musl.tar.gz', sha256: 'd2a3d0882f6eb4ddb84dfe1c90c5113dfbe32301f718706da0acd276770d3c75' },
+  'darwin-arm64': { asset: 'codex-app-server-aarch64-apple-darwin.tar.gz', sha256: '1c68b24d3191fb7d5f57e1c15472fd87a5aa06c18160dd0430b21f10c6abe7f6', kind: 'tar' },
+  'darwin-x64': { asset: 'codex-app-server-x86_64-apple-darwin.tar.gz', sha256: '1c7bcc3037d204305a81976227153250b58e546109b882649fee5420a14b7591', kind: 'tar' },
+  'linux-x64': { asset: 'codex-app-server-x86_64-unknown-linux-musl.tar.gz', sha256: 'ace0e794c53d0c1abe2fdb9248684904d04b08aca5a7851bc4a7ce0887773cf0', kind: 'tar' },
+  'linux-arm64': { asset: 'codex-app-server-aarch64-unknown-linux-musl.tar.gz', sha256: 'd2a3d0882f6eb4ddb84dfe1c90c5113dfbe32301f718706da0acd276770d3c75', kind: 'tar' },
+  'win32-x64': { asset: 'codex-app-server-x86_64-pc-windows-msvc.exe', sha256: 'b6c2be1fe2c6a5256cfb34fa07832b4c5bb06de11226074487961427401ccf51', kind: 'file' },
+  'win32-arm64': { asset: 'codex-app-server-aarch64-pc-windows-msvc.exe', sha256: '72330131615da05d12e2c35eb9f25e9054255a1c8e0b7da2f9c106726b288c50', kind: 'file' },
 });
 
 const args = Object.fromEntries(process.argv.slice(2).map((value) => {
@@ -21,28 +23,33 @@ const runtime = String(args.runtime || codexRuntimeKey());
 const artifact = ARTIFACTS[runtime];
 if (!artifact) throw new Error(`No pinned Codex app-server artifact for ${runtime || 'this platform'}`);
 
-const stagingRoot = resolve(String(args.output || 'staging/codex'));
+const stagingRoot = resolve(String(args.output || 'vendor/codex'));
 const destination = join(stagingRoot, runtime);
-const archive = args.archive ? resolve(String(args.archive)) : join(tmpdir(), `cuppet-${artifact.asset}`);
+const downloaded = args.archive ? resolve(String(args.archive)) : join(tmpdir(), `cuppet-${artifact.asset}`);
 const temporary = join(tmpdir(), `cuppet-codex-stage-${process.pid}-${Date.now()}`);
 
 try {
-  if (!args.archive) await download(`https://github.com/openai/codex/releases/download/${RELEASE}/${artifact.asset}`, archive);
-  const digest = sha256(await readFile(archive));
+  if (!args.archive) await download(`https://github.com/openai/codex/releases/download/${RELEASE}/${artifact.asset}`, downloaded);
+  const digest = sha256(await readFile(downloaded));
   if (digest !== artifact.sha256) throw new Error(`Codex app-server checksum mismatch for ${runtime}: expected ${artifact.sha256}, got ${digest}`);
-
-  await rm(temporary, { recursive: true, force: true });
-  await mkdir(temporary, { recursive: true });
-  const extracted = spawnSync('tar', ['-xzf', archive, '-C', temporary], { stdio: 'inherit' });
-  if (extracted.status !== 0) throw new Error(`Unable to extract ${artifact.asset}`);
-  const binary = await findBinary(temporary);
-  if (!binary) throw new Error(`${artifact.asset} did not contain codex-app-server`);
 
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
-  const target = join(destination, process.platform === 'win32' ? 'codex-app-server.exe' : 'codex-app-server');
-  await copyFile(binary, target);
-  await chmod(target, 0o755);
+  const target = join(destination, runtime.startsWith('win32-') ? 'codex-app-server.exe' : 'codex-app-server');
+
+  if (artifact.kind === 'file') {
+    await copyFile(downloaded, target);
+  } else {
+    await rm(temporary, { recursive: true, force: true });
+    await mkdir(temporary, { recursive: true });
+    const extracted = spawnSync('tar', ['-xzf', downloaded, '-C', temporary], { stdio: 'inherit' });
+    if (extracted.status !== 0) throw new Error(`Unable to extract ${artifact.asset}`);
+    const binary = await findBinary(temporary);
+    if (!binary) throw new Error(`${artifact.asset} did not contain codex-app-server`);
+    await copyFile(binary, target);
+  }
+
+  if (!runtime.startsWith('win32-')) await chmod(target, 0o755);
   await writeFile(join(destination, 'manifest.json'), `${JSON.stringify({
     schemaVersion: 1,
     vendor: 'OpenAI',
@@ -57,7 +64,7 @@ try {
   console.log(`Staged official Codex app-server ${VERSION} for ${runtime} at ${target}`);
 } finally {
   await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
-  if (!args.archive) await rm(archive, { force: true }).catch(() => undefined);
+  if (!args.archive) await rm(downloaded, { force: true }).catch(() => undefined);
 }
 
 async function download(url, path) {
