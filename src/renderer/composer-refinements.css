@@ -1,17 +1,32 @@
 /* Composer-only refinements layered after the shared control skin. */
-.model-controls{display:flex;align-items:center;gap:2px;min-width:0}
-
-.effort-picker{position:relative;flex:0 0 auto}
-.effort-picker-trigger{height:30px;display:flex;align-items:center;gap:4px;border:0;border-radius:7px;background:transparent;color:#77818e;padding:5px 7px;font-size:11px;outline:0}
-.effort-picker-trigger:hover:not(:disabled),.effort-picker.open .effort-picker-trigger{background:#20262e;color:#e7ebf0}
-.effort-picker-trigger:focus-visible{box-shadow:0 0 0 2px rgba(130,145,165,.16)}
-.effort-picker-trigger:disabled{opacity:.36;cursor:default}
-.effort-picker-trigger svg{width:12px;height:12px;flex:0 0 auto;color:#687381;transition:transform .12s ease}
-.effort-picker.open .effort-picker-trigger svg{transform:rotate(180deg)}
-
-.effort-picker-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:271;width:154px;max-height:260px;overflow:auto;padding:5px;border:1px solid #303741;border-radius:9px;background:#11161c;box-shadow:0 18px 50px rgba(0,0,0,.5)}
-.effort-picker-option{width:100%;min-height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;border-radius:6px;background:transparent;color:#cbd2dc;padding:6px 8px;text-align:left;font-size:11px}
-.effort-picker-option:hover,.effort-picker-option.selected{background:#1a2027;color:#f2f4f7}
+.model-picker-back{
+  width:100%;
+  min-height:26px;
+  border:0;
+  border-radius:6px;
+  background:transparent;
+  color:#7f8a97;
+  padding:4px 8px;
+  text-align:left;
+  font-size:10px;
+}
+.model-picker-back:hover{background:#1a2027;color:#e7ebf0}
+.model-picker-effort-option{
+  width:100%;
+  min-height:30px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  border:0;
+  border-radius:6px;
+  background:transparent;
+  color:#cbd2dc;
+  padding:6px 8px;
+  text-align:left;
+  font-size:11px;
+}
+.model-picker-effort-option:hover,.model-picker-effort-option.selected{background:#1a2027;color:#f2f4f7}
 
 /* Streaming state belongs to the composer/stop affordance, not the transcript. */
 .message-status:not(.error){display:none}
