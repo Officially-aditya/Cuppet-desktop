@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('cuppet', {
   health: () => ipcRenderer.invoke('cuppet:health'),
+  usage: {
+    summary: () => ipcRenderer.invoke('cuppet:usage:summary'),
+  },
   cognitive: {
     status: () => ipcRenderer.invoke('cuppet:cognitive:status'),
     modeGet: (sessionId) => ipcRenderer.invoke('cuppet:session:mode:get', sessionId),
