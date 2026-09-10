@@ -205,6 +205,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   };
 
   const slotLabel = slot === 'secondary' ? 'secondary' : 'primary';
+  // Renderer contract: the default composer trigger resolves to aria-label="Select model".
   const triggerAriaLabel = surface === 'composer' && slot === 'primary' ? 'Select model' : `Select ${slotLabel} model`;
 
   return (
