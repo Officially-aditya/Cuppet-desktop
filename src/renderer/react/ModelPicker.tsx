@@ -8,14 +8,18 @@ type ModelOption = {
 };
 
 type PickerStage = 'models' | 'efforts';
+type ModelSlot = 'primary' | 'secondary';
 
 type Props = {
   disabled?: boolean;
+  slot?: ModelSlot;
+  surface?: 'composer' | 'settings';
+  onChange?: (settings: ProviderSettings) => void;
 };
 
 const EMPTY_CODEX: CodexModelCatalog = { available: false, models: [], defaultModel: null };
 
-export function ModelPicker({ disabled = false }: Props) {
+export function ModelPicker({ disabled = false, slot = 'primary', surface = 'composer', onChange }: Props) {
   const root = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<PickerStage>('models');
@@ -57,7 +61,9 @@ export function ModelPicker({ disabled = false }: Props) {
   const providerID = settings?.primary?.providerID || settings?.providerID || '';
   const providerPreset = settings?.presets?.find((item) => item.id === providerID);
   const providerLabel = providerPreset?.label || providerID || 'Provider';
-  const configuredModel = settings?.primary?.modelID || '';
+  const configuredModel = slot === 'secondary'
+    ? settings?.secondary?.modelID || settings?.primary?.modelID || ''
+    : settings?.primary?.modelID || '';
 
   const options = useMemo<ModelOption[]>(() => {
     const custom = (settings?.customModels ?? []).filter((item) => item.providerID === providerID);
@@ -101,9 +107,7 @@ export function ModelPicker({ disabled = false }: Props) {
 
   const effortState = modelEffortState(providerID, configuredModel, settings, codex);
   const effortOptions = effortState.options;
-  const explicitEffort = providerID === 'codex'
-    ? String(settings?.primaryEffort ?? '').trim()
-    : String(settings?.primary?.variant ?? '').trim();
+  const explicitEffort = selectedEffort(slot, providerID, settings);
 
   const displayModel = useMemo(() => {
     if (providerID === 'codex' && configuredModel === 'codex-default' && codex.defaultModel) {
@@ -124,16 +128,19 @@ export function ModelPicker({ disabled = false }: Props) {
 
       const nextEffortState = modelEffortState(currentProvider, id, current, codex);
       if (id !== configuredModel) {
-        const nextEffort = effortForModel(currentProvider, id, current, codex);
+        const nextEffort = effortForModel(slot, currentProvider, id, current, codex);
+        const primaryModel = slot === 'primary' ? id : current.primary?.modelID || id;
+        const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
         const next = await window.cuppet.settings.save({
           providerID: currentProvider,
           baseUrl: current.baseUrl || '',
-          model: id,
-          backgroundModel: current.secondary?.modelID || id,
-          primaryEffort: nextEffort,
-          secondaryEffort: current.secondary?.variant || '',
+          model: primaryModel,
+          backgroundModel: secondaryModel,
+          primaryEffort: slot === 'primary' ? nextEffort : selectedEffort('primary', currentProvider, current),
+          secondaryEffort: slot === 'secondary' ? nextEffort : selectedEffort('secondary', currentProvider, current),
         });
         setSettings(next);
+        onChange?.(next);
       }
 
       if (nextEffortState.options.length > 0) {
@@ -169,10 +176,11 @@ export function ModelPicker({ disabled = false }: Props) {
         baseUrl: current.baseUrl || '',
         model: current.primary?.modelID || configuredModel,
         backgroundModel: current.secondary?.modelID || current.primary?.modelID || configuredModel,
-        primaryEffort: value,
-        secondaryEffort: current.secondary?.variant || '',
+        primaryEffort: slot === 'primary' ? value : selectedEffort('primary', currentProvider, current),
+        secondaryEffort: slot === 'secondary' ? value : selectedEffort('secondary', currentProvider, current),
       });
       setSettings(saved);
+      onChange?.(saved);
       setOpen(false);
       setStage('models');
     } catch (value) {
@@ -196,16 +204,18 @@ export function ModelPicker({ disabled = false }: Props) {
     catch (value) { setError(message(value)); }
   };
 
+  const slotLabel = slot === 'secondary' ? 'secondary' : 'primary';
+
   return (
-    <div className={`model-picker${open ? ' open' : ''}`} ref={root}>
+    <div className={`model-picker${surface === 'settings' ? ' settings-model-picker' : ''}${open ? ' open' : ''}`} ref={root}>
       <button
         type="button"
         className="model-picker-trigger"
-        aria-label="Select model"
+        aria-label={`Select ${slotLabel} model`}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled || busy}
-        title={configuredModel ? `Model: ${displayModel}` : 'Select model'}
+        title={configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : `Select ${slotLabel} model`}
         onClick={() => void toggle()}
       >
         <span className="model-picker-name">{displayModel}</span>
@@ -213,10 +223,10 @@ export function ModelPicker({ disabled = false }: Props) {
       </button>
 
       {open && (
-        <div className="model-picker-menu" role="listbox" aria-label={stage === 'models' ? 'Models' : 'Reasoning effort'}>
+        <div className="model-picker-menu" role="listbox" aria-label={stage === 'models' ? `${slotLabel} models` : 'Reasoning effort'}>
           {stage === 'models' ? (
             <>
-              <div className="model-picker-provider">{providerLabel} · Models</div>
+              <div className="model-picker-provider">{providerLabel} · {slot === 'secondary' ? 'Secondary models' : 'Models'}</div>
               {options.length > 0 ? options.map((option) => (
                 <button
                   type="button"
@@ -285,10 +295,14 @@ function modelEffortState(providerID: string, modelID: string, settings: Provide
   };
 }
 
-function effortForModel(providerID: string, modelID: string, settings: ProviderSettings, codex: CodexModelCatalog) {
-  const currentEffort = providerID === 'codex'
-    ? String(settings.primaryEffort ?? '').trim()
-    : String(settings.primary?.variant ?? '').trim();
+function selectedEffort(slot: ModelSlot, providerID: string, settings: ProviderSettings | null) {
+  if (slot === 'primary' && providerID === 'codex') return String(settings?.primaryEffort ?? '').trim();
+  const selection = slot === 'secondary' ? settings?.secondary : settings?.primary;
+  return String(selection?.variant ?? '').trim();
+}
+
+function effortForModel(slot: ModelSlot, providerID: string, modelID: string, settings: ProviderSettings, codex: CodexModelCatalog) {
+  const currentEffort = selectedEffort(slot, providerID, settings);
   const state = modelEffortState(providerID, modelID, settings, codex);
   if (currentEffort && state.options.includes(currentEffort)) return currentEffort;
   return '';
