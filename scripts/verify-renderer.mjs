@@ -4,12 +4,13 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, providerSettings, providerPresets, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
+const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
   read('src/main/provider-settings.mjs'),
   read('src/main/provider-presets.mjs'),
+  read('src/main/custom-models.mjs'),
   read('src/preload/preload.cjs'),
   read('src/renderer/index.html'),
   read('src/renderer/main.tsx'),
@@ -89,11 +90,17 @@ assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does no
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
 assert.match(modelPicker, /window\.cuppet\.codexAuth\.models/, 'Codex model picker does not use the app-server catalog');
 assert.match(modelPicker, /providerPreset\?\.models/, 'provider-family model choices are not merged into the picker');
-assert.match(modelPicker, /Latest models/, 'model picker does not identify the current provider family list');
+assert.match(modelPicker, /settings\?\.customModels/, 'validated provider custom models are not merged into the picker');
+assert.match(modelPicker, /Custom model · validated in Provider settings/, 'custom models are not identified in the picker');
+assert.match(modelPicker, /providerLabel\} · Models/, 'model picker no longer identifies its provider model list');
 assert.match(modelPicker, /codex-default/, 'Codex automatic default selection is not preserved');
 assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
 assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
 assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
+assert.match(providerSettings, /customModels:\s*customModelEntries\(this\.#customModels\)/, 'provider-scoped custom models are not projected to the renderer');
+assert.match(providerSettings, /await probeCustomModel\(this\.runtimeValue\(\), customModel\)/, 'custom model IDs are persisted without a real provider validation request');
+assert.match(customModels, /Reply only with OK\./, 'custom model validation prompt is no longer tiny');
+assert.match(customModels, /tools:\s*\[\]/, 'custom model validation must remain tool-free');
 for (const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','claude-fable-5','claude-opus-5','claude-sonnet-5','qwen3.8-max','qwen3.8-flash','deepseek-v4-pro','deepseek-v4-flash','kimi-k3','kimi-k2.6','kimi-k2.5','glm-5.3','glm-5.3-flash','glm-5.1','glm-5-turbo','glm-5','gemini-3.8-flash','gemini-3.1-pro-preview','gemini-3.5-flash-lite','muse-spark-1.3']) {
   assert.ok(providerPresets.includes(id), `latest provider-family model missing from picker catalog: ${id}`);
 }
@@ -133,6 +140,9 @@ assert.match(settings, /Connected devices/);
 assert.match(settings, /OpenRouter|presets\.map/, 'provider preset selector missing');
 assert.match(settings, /Continue with ChatGPT/, 'Codex subscription connection UI missing');
 assert.match(settings, /API key/, 'API-key provider credential UI missing');
+assert.match(settings, /Custom model ID/, 'provider settings custom-model field missing');
+assert.match(settings, /Test & add/, 'custom model validation action missing');
+assert.match(settings, /customModel:\s*value/, 'custom model settings action does not use the host settings boundary');
 assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/, 'advanced provider endpoint/model fields returned to the React UI');
 assert.match(remote, /remote\.start/);
 assert.match(remote, /remote\.stop/);
@@ -152,4 +162,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 13px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 13px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
