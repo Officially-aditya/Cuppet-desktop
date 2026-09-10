@@ -114,6 +114,40 @@ export type ProviderSettings = {
   encryptionUnavailableReason?: string;
 };
 
+export type TokenUsageBucket = {
+  providerID: string;
+  modelID: string;
+  requests: number;
+  trackedRequests: number;
+  unreportedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  firstRequestAt?: number | null;
+  lastRequestAt?: number | null;
+  firstTrackedAt?: number | null;
+  lastTrackedAt?: number | null;
+};
+
+export type TokenUsageSummary = {
+  version: number;
+  requests: number;
+  trackedRequests: number;
+  unreportedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  firstRequestAt?: number | null;
+  lastRequestAt?: number | null;
+  firstTrackedAt?: number | null;
+  lastTrackedAt?: number | null;
+  byModel: TokenUsageBucket[];
+};
+
 export type CodexModelCatalog = {
   available: boolean;
   loggedIn?: boolean;
@@ -181,6 +215,9 @@ export type RuntimeEvent = Record<string, any> & { type?: string };
 
 export type CuppetApi = {
   health: () => Promise<any>;
+  usage: {
+    summary: () => Promise<TokenUsageSummary>;
+  };
   cognitive: {
     status: () => Promise<CognitiveStatus>;
     modeGet: (sessionId: string) => Promise<{ mode?: 'plan' | 'build' }>;
