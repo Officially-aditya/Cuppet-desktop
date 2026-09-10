@@ -23,9 +23,10 @@ export class BackgroundEnricher {
   forgetSession(sessionID) {
     const id = String(sessionID ?? '');
     if (!id) return { sessionID: id, forgotten: false };
-    const forgotten = this.#batches.delete(id) || this.#lastCompleted.delete(id);
+    const removedBatch = this.#batches.delete(id);
+    const removedCompletion = this.#lastCompleted.delete(id);
     this.#schedule();
-    return { sessionID: id, forgotten };
+    return { sessionID: id, forgotten: removedBatch || removedCompletion };
   }
   async recordTurn({ sessionID, projectID = this.#projectID, userText, assistantText }) {
     await this.ready();
