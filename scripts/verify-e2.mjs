@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 
-const [provider, auth, factory, toolRuntime, journaled, settings, presets, pkg] = await Promise.all([
+const [provider, auth, factory, toolRuntime, journaled, settings, presets, pkg, stageCodex, appServer] = await Promise.all([
   read('src/runtime/codex-provider.mjs'),
   read('src/main/codex-auth.mjs'),
   read('src/runtime/provider-factory.mjs'),
@@ -12,6 +12,8 @@ const [provider, auth, factory, toolRuntime, journaled, settings, presets, pkg] 
   read('src/renderer/react/SettingsModal.tsx'),
   read('src/main/provider-presets.mjs'),
   read('package.json'),
+  read('scripts/stage-codex-app-server.mjs'),
+  read('src/runtime/codex-app-server.mjs'),
 ]);
 
 assert.match(provider, /parseCodexAccount/);
@@ -35,6 +37,11 @@ assert.match(settings, /apiKey:\s*isCodex\s*\?\s*''\s*:\s*apiKey/, 'Codex provid
 assert.match(settings, /isCodex\s*\?\s*\(/, 'React provider form does not branch to the Codex subscription surface');
 assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/, 'advanced provider internals returned to the React settings surface');
 assert.match(presets, /authType: 'chatgpt'/);
+assert.match(stageCodex, /codex-app-server-package-aarch64-apple-darwin\.tar\.gz/, 'Codex staging returned to the incomplete standalone app-server artifact');
+assert.match(stageCodex, /codex-code-mode-host/, 'Codex staging does not require the code-mode host');
+assert.match(stageCodex, /codex-package\.json/, 'Codex staging does not preserve the official package layout');
+assert.match(appServer, /join\(packageRoot, 'bin', executable\)/, 'packaged Codex resolver does not use the canonical package entrypoint');
+assert.match(appServer, /executableFile\(candidate\.helper\)/, 'packaged Codex resolver can accept a package without code-mode host');
 
 const packageJson = JSON.parse(pkg);
 assert.equal(packageJson.scripts['e2:stage-codex'], 'node scripts/stage-codex-app-server.mjs');
@@ -43,6 +50,6 @@ assert.ok(packageJson.build.extraResources.some((item) => item.from === 'vendor/
 
 const tested = spawnSync(process.execPath, ['--test', 'test/codex-app-server.test.mjs', 'test/codex-provider.test.mjs'], { stdio: 'inherit' });
 if (tested.status !== 0) process.exit(tested.status ?? 1);
-console.log('E2 Codex subscription provider verification passed.');
+console.log('E2 Codex subscription provider verification passed with complete app-server package guards.');
 
 function read(path) { return readFile(path, 'utf8'); }
