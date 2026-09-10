@@ -9,6 +9,7 @@ type ModelOption = {
 
 type PickerStage = 'models' | 'efforts';
 type ModelSlot = 'primary' | 'secondary';
+type SettingsWithSecondaryAuto = ProviderSettings & { secondaryAuto?: boolean };
 
 type Props = {
   disabled?: boolean;
@@ -64,6 +65,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const configuredModel = slot === 'secondary'
     ? settings?.secondary?.modelID || settings?.primary?.modelID || ''
     : settings?.primary?.modelID || '';
+  const secondaryAuto = slot === 'secondary' && (settings as SettingsWithSecondaryAuto | null)?.secondaryAuto !== false;
 
   const options = useMemo<ModelOption[]>(() => {
     const custom = (settings?.customModels ?? []).filter((item) => item.providerID === providerID);
@@ -108,13 +110,46 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const effortState = modelEffortState(providerID, configuredModel, settings, codex);
   const effortOptions = effortState.options;
   const explicitEffort = selectedEffort(slot, providerID, settings);
-
-  const displayModel = useMemo(() => {
+  const resolvedModelLabel = useMemo(() => {
     if (providerID === 'codex' && configuredModel === 'codex-default' && codex.defaultModel) {
       return codex.models.find((item) => item.id === codex.defaultModel)?.label || codex.defaultModel;
     }
     return options.find((item) => item.id === configuredModel)?.label || configuredModel || 'Select model';
   }, [codex.defaultModel, codex.models, configuredModel, options, providerID]);
+  const displayModel = secondaryAuto ? 'Auto' : resolvedModelLabel;
+
+  const chooseAuto = async () => {
+    if (slot !== 'secondary' || secondaryAuto) {
+      setOpen(false);
+      setStage('models');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const current = settings ?? await window.cuppet.settings.get();
+      const currentProvider = current.primary?.providerID || current.providerID || '';
+      const primaryModel = current.primary?.modelID || '';
+      if (!currentProvider || !primaryModel) throw new Error('Configure a primary model before using automatic secondary selection.');
+      const next = await window.cuppet.settings.save({
+        providerID: currentProvider,
+        baseUrl: current.baseUrl || '',
+        model: primaryModel,
+        backgroundModel: current.secondary?.modelID || primaryModel,
+        primaryEffort: selectedEffort('primary', currentProvider, current),
+        secondaryEffort: '',
+        secondaryAuto: true,
+      });
+      setSettings(next);
+      onChange?.(next);
+      setOpen(false);
+      setStage('models');
+    } catch (value) {
+      setError(message(value));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const chooseModel = async (modelID: string) => {
     const id = modelID.trim();
@@ -127,7 +162,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
       const nextEffortState = modelEffortState(currentProvider, id, current, codex);
-      if (id !== configuredModel) {
+      if (id !== configuredModel || secondaryAuto) {
         const nextEffort = effortForModel(slot, currentProvider, id, current, codex);
         const primaryModel = slot === 'primary' ? id : current.primary?.modelID || id;
         const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
@@ -138,6 +173,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
           backgroundModel: secondaryModel,
           primaryEffort: slot === 'primary' ? nextEffort : selectedEffort('primary', currentProvider, current),
           secondaryEffort: slot === 'secondary' ? nextEffort : selectedEffort('secondary', currentProvider, current),
+          ...(slot === 'secondary' ? { secondaryAuto: false } : {}),
         });
         setSettings(next);
         onChange?.(next);
@@ -207,6 +243,9 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const slotLabel = slot === 'secondary' ? 'secondary' : 'primary';
   // Renderer contract: the default composer trigger resolves to aria-label="Select model".
   const triggerAriaLabel = surface === 'composer' && slot === 'primary' ? 'Select model' : `Select ${slotLabel} model`;
+  const triggerTitle = secondaryAuto
+    ? `Secondary model: Auto · currently ${resolvedModelLabel}`
+    : configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : triggerAriaLabel;
 
   return (
     <div className={`model-picker${surface === 'settings' ? ' settings-model-picker' : ''}${open ? ' open' : ''}`} ref={root}>
@@ -217,7 +256,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled || busy}
-        title={configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : triggerAriaLabel}
+        title={triggerTitle}
         onClick={() => void toggle()}
       >
         <span className="model-picker-name">{displayModel}</span>
@@ -229,21 +268,38 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
           {stage === 'models' ? (
             <>
               <div className="model-picker-provider">{slot === 'secondary' ? `${providerLabel} · Secondary models` : `${providerLabel} · Models`}</div>
-              {options.length > 0 ? options.map((option) => (
+              {slot === 'secondary' && (
                 <button
                   type="button"
                   role="option"
-                  aria-selected={option.id === configuredModel}
-                  className={`model-picker-option${option.id === configuredModel ? ' selected' : ''}`}
-                  key={option.id}
+                  aria-selected={secondaryAuto}
+                  className={`model-picker-option${secondaryAuto ? ' selected' : ''}`}
                   disabled={busy}
-                  onClick={() => void chooseModel(option.id)}
+                  onClick={() => void chooseAuto()}
                 >
-                  <strong>{option.label}</strong>
-                  {option.id === configuredModel && <span className="model-picker-check" aria-hidden="true">✓</span>}
-                  {option.description && <small>{option.description}</small>}
+                  <strong>Auto</strong>
+                  {secondaryAuto && <span className="model-picker-check" aria-hidden="true">✓</span>}
+                  <small>Cuppet automatically selects the Context Memory model. Currently {resolvedModelLabel}.</small>
                 </button>
-              )) : <div className="model-picker-empty">No models advertised by this provider.</div>}
+              )}
+              {options.length > 0 ? options.map((option) => {
+                const selected = !secondaryAuto && option.id === configuredModel;
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`model-picker-option${selected ? ' selected' : ''}`}
+                    key={option.id}
+                    disabled={busy}
+                    onClick={() => void chooseModel(option.id)}
+                  >
+                    <strong>{option.label}</strong>
+                    {selected && <span className="model-picker-check" aria-hidden="true">✓</span>}
+                    {option.description && <small>{option.description}</small>}
+                  </button>
+                );
+              }) : <div className="model-picker-empty">No models advertised by this provider.</div>}
             </>
           ) : (
             <>
