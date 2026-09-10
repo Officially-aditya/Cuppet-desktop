@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Project, SearchResult } from '../types';
 
+const DELETED_CHAT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: { projects: Project[]; onClose: () => void; onOpen: (sessionId: string) => void | Promise<void>; onChanged: () => void | Promise<unknown>; onError: (error: unknown) => void }) {
   const [query, setQuery] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -44,7 +46,7 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
     try {
       await window.cuppet.sessions.restore(result.sessionId);
       await onChanged();
-      setResults((current) => current.map((item) => item.sessionId === result.sessionId ? { ...item, archivedAt: null } : item));
+      setResults((current) => current.map((item) => item.sessionId === result.sessionId ? { ...item, archivedAt: null, deletedAt: null } : item));
     } catch (error) { onError(error); }
   };
 
@@ -61,7 +63,7 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
             }} /></div>
             <button className="search-close" type="button" aria-label="Close" onClick={onClose}>×</button>
           </div>
-          <div className="search-options"><label><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Include archived</label><span className="search-shortcut">↑↓ navigate · Enter open</span></div>
+          <div className="search-options"><label><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Include archived & deleted</label><span className="search-shortcut">↑↓ navigate · Enter open</span></div>
           <div className="search-results">
             {state && <div className="search-state">{state}</div>}
             {results.map((result, index) => {
@@ -69,7 +71,7 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
               return (
                 <article key={`${result.sessionId}-${result.itemId || result.kind || index}`} className={`search-result${index === selected ? ' selected' : ''}`}>
                   <button type="button" className="search-result-main" onClick={() => void openResult(result)}>
-                    <div className="search-result-title">{result.title || 'New chat'}{result.archivedAt ? <span className="archive-badge">Archived</span> : null}</div>
+                    <div className="search-result-title">{result.title || 'New chat'}{result.deletedAt ? <span className="archive-badge">{deletedRecoveryLabel(result.deletedAt)}</span> : result.archivedAt ? <span className="archive-badge">Archived</span> : null}</div>
                     <div className="search-result-meta">{[project?.name || (result.projectId ? 'Project' : 'General'), result.kind === 'message' ? `${result.role || 'message'}${result.sequence ? ` · #${result.sequence}` : ''}` : 'chat title'].join(' · ')}</div>
                     <div className="search-result-snippet">{result.snippet || (result.kind === 'session' ? 'Title match' : '')}</div>
                   </button>
@@ -82,6 +84,13 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
       </section>
     </div>
   );
+}
+
+function deletedRecoveryLabel(deletedAt: number) {
+  const remaining = deletedAt + DELETED_CHAT_RETENTION_MS - Date.now();
+  if (remaining <= 0) return 'Deletion pending';
+  const days = Math.max(1, Math.ceil(remaining / (24 * 60 * 60 * 1000)));
+  return `Deleted · ${days}d left`;
 }
 
 function focusMessage(messageId: string) {
