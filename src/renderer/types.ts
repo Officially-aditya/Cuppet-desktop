@@ -32,6 +32,7 @@ export type Session = {
   updatedAt?: number;
   lastStatus?: string;
   archivedAt?: number | null;
+  deletedAt?: number | null;
   messages: Message[];
   toolExecutions?: ToolExecution[];
 };
@@ -53,6 +54,7 @@ export type SearchResult = {
   snippet?: string;
   itemId?: string;
   archivedAt?: number | null;
+  deletedAt?: number | null;
 };
 
 export type CommandDefinition = {
