@@ -68,12 +68,14 @@ async function listCodexModels() {
                 return effort ? [effort] : [];
               })
             : [];
+          const defaultEffort = safeText(item.defaultReasoningEffort, 80) || null;
           models.push({
             id,
             label: safeText(item.displayName ?? item.id ?? id, 160) || id,
             description: safeText(item.description, 600),
             isDefault: item.isDefault === true,
             efforts,
+            defaultEffort,
           });
           if (models.length >= MAX_CODEX_MODELS) break;
         }
