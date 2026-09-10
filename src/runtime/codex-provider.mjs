@@ -71,6 +71,8 @@ export class CodexSubscriptionProvider {
       };
       const configuredModel = String(this.#configuration.model || '').trim();
       if (configuredModel && configuredModel !== 'codex-default') threadParams.model = configuredModel;
+      const configuredEffort = reasoningEffort(this.#configuration.primaryEffort);
+      if (configuredEffort) threadParams.config = { model_reasoning_effort: configuredEffort };
       const startedThread = await client.request('thread/start', threadParams);
       threadId = String(record(startedThread).thread?.id ?? '');
       if (!threadId) throw new Error('Codex app-server did not return a thread ID.');
@@ -158,6 +160,10 @@ function normalizeUsage(value) {
     outputTokens: number(usage.outputTokens ?? usage.output_tokens ?? usage.totalOutputTokens),
     totalTokens: number(usage.totalTokens ?? usage.total_tokens),
   };
+}
+function reasoningEffort(value) {
+  const effort = typeof value === 'string' ? value.trim().slice(0, 80) : '';
+  return /^[A-Za-z0-9._-]+$/.test(effort) ? effort : '';
 }
 function number(value) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
