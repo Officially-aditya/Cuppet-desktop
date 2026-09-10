@@ -386,6 +386,10 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   const hasTrace = assistant && trace.length > 0;
   const canCopy = assistant && !live && message.status !== 'streaming' && Boolean(content.trim());
 
+  useEffect(() => {
+    if (!live) setTraceOpen(false);
+  }, [live]);
+
   const copySummary = async () => {
     if (!canCopy) return;
     try {
@@ -400,7 +404,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
       <div className="message-role">
-        {hasTrace ? (
+        {hasTrace && !live ? (
           <button
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
@@ -413,7 +417,8 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} />}
+      {hasTrace && live && <TraceView trace={trace} />}
+      {hasTrace && !live && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
         content ? <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
