@@ -1,5 +1,5 @@
 /* Provider model selection reuses the chat model picker with a settings-sized surface. */
-.provider-model-section{
+.platform-model-section{
   display:grid;
   gap:8px;
   width:100%;
@@ -9,37 +9,37 @@
   border-radius:9px;
   background:#11161c;
 }
-.provider-model-grid{
+.platform-model-grid{
   display:grid;
   grid-template-columns:minmax(0,1fr) minmax(0,1fr);
   gap:12px;
   width:100%;
 }
-.provider-model-field{
+.platform-model-field{
   display:grid;
   gap:7px;
   min-width:0;
 }
-.provider-model-copy{
+.platform-model-copy{
   display:flex;
   align-items:baseline;
   justify-content:space-between;
   gap:10px;
   min-width:0;
 }
-.provider-model-copy strong{
+.platform-model-copy strong{
   color:#e5e9ee;
   font-size:11px;
   font-weight:600;
 }
-.provider-model-copy span,
-.provider-model-hint{
+.platform-model-copy span,
+.platform-model-hint{
   color:#77818e;
   font-size:9.5px;
   line-height:1.45;
 }
-.provider-model-copy span{white-space:nowrap}
-.provider-model-hint{padding-top:1px}
+.platform-model-copy span{white-space:nowrap}
+.platform-model-hint{padding-top:1px}
 
 .settings-model-picker{
   width:100%;
@@ -82,6 +82,6 @@
 }
 
 @media(max-width:760px){
-  .provider-model-grid{grid-template-columns:1fr}
-  .provider-model-copy{justify-content:flex-start}
+  .platform-model-grid{grid-template-columns:1fr}
+  .platform-model-copy{justify-content:flex-start}
 }
