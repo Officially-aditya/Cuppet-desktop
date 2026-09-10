@@ -81,6 +81,17 @@ export class MutationJournal {
     return { available: Boolean(latest), latest: latest ? publicEntry(latest) : null };
   }
 
+  async deleteSession(sessionId) {
+    const id = String(sessionId ?? '');
+    if (!id) return { sessionId: id, deleted: false };
+    const pending = this.#writes.get(id);
+    if (pending) await pending.catch(() => undefined);
+    this.#writes.delete(id);
+    const cached = this.#cache.delete(id);
+    if (this.#directory) await rm(this.#path(id), { force: true });
+    return { sessionId: id, deleted: cached || Boolean(this.#directory) };
+  }
+
   async undoLatest({ sessionId, projectRoot }) {
     const entries = await this.#load(sessionId);
     const index = findLatestApplied(entries);
@@ -90,7 +101,6 @@ export class MutationJournal {
 
     const currentRoot = await realpath(projectRoot).catch(() => resolve(projectRoot));
     if (entry.projectRoot !== currentRoot) throw new UndoConflictError('Cannot undo this mutation because the session is no longer attached to the original project workspace.');
-
     const files = entry.kind === 'batch' ? entry.files : [{ path: entry.path, before: entry.before, after: entry.after }];
     const checked = [];
     for (const item of files) {
