@@ -93,6 +93,11 @@ export type ProviderPreset = {
   authType?: 'api-key' | 'chatgpt' | string;
 };
 
+export type ProviderCustomModel = {
+  providerID: string;
+  modelID: string;
+};
+
 export type ProviderSettings = {
   providerID?: string;
   configured?: boolean;
@@ -103,6 +108,8 @@ export type ProviderSettings = {
   requiresChatGPTAuth?: boolean;
   presetID?: string | null;
   presets?: ProviderPreset[];
+  customModels?: ProviderCustomModel[];
+  customModelProbe?: { ok?: boolean; providerID?: string; modelID?: string; reply?: string };
   baseUrl?: string;
   primary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
   secondary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
