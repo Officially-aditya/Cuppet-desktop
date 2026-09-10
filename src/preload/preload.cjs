@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('cuppet', {
   sessions: {
     list: (projectId) => ipcRenderer.invoke('cuppet:session:list', projectId),
     deleted: () => ipcRenderer.invoke('cuppet:session:deleted:list'),
+    editedFiles: (sessionId) => ipcRenderer.invoke('cuppet:session:edited-files', sessionId),
     create: (projectId = null) => ipcRenderer.invoke('cuppet:session:create', projectId),
     get: (sessionId) => ipcRenderer.invoke('cuppet:session:get', sessionId),
     search: (query, options = {}) => ipcRenderer.invoke('cuppet:session:search', query, options),
@@ -80,6 +81,8 @@ contextBridge.exposeInMainWorld('cuppet', {
   native: {
     platform: process.platform,
     chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
+    openProjectFile: (projectId, path) => ipcRenderer.invoke('cuppet:native:open-project-file', projectId, path),
+    openExternal: (url) => ipcRenderer.invoke('cuppet:native:open-external', url),
   },
   settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
   onEvent: (callback) => { if (typeof callback !== 'function') return () => {}; const listener = (_event, payload) => callback(payload); ipcRenderer.on('cuppet:event', listener); return () => ipcRenderer.removeListener('cuppet:event', listener); },
