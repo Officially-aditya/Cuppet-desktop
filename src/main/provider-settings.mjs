@@ -31,6 +31,7 @@ export class ProviderSettingsStore {
   #value = structuredClone(DEFAULTS);
   #encryptedApiKey;
   #primaryEffort = '';
+  #secondaryAuto = true;
   #customModels = {};
 
   constructor(path) { this.#path = path; }
@@ -41,24 +42,28 @@ export class ProviderSettingsStore {
       this.#value = serializableProviderConfiguration({ ...DEFAULTS, ...parsed });
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
       this.#primaryEffort = this.#value.providerID === 'codex' ? effortID(parsed.primaryEffort) : '';
+      this.#secondaryAuto = parsed.secondaryAuto !== false;
       this.#customModels = normalizeCustomModelRegistry(parsed.customModels);
     } catch {
       this.#value = structuredClone(DEFAULTS);
       this.#encryptedApiKey = undefined;
       this.#primaryEffort = '';
+      this.#secondaryAuto = true;
       this.#customModels = {};
     }
   }
 
   rendererValue() {
-    const projection = providerProjection(this.#value, { includeEndpoint: true });
+    const effective = this.#effectiveValue();
+    const projection = providerProjection(effective, { includeEndpoint: true });
     const storage = credentialStorageStatus(safeStorage);
-    const selectedPreset = providerPreset(projection.providerID ?? this.#value.providerID);
+    const selectedPreset = providerPreset(projection.providerID ?? effective.providerID);
     const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
     const encryptedApiKeyConfigured = Boolean(this.#encryptedApiKey);
     const credentialConfigured = chatGPTProvider || (storage.available && encryptedApiKeyConfigured);
     return {
       ...projection,
+      secondaryAuto: this.#secondaryAuto,
       configured: credentialConfigured && Boolean(projection.primary?.modelID),
       // Compatibility for the current renderer send gate. For Codex this means the provider's
       // credential requirement is satisfied by its separate ChatGPT OAuth flow; no API key exists.
@@ -78,12 +83,13 @@ export class ProviderSettingsStore {
   }
 
   runtimeValue() {
-    const selectedPreset = providerPreset(this.#value.providerID);
+    const effective = this.#effectiveValue();
+    const selectedPreset = providerPreset(effective.providerID);
     const normalized = normalizeProviderConfiguration({
-      ...this.#value,
+      ...effective,
       apiKey: selectedPreset?.authType === 'chatgpt' ? '' : this.#decryptApiKey(),
     });
-    return this.#value.providerID === 'codex' && this.#primaryEffort
+    return effective.providerID === 'codex' && this.#primaryEffort
       ? { ...normalized, primaryEffort: this.#primaryEffort }
       : normalized;
   }
@@ -108,9 +114,13 @@ export class ProviderSettingsStore {
     // When the provider itself changes, fall back to that provider's preset model instead of
     // accidentally carrying a model id across providers.
     const model = requestedModel || currentPrimaryModel || modelID(preset?.model);
-    const backgroundModel = requestedBackgroundModel || currentSecondaryModel || model;
+    const secondaryAutoProvided = Object.prototype.hasOwnProperty.call(source, 'secondaryAuto');
+    const secondaryAuto = providerChanged ? true : secondaryAutoProvided ? source.secondaryAuto !== false : this.#secondaryAuto;
+    const backgroundModel = secondaryAuto
+      ? autoSecondaryModel(preset, model)
+      : requestedBackgroundModel || currentSecondaryModel || model;
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
-    const secondaryEffort = preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
+    const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
     const chatGPTProvider = preset?.authType === 'chatgpt';
     const codexEffortProvided = providerID === 'codex' && Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
     const codexEffort = providerID === 'codex'
@@ -139,6 +149,7 @@ export class ProviderSettingsStore {
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
     this.#primaryEffort = codexEffort;
+    this.#secondaryAuto = secondaryAuto;
 
     if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
@@ -168,10 +179,25 @@ export class ProviderSettingsStore {
     return { ...this.rendererValue(), customModelProbe: probe };
   }
 
+  #effectiveValue() {
+    if (!this.#secondaryAuto) return this.#value;
+    const providerID = this.#value.providerID || DEFAULT_PROVIDER_ID;
+    const primaryModel = modelID(this.#value.primary?.modelID ?? this.#value.model);
+    if (!primaryModel) return this.#value;
+    const secondaryModel = autoSecondaryModel(providerPreset(providerID), primaryModel);
+    if (!secondaryModel) return this.#value;
+    return serializableProviderConfiguration({
+      ...this.#value,
+      backgroundModel: secondaryModel,
+      secondary: { providerID, modelID: secondaryModel },
+    });
+  }
+
   async #persist() {
     await writeSettingsAtomically(this.#path, `${JSON.stringify({
       ...this.#value,
       ...(this.#primaryEffort ? { primaryEffort: this.#primaryEffort } : {}),
+      secondaryAuto: this.#secondaryAuto,
       customModels: this.#customModels,
       apiKey: this.#encryptedApiKey,
     }, null, 2)}\n`);
@@ -194,6 +220,31 @@ async function writeSettingsAtomically(path, content) {
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
   }
+}
+
+function autoSecondaryModel(preset, primaryModel) {
+  const fallback = modelID(primaryModel);
+  const models = Array.isArray(preset?.models) ? preset.models : [];
+  if (!models.length) return fallback;
+  let best = { id: fallback, score: 0 };
+  for (const item of models) {
+    const id = modelID(item?.id);
+    if (!id) continue;
+    const text = `${id} ${item?.label ?? ''} ${item?.description ?? ''}`.toLowerCase();
+    let score = 0;
+    if (text.includes('flash-lite')) score += 100;
+    if (text.includes('luna')) score += 90;
+    if (text.includes('flash')) score += 80;
+    if (text.includes('turbo')) score += 70;
+    if (text.includes('cost-efficient') || text.includes('lower-cost') || text.includes('low-latency')) score += 60;
+    if (text.includes('fast')) score += 50;
+    if (text.includes('small') || text.includes('27b')) score += 45;
+    if (text.includes('balanced') || text.includes('sonnet')) score += 35;
+    if (text.includes('opus') || text.includes('max') || text.includes(' pro ')) score -= 20;
+    if (text.includes('flagship') || text.includes('advanced') || text.includes('hardest')) score -= 10;
+    if (score > best.score) best = { id, score };
+  }
+  return best.score > 0 ? best.id : fallback;
 }
 
 function modelID(value) {
