@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('cuppet', {
   },
   sessions: {
     list: (projectId) => ipcRenderer.invoke('cuppet:session:list', projectId),
+    deleted: () => ipcRenderer.invoke('cuppet:session:deleted:list'),
     create: (projectId = null) => ipcRenderer.invoke('cuppet:session:create', projectId),
     get: (sessionId) => ipcRenderer.invoke('cuppet:session:get', sessionId),
     search: (query, options = {}) => ipcRenderer.invoke('cuppet:session:search', query, options),
