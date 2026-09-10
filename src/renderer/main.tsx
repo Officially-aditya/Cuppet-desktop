@@ -6,8 +6,8 @@ import './navigation.css';
 import './settings.css';
 import './execution.css';
 import './react.css';
-import './controls.css';
 import './composer-refinements.css';
+import './controls.css';
 import { App } from './react/App';
 import './types';
 
