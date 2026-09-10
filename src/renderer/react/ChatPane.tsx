@@ -302,17 +302,13 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 }
 
 function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
-  const [traceOpen, setTraceOpen] = useState(live);
+  const [traceOpen, setTraceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
   const hasTrace = assistant && trace.length > 0;
   const canCopy = assistant && !live && message.status !== 'streaming' && Boolean(content.trim());
-
-  useEffect(() => {
-    setTraceOpen(live);
-  }, [live, message.id]);
 
   const copySummary = async () => {
     if (!canCopy) return;
