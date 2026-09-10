@@ -1,0 +1,87 @@
+/* Provider model selection reuses the chat model picker with a settings-sized surface. */
+.provider-model-section{
+  display:grid;
+  gap:8px;
+  width:100%;
+  box-sizing:border-box;
+  padding:12px 13px;
+  border:1px solid #272e37;
+  border-radius:9px;
+  background:#11161c;
+}
+.provider-model-grid{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:12px;
+  width:100%;
+}
+.provider-model-field{
+  display:grid;
+  gap:7px;
+  min-width:0;
+}
+.provider-model-copy{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:10px;
+  min-width:0;
+}
+.provider-model-copy strong{
+  color:#e5e9ee;
+  font-size:11px;
+  font-weight:600;
+}
+.provider-model-copy span,
+.provider-model-hint{
+  color:#77818e;
+  font-size:9.5px;
+  line-height:1.45;
+}
+.provider-model-copy span{white-space:nowrap}
+.provider-model-hint{padding-top:1px}
+
+.settings-model-picker{
+  width:100%;
+  min-width:0;
+  flex:1 1 auto;
+}
+.settings-model-picker .model-picker-trigger{
+  width:100%;
+  max-width:none;
+  min-height:34px;
+  height:34px;
+  justify-content:space-between;
+  border:1px solid #303741;
+  border-radius:8px;
+  background:#0c1014;
+  color:#e8ecf1;
+  padding:7px 9px 7px 10px;
+  font-size:12px;
+}
+.settings-model-picker .model-picker-trigger:hover,
+.settings-model-picker.open .model-picker-trigger{
+  border-color:#3a424e;
+  background:#0e1217;
+  color:#f0f3f6;
+}
+.settings-model-picker.open .model-picker-trigger{
+  border-color:#596575;
+  box-shadow:0 0 0 2px rgba(130,145,165,.12);
+}
+.settings-model-picker .model-picker-name{
+  max-width:calc(100% - 22px);
+}
+.settings-model-picker .model-picker-menu{
+  top:calc(100% + 5px);
+  bottom:auto;
+  left:0;
+  right:auto;
+  width:min(360px,calc(100vw - 48px));
+  max-width:none;
+}
+
+@media(max-width:760px){
+  .provider-model-grid{grid-template-columns:1fr}
+  .provider-model-copy{justify-content:flex-start}
+}
