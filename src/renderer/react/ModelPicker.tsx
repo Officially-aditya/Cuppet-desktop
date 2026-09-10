@@ -311,7 +311,7 @@ function effortForModel(providerID: string, modelID: string, settings: ProviderS
     : String(settings.primary?.variant ?? '').trim();
   const state = modelEffortState(providerID, modelID, settings, codex);
   if (currentEffort && state.options.includes(currentEffort)) return currentEffort;
-  return providerID === 'codex' ? state.defaultEffort : '';
+  return '';
 }
 
 function formatEffort(value: string) {
