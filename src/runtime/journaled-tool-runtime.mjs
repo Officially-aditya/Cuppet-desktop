@@ -1,18 +1,33 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 
 export class JournaledToolRuntime {
-  #inner; #journal; #captures = new Map(); #emit;
+  #inner; #journal; #captures = new Map(); #emit; #db;
 
-  constructor({ journal, emit = () => {}, ...options }) {
+  constructor({ journal, emit = () => {}, db = null, ...options }) {
     this.#journal = journal;
     this.#emit = emit;
-    this.#inner = new ToolRuntime({ ...options, emit: (event) => this.#onToolEvent(event) });
+    this.#db = db;
+    this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
   definitions(options) { return this.#inner.definitions(options); }
 
   async run(options) {
-    const capture = new ToolMutationCapture({ journal: this.#journal, sessionId: options.sessionId, projectRoot: options.projectRoot, adapter: options.adapter });
+    const messageId = latestAssistantMessageID(this.#db, options.sessionId);
+    const capture = new ToolMutationCapture({
+      journal: this.#journal,
+      sessionId: options.sessionId,
+      projectRoot: options.projectRoot,
+      adapter: options.adapter,
+      onReasoning: (segment) => {
+        if (!messageId || !segment) return;
+        this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
+      },
+      onPreview: (content) => {
+        if (!messageId) return;
+        this.#emit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
+      },
+    });
     this.#captures.set(options.sessionId, capture);
     try {
       const result = await this.#inner.run({
@@ -37,20 +52,51 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #projectRoot; #adapter; #pending = new Map(); #lastFinished = null; #failure = null;
-  constructor({ journal, sessionId, projectRoot, adapter }) { this.#journal = journal; this.#sessionId = sessionId; this.#projectRoot = projectRoot; this.#adapter = adapter; }
+  #journal; #sessionId; #projectRoot; #adapter; #pending = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview;
+  constructor({ journal, sessionId, projectRoot, adapter, onReasoning = () => {}, onPreview = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview;
+  }
 
   async stream(messages, options) {
     if (this.#failure) throw this.#failure;
+    const finalDelta = typeof options?.onDelta === 'function' ? options.onDelta : async () => {};
+    let pendingText = '';
+    const previewDelta = (delta) => {
+      const text = typeof delta === 'string' ? delta : String(delta ?? '');
+      if (!text) return;
+      pendingText += text;
+      this.#onPreview(pendingText);
+    };
+    const flushReasoning = async () => {
+      const segment = pendingText.trim();
+      if (segment) await this.#onReasoning(segment);
+      pendingText = '';
+      this.#onPreview('');
+    };
     const executeTool = typeof options?.executeTool === 'function'
       ? async (call) => {
+          await flushReasoning();
           await this.#prepareCall(call);
           return options.executeTool(call);
         }
       : undefined;
-    const response = await this.#adapter.stream(messages, { ...options, ...(executeTool ? { executeTool } : {}) });
-    if (!this.#journal || !this.#projectRoot) return response;
-    for (const call of Array.isArray(response?.toolCalls) ? response.toolCalls : []) await this.#prepareCall(call);
+    let response;
+    try {
+      response = await this.#adapter.stream(messages, { ...options, onDelta: previewDelta, ...(executeTool ? { executeTool } : {}) });
+    } catch (error) {
+      this.#onPreview('');
+      throw error;
+    }
+    const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
+    if (toolCalls.length) {
+      await flushReasoning();
+      if (this.#journal && this.#projectRoot) for (const call of toolCalls) await this.#prepareCall(call);
+      return response;
+    }
+    if (!pendingText && typeof response?.text === 'string') pendingText = response.text;
+    if (pendingText) await finalDelta(pendingText);
+    pendingText = '';
+    this.#onPreview('');
     return response;
   }
 
@@ -94,6 +140,14 @@ class ToolMutationCapture {
   }
 
   assertHealthy() { if (this.#failure) throw this.#failure; }
+}
+
+function latestAssistantMessageID(db, sessionId) {
+  try {
+    const messages = db?.getSession?.(sessionId)?.messages;
+    if (!Array.isArray(messages)) return '';
+    return String([...messages].reverse().find((message) => message?.role === 'assistant' && message?.status === 'streaming')?.id ?? '');
+  } catch { return ''; }
 }
 
 function parseArguments(value) {
