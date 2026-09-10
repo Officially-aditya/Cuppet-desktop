@@ -261,7 +261,7 @@ export type CuppetApi = {
     get: () => Promise<ProviderSettings>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
-  events: { subscribe: (handler: (event: RuntimeEvent) => void) => () => void };
+  onEvent: (handler: (event: RuntimeEvent) => void) => () => void;
 };
 
 declare global { interface Window { cuppet: CuppetApi } }
