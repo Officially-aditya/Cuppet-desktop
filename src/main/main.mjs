@@ -59,6 +59,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:command:execute', async (_event, sessionId, value) => executeDesktopCommand(request, sessionId, value));
 
   ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
+  ipcMain.handle('cuppet:session:deleted:list', () => request('session.deleted.list'));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
   ipcMain.handle('cuppet:session:search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
