@@ -124,10 +124,10 @@ assert.match(sidebar, /SIDEBAR_COLLAPSED_KEY/, 'macOS sidebar collapse persisten
 assert.match(sidebar, /sidebar-toggle-button/, 'macOS sidebar collapse button missing');
 assert.match(sidebar, /event\.metaKey.*event\.altKey.*event\.key\.toLowerCase\(\) !== 's'/s, 'macOS sidebar toggle shortcut is missing');
 assert.match(sidebar, /window\.cuppet\.native\.platform === 'darwin'/, 'sidebar collapse control is not scoped to macOS');
-assert.match(reactCss, /\.react-sidebar \.nav-button\{[^}]*font-size:13px/, 'primary sidebar navigation text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.project-name\{[^}]*font-size:13px/, 'project sidebar text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:13px/, 'chat/session sidebar text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.sidebar-bottom \.ghost-button\{[^}]*font-size:13px/, 'sidebar footer action text is not 13px');
+assert.match(reactCss, /\.react-sidebar \.nav-button\{[^}]*font-size:14px/, 'primary sidebar navigation text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.project-name\{[^}]*font-size:14px/, 'project sidebar text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:14px/, 'chat/session sidebar text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.sidebar-bottom \.ghost-button\{[^}]*font-size:14px/, 'sidebar footer action text is not 14px');
 assert.match(settingsCss, /\.settings-hub-nav button\{[^}]*font-size:12px/, 'Settings navigation baseline font size changed unexpectedly');
 assert.match(reactCss, /\.react-sidebar\.collapsed\{[^}]*42px/, 'collapsed macOS sidebar rail styling missing');
 assert.match(settings, /Account/);
@@ -162,4 +162,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 13px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 14px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
