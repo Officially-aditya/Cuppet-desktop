@@ -217,7 +217,7 @@ function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex,
         ? (isCodex ? 'Connect ChatGPT first so Cuppet can validate this Codex model.' : 'Save an API key first so Cuppet can validate this model.')
         : 'Cuppet sends one tiny tool-free request before saving the model ID.';
 
-  return <div className="provider-auth-card">
+  return <div className="provider-auth-card custom-model-card">
     <div className="provider-auth-copy">
       <div className="provider-auth-title-row"><strong>Custom model ID</strong>{savedModels.length > 0 && <span className="settings-status-pill compact">{savedModels.length} saved</span>}</div>
       <span>{status || blockedReason}</span>
@@ -239,7 +239,7 @@ function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex,
           void add();
         }}
       />
-      <button type="button" className="ghost-button settings-action-button" disabled={!providerReady || testing || !modelID.trim()} onClick={() => void add()}>{testing ? 'Testing…' : 'Test & add'}</button>
+      <button type="button" className="ghost-button settings-action-button" disabled={!providerReady || testing || !modelID.trim()} onClick={() => void add()}>{testing ? 'Adding…' : 'Add'}</button>
     </div>
   </div>;
 }
@@ -283,6 +283,7 @@ function UsagePanel({ current, usage, loading, onRefresh }: { current: ProviderS
         <span>{unreported ? `${unreported} successful provider call${unreported === 1 ? '' : 's'} did not return token telemetry and are excluded from token totals. ` : ''}Cached-input and reasoning counts are shown only when a provider reports them.</span>
         {usage.lastTrackedAt && <span>Last exact report {formatUsageTime(usage.lastTrackedAt)}.</span>}
       </div>
+      <div className="usage-footnote"><span>Provider validation probes are intentionally excluded from conversation usage totals.</span></div>
     </>}
   </div>;
 }
