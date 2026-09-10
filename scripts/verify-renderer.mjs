@@ -141,7 +141,7 @@ assert.match(settings, /OpenRouter|presets\.map/, 'provider preset selector miss
 assert.match(settings, /Continue with ChatGPT/, 'Codex subscription connection UI missing');
 assert.match(settings, /API key/, 'API-key provider credential UI missing');
 assert.match(settings, /Custom model ID/, 'provider settings custom-model field missing');
-assert.match(settings, /Test & add/, 'custom model validation action missing');
+assert.match(settings, /testing \? 'Adding…' : 'Add'/, 'custom model validation action missing');
 assert.match(settings, /customModel:\s*value/, 'custom model settings action does not use the host settings boundary');
 assert.doesNotMatch(settings, /provider-base-url|provider-model|primary-effort/, 'advanced provider endpoint/model fields returned to the React UI');
 assert.match(remote, /remote\.start/);
