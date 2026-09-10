@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ProviderPreset, ProviderSettings, RemoteDevice, TokenUsageSummary } from '../types';
+import type { ProviderPreset, ProviderSettings, RemoteDevice, Session, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
@@ -135,7 +135,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
               {section === 'general' && <GeneralPanel />}
-              {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
+              {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
@@ -150,11 +150,55 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   );
 }
 
-function AccountPanel({ codex, busy, onConnect, onDisconnect }: { codex: any; busy: boolean; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void> }) {
+function AccountPanel({ codex, busy, onConnect, onDisconnect, onError }: { codex: any; busy: boolean; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onError: (error: unknown) => void }) {
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [deleted, setDeleted] = useState<Session[]>([]);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [clock, setClock] = useState(Date.now());
+
+  const refreshDeleted = useCallback(async () => {
+    setDeletedLoading(true);
+    try { setDeleted(await window.cuppet.sessions.deleted()); }
+    catch (error) { onError(error); }
+    finally { setDeletedLoading(false); }
+  }, [onError]);
+
+  useEffect(() => {
+    if (!showDeleted) return;
+    void refreshDeleted();
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    const unsubscribe = window.cuppet.onEvent((event) => {
+      if (['session.deleted', 'session.restored', 'session.purged'].includes(String(event?.type))) void refreshDeleted();
+    });
+    return () => { window.clearInterval(timer); unsubscribe(); };
+  }, [refreshDeleted, showDeleted]);
+
+  const restoreDeleted = async (sessionId: string) => {
+    setRestoring(sessionId);
+    try {
+      await window.cuppet.sessions.restore(sessionId);
+      await refreshDeleted();
+    } catch (error) { onError(error); }
+    finally { setRestoring(null); }
+  };
+
   return <>
     <div className="settings-card"><div className="settings-card-heading"><div><h3>Cuppet account</h3><p>Your Cuppet account will connect desktop identity, Agents, and synced services.</p></div><span className="settings-status-pill">Not connected</span></div><div className="settings-row"><div><strong>Desktop mode</strong><span>Projects and conversations remain local in this build.</span></div><span className="settings-value">Local</span></div></div>
     <div className="settings-card"><div className="settings-card-heading"><div><h3>ChatGPT / Codex</h3><p>Uses the official OpenAI Codex app-server. Codex owns and refreshes the OAuth credentials; Cuppet never reads or copies them.</p></div><span className={`settings-status-pill${codex.loggedIn ? '' : ' muted'}`}>{codex.loggedIn ? 'Connected' : codex.loginRunning ? 'Connecting…' : 'Not connected'}</span></div>
       <div className="settings-row codex-auth-row"><div><strong>{codex.email || 'Official Codex OAuth'}</strong><span>{codex.message || 'Use your existing ChatGPT Codex subscription.'}{codex.planType ? ` · ${codex.planType}` : ''}</span></div><div className="codex-auth-actions">{codex.loggedIn ? <button type="button" className="ghost-button settings-action-button" disabled={busy} onClick={() => void onDisconnect()}>Sign out</button> : <button type="button" className="primary-button settings-action-button" disabled={busy || codex.loginRunning || codex.available === false} onClick={() => void onConnect()}>Continue with ChatGPT</button>}</div></div>
+    </div>
+    <div className="settings-card deleted-chats-card">
+      <div className="settings-row">
+        <div><strong>Deleted chats</strong><span>Chats deleted from the sidebar remain recoverable for 7 days before permanent cleanup.</span></div>
+        <button type="button" className="ghost-button settings-action-button" aria-expanded={showDeleted} onClick={() => setShowDeleted((value) => !value)}>{showDeleted ? 'Hide' : 'Deleted chats'}</button>
+      </div>
+      {showDeleted && <div className="settings-device-list deleted-chat-list" aria-label="Deleted chats">
+        {deletedLoading && !deleted.length ? <div className="settings-empty">Loading deleted chats…</div> : deleted.length ? deleted.map((session) => <div className="settings-row deleted-chat-row" key={session.id}>
+          <div><strong>{session.title || 'New chat'}</strong><span>{session.projectId ? 'Project chat' : 'General chat'} · {deletedRecoveryLabel(session, clock)}</span></div>
+          <button type="button" className="ghost-button settings-action-button" disabled={restoring === session.id} onClick={() => void restoreDeleted(session.id)}>{restoring === session.id ? 'Restoring…' : 'Restore'}</button>
+        </div>) : <div className="settings-empty">No deleted chats in the 7-day recovery window.</div>}
+      </div>}
     </div>
   </>;
 }
@@ -338,6 +382,16 @@ function PrivacyPanel() {
 
 function AboutPanel() {
   return <div className="settings-card"><div className="settings-card-heading"><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and Remote.</p></div></div><div className="settings-row"><div><strong>Renderer</strong><span>React + TypeScript, compiled with Vite.</span></div><span className="settings-value">React</span></div><div className="settings-row"><div><strong>Runtime</strong><span>Electron host with the independent Cuppet runtime.</span></div><span className="settings-value">Desktop</span></div></div>;
+}
+
+function deletedRecoveryLabel(session: Session, now = Date.now()) {
+  const purgeAt = Number(session.purgeAt || (Number(session.deletedAt) + 7 * 24 * 60 * 60 * 1000));
+  const remaining = Math.max(0, purgeAt - now);
+  if (remaining <= 0) return 'Recovery window expired';
+  const hours = Math.max(1, Math.ceil(remaining / (60 * 60 * 1000)));
+  if (hours < 24) return `${hours}h left to restore`;
+  const days = Math.ceil(hours / 24);
+  return `${days}d left to restore`;
 }
 
 function formatTokens(value: number) {
