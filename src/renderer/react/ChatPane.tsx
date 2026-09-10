@@ -46,6 +46,8 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     }).slice(0, 16);
   }, [commands, value]);
 
+  const transientActivity = useMemo(() => running ? compactActivity(activity) : [], [activity, running]);
+
   useEffect(() => setSelected(0), [value]);
 
   useEffect(() => {
@@ -74,7 +76,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     if (!node) return;
     const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
-  }, [session?.messages]);
+  }, [session?.messages, transientActivity.length]);
 
   const submit = async () => {
     const raw = value.trim();
@@ -175,10 +177,16 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
         {!messages.length ? (
           <div className="empty-state"><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
         ) : messages.map((message) => <MessageView key={message.id} message={message} />)}
+        {transientActivity.length > 0 && (
+          <div className="thread-activity" aria-label="Agent activity">
+            {transientActivity.slice(-12).map((entry) => (
+              <div key={entry.id} className={`thread-activity-line ${entry.status || 'complete'}`}>{entry.label}</div>
+            ))}
+          </div>
+        )}
       </section>
 
       <footer className="composer-wrap react-composer-wrap">
-        {activity.length > 0 && <ActivityPanel activity={activity} />}
         {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -216,12 +224,19 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             )}
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
-            {running && <button type="button" className="stop-button" onClick={() => void onStop()}>Stop</button>}
-            <button type="submit" className="send-button" aria-label={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} title={running ? (deliveryMode === 'steer' ? 'Steer' : 'Queue') : 'Send'} disabled={!value.trim() && !attachments.length}>
-              <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+            {running ? (
+              <button type="button" className="send-button composer-pause-button" aria-label="Pause" title="Pause" onClick={() => void onStop()}>
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M7.25 6v8M12.75 6v8" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : (
+              <button type="submit" className="send-button" aria-label="Send" title="Send" disabled={!value.trim() && !attachments.length}>
+                <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
           </div>
         </form>
       </footer>
@@ -278,22 +293,6 @@ function CommandResultView({ result, onDismiss }: { result: CommandResult; onDis
   );
 }
 
-function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
-  return (
-    <section className="execution-activity react-execution-activity" aria-label="Agent activity">
-      {activity.slice(-12).map((entry) => (
-        <article key={entry.id} className={`activity-row ${entry.status || 'complete'}`}>
-          <div className="activity-head">
-            <span className="activity-status">{entry.status === 'running' ? '…' : entry.status === 'error' ? '×' : entry.status === 'queued' ? '↳' : '✓'}</span>
-            <span className="activity-label">{entry.label}</span>
-          </div>
-          {entry.details && <details className="activity-details"><summary>Details</summary><pre>{entry.details}</pre></details>}
-        </article>
-      ))}
-    </section>
-  );
-}
-
 async function executePaletteAction(item: CommandDefinition, sessionId: string | null, mode: 'plan' | 'build') {
   if (item.requiresSession && !sessionId) throw new Error('Start or open a chat before using this action.');
   let input: Record<string, unknown> = {};
@@ -338,6 +337,18 @@ function exactSlash(value: string, item: CommandDefinition) {
 
 function attachmentKey(value: Attachment) {
   return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
+}
+
+function compactActivity(activity: ActivityEntry[]) {
+  const output: ActivityEntry[] = [];
+  let previous = '';
+  for (const entry of activity) {
+    const key = `${entry.kind}:${entry.status}:${entry.label}:${entry.details ?? ''}`;
+    if (key === previous) continue;
+    previous = key;
+    output.push(entry);
+  }
+  return output;
 }
 
 function resize(node: HTMLTextAreaElement | null) {
