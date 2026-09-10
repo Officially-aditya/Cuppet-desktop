@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile as execFileCallback, spawn } from 'node:child_process'
-import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -13,10 +13,20 @@ const options = parseArgs(process.argv.slice(2))
 const manifestPath = resolve(root, options.manifest)
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 if (!Array.isArray(manifest.tasks) || manifest.tasks.length !== 12) throw new Error(`Desktop marathon requires exactly 12 tasks; found ${manifest.tasks?.length ?? 'unknown'}`)
+if (!manifest.sourceRepository?.url || !manifest.sourceRepository?.startingSha) throw new Error('Desktop marathon manifest must pin its source repository and starting SHA')
 
 const repetitions = options.repeats ?? manifest.repetitions ?? 2
 if (options.dryRun) {
-  process.stdout.write(`${JSON.stringify({ benchmark: manifest.name, benchmarkVersion: manifest.benchmarkVersion, repetitions, tasks: manifest.tasks.map((task) => task.id), runtime: 'Cuppet Desktop RuntimeService', pe3: true, tst: true }, null, 2)}\n`)
+  process.stdout.write(`${JSON.stringify({
+    benchmark: manifest.name,
+    benchmarkVersion: manifest.benchmarkVersion,
+    sourceRepository: manifest.sourceRepository,
+    repetitions,
+    tasks: manifest.tasks.map((task) => task.id),
+    runtime: 'Cuppet Desktop RuntimeService',
+    pe3: true,
+    tst: true,
+  }, null, 2)}\n`)
   process.exit(0)
 }
 
@@ -25,6 +35,7 @@ const runRoot = await mkdtemp(join(root, '.benchmarks', 'marathon-'))
 process.env.CUPPET_DATA_DIR = join(runRoot, 'usage-ledger')
 process.env.CUPPET_PE3 = '1'
 
+const sourceRoot = await resolveBenchmarkSource(manifest.sourceRepository)
 const runtime = await loadDesktopRuntime()
 const tstBinary = process.env.CUPPET_TST_BIN?.trim() || runtime.resolveManagedTstBinary()
 if (!tstBinary || !existsSync(tstBinary)) {
@@ -35,13 +46,13 @@ const results = []
 try {
   for (let repeat = 1; repeat <= repetitions; repeat += 1) {
     const workspace = join(runRoot, 'workspaces', `repeat-${repeat}`)
-    await prepareWorkspace(workspace, resolve(root, manifest.fixture))
+    await prepareWorkspace(workspace, sourceRoot, manifest.sourceRepository.startingSha)
     const repeatResults = await runSequence({ repeat, workspace, manifest, runtime, tstBinary })
     results.push(...repeatResults)
     if (!options.keepWorkspaces) await rm(workspace, { recursive: true, force: true })
   }
 
-  const report = buildReport(manifest, repetitions, results, runRoot)
+  const report = buildReport(manifest, repetitions, results, runRoot, sourceRoot)
   const outputDir = resolve(root, options.output)
   await mkdir(outputDir, { recursive: true })
   const stamp = new Date().toISOString().replaceAll(':', '-')
@@ -68,14 +79,24 @@ async function runSequence({ repeat, workspace, manifest, runtime, tstBinary }) 
     if (event?.type === 'tool.started') counters.toolCalls += 1
     if (event?.type === 'context.compacted') counters.compactions += 1
     if (event?.type === 'run.finished' && event?.error) activeFailure ??= String(event.error)
-    if (event?.type === 'pe3.routed') routes.push({ action: event.action, sourceSessionId: event.sourceSessionId, targetSessionId: event.targetSessionId, reason: event.reason ?? null })
+    if (event?.type === 'pe3.routed') routes.push({
+      action: event.action,
+      sourceSessionId: event.sourceSessionId,
+      targetSessionId: event.targetSessionId,
+      reason: event.reason ?? null,
+    })
     if (event?.type === 'permission.requested') {
       counters.permissions += 1
       const allowed = new Set(['read', 'edit', 'write', 'bash']).has(String(event.request?.action ?? ''))
       if (!allowed) counters.rejectedPermissions += 1
-      queueMicrotask(() => void service?.handle('permission.reply', { requestId: event.request?.id, reply: allowed ? 'once' : 'reject' }).catch(() => undefined))
+      queueMicrotask(() => void service?.handle('permission.reply', {
+        requestId: event.request?.id,
+        reply: allowed ? 'once' : 'reject',
+      }).catch(() => undefined))
     }
-    if (event?.type === 'question.requested') queueMicrotask(() => void service?.handle('question.reject', { requestId: event.request?.id }).catch(() => undefined))
+    if (event?.type === 'question.requested') {
+      queueMicrotask(() => void service?.handle('question.reject', { requestId: event.request?.id }).catch(() => undefined))
+    }
   }
 
   const tst = new runtime.RuntimeTstManager({ dataDir: join(dataDir, 'tst'), binaryPath: tstBinary, idleMs: 0 })
@@ -141,10 +162,14 @@ async function runSequence({ repeat, workspace, manifest, runtime, tstBinary }) 
         success,
         startedAt,
         completedAt: new Date().toISOString(),
-        durationMs: Math.round(performance.now() - started),
         sourceSessionId: pe3?.sourceSessionId ?? null,
         sessionId: targetSessionId,
-        pe3: pe3 ? { action: pe3.action, reason: pe3.reason ?? null, affinity: pe3.affinity ?? null, refreshPaths: pe3.refreshPaths ?? [] } : null,
+        pe3: pe3 ? {
+          action: pe3.action,
+          reason: pe3.reason ?? null,
+          affinity: pe3.affinity ?? null,
+          refreshPaths: pe3.refreshPaths ?? [],
+        } : null,
         routeEvents: routes.slice(routeOffset),
         usage,
         toolCalls: counters.toolCalls - before.toolCalls,
@@ -167,18 +192,58 @@ async function runSequence({ repeat, workspace, manifest, runtime, tstBinary }) 
   return rows
 }
 
-async function prepareWorkspace(workspace, fixture) {
-  await cp(fixture, workspace, { recursive: true })
+async function resolveBenchmarkSource(source) {
+  const requested = process.env.CUPPET_BENCHMARK_SOURCE_ROOT?.trim()
+  const candidates = [requested ? resolve(requested) : null, resolve(root, '..', 'Cuppet-code')].filter(Boolean)
+  for (const candidate of candidates) {
+    if (await hasCommit(candidate, source.startingSha)) return candidate
+  }
+
+  const cacheRoot = resolve(root, '.benchmark-cache', 'Cuppet-code')
+  await mkdir(dirname(cacheRoot), { recursive: true })
+  if (!existsSync(join(cacheRoot, '.git'))) {
+    await rm(cacheRoot, { recursive: true, force: true })
+    const args = ['clone', '--filter=blob:none', '--no-checkout', '--quiet']
+    if (source.ref) args.push('--branch', source.ref)
+    args.push(source.url, cacheRoot)
+    await execFile('git', args, { cwd: root, maxBuffer: 4 * 1024 * 1024 })
+  }
+  if (!await hasCommit(cacheRoot, source.startingSha)) {
+    const ref = source.ref || 'HEAD'
+    await execFile('git', ['fetch', '--quiet', 'origin', ref], { cwd: cacheRoot, maxBuffer: 4 * 1024 * 1024 })
+  }
+  if (!await hasCommit(cacheRoot, source.startingSha)) {
+    throw new Error(`Frozen benchmark source commit ${source.startingSha} is unavailable in ${cacheRoot}`)
+  }
+  return cacheRoot
+}
+
+async function hasCommit(repository, sha) {
+  if (!repository || !existsSync(join(repository, '.git'))) return false
+  try {
+    await execFile('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: repository, maxBuffer: 64 * 1024 })
+    return true
+  } catch { return false }
+}
+
+async function prepareWorkspace(workspace, sourceRoot, startingSha) {
+  await mkdir(workspace, { recursive: true })
+  const archive = `${workspace}.tar`
+  await execFile('git', ['archive', '--format=tar', '--output', archive, startingSha], { cwd: sourceRoot, maxBuffer: 4 * 1024 * 1024 })
+  await execFile('tar', ['-xf', archive, '-C', workspace], { maxBuffer: 4 * 1024 * 1024 })
+  await rm(archive, { force: true })
+
   const sourceNodeModules = join(root, 'node_modules')
   try {
     await access(sourceNodeModules)
     await symlink(sourceNodeModules, join(workspace, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
   } catch {}
+
   await git(workspace, ['init', '--quiet'])
   await git(workspace, ['config', 'user.email', 'benchmark@localhost'])
   await git(workspace, ['config', 'user.name', 'Benchmark Controller'])
   await mkdir(join(workspace, '.git', 'info'), { recursive: true })
-  await writeFile(join(workspace, '.git', 'info', 'exclude'), 'node_modules\ngames/task-tracker/dist\n', 'utf8')
+  await writeFile(join(workspace, '.git', 'info', 'exclude'), 'node_modules\n.benchmarks\n', 'utf8')
   await git(workspace, ['add', '--all'])
   await git(workspace, ['commit', '--quiet', '-m', 'benchmark baseline'])
 }
@@ -289,7 +354,7 @@ function usageDelta(after, before) {
   }
 }
 
-function buildReport(manifest, repetitions, results, runRoot) {
+function buildReport(manifest, repetitions, results, runRoot, sourceRoot) {
   const successful = results.filter((row) => row.success)
   const allChecks = results.flatMap((row) => row.verification)
   const early = results.filter((row) => row.taskIndex < 3)
@@ -327,6 +392,7 @@ function buildReport(manifest, repetitions, results, runRoot) {
     benchmarkVersion: manifest.benchmarkVersion,
     benchmark: manifest.name,
     sourceBenchmark: manifest.sourceBenchmark,
+    sourceRepository: { ...manifest.sourceRepository, resolvedRoot: sourceRoot },
     topology: 'marathon',
     runtime: 'Cuppet Desktop RuntimeService',
     pe3Enabled: true,
@@ -348,6 +414,7 @@ function renderMarkdown(report) {
     '',
     `- Status: **${report.status}**`,
     `- Runtime: ${report.runtime}`,
+    `- Source seed: ${report.sourceRepository.startingSha}`,
     `- Topology: ${report.topology}; ${report.sequenceLength} tasks × ${report.repetitions} repeat(s)`,
     `- PE3: enabled`,
     `- TST: enabled`,
@@ -439,7 +506,11 @@ function parseArgs(argv) {
       if (!value) throw new Error(`${arg} requires a value`)
       if (arg === '--manifest') options.manifest = value
       else if (arg === '--output') options.output = value
-      else { const parsed = Number(value); if (!Number.isInteger(parsed) || parsed < 1) throw new Error('--repeats must be a positive integer'); options.repeats = parsed }
+      else {
+        const parsed = Number(value)
+        if (!Number.isInteger(parsed) || parsed < 1) throw new Error('--repeats must be a positive integer')
+        options.repeats = parsed
+      }
     } else throw new Error(`unknown argument: ${arg}`)
   }
   return options
