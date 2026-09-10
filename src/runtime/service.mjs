@@ -131,6 +131,7 @@ export class RuntimeService {
       case 'session.stop': return this.stop(params.sessionId);
       case 'session.undo.status': return this.#journal.status(this.requireSession(params.sessionId).id);
       case 'session.undo': return this.#undo(params.sessionId);
+      case 'session.cleanup': return this.#cleanupSession(params.sessionId);
       default: throw new Error(`unknown runtime method: ${method}`);
     }
   }
@@ -266,6 +267,28 @@ export class RuntimeService {
   requireSession(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
     const session = this.#db.getSession(sessionId); if (!session) throw new Error(`unknown session: ${sessionId}`); return session;
+  }
+
+  async #cleanupSession(sessionId) {
+    const session = this.requireSession(sessionId);
+    if (this.#runs.has(session.id)) throw new Error('cannot purge a chat while it is generating');
+    this.#permissions.forgetSession?.(session.id);
+    this.#questions.forgetSession?.(session.id);
+    this.#compiler.clearSession?.(session.id);
+    const backgroundKey = session.projectId ?? 'general';
+    this.#backgrounds.get(backgroundKey)?.forgetSession?.(session.id);
+    if (session.projectId) this.#pe3Routers.delete(session.projectId);
+    await Promise.all([
+      this.#plans.delete?.(session.id),
+      this.#journal.deleteSession?.(session.id),
+      this.#cognitive.forgetSession?.(session.id),
+    ]);
+    return {
+      sessionId: session.id,
+      projectId: session.projectId ?? null,
+      preserved: ['tst-memory', 'project-files'],
+      purged: ['permissions', 'questions', 'context-cache', 'lossless-plan', 'mutation-journal', 'cognitive-session-state', 'background-session-state', 'pe3-live-router'],
+    };
   }
 
   async send(params) {
