@@ -380,6 +380,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
   const [traceOpen, setTraceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const responseRef = useRef<HTMLDivElement | null>(null);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
@@ -393,7 +394,10 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   const copySummary = async () => {
     if (!canCopy) return;
     try {
-      await navigator.clipboard.writeText(content);
+      const rendered = responseRef.current?.innerText?.trim();
+      const value = rendered || content.trim();
+      if (!value) return;
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {
@@ -420,7 +424,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
       {hasTrace && live && <TraceView trace={trace} />}
       {hasTrace && !live && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
-        content ? <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
+        content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
         <div className="message-content">{content}</div>
       )}
