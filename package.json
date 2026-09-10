@@ -15,6 +15,8 @@
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test",
+    "benchmark:marathon": "node scripts/benchmark-marathon.mjs",
+    "benchmark:marathon:dry-run": "node scripts/benchmark-marathon.mjs --dry-run",
     "pack:dir": "node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run renderer:verify && electron-builder --dir --publish never",
     "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
@@ -56,6 +58,7 @@
     "qrcode": "1.5.4",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "tsx": "4.19.4",
     "typescript": "5.9.2",
     "vite": "7.1.5"
   },
