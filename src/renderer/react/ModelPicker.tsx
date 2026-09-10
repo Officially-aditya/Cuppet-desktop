@@ -143,7 +143,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         onChange?.(next);
       }
 
-      if (nextEffortState.options.length > 0) {
+      if (slot === 'primary' && nextEffortState.options.length > 0) {
         setStage('efforts');
         setOpen(true);
       } else {
@@ -176,8 +176,8 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         baseUrl: current.baseUrl || '',
         model: current.primary?.modelID || configuredModel,
         backgroundModel: current.secondary?.modelID || current.primary?.modelID || configuredModel,
-        primaryEffort: slot === 'primary' ? value : selectedEffort('primary', currentProvider, current),
-        secondaryEffort: slot === 'secondary' ? value : selectedEffort('secondary', currentProvider, current),
+        primaryEffort: value,
+        secondaryEffort: selectedEffort('secondary', currentProvider, current),
       });
       setSettings(saved);
       onChange?.(saved);
@@ -205,17 +205,18 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   };
 
   const slotLabel = slot === 'secondary' ? 'secondary' : 'primary';
+  const triggerAriaLabel = surface === 'composer' && slot === 'primary' ? 'Select model' : `Select ${slotLabel} model`;
 
   return (
     <div className={`model-picker${surface === 'settings' ? ' settings-model-picker' : ''}${open ? ' open' : ''}`} ref={root}>
       <button
         type="button"
         className="model-picker-trigger"
-        aria-label={`Select ${slotLabel} model`}
+        aria-label={triggerAriaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled || busy}
-        title={configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : `Select ${slotLabel} model`}
+        title={configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : triggerAriaLabel}
         onClick={() => void toggle()}
       >
         <span className="model-picker-name">{displayModel}</span>
@@ -226,7 +227,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         <div className="model-picker-menu" role="listbox" aria-label={stage === 'models' ? `${slotLabel} models` : 'Reasoning effort'}>
           {stage === 'models' ? (
             <>
-              <div className="model-picker-provider">{providerLabel} · {slot === 'secondary' ? 'Secondary models' : 'Models'}</div>
+              <div className="model-picker-provider">{slot === 'secondary' ? `${providerLabel} · Secondary models` : `${providerLabel} · Models`}</div>
               {options.length > 0 ? options.map((option) => (
                 <button
                   type="button"
