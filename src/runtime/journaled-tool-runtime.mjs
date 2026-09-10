@@ -17,6 +17,7 @@ export class JournaledToolRuntime {
     const capture = new ToolMutationCapture({
       journal: this.#journal,
       sessionId: options.sessionId,
+      messageId,
       projectRoot: options.projectRoot,
       adapter: options.adapter,
       onReasoning: (segment) => {
@@ -46,15 +47,16 @@ export class JournaledToolRuntime {
   }
 
   #onToolEvent(event) {
-    this.#captures.get(event?.sessionId)?.onToolEvent(event);
-    this.#emit(event);
+    const capture = this.#captures.get(event?.sessionId);
+    capture?.onToolEvent(event);
+    this.#emit(capture ? capture.decorateToolEvent(event) : event);
   }
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #projectRoot; #adapter; #pending = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview;
-  constructor({ journal, sessionId, projectRoot, adapter, onReasoning = () => {}, onPreview = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, onReasoning = () => {}, onPreview = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview;
   }
 
   async stream(messages, options) {
@@ -76,6 +78,7 @@ class ToolMutationCapture {
     const executeTool = typeof options?.executeTool === 'function'
       ? async (call) => {
           await flushReasoning();
+          this.#rememberCall(call);
           await this.#prepareCall(call);
           return options.executeTool(call);
         }
@@ -90,6 +93,7 @@ class ToolMutationCapture {
     const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
     if (toolCalls.length) {
       await flushReasoning();
+      for (const call of toolCalls) this.#rememberCall(call);
       if (this.#journal && this.#projectRoot) for (const call of toolCalls) await this.#prepareCall(call);
       return response;
     }
@@ -98,6 +102,25 @@ class ToolMutationCapture {
     pendingText = '';
     this.#onPreview('');
     return response;
+  }
+
+  #rememberCall(call) {
+    const callId = String(call?.id || '');
+    if (!callId) return;
+    this.#calls.set(callId, {
+      tool: String(call?.name || ''),
+      argumentsJson: typeof call?.arguments === 'string' ? call.arguments : '{}',
+    });
+  }
+
+  decorateToolEvent(event) {
+    const call = this.#calls.get(String(event?.callId || ''));
+    return {
+      ...event,
+      ...(this.#messageId ? { messageId: this.#messageId } : {}),
+      ...(call?.tool ? { tool: call.tool } : {}),
+      ...(call?.argumentsJson ? { argumentsJson: call.argumentsJson } : {}),
+    };
   }
 
   async #prepareCall(call) {
