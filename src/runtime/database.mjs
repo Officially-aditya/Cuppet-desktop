@@ -59,6 +59,7 @@ export class ConversationDatabase {
     `);
     this.#ensureSessionProjectColumn();
     this.#ensureSessionArchiveColumn();
+    this.#ensureSessionDeletedColumn();
     this.#ensureSearchIndex();
     const now = Date.now();
     this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming'").run(now);
@@ -76,6 +77,13 @@ export class ConversationDatabase {
     if (!columns.some((column) => column.name === 'archived_at')) {
       this.#db.exec('ALTER TABLE sessions ADD COLUMN archived_at INTEGER');
       this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_archived_updated ON sessions(archived_at, updated_at DESC)');
+    }
+  }
+  #ensureSessionDeletedColumn() {
+    const columns = this.#db.prepare('PRAGMA table_info(sessions)').all();
+    if (!columns.some((column) => column.name === 'deleted_at')) {
+      this.#db.exec('ALTER TABLE sessions ADD COLUMN deleted_at INTEGER');
+      this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)');
     }
   }
   #ensureSearchIndex() {
@@ -129,7 +137,7 @@ export class ConversationDatabase {
 
   createSession({ id, title='New chat', projectId=null, now=Date.now() }) {
     if(projectId && !this.getProject(projectId)) throw new Error(`unknown project: ${projectId}`);
-    this.#db.prepare('INSERT INTO sessions (id,title,created_at,updated_at,project_id,archived_at) VALUES (?,?,?,?,?,NULL)').run(id,title,now,now,projectId);
+    this.#db.prepare('INSERT INTO sessions (id,title,created_at,updated_at,project_id,archived_at,deleted_at) VALUES (?,?,?,?,?,NULL,NULL)').run(id,title,now,now,projectId);
     if(projectId) this.touchProject(projectId,now);
     this.#upsertSearchSession(id);
     return this.getSessionSummary(id);
@@ -138,22 +146,33 @@ export class ConversationDatabase {
     const clauses = [archived ? 's.archived_at IS NOT NULL' : 's.archived_at IS NULL'];
     const values = [];
     if (projectId !== undefined) { clauses.push('s.project_id IS ?'); values.push(projectId); }
-    return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
+    return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
   }
-  getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
+  getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
   getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages,toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
   getMessage(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; }
   updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
   appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
   renameSession(id,title,now=Date.now()){ const value=String(title??'').trim().slice(0,160); if(!value) throw new Error('chat title is required'); this.#db.prepare('UPDATE sessions SET title=?,updated_at=? WHERE id=?').run(value,now,id); this.#upsertSearchSession(id); return this.getSessionSummary(id); }
-  archiveSession(id,archived=true,now=Date.now()){ const session=this.getSessionSummary(id); if(!session) throw new Error(`unknown session: ${id}`); this.#db.prepare('UPDATE sessions SET archived_at=?,updated_at=? WHERE id=?').run(archived?now:null,now,id); return this.getSessionSummary(id); }
+  archiveSession(id,archived=true,now=Date.now()){
+    const session=this.getSessionSummary(id); if(!session) throw new Error(`unknown session: ${id}`);
+    if(archived) this.#db.prepare('UPDATE sessions SET archived_at=?,updated_at=? WHERE id=?').run(now,now,id);
+    else this.#db.prepare('UPDATE sessions SET archived_at=NULL,deleted_at=NULL,updated_at=? WHERE id=?').run(now,id);
+    return this.getSessionSummary(id);
+  }
+  trashSession(id,now=Date.now()){
+    const session=this.getSessionSummary(id); if(!session) throw new Error(`unknown session: ${id}`);
+    this.#db.prepare('UPDATE sessions SET archived_at=?,deleted_at=?,updated_at=? WHERE id=?').run(now,now,now,id);
+    return this.getSessionSummary(id);
+  }
+  listExpiredDeleted(cutoff,limit=100){ return this.#db.prepare(`SELECT id,project_id AS projectId,deleted_at AS deletedAt FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at<=? ORDER BY deleted_at ASC LIMIT ?`).all(cutoff,Math.min(Math.max(Number(limit)||100,1),500)); }
   deleteSession(id){ this.#db.prepare('DELETE FROM search_index WHERE session_id=?').run(id); const result=this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id); return result.changes>0; }
-  touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now,id); }
+  touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=?,updated_at=? WHERE id=?').run(now,now,id); }
   search(query,{limit=50,includeArchived=false}={}){
     const match=ftsQuery(query); if(!match) return [];
     const archivedClause=includeArchived?'':'AND s.archived_at IS NULL';
-    return this.#db.prepare(`SELECT si.kind,si.item_id AS itemId,si.session_id AS sessionId,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,m.sequence,m.role,snippet(search_index,4,'[',']',' … ',18) AS snippet,bm25(search_index,0,0,0,3.0,1.0) AS rank FROM search_index si JOIN sessions s ON s.id=si.session_id LEFT JOIN messages m ON si.kind='message' AND m.id=si.item_id WHERE search_index MATCH ? ${archivedClause} ORDER BY rank ASC,s.updated_at DESC LIMIT ?`).all(match,Math.min(Math.max(Number(limit)||50,1),100));
+    return this.#db.prepare(`SELECT si.kind,si.item_id AS itemId,si.session_id AS sessionId,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,m.sequence,m.role,snippet(search_index,4,'[',']',' … ',18) AS snippet,bm25(search_index,0,0,0,3.0,1.0) AS rank FROM search_index si JOIN sessions s ON s.id=si.session_id LEFT JOIN messages m ON si.kind='message' AND m.id=si.item_id WHERE search_index MATCH ? ${archivedClause} ORDER BY rank ASC,s.updated_at DESC LIMIT ?`).all(match,Math.min(Math.max(Number(limit)||50,1),100));
   }
 
   forkSession({ sourceSessionId, id, title, now = Date.now() }) {
