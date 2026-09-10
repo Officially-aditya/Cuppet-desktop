@@ -65,6 +65,7 @@
 .settings-hub-dialog .settings-card-heading>.settings-action-button{margin-top:-2px}
 .platform-settings-form{width:100%}
 .platform-settings-form .dialog-actions{margin:0}
+.platform-settings-form .dialog-actions .settings-action-button{width:60px;flex:0 0 60px}
 .platform-provider-card{display:grid;gap:0;width:100%;box-sizing:border-box}
 .provider-simple-form{display:grid;gap:14px;width:100%;max-width:none}
 .settings-hub-dialog .provider-simple-form label{width:100%;margin:0;display:grid;gap:7px}
