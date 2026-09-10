@@ -1,4 +1,4 @@
-import { createChatProvider } from '../runtime/provider-factory.mjs';
+import { createUntrackedChatProvider } from '../runtime/provider-factory.mjs';
 import { normalizeProviderConfiguration } from '../runtime/provider-policy.mjs';
 
 export const CUSTOM_MODEL_PROBE_PROMPT = 'Reply only with OK.';
@@ -7,7 +7,7 @@ const MAX_PROVIDERS = 64;
 const MAX_MODELS_PER_PROVIDER = 64;
 const MAX_ID_LENGTH = 240;
 
-export async function probeCustomModel(configuration, modelID, { providerFactory = createChatProvider, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function probeCustomModel(configuration, modelID, { providerFactory = createUntrackedChatProvider, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const id = normalizeCustomModelID(modelID);
   const source = record(configuration);
   const providerID = text(source.providerID) || text(record(source.primary).providerID);
