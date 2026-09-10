@@ -33,6 +33,8 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('queue');
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+  const [reasoningByMessage, setReasoningByMessage] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<{ messageId: string; content: string } | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -56,6 +58,29 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   }, [session?.id, draft?.projectId]);
 
   useEffect(() => {
+    setPreview(null);
+    setReasoningByMessage(loadStoredReasoning(session));
+  }, [session?.id]);
+
+  useEffect(() => window.cuppet.onEvent((event) => {
+    const messageId = String(event?.messageId ?? '');
+    if (!messageId) return;
+    if (event.type === 'message.reasoning') {
+      const segment = typeof event.segment === 'string' ? event.segment.trim() : '';
+      if (!segment) return;
+      const existing = readStoredReasoning(messageId);
+      const next = boundReasoning(existing ? `${existing}\n\n${segment}` : segment);
+      storeReasoning(messageId, next);
+      if (session?.id && String(event?.sessionId ?? '') === session.id) setReasoningByMessage((current) => ({ ...current, [messageId]: next }));
+      return;
+    }
+    if (event.type === 'message.preview' && session?.id && String(event?.sessionId ?? '') === session.id) {
+      const content = typeof event.content === 'string' ? event.content : '';
+      setPreview(content ? { messageId, content } : (current) => current?.messageId === messageId ? null : current);
+    }
+  }), [session?.id]);
+
+  useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
     const key = session?.id ? `cuppet.desktop.scroll.${session.id}` : null;
@@ -76,7 +101,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     if (!node) return;
     const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
-  }, [session?.messages, transientActivity.length]);
+  }, [session?.messages, transientActivity.length, preview?.content]);
 
   const submit = async () => {
     const raw = value.trim();
@@ -168,6 +193,10 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   };
 
   const messages = session?.messages?.filter((message) => message.role !== 'system') ?? [];
+  const runningAssistant = running ? [...messages].reverse().find((message) => message.role === 'assistant') ?? null : null;
+  const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
+  const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
+  const runningReasoning = runningAssistant ? reasoningByMessage[runningAssistant.id] ?? '' : '';
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -176,13 +205,21 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
           <div className="empty-state"><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
-        ) : messages.map((message) => <MessageView key={message.id} message={message} />)}
+        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} reasoning={reasoningByMessage[message.id] ?? ''} />)}
         {transientActivity.length > 0 && (
           <div className="thread-activity" aria-label="Agent activity">
             {transientActivity.slice(-12).map((entry) => (
               <div key={entry.id} className={`thread-activity-line ${entry.status || 'complete'}`}>{friendlyActivityLabel(entry)}</div>
             ))}
           </div>
+        )}
+        {runningAssistant && (runningPreview || runningAssistant.content || runningReasoning) && (
+          <MessageView
+            key={runningAssistant.id}
+            message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
+            reasoning={runningReasoning}
+            preview={Boolean(runningPreview)}
+          />
         )}
       </section>
 
@@ -244,17 +281,52 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   );
 }
 
-function MessageView({ message }: { message: Session['messages'][number] }) {
+function MessageView({ message, reasoning = '', preview = false }: { message: Session['messages'][number]; reasoning?: string; preview?: boolean }) {
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
+  const assistant = message.role === 'assistant';
+  const content = String(message.content ?? '');
+  const canCopy = assistant && !preview && message.status !== 'streaming' && Boolean(content.trim());
+
+  const copySummary = async () => {
+    if (!canCopy) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
-    <article className={`message ${message.role}`} data-message-id={message.id}>
-      <div className="message-role">{message.role === 'assistant' ? 'Cuppet' : 'You'}</div>
-      {message.role === 'assistant' ? (
-        <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+    <article className={`message ${message.role}${preview ? ' message-preview' : ''}`} data-message-id={message.id}>
+      <div className="message-role">{assistant ? 'Cuppet' : 'You'}</div>
+      {assistant ? (
+        content ? <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
-        <div className="message-content">{message.content}</div>
+        <div className="message-content">{content}</div>
       )}
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}
+      {assistant && (reasoning || canCopy) && (
+        <div className="message-footer-actions">
+          {reasoning && (
+            <div className={`message-reasoning${reasoningOpen ? ' open' : ''}`}>
+              <button type="button" className="message-reasoning-toggle" aria-expanded={reasoningOpen} onClick={() => setReasoningOpen((current) => !current)}>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <span>Reasoning</span>
+              </button>
+              {reasoningOpen && <div className="message-reasoning-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(reasoning) }} />}
+            </div>
+          )}
+          {canCopy && (
+            <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : 'Copy final response'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
+              <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="6.1" y="5.7" width="7" height="8" rx="1.4" stroke="currentColor" strokeWidth="1.25"/><path d="M4.6 11.7H4a1.4 1.4 0 0 1-1.4-1.4V4A1.4 1.4 0 0 1 4 2.6h6.1A1.4 1.4 0 0 1 11.5 4v.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/></svg>
+            </button>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -381,6 +453,34 @@ function compactActivity(activity: ActivityEntry[]) {
   return output;
 }
 
+const REASONING_KEY_PREFIX = 'cuppet.desktop.reasoning.';
+const MAX_REASONING_CHARS = 120_000;
+
+function loadStoredReasoning(session: Session | null) {
+  const output: Record<string, string> = {};
+  for (const message of session?.messages ?? []) {
+    if (message.role !== 'assistant') continue;
+    const value = readStoredReasoning(message.id);
+    if (value) output[message.id] = value;
+  }
+  return output;
+}
+
+function readStoredReasoning(messageId: string) {
+  try { return localStorage.getItem(`${REASONING_KEY_PREFIX}${messageId}`) ?? ''; }
+  catch { return ''; }
+}
+
+function storeReasoning(messageId: string, value: string) {
+  try { localStorage.setItem(`${REASONING_KEY_PREFIX}${messageId}`, value); }
+  catch { /* local persistence is best-effort; the final answer remains durable in the runtime DB. */ }
+}
+
+function boundReasoning(value: string) {
+  if (value.length <= MAX_REASONING_CHARS) return value;
+  return `…\n\n${value.slice(value.length - MAX_REASONING_CHARS + 2)}`;
+}
+
 function resize(node: HTMLTextAreaElement | null) {
   if (!node) return;
   node.style.height = 'auto';
@@ -403,7 +503,7 @@ function summarize(value: CommandResult['result']) {
 }
 
 function statusLabel(status: string) {
-  if (status === 'streaming') return 'Generating…';
+  if (status === 'streaming') return null;
   if (status === 'stopped') return 'Stopped';
   if (status === 'interrupted') return 'Interrupted by restart';
   if (status === 'error') return 'Generation failed';
