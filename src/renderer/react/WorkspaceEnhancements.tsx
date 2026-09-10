@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
+const CODE_FILE = /(?:^|\/)(?:Dockerfile|Makefile|Procfile|Gemfile|Rakefile|Cargo\.toml|go\.mod|go\.sum|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.(?:[cm]?[jt]sx?|json|mdx?|py|rs|go|java|kt|kts|swift|css|scss|sass|less|html?|vue|svelte|ya?ml|toml|sql|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|cs|rb|php|xml|gradle|properties|ini|conf|env|graphql|proto))(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?$/i;
 
 type EditedFile = { path: string; tool?: string; updatedAt?: number };
 type EditedFilesResult = { sessionId: string; projectId?: string | null; files?: EditedFile[] };
@@ -15,6 +16,7 @@ export function WorkspaceEnhancements() {
   const [error, setError] = useState('');
 
   const sync = useCallback(async () => {
+    markInlineProjectFiles();
     const id = localStorage.getItem(LAST_SESSION_KEY) || '';
     const hasConversation = Boolean(document.querySelector('.react-messages .message[data-message-id]'));
     if (!id || !hasConversation) {
@@ -126,6 +128,26 @@ export function WorkspaceEnhancements() {
     </div>,
     mount,
   );
+}
+
+function markInlineProjectFiles() {
+  const nodes = document.querySelectorAll<HTMLElement>('.message.assistant .markdown-rendered :not(pre) > code:not([data-cuppet-project-file])');
+  for (const node of nodes) {
+    const path = inlineProjectPath(node.textContent);
+    if (!path) continue;
+    node.setAttribute('data-cuppet-project-file', path);
+    node.setAttribute('role', 'link');
+    node.tabIndex = 0;
+    node.title = `Open ${stripLineSuffix(path)}`;
+  }
+}
+
+function inlineProjectPath(value: string | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw.length > 1024 || /\s|:\/\/|[|;&<>`$]/.test(raw)) return '';
+  const path = raw.replace(/^[/\\]+/, '').replace(/^\.\//, '').replaceAll('\\', '/');
+  if (!path || path === '..' || path.startsWith('../') || path.includes('/../') || !CODE_FILE.test(path)) return '';
+  return path;
 }
 
 async function openProjectFile(projectId: string, path: string, setError: (value: string) => void) {
