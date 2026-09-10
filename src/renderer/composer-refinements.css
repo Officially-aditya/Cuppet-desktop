@@ -1,4 +1,4 @@
-/* Composer-only refinements layered after the shared control skin. */
+/* Composer-only refinements layered around the shared control skin. */
 .model-picker-back{
   width:100%;
   min-height:26px;
@@ -28,7 +28,28 @@
 }
 .model-picker-effort-option:hover,.model-picker-effort-option.selected{background:#1a2027;color:#f2f4f7}
 
-/* Streaming state belongs to the composer/stop affordance, not the transcript. */
+/* Tool progress is part of the transcript while a run is active, not a separate composer card. */
+.thread-activity{max-width:820px;margin:-8px auto 22px;display:grid;gap:3px;color:#77818e;font-size:11px;line-height:1.5}
+.thread-activity-line{min-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-activity-line.running{color:#a7b0bc;animation:activity-pulse 1.2s ease-in-out infinite}
+.thread-activity-line.error{color:#d99b9b}
+
+/* Running reuses the send-button footprint instead of adding a large Stop control. */
+.composer-pause-button{width:34px;height:34px;display:grid;place-items:center;padding:0}
+.composer-pause-button svg{width:18px;height:18px}
+
+/* Native-free inline chat rename surface. */
+.sidebar-rename-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.52)}
+.sidebar-rename-dialog{width:min(360px,calc(100vw - 40px));display:grid;gap:10px;padding:14px;border:1px solid #303741;border-radius:11px;background:#11161c;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.sidebar-rename-dialog label{color:#e7ebf0;font-size:12px;font-weight:600}
+.sidebar-rename-dialog input{width:100%}
+.sidebar-rename-actions{display:flex;justify-content:flex-end;gap:7px}
+.sidebar-rename-actions button{min-height:30px;border:1px solid #303741;border-radius:7px;background:#171d24;color:#cbd2dc;padding:5px 10px;font-size:11px}
+.sidebar-rename-actions button:hover:not(:disabled){background:#202730;color:#fff}
+.sidebar-rename-actions button:disabled{opacity:.4;cursor:not-allowed}
+.sidebar-rename-error{color:#d99b9b;font-size:10px;line-height:1.4}
+
+/* Streaming state belongs to the composer/pause affordance, not the transcript message body. */
 .message-status:not(.error){display:none}
 .message.assistant:has(.message-content:empty){display:none}
 .message.assistant .message-content:empty::after{content:none!important}
