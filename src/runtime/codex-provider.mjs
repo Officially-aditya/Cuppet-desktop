@@ -159,6 +159,8 @@ function normalizeUsage(value) {
     inputTokens: number(usage.inputTokens ?? usage.input_tokens ?? usage.totalInputTokens),
     outputTokens: number(usage.outputTokens ?? usage.output_tokens ?? usage.totalOutputTokens),
     totalTokens: number(usage.totalTokens ?? usage.total_tokens),
+    cachedInputTokens: number(usage.cachedInputTokens ?? usage.cached_input_tokens ?? usage.cacheReadInputTokens ?? usage.cache_read_input_tokens),
+    reasoningTokens: number(usage.reasoningOutputTokens ?? usage.reasoning_output_tokens ?? usage.reasoningTokens ?? usage.reasoning_tokens),
   };
 }
 function reasoningEffort(value) {
