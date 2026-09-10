@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -85,15 +85,16 @@ async function findPackageRoot(root, runtime) {
   const queue = [root];
   while (queue.length) {
     const directory = queue.shift();
-    const names = new Set((await readdir(directory, { withFileTypes: true })).map((entry) => entry.name));
+    const entries = await readdir(directory, { withFileTypes: true });
+    const names = new Set(entries.map((entry) => entry.name));
     if (names.has('codex-package.json')) {
       try {
-        await readFile(join(directory, 'bin', `codex-app-server${executableSuffix}`));
-        await readFile(join(directory, 'bin', `codex-code-mode-host${executableSuffix}`));
+        await access(join(directory, 'bin', `codex-app-server${executableSuffix}`));
+        await access(join(directory, 'bin', `codex-code-mode-host${executableSuffix}`));
         return directory;
       } catch {}
     }
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    for (const entry of entries) {
       if (entry.isDirectory()) queue.push(join(directory, entry.name));
     }
   }
