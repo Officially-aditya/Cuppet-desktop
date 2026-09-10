@@ -1,0 +1,88 @@
+name: Temporary sidebar show more
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/tmp-sidebar-show-more.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui/cuppet-branding
+          fetch-depth: 0
+      - name: Add bounded chat lists
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          sidebar = Path('src/renderer/react/Sidebar.tsx')
+          text = sidebar.read_text()
+
+          old = "const COLLAPSED_WIDTH = 42;\n"
+          new = "const COLLAPSED_WIDTH = 42;\nconst MAX_VISIBLE_CHATS = 5;\nconst GENERAL_CHAT_GROUP = '__general__';\n"
+          assert old in text, 'sidebar constants anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = "  const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});\n"
+          new = old + "  const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());\n"
+          assert old in text, 'sidebar state anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = "  const openMenu = (event: React.MouseEvent, kind: 'project' | 'session', id: string) => {\n"
+          new = "  useEffect(() => {\n    if (!props.activeSessionId) return;\n    const projectSession = props.sessions.find((session) => session.id === props.activeSessionId);\n    const groupKey = projectSession?.projectId ?? (props.generalSessions.some((session) => session.id === props.activeSessionId) ? GENERAL_CHAT_GROUP : null);\n    if (!groupKey) return;\n    const groupSessions = groupKey === GENERAL_CHAT_GROUP ? props.generalSessions : (sessionsByProject.get(groupKey) ?? []);\n    if (groupSessions.findIndex((session) => session.id === props.activeSessionId) < MAX_VISIBLE_CHATS) return;\n    setExpandedChatGroups((current) => {\n      if (current.has(groupKey)) return current;\n      const next = new Set(current);\n      next.add(groupKey);\n      return next;\n    });\n  }, [props.activeSessionId, props.sessions, props.generalSessions, sessionsByProject]);\n\n  const toggleChatGroup = (groupKey: string) => {\n    setExpandedChatGroups((current) => {\n      const next = new Set(current);\n      if (next.has(groupKey)) next.delete(groupKey);\n      else next.add(groupKey);\n      return next;\n    });\n  };\n\n" + old
+          assert old in text, 'sidebar openMenu anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = "          {props.projects.map((project) => {\n            const projectActive = props.activeSessionId === null && props.selectedProjectId === project.id;\n            return ("
+          new = "          {props.projects.map((project) => {\n            const projectActive = props.activeSessionId === null && props.selectedProjectId === project.id;\n            const projectSessions = sessionsByProject.get(project.id) ?? [];\n            const chatsExpanded = expandedChatGroups.has(project.id);\n            const visibleProjectSessions = chatsExpanded ? projectSessions : projectSessions.slice(0, MAX_VISIBLE_CHATS);\n            return ("
+          assert old in text, 'project map anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = "                {(sessionsByProject.get(project.id) ?? []).map((session) => (\n                  <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />\n                ))}\n"
+          new = "                {visibleProjectSessions.map((session) => (\n                  <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />\n                ))}\n                {projectSessions.length > MAX_VISIBLE_CHATS && (\n                  <button\n                    type=\"button\"\n                    className=\"session-show-more\"\n                    aria-expanded={chatsExpanded}\n                    onClick={() => toggleChatGroup(project.id)}\n                  >{chatsExpanded ? 'Show less' : 'Show more'}</button>\n                )}\n"
+          assert old in text, 'project sessions anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = "              {props.generalSessions.map((session) => (\n                <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />\n              ))}\n"
+          new = "              {(expandedChatGroups.has(GENERAL_CHAT_GROUP) ? props.generalSessions : props.generalSessions.slice(0, MAX_VISIBLE_CHATS)).map((session) => (\n                <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />\n              ))}\n              {props.generalSessions.length > MAX_VISIBLE_CHATS && (\n                <button\n                  type=\"button\"\n                  className=\"session-show-more\"\n                  aria-expanded={expandedChatGroups.has(GENERAL_CHAT_GROUP)}\n                  onClick={() => toggleChatGroup(GENERAL_CHAT_GROUP)}\n                >{expandedChatGroups.has(GENERAL_CHAT_GROUP) ? 'Show less' : 'Show more'}</button>\n              )}\n"
+          assert old in text, 'general sessions anchor missing'
+          text = text.replace(old, new, 1)
+
+          sidebar.write_text(text)
+
+          css = Path('src/renderer/react.css')
+          text = css.read_text()
+          old = ".react-sidebar .session-menu-button{width:20px;height:20px;border-radius:5px;font-size:14px;opacity:0;pointer-events:none}.react-sidebar .session-row:hover .session-menu-button,.react-sidebar .session-row:focus-within .session-menu-button{opacity:1;pointer-events:auto}.react-sidebar .general-label"
+          new = ".react-sidebar .session-menu-button{width:20px;height:20px;border-radius:5px;font-size:14px;opacity:0;pointer-events:none}.react-sidebar .session-row:hover .session-menu-button,.react-sidebar .session-row:focus-within .session-menu-button{opacity:1;pointer-events:auto}.react-sidebar .session-show-more{display:block;width:calc(100% - 16px);min-height:24px;margin:1px 0 2px 10px;padding:2px 6px;border:0;border-radius:6px;background:transparent;color:#747f8d;text-align:left;font-size:10.5px;line-height:18px}.react-sidebar .session-show-more:hover{background:#1b2027;color:#c8d0da}.react-sidebar .session-show-more:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(130,145,165,.18)}.react-sidebar .general-label"
+          assert old in text, 'sidebar css anchor missing'
+          text = text.replace(old, new, 1)
+          css.write_text(text)
+
+          verify = Path('scripts/verify-renderer.mjs')
+          text = verify.read_text()
+          anchor = "assert.match(sidebar, /project-new-chat-button/, 'project hover new-chat button missing');"
+          replacement = anchor + "\nassert.match(sidebar, /MAX_VISIBLE_CHATS = 5/, 'sidebar chat groups are not capped at five by default');\nassert.match(sidebar, /session-show-more/, 'sidebar chat groups do not expose a show-more control');\nassert.match(sidebar, /Show less.*Show more|Show more.*Show less/s, 'sidebar chat disclosure does not support both expansion states');\nassert.match(reactCss, /\\.session-show-more/, 'sidebar show-more control is not styled');"
+          assert anchor in text, 'renderer verifier sidebar anchor missing'
+          text = text.replace(anchor, replacement, 1)
+          verify.write_text(text)
+          PY
+      - name: Verify renderer contract
+        run: npm install && npm run renderer:verify
+      - name: Commit change and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-sidebar-show-more.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/renderer/react/Sidebar.tsx src/renderer/react.css scripts/verify-renderer.mjs .github/workflows/tmp-sidebar-show-more.yml
+          git commit -m "feat: collapse long sidebar chat lists"
+          git push origin HEAD:ui/cuppet-branding
