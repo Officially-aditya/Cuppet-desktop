@@ -5,6 +5,7 @@
   "sourceBenchmark": "Cuppet-code Issue #4 12-task marathon",
   "sourceRepository": {
     "url": "https://github.com/Officially-aditya/Cuppet-code.git",
+    "ref": "codex-issue-4-benchmarks",
     "startingSha": "840ed751b61c04afc881a393b7836d4d2c932f61"
   },
   "model": {
