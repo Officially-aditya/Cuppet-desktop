@@ -144,29 +144,38 @@ export function Sidebar(props: Props) {
         </div>
 
         <div className="project-list" aria-label="Projects and conversations">
-          {props.projects.map((project) => (
-            <section className="project-group" key={project.id}>
-              <div className={`project-row${props.selectedProjectId === project.id ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
-                <button type="button" className="project-button" title={projectMetadata(project)} onClick={() => void props.onProject(project.id)}>
-                  <span className="project-name">{project.name}</span>
-                </button>
-                <button
-                  type="button"
-                  className="project-new-chat-button"
-                  aria-label={`New chat in ${project.name}`}
-                  title={`New chat in ${project.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onNewProjectChat(project.id);
-                  }}
-                >+</button>
-                <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
-              </div>
-              {(sessionsByProject.get(project.id) ?? []).map((session) => (
-                <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
-              ))}
-            </section>
-          ))}
+          {props.projects.map((project) => {
+            const projectActive = props.activeSessionId === null && props.selectedProjectId === project.id;
+            return (
+              <section className="project-group" key={project.id}>
+                <div className={`project-row${projectActive ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
+                  <button
+                    type="button"
+                    className="project-button"
+                    aria-current={projectActive ? 'page' : undefined}
+                    title={projectMetadata(project)}
+                    onClick={() => void props.onProject(project.id)}
+                  >
+                    <span className="project-name">{project.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="project-new-chat-button"
+                    aria-label={`New chat in ${project.name}`}
+                    title={`New chat in ${project.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onNewProjectChat(project.id);
+                    }}
+                  >+</button>
+                  <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
+                </div>
+                {(sessionsByProject.get(project.id) ?? []).map((session) => (
+                  <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+                ))}
+              </section>
+            );
+          })}
 
           {props.generalSessions.length > 0 && (
             <section className="project-group general-group">
@@ -219,7 +228,7 @@ export function Sidebar(props: Props) {
 function SessionRow({ session, active, onOpen, onMenu }: { session: Session; active: boolean; onOpen: (id: string) => void | Promise<void>; onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void }) {
   return (
     <div className="session-row" onContextMenu={(event) => onMenu(event, 'session', session.id)}>
-      <button type="button" className={`session-item${active ? ' active' : ''}`} onClick={() => void onOpen(session.id)}>
+      <button type="button" className={`session-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} onClick={() => void onOpen(session.id)}>
         <div className="session-title">{session.title || 'New chat'}</div>
         <div className="session-meta">{session.lastStatus === 'streaming' ? 'Generating…' : relativeTime(session.updatedAt)}</div>
       </button>
