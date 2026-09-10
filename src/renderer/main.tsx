@@ -8,6 +8,7 @@ import './execution.css';
 import './react.css';
 import './usage.css';
 import './composer-refinements.css';
+import './message-controls.css';
 import './controls.css';
 import { App } from './react/App';
 import './types';
