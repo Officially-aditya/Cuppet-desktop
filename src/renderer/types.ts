@@ -106,6 +106,7 @@ export type ProviderSettings = {
   baseUrl?: string;
   primary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
   secondary?: { providerID?: string; modelID?: string; variant?: string | null } | null;
+  primaryEffort?: string | null;
   models?: Array<{ providerID?: string; modelID?: string; name?: string; variants?: string[] }>;
   catalog?: Array<{ id?: string; label?: string; integrationIds?: string[] }>;
   encryptionAvailable?: boolean;
@@ -124,6 +125,7 @@ export type CodexModelCatalog = {
     description?: string;
     isDefault?: boolean;
     efforts?: string[];
+    defaultEffort?: string | null;
   }>;
 };
 
@@ -259,13 +261,9 @@ export type CuppetApi = {
     get: () => Promise<ProviderSettings>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
-  onEvent: (callback: (event: RuntimeEvent) => void) => () => void;
+  events: { subscribe: (handler: (event: RuntimeEvent) => void) => () => void };
 };
 
-declare global {
-  interface Window {
-    cuppet: CuppetApi;
-  }
-}
+declare global { interface Window { cuppet: CuppetApi } }
 
 export {};
