@@ -210,7 +210,7 @@ export function ModelPicker({ disabled = false }: Props) {
           title={configuredModel ? `Model: ${displayModel}` : 'Select model'}
           onClick={() => void toggleModel()}
         >
-          <span className="model-picker-name">{busy ? 'Switching…' : displayModel}</span>
+          <span className="model-picker-name">{displayModel}</span>
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
 
@@ -297,6 +297,7 @@ export function ModelPicker({ disabled = false }: Props) {
                 {explicitEffort === effort && <span aria-hidden="true">✓</span>}
               </button>
             ))}
+            {error && <div className="model-picker-error" role="status">{error}</div>}
           </div>
         )}
       </div>
