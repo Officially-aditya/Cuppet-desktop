@@ -85,6 +85,7 @@ export function normalizeTokenUsage(value) {
   const cachedInputTokens = firstNumber(
     root.cachedInputTokens,
     root.cached_input_tokens,
+    root.prompt_cache_hit_tokens,
     record(root.prompt_tokens_details).cached_tokens,
     record(root.input_tokens_details).cached_tokens,
     root.cache_read_input_tokens,
@@ -92,6 +93,8 @@ export function normalizeTokenUsage(value) {
     root.cached_content_token_count,
   );
   const reasoningTokens = firstNumber(
+    root.reasoningOutputTokens,
+    root.reasoning_output_tokens,
     root.reasoningTokens,
     root.reasoning_tokens,
     record(root.completion_tokens_details).reasoning_tokens,
@@ -175,7 +178,7 @@ function sanitizeState(value) {
   const state = emptyState();
   for (const key of Object.keys(emptyCounters())) state[key] = finiteInteger(source[key]) ?? 0;
   for (const key of ['firstRequestAt', 'lastRequestAt', 'firstTrackedAt', 'lastTrackedAt']) state[key] = finiteInteger(source[key]);
-  for (const [key, raw] of Object.entries(record(source.byModel))) {
+  for (const [, raw] of Object.entries(record(source.byModel))) {
     const item = record(raw);
     const providerID = boundedLabel(item.providerID, 'unknown');
     const modelID = boundedLabel(item.modelID, 'unknown');
