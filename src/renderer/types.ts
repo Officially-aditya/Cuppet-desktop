@@ -304,6 +304,7 @@ export type CuppetApi = {
   native: {
     platform: string;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
+    copyText: (text: string) => Promise<{ copied: boolean }>;
   };
   settings: {
     get: () => Promise<ProviderSettings>;

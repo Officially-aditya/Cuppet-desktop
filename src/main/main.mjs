@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { realpath, stat } from 'node:fs/promises';
 import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,6 +103,11 @@ function registerIpc() {
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
   ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
+  ipcMain.handle('cuppet:native:copy-text', (_event, value) => {
+    const text = typeof value === 'string' ? value.slice(0, 2_000_000) : '';
+    clipboard.writeText(text);
+    return { copied: true };
+  });
 
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {

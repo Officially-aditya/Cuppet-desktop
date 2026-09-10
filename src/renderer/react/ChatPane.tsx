@@ -397,7 +397,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
       const rendered = responseRef.current?.innerText?.trim();
       const value = rendered || content.trim();
       if (!value) return;
-      await navigator.clipboard.writeText(value);
+      await window.cuppet.native.copyText(value);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {

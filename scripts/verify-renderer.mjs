@@ -109,6 +109,11 @@ assert.match(providerPresets, /id:\s*'zai'.*baseUrl:\s*'https:\/\/api\.z\.ai\/ap
 assert.match(providerPresets, /models:\s*models\.map/, 'provider preset projection does not expose its model family');
 assert.match(preload, /platform:\s*process\.platform/, 'renderer cannot detect macOS for native sidebar affordances');
 assert.match(preload, /cuppet:usage:summary/, 'bounded preload does not expose token usage summary');
+assert.match(main, /cuppet:native:copy-text/, 'Electron main process does not expose native clipboard copy');
+assert.match(main, /clipboard\.writeText\(text\)/, 'native clipboard IPC does not write through Electron clipboard');
+assert.match(preload, /copyText: \(text\) => ipcRenderer\.invoke\('cuppet:native:copy-text'/, 'bounded preload does not expose native clipboard copy');
+assert.match(chat, /window\.cuppet\.native\.copyText\(value\)/, 'assistant copy button does not use the native clipboard bridge');
+assert.doesNotMatch(chat, /navigator\.clipboard/, 'assistant copy path returned to fragile renderer clipboard access');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
