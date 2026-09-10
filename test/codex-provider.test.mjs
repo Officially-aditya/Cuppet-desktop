@@ -46,7 +46,11 @@ class FakeCodexClient extends EventEmitter {
 test('subscription provider streams through Codex while Cuppet executes dynamic tools', async () => {
   const client = new FakeCodexClient();
   const provider = new CodexSubscriptionProvider({
-    providerID: 'codex', model: 'codex-default', codexLaunch: { command: 'fake', args: [], source: 'test' }, clientFactory: () => client,
+    providerID: 'codex',
+    model: 'codex-default',
+    primaryEffort: 'high',
+    codexLaunch: { command: 'fake', args: [], source: 'test' },
+    clientFactory: () => client,
   });
   const deltas = [];
   const toolCalls = [];
@@ -67,6 +71,7 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(client.threadParams.ephemeral, true);
   assert.equal(client.threadParams.sandbox, 'read-only');
   assert.equal(client.threadParams.approvalPolicy, 'never');
+  assert.deepEqual(client.threadParams.config, { model_reasoning_effort: 'high' });
   assert.equal(client.threadParams.dynamicTools[0].type, 'function');
   assert.equal(client.threadParams.dynamicTools[0].inputSchema.type, 'object');
   assert.match(client.threadParams.cwd, /cuppet-codex-runtime/);
