@@ -1,22 +1,35 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { renderMarkdown } from './markdown';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
+const TRACE_KEY_PREFIX = 'cuppet.desktop.trace.';
+const LEGACY_REASONING_KEY_PREFIX = 'cuppet.desktop.reasoning.';
 const CODE_FILE = /(?:^|\/)(?:Dockerfile|Makefile|Procfile|Gemfile|Rakefile|Cargo\.toml|go\.mod|go\.sum|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.(?:[cm]?[jt]sx?|json|mdx?|py|rs|go|java|kt|kts|swift|css|scss|sass|less|html?|vue|svelte|ya?ml|toml|sql|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|cs|rb|php|xml|gradle|properties|ini|conf|env|graphql|proto))(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?$/i;
 
 type EditedFileEvent = { path: string; tool?: string; updatedAt?: number };
 type EditedFilesResult = { sessionId: string; projectId?: string | null; files?: EditedFileEvent[] };
 type RuntimeMessage = { id: string; role?: string; status?: string; sequence?: number; createdAt?: number };
+type ReasoningSegment = { id: string; text: string };
 
 export function WorkspaceEnhancements() {
   const [projectId, setProjectId] = useState<string | null>(null);
+  const liveReasoning = useRef(new Map<string, ReasoningSegment[]>());
+  const activeSession = useRef('');
 
   const sync = useCallback(async () => {
     markInlineProjectFiles();
+    syncVisibleReasoning(liveReasoning.current);
     const id = localStorage.getItem(LAST_SESSION_KEY) || '';
+    if (activeSession.current !== id) {
+      activeSession.current = id;
+      liveReasoning.current.clear();
+      clearVisibleReasoning();
+    }
     const hasConversation = Boolean(document.querySelector('.react-messages .message[data-message-id]'));
     if (!id || !hasConversation) {
       setProjectId(null);
       clearTurnFileSummaries();
+      clearVisibleReasoning();
       return;
     }
     try {
@@ -32,11 +45,13 @@ export function WorkspaceEnhancements() {
         Array.isArray(edited?.files) ? edited.files : [],
         nextProjectId,
       );
+      syncVisibleReasoning(liveReasoning.current);
       markInlineProjectFiles();
     } catch {
       if ((localStorage.getItem(LAST_SESSION_KEY) || '') === id) {
         setProjectId(null);
         clearTurnFileSummaries();
+        syncVisibleReasoning(liveReasoning.current);
       }
     }
   }, []);
@@ -53,11 +68,30 @@ export function WorkspaceEnhancements() {
     const observer = new MutationObserver(requestSync);
     if (messages) observer.observe(messages, { childList: true, subtree: true });
     const removeEvent = window.cuppet.onEvent((event) => {
+      if (event?.type === 'message.reasoning') {
+        const messageId = typeof event?.messageId === 'string' ? event.messageId : '';
+        const text = typeof event?.segment === 'string' ? event.segment.trim() : '';
+        if (messageId && text) {
+          const current = liveReasoning.current.get(messageId) ?? [];
+          if (current.at(-1)?.text !== text) {
+            liveReasoning.current.set(messageId, [...current, { id: `live-${Date.now()}-${current.length}`, text }]);
+          }
+          syncVisibleReasoning(liveReasoning.current);
+          window.setTimeout(requestSync, 0);
+        }
+        return;
+      }
       if (event?.type === 'run.finished') window.setTimeout(requestSync, 60);
       if (event?.type === 'mutation.undone' || event?.type === 'session.restored' || event?.type === 'session.deleted' || event?.type === 'session.purged') requestSync();
-      if (event?.type === 'message.preview') queueMicrotask(markInlineProjectFiles);
+      if (event?.type === 'message.preview') queueMicrotask(() => { markInlineProjectFiles(); syncVisibleReasoning(liveReasoning.current); });
     });
-    return () => { observer.disconnect(); removeEvent(); clearTurnFileSummaries(); };
+    return () => {
+      observer.disconnect();
+      removeEvent();
+      clearTurnFileSummaries();
+      clearVisibleReasoning();
+      liveReasoning.current.clear();
+    };
   }, [sync]);
 
   useEffect(() => {
@@ -105,6 +139,73 @@ export function WorkspaceEnhancements() {
   }, [projectId]);
 
   return null;
+}
+
+function syncVisibleReasoning(liveReasoning: Map<string, ReasoningSegment[]>) {
+  const desired = new Set<string>();
+  const articles = document.querySelectorAll<HTMLElement>('.message.assistant[data-message-id]');
+  for (const article of articles) {
+    const messageId = article.getAttribute('data-message-id') || '';
+    if (!messageId) continue;
+    const stored = readStoredReasoning(messageId);
+    const live = liveReasoning.get(messageId) ?? [];
+    const segments = mergeReasoning(stored, live);
+    const current = article.querySelector<HTMLElement>(':scope > [data-cuppet-visible-reasoning]');
+    if (!segments.length) {
+      current?.remove();
+      continue;
+    }
+    desired.add(messageId);
+    const signature = segments.map((item) => item.text).join('\n\u001e\n');
+    let node = current;
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'message-content markdown-rendered message-visible-reasoning';
+      node.setAttribute('data-cuppet-visible-reasoning', 'true');
+      node.setAttribute('data-message-id', messageId);
+    }
+    if (node.dataset.signature !== signature) {
+      node.dataset.signature = signature;
+      node.innerHTML = segments.map((item) => `<div class="message-visible-reasoning-segment" data-reasoning-id="${escapeAttribute(item.id)}">${renderMarkdown(item.text)}</div>`).join('');
+    }
+    const anchor = article.querySelector<HTMLElement>(':scope > .message-trace, :scope > .message-content:not([data-cuppet-visible-reasoning]), :scope > .message-status, :scope > .message-edited-files, :scope > .message-footer-actions');
+    if (anchor) {
+      if (node.parentElement !== article || node.nextElementSibling !== anchor) article.insertBefore(node, anchor);
+    } else if (node.parentElement !== article) {
+      article.append(node);
+    }
+  }
+  for (const node of document.querySelectorAll<HTMLElement>('[data-cuppet-visible-reasoning]')) {
+    const messageId = node.getAttribute('data-message-id') || '';
+    if (!desired.has(messageId) || !node.closest('.message.assistant')) node.remove();
+  }
+}
+
+function readStoredReasoning(messageId: string): ReasoningSegment[] {
+  try {
+    const raw = localStorage.getItem(`${TRACE_KEY_PREFIX}${messageId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.flatMap((item, index) => {
+        if (!item || item.type !== 'reasoning' || typeof item.text !== 'string' || !item.text.trim()) return [];
+        return [{ id: typeof item.id === 'string' ? item.id : `stored-${index}`, text: item.text.trim() }];
+      });
+    }
+    const legacy = localStorage.getItem(`${LEGACY_REASONING_KEY_PREFIX}${messageId}`)?.trim();
+    return legacy ? [{ id: 'legacy-reasoning', text: legacy }] : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeReasoning(stored: ReasoningSegment[], live: ReasoningSegment[]) {
+  const output: ReasoningSegment[] = [];
+  for (const item of [...stored, ...live]) {
+    const text = String(item?.text ?? '').trim();
+    if (!text || output.some((existing) => existing.text === text)) continue;
+    output.push({ id: String(item?.id ?? `reason-${output.length}`), text });
+  }
+  return output;
 }
 
 function syncTurnFileSummaries(messages: RuntimeMessage[], events: EditedFileEvent[], projectId: string | null) {
@@ -200,6 +301,10 @@ function clearTurnFileSummaries() {
   for (const node of document.querySelectorAll('[data-cuppet-edited-files-summary]')) node.remove();
 }
 
+function clearVisibleReasoning() {
+  for (const node of document.querySelectorAll('[data-cuppet-visible-reasoning]')) node.remove();
+}
+
 function markInlineProjectFiles() {
   const nodes = document.querySelectorAll<HTMLElement>('.message.assistant .markdown-rendered :not(pre) > code:not([data-cuppet-project-file])');
   for (const node of nodes) {
@@ -232,4 +337,8 @@ function stripLineSuffix(value: string) {
 
 function cssEscape(value: string) {
   return typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(value) : value.replace(/["\\]/g, '\\$&');
+}
+
+function escapeAttribute(value: unknown) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 }
