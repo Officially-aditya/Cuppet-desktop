@@ -12,6 +12,17 @@ export type ActivityEntry = {
   details?: string;
 };
 
+type TraceReasoning = { id: string; type: 'reasoning'; text: string };
+type TraceTool = {
+  id: string;
+  type: 'tool';
+  status: 'running' | 'complete' | 'error';
+  tool: string;
+  argumentsJson: string;
+  label: string;
+  details?: string;
+};
+type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 
 type Props = {
@@ -27,13 +38,13 @@ type Props = {
   onToggleMode: () => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, running, commands, activity, onSend, onStop }: Props) {
+export function ChatPane({ session, draft, project, mode, running, commands, activity: _activity, onSend, onStop }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('queue');
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
-  const [reasoningByMessage, setReasoningByMessage] = useState<Record<string, string>>({});
+  const [traceByMessage, setTraceByMessage] = useState<Record<string, TraceItem[]>>({});
   const [preview, setPreview] = useState<{ messageId: string; content: string } | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -48,8 +59,6 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     }).slice(0, 16);
   }, [commands, value]);
 
-  const transientActivity = useMemo(() => running ? compactActivity(activity) : [], [activity, running]);
-
   useEffect(() => setSelected(0), [value]);
 
   useEffect(() => {
@@ -59,22 +68,40 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 
   useEffect(() => {
     setPreview(null);
-    setReasoningByMessage(loadStoredReasoning(session));
+    setTraceByMessage(loadStoredTraces(session));
   }, [session?.id]);
 
   useEffect(() => window.cuppet.onEvent((event) => {
+    if (!session?.id || String(event?.sessionId ?? '') !== session.id) return;
     const messageId = String(event?.messageId ?? '');
-    if (!messageId) return;
+
     if (event.type === 'message.reasoning') {
       const segment = typeof event.segment === 'string' ? event.segment.trim() : '';
-      if (!segment) return;
-      const existing = readStoredReasoning(messageId);
-      const next = boundReasoning(existing ? `${existing}\n\n${segment}` : segment);
-      storeReasoning(messageId, next);
-      if (session?.id && String(event?.sessionId ?? '') === session.id) setReasoningByMessage((current) => ({ ...current, [messageId]: next }));
+      if (!messageId || !segment) return;
+      setTraceByMessage((current) => {
+        const existing = current[messageId] ?? readStoredTrace(messageId, true);
+        const last = existing.at(-1);
+        const next = last?.type === 'reasoning' && last.text === segment
+          ? existing
+          : boundTrace([...existing, { id: `reason-${Date.now()}-${existing.length}`, type: 'reasoning', text: segment }]);
+        if (next !== existing) storeTrace(messageId, next);
+        return next === existing ? current : { ...current, [messageId]: next };
+      });
       return;
     }
-    if (event.type === 'message.preview' && session?.id && String(event?.sessionId ?? '') === session.id) {
+
+    if (event.type === 'tool.started' || event.type === 'tool.finished') {
+      if (!messageId) return;
+      setTraceByMessage((current) => {
+        const existing = current[messageId] ?? readStoredTrace(messageId, true);
+        const next = updateToolTrace(existing, event);
+        storeTrace(messageId, next);
+        return { ...current, [messageId]: next };
+      });
+      return;
+    }
+
+    if (event.type === 'message.preview' && messageId) {
       const content = typeof event.content === 'string' ? event.content : '';
       setPreview(content ? { messageId, content } : (current) => current?.messageId === messageId ? null : current);
     }
@@ -101,7 +128,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     if (!node) return;
     const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
-  }, [session?.messages, transientActivity.length, preview?.content]);
+  }, [session?.messages, traceByMessage, preview?.content]);
 
   const submit = async () => {
     const raw = value.trim();
@@ -196,7 +223,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const runningAssistant = running ? [...messages].reverse().find((message) => message.role === 'assistant') ?? null : null;
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
-  const runningReasoning = runningAssistant ? reasoningByMessage[runningAssistant.id] ?? '' : '';
+  const runningTrace = runningAssistant ? traceByMessage[runningAssistant.id] ?? [] : [];
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -205,20 +232,13 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
           <div className="empty-state"><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
-        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} reasoning={reasoningByMessage[message.id] ?? ''} />)}
-        {transientActivity.length > 0 && (
-          <div className="thread-activity" aria-label="Agent activity">
-            {transientActivity.slice(-12).map((entry) => (
-              <div key={entry.id} className={`thread-activity-line ${entry.status || 'complete'}`}>{friendlyActivityLabel(entry)}</div>
-            ))}
-          </div>
-        )}
-        {runningAssistant && (runningPreview || runningAssistant.content || runningReasoning) && (
+        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceByMessage[message.id] ?? []} />)}
+        {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView
             key={runningAssistant.id}
             message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
-            reasoning={runningReasoning}
-            preview={Boolean(runningPreview)}
+            trace={runningTrace}
+            live
           />
         )}
       </section>
@@ -281,13 +301,18 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   );
 }
 
-function MessageView({ message, reasoning = '', preview = false }: { message: Session['messages'][number]; reasoning?: string; preview?: boolean }) {
-  const [reasoningOpen, setReasoningOpen] = useState(false);
+function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
+  const [traceOpen, setTraceOpen] = useState(live);
   const [copied, setCopied] = useState(false);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
-  const canCopy = assistant && !preview && message.status !== 'streaming' && Boolean(content.trim());
+  const hasTrace = assistant && trace.length > 0;
+  const canCopy = assistant && !live && message.status !== 'streaming' && Boolean(content.trim());
+
+  useEffect(() => {
+    setTraceOpen(live);
+  }, [live, message.id]);
 
   const copySummary = async () => {
     if (!canCopy) return;
@@ -301,33 +326,48 @@ function MessageView({ message, reasoning = '', preview = false }: { message: Se
   };
 
   return (
-    <article className={`message ${message.role}${preview ? ' message-preview' : ''}`} data-message-id={message.id}>
-      <div className="message-role">{assistant ? 'Cuppet' : 'You'}</div>
+    <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
+      <div className="message-role">
+        {hasTrace ? (
+          <button
+            type="button"
+            className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
+            aria-expanded={traceOpen}
+            aria-label={traceOpen ? 'Hide Cuppet activity' : 'Show Cuppet activity'}
+            onClick={() => setTraceOpen((current) => !current)}
+          >
+            <span>Cuppet</span>
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+        ) : assistant ? 'Cuppet' : 'You'}
+      </div>
+      {hasTrace && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
         content ? <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
         <div className="message-content">{content}</div>
       )}
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}
-      {assistant && (reasoning || canCopy) && (
-        <div className="message-footer-actions">
-          {reasoning && (
-            <div className={`message-reasoning${reasoningOpen ? ' open' : ''}`}>
-              <button type="button" className="message-reasoning-toggle" aria-expanded={reasoningOpen} onClick={() => setReasoningOpen((current) => !current)}>
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                <span>Reasoning</span>
-              </button>
-              {reasoningOpen && <div className="message-reasoning-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(reasoning) }} />}
-            </div>
-          )}
-          {canCopy && (
-            <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : 'Copy final response'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
-              <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="6.1" y="5.7" width="7" height="8" rx="1.4" stroke="currentColor" strokeWidth="1.25"/><path d="M4.6 11.7H4a1.4 1.4 0 0 1-1.4-1.4V4A1.4 1.4 0 0 1 4 2.6h6.1A1.4 1.4 0 0 1 11.5 4v.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/></svg>
-            </button>
-          )}
+      {canCopy && (
+        <div className="message-footer-actions message-footer-copy">
+          <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : 'Copy final response'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
+            <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="6.1" y="5.7" width="7" height="8" rx="1.4" stroke="currentColor" strokeWidth="1.25"/><path d="M4.6 11.7H4a1.4 1.4 0 0 1-1.4-1.4V4A1.4 1.4 0 0 1 4 2.6h6.1A1.4 1.4 0 0 1 11.5 4v.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/></svg>
+          </button>
         </div>
       )}
     </article>
+  );
+}
+
+function TraceView({ trace }: { trace: TraceItem[] }) {
+  return (
+    <div className="message-trace thread-activity" aria-label="Cuppet activity">
+      {trace.map((item) => item.type === 'reasoning' ? (
+        <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
+      ) : (
+        <div key={item.id} className={`thread-activity-line ${item.status}`}>{friendlyActivityLabel({ id: item.id, kind: 'tool', status: item.status, label: item.label, details: item.details })}</div>
+      ))}
+    </div>
   );
 }
 
@@ -411,74 +451,177 @@ function attachmentKey(value: Attachment) {
   return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
 }
 
+function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {
+  const id = String(event?.executionId ?? event?.callId ?? `tool-${Date.now()}`);
+  const existingIndex = trace.findIndex((item) => item.type === 'tool' && item.id === id);
+  const existing = existingIndex >= 0 ? trace[existingIndex] as TraceTool : null;
+  const tool = String(event?.tool ?? existing?.tool ?? '');
+  const argumentsJson = typeof event?.argumentsJson === 'string' ? event.argumentsJson : existing?.argumentsJson ?? '{}';
+  const status: TraceTool['status'] = event?.type === 'tool.finished' ? (event?.success === false ? 'error' : 'complete') : 'running';
+  const patch: TraceTool = {
+    id,
+    type: 'tool',
+    status,
+    tool,
+    argumentsJson,
+    label: toolActivityLabel(tool, argumentsJson, status),
+    ...(typeof event?.message === 'string' && event.message ? { details: event.message } : existing?.details ? { details: existing.details } : {}),
+  };
+  const next = [...trace];
+  if (existingIndex >= 0) next[existingIndex] = patch;
+  else next.push(patch);
+  return boundTrace(next);
+}
+
 function friendlyActivityLabel(entry: ActivityEntry) {
-  if (entry.kind !== 'tool') return entry.label;
-  const raw = String(entry.label || '').toLowerCase();
-  const failed = entry.status === 'error' || raw.includes(' failed');
-  const complete = entry.status === 'complete' || raw.includes(' finished') || raw.includes(' completed');
-  const state = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
-
-  if (raw.includes('tst_read')) return state('Reading file…', 'Read file', 'Couldn’t read file');
-  if (raw.includes('tst_explore')) return state('Exploring…', 'Explored', 'Couldn’t explore');
-  if (raw.includes('tst_edit_batch')) return state('Editing files…', 'Edited files', 'Couldn’t edit files');
-  if (raw.includes('tst_validate')) return state('Validating…', 'Validated', 'Validation failed');
-  if (raw.includes('workspace_write')) return state('Writing file…', 'Wrote file', 'Couldn’t write file');
-  if (raw.includes('workspace_edit')) return state('Editing file…', 'Edited file', 'Couldn’t edit file');
-  if (raw.includes('cuppet_memory_search')) return state('Searching memory…', 'Searched memory', 'Couldn’t search memory');
-  if (raw.includes('cuppet_plan')) return state('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
-  if (/\bbash\b/.test(raw)) return state('Running command…', 'Ran command', 'Command failed');
-  if (/\bquestion\b/.test(raw)) return state('Waiting for input…', 'Received input', 'Input request failed');
-
-  const internal = raw.match(/(?:running\s+)?([a-z0-9]+(?:_[a-z0-9]+)+)(?:\s+(?:finished|completed|failed))?/i)?.[1];
-  if (internal) {
-    const readable = internal.replace(/^(?:tst|cuppet|workspace)_/, '').replaceAll('_', ' ');
-    return state(`${capitalize(readable)}…`, capitalize(readable), `${capitalize(readable)} failed`);
-  }
   return entry.label;
 }
 
-function capitalize(value: string) {
-  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
-}
+function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceTool['status']) {
+  const args = parseToolArguments(argumentsJson);
+  const failed = status === 'error';
+  const complete = status === 'complete';
+  const phrase = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
+  const targets = toolTargets(toolName, args);
+  const one = targets.length === 1 ? targetName(targets[0]) : '';
+  const many = targets.length > 1 ? `${targets.length} files` : '';
+  const target = one || many;
 
-function compactActivity(activity: ActivityEntry[]) {
-  const output: ActivityEntry[] = [];
-  let previous = '';
-  for (const entry of activity) {
-    const key = `${entry.kind}:${entry.status}:${entry.label}:${entry.details ?? ''}`;
-    if (key === previous) continue;
-    previous = key;
-    output.push(entry);
+  if (toolName === 'tst_read') return target
+    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
+    : phrase('Reading…', 'Read files', 'Couldn’t read files');
+  if (toolName === 'tst_explore') {
+    const focus = toolExploreFocus(args);
+    return focus
+      ? phrase(`Exploring ${focus}…`, `Explored ${focus}`, `Couldn’t explore ${focus}`)
+      : phrase('Exploring…', 'Explored', 'Couldn’t explore');
   }
-  return output;
+  if (toolName === 'tst_edit_batch') {
+    if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edits…', 'Applied edits', 'Couldn’t apply edits');
+    return target
+      ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
+      : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
+  }
+  if (toolName === 'workspace_edit') return target
+    ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
+    : phrase('Editing…', 'Edited file', 'Couldn’t edit file');
+  if (toolName === 'workspace_write') return target
+    ? phrase(`Writing ${target}…`, `Wrote ${target}`, `Couldn’t write ${target}`)
+    : phrase('Writing…', 'Wrote file', 'Couldn’t write file');
+  if (toolName === 'tst_validate') return target
+    ? phrase(`Validating ${target}…`, `Validated ${target}`, `Validation failed for ${target}`)
+    : phrase('Validating…', 'Validated', 'Validation failed');
+  if (toolName === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Couldn’t search memory');
+  if (toolName === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
+  if (toolName === 'bash') return phrase('Running command…', 'Ran command', 'Command failed');
+  if (toolName === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
+  return phrase('Working…', 'Completed', 'Failed');
 }
 
-const REASONING_KEY_PREFIX = 'cuppet.desktop.reasoning.';
-const MAX_REASONING_CHARS = 120_000;
+function toolTargets(toolName: string, args: Record<string, unknown>) {
+  const values: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    const path = value.trim();
+    if (path && !values.includes(path)) values.push(path);
+  };
 
-function loadStoredReasoning(session: Session | null) {
-  const output: Record<string, string> = {};
+  if (toolName === 'tst_read') {
+    add(args.path);
+    for (const item of arrayRecords(args.reads)) add(item.path);
+    for (const item of arrayRecords(args.targets)) add(item.path);
+  } else if (toolName === 'tst_edit_batch') {
+    for (const item of arrayRecords(args.operations)) {
+      add(item.path);
+      if (item.target && typeof item.target === 'object' && !Array.isArray(item.target)) add((item.target as Record<string, unknown>).path);
+    }
+  } else if (toolName === 'tst_validate') {
+    for (const value of Array.isArray(args.paths) ? args.paths : []) add(value);
+  } else if (toolName === 'workspace_edit' || toolName === 'workspace_write') {
+    add(args.path);
+  }
+  return values.slice(0, 64);
+}
+
+function toolExploreFocus(args: Record<string, unknown>) {
+  const prefix = typeof args.prefix === 'string' ? args.prefix.trim() : '';
+  if (prefix) return targetName(prefix);
+  const query = typeof args.query === 'string' ? args.query.trim() : '';
+  if (query) return compactActivityText(query);
+  return '';
+}
+
+function parseToolArguments(value: string) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function arrayRecords(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)));
+}
+
+function targetName(path: string) {
+  const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');
+  const name = normalized.split('/').filter(Boolean).at(-1) || normalized;
+  return compactActivityText(name);
+}
+
+function compactActivityText(value: string) {
+  const text = value.replace(/[\r\n\t]+/g, ' ').trim();
+  return text.length > 72 ? `${text.slice(0, 69)}…` : text;
+}
+
+const TRACE_KEY_PREFIX = 'cuppet.desktop.trace.';
+const LEGACY_REASONING_KEY_PREFIX = 'cuppet.desktop.reasoning.';
+const MAX_TRACE_CHARS = 140_000;
+
+function loadStoredTraces(session: Session | null) {
+  const output: Record<string, TraceItem[]> = {};
   for (const message of session?.messages ?? []) {
     if (message.role !== 'assistant') continue;
-    const value = readStoredReasoning(message.id);
-    if (value) output[message.id] = value;
+    const value = readStoredTrace(message.id, message.status === 'streaming');
+    if (value.length) output[message.id] = value;
   }
   return output;
 }
 
-function readStoredReasoning(messageId: string) {
-  try { return localStorage.getItem(`${REASONING_KEY_PREFIX}${messageId}`) ?? ''; }
-  catch { return ''; }
+function readStoredTrace(messageId: string, keepRunning = false): TraceItem[] {
+  try {
+    const raw = localStorage.getItem(`${TRACE_KEY_PREFIX}${messageId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed
+        .filter(validTraceItem)
+        .map((item) => item.type === 'tool' && item.status === 'running' && !keepRunning ? { ...item, status: 'complete', label: toolActivityLabel(item.tool, item.argumentsJson, 'complete') } : item);
+    }
+    const legacy = localStorage.getItem(`${LEGACY_REASONING_KEY_PREFIX}${messageId}`)?.trim();
+    return legacy ? [{ id: 'legacy-reasoning', type: 'reasoning', text: legacy }] : [];
+  } catch {
+    return [];
+  }
 }
 
-function storeReasoning(messageId: string, value: string) {
-  try { localStorage.setItem(`${REASONING_KEY_PREFIX}${messageId}`, value); }
+function validTraceItem(value: unknown): value is TraceItem {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  if (item.type === 'reasoning') return typeof item.id === 'string' && typeof item.text === 'string';
+  return item.type === 'tool' && typeof item.id === 'string' && typeof item.label === 'string' && typeof item.tool === 'string' && typeof item.argumentsJson === 'string' && ['running', 'complete', 'error'].includes(String(item.status));
+}
+
+function storeTrace(messageId: string, trace: TraceItem[]) {
+  try { localStorage.setItem(`${TRACE_KEY_PREFIX}${messageId}`, JSON.stringify(boundTrace(trace))); }
   catch { /* local persistence is best-effort; the final answer remains durable in the runtime DB. */ }
 }
 
-function boundReasoning(value: string) {
-  if (value.length <= MAX_REASONING_CHARS) return value;
-  return `…\n\n${value.slice(value.length - MAX_REASONING_CHARS + 2)}`;
+function boundTrace(trace: TraceItem[]) {
+  let next = trace.slice(-80);
+  while (JSON.stringify(next).length > MAX_TRACE_CHARS && next.length > 1) next = next.slice(1);
+  return next;
 }
 
 function resize(node: HTMLTextAreaElement | null) {
