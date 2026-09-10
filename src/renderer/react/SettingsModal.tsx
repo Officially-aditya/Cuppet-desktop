@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProviderPreset, ProviderSettings, RemoteDevice, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
+import { ModelPicker } from './ModelPicker';
 
 const SECTION_META: Record<string, [string, string]> = {
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
@@ -111,6 +112,11 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     finally { setBusy(false); }
   };
 
+  const modelSaved = useCallback((saved: ProviderSettings) => {
+    setCurrent(saved);
+    onSaved(saved);
+  }, [onSaved]);
+
   const [title, description] = SECTION_META[section] ?? SECTION_META.account;
 
   return (
@@ -127,7 +133,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
-              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
+              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
@@ -150,7 +156,18 @@ function AccountPanel({ codex, busy, onConnect, onDisconnect }: { codex: any; bu
   </>;
 }
 
-function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, codex, note, busy, onProvider, onApiKey, onSave, onClose, onConnect, onDisconnect }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void> }) {
+function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, codex, note, busy, onProvider, onApiKey, onSave, onModelSaved, onClose, onConnect, onDisconnect }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void> }) {
+  const activeProviderID = current?.providerID || current?.primary?.providerID || '';
+  const credentialReady = isCodex ? Boolean(codex.loggedIn) : Boolean(current?.apiKeyConfigured);
+  const modelsReady = Boolean(selected && activeProviderID === providerID && credentialReady && !apiKey.trim());
+  const modelHint = activeProviderID !== providerID
+    ? `Save ${selected?.label || providerID} first to choose its models.`
+    : apiKey.trim()
+      ? 'Save the API key change first so model selection uses the saved credential.'
+      : !credentialReady
+        ? (isCodex ? 'Connect ChatGPT first to choose Codex models.' : 'Save an API key first to choose models.')
+        : '';
+
   return <form className="platform-settings-form" onSubmit={(event) => void onSave(event)}>
     <div className="settings-card platform-provider-card">
       <div className="settings-card-heading"><div><h3>AI provider</h3><p>Select a provider and add its API key. Cuppet fills the official endpoint and default coding model automatically.</p></div></div>
@@ -168,10 +185,23 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             </div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
+        {selected && <div className="provider-model-section">
+          <div className="provider-model-grid">
+            <div className="provider-model-field">
+              <div className="provider-model-copy"><strong>Primary model</strong><span>Foreground work</span></div>
+              <ModelPicker slot="primary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
+            </div>
+            <div className="provider-model-field">
+              <div className="provider-model-copy"><strong>Secondary model</strong><span>Context Memory</span></div>
+              <ModelPicker slot="secondary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
+            </div>
+          </div>
+          {modelHint && <div className="provider-model-hint">{modelHint}</div>}
+        </div>}
         {selected && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
       <div className="settings-form-footer">
-        <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store. Primary drives foreground work; secondary drives background/worker work.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
+        <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store. Primary drives foreground work; secondary drives Context Memory.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
         <div className="dialog-actions"><button type="button" className="ghost-button settings-action-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button settings-action-button" disabled={busy || !selected}>Save</button></div>
       </div>
     </div>
