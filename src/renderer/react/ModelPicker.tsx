@@ -22,7 +22,6 @@ export function ModelPicker({ disabled = false }: Props) {
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState<ProviderSettings | null>(null);
   const [codex, setCodex] = useState<CodexModelCatalog>(EMPTY_CODEX);
-  const [customModel, setCustomModel] = useState('');
   const [error, setError] = useState('');
 
   const refresh = async () => {
@@ -86,8 +85,6 @@ export function ModelPicker({ disabled = false }: Props) {
       output.push({ id: value, label: label || value, ...(description ? { description } : {}) });
     };
 
-    // Curated provider presets surface the current family first; runtime-advertised
-    // models remain available underneath so custom/provider-discovered entries are preserved.
     for (const model of providerPreset?.models ?? []) add(model.id, model.label, model.description);
     for (const model of settings?.models ?? []) {
       if (model.providerID !== providerID) continue;
@@ -121,10 +118,9 @@ export function ModelPicker({ disabled = false }: Props) {
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
       const nextEffortState = modelEffortState(currentProvider, id, current, codex);
-      let next = current;
       if (id !== configuredModel) {
         const nextEffort = effortForModel(currentProvider, id, current, codex);
-        next = await window.cuppet.settings.save({
+        const next = await window.cuppet.settings.save({
           providerID: currentProvider,
           baseUrl: current.baseUrl || '',
           model: id,
@@ -135,7 +131,6 @@ export function ModelPicker({ disabled = false }: Props) {
         setSettings(next);
       }
 
-      setCustomModel('');
       if (nextEffortState.options.length > 0) {
         setStage('efforts');
         setOpen(true);
@@ -231,27 +226,7 @@ export function ModelPicker({ disabled = false }: Props) {
                   {option.id === configuredModel && <span className="model-picker-check" aria-hidden="true">✓</span>}
                   {option.description && <small>{option.description}</small>}
                 </button>
-              )) : <div className="model-picker-empty">No advertised model list. Enter a model ID below.</div>}
-
-              <div className="model-picker-custom">
-                <input
-                  type="text"
-                  value={customModel}
-                  maxLength={240}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="Model ID"
-                  aria-label="Custom model ID"
-                  onChange={(event) => setCustomModel(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (customModel.trim() && !busy) void chooseModel(customModel);
-                  }}
-                />
-                <button type="button" disabled={busy || !customModel.trim()} onClick={() => void chooseModel(customModel)}>Use</button>
-              </div>
+              )) : <div className="model-picker-empty">No models advertised by this provider.</div>}
             </>
           ) : (
             <>
