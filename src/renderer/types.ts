@@ -33,6 +33,7 @@ export type Session = {
   lastStatus?: string;
   archivedAt?: number | null;
   deletedAt?: number | null;
+  purgeAt?: number | null;
   messages: Message[];
   toolExecutions?: ToolExecution[];
 };
@@ -275,6 +276,7 @@ export type CuppetApi = {
   };
   sessions: {
     list: (projectId?: string) => Promise<Session[]>;
+    deleted: () => Promise<Session[]>;
     create: (projectId?: string | null) => Promise<Session>;
     get: (sessionId: string) => Promise<Session>;
     search: (query: string, options?: Record<string, unknown>) => Promise<SearchResult[]>;
