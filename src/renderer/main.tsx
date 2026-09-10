@@ -12,6 +12,7 @@ import './message-controls.css';
 import './sidebar-icons.css';
 import './controls.css';
 import './provider-model-settings.css';
+import './general-settings.css';
 import { App } from './react/App';
 import './types';
 
