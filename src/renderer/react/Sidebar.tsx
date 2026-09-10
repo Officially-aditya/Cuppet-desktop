@@ -168,6 +168,20 @@ export function Sidebar(props: Props) {
         </button>
       )}
 
+      {sidebarCollapsed && (
+        <>
+          <nav className="primary-nav sidebar-compact-nav" aria-label="Primary">
+            <button type="button" className="nav-button sidebar-compact-action" aria-label="New chat" title="New chat" onClick={props.onNewChat} />
+            <button type="button" className="nav-button sidebar-compact-action" aria-label="Search" title="Search" onClick={props.onSearch} />
+            <button type="button" className="nav-button sidebar-compact-action" aria-label="Agents" title="Agents" disabled />
+            <button type="button" className="nav-button sidebar-compact-action" aria-label="Remote" title="Remote" onClick={props.onRemote} />
+          </nav>
+          <div className="sidebar-bottom sidebar-compact-bottom">
+            <button type="button" className="ghost-button sidebar-compact-action" aria-label="Settings" title="Settings" onClick={props.onSettings} />
+          </div>
+        </>
+      )}
+
       {!sidebarCollapsed && <>
         <div className="sidebar-top">
           <div className="brand-row">
