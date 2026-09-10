@@ -33,16 +33,19 @@ test('compiler injects detached cache-stable context without mutating durable me
   assert.match(first.messages.find((m) => m.role === 'system').content, /trust="untrusted"/);
 });
 
-test('history trimming fails closed unless TST reports complete observation coverage and retained STM', async () => {
+test('reliable Context Memory always bounds foreground history to the last two user turns', async () => {
   const messages = [];
   for (let i = 0; i < 6; i++) { messages.push({ id: `u${i}`, role: 'user', content: `turn ${i} ${'x'.repeat(500)}` }); messages.push({ id: `a${i}`, role: 'assistant', content: 'y'.repeat(500) }); }
+
   const incomplete = new ContextCompiler({ tst: fakeTst({ observation_complete: false, stm: [{ key: 'x', value: 'y' }] }), cognitiveState: state() });
   const kept = await incomplete.compile({ sessionId: 's2', messages, userMessageId: 'u5', usableTokens: 1000, estimatedTokens: 5000 });
-  assert.equal(kept.trimmed, false);
+  assert.equal(kept.trimmed, false, 'incomplete retained state must fail closed even under context pressure');
+
   const complete = new ContextCompiler({ tst: fakeTst({ observation_complete: true, stm: [{ key: 'x', value: 'y' }] }), cognitiveState: state() });
-  const trimmed = await complete.compile({ sessionId: 's3', messages, userMessageId: 'u5', usableTokens: 1000, estimatedTokens: 5000 });
-  assert.equal(trimmed.trimmed, true);
-  assert.ok(trimmed.messages.length < messages.length + 1);
+  const trimmed = await complete.compile({ sessionId: 's3', messages, userMessageId: 'u5', usableTokens: 100000, estimatedTokens: 1000 });
+  assert.equal(trimmed.trimmed, true, 'reliable retained state must bound history even far below half the model window');
+  assert.deepEqual(trimmed.messages.filter((message) => message.role === 'user').map((message) => message.id), ['u4', 'u5']);
+  assert.equal(trimmed.messages.some((message) => message.id === 'u3' || message.id === 'a3'), false);
 });
 
 test('plan mode uses 12 percent budget and orchestrator bypasses automatic TST context', async () => {
