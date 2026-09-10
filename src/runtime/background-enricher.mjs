@@ -20,6 +20,13 @@ export class BackgroundEnricher {
   resume() { this.#paused = false; this.#schedule(); }
   foregroundStarted() { this.#clearTimer(); this.#activeController?.abort(); }
   foregroundIdle() { this.#schedule(); }
+  forgetSession(sessionID) {
+    const id = String(sessionID ?? '');
+    if (!id) return { sessionID: id, forgotten: false };
+    const forgotten = this.#batches.delete(id) || this.#lastCompleted.delete(id);
+    this.#schedule();
+    return { sessionID: id, forgotten };
+  }
   async recordTurn({ sessionID, projectID = this.#projectID, userText, assistantText }) {
     await this.ready();
     const summary = [`USER: ${String(userText ?? '').slice(0, 700)}`, `ASSISTANT: ${String(assistantText ?? '').slice(0, 500)}`].join('\n');
