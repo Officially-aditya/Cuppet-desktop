@@ -136,8 +136,20 @@ export async function resolveCodexAppServerCommand({ resourcesPath = process.env
   if (override) return executableCommand(override, []);
 
   const runtimeKey = codexRuntimeKey(platform, arch);
-  const packaged = resourcesPath && runtimeKey ? join(resourcesPath, 'codex', runtimeKey, executableName(platform)) : null;
-  if (packaged && await executable(packaged)) return { command: packaged, args: [], source: 'packaged' };
+  if (resourcesPath && runtimeKey) {
+    const packageRoot = join(resourcesPath, 'codex', runtimeKey);
+    const executable = executableName(platform);
+    const helper = codeModeHostName(platform);
+    const packagedCandidates = [
+      { command: join(packageRoot, 'bin', executable), helper: join(packageRoot, 'bin', helper) },
+      { command: join(packageRoot, executable), helper: join(packageRoot, helper) },
+    ];
+    for (const candidate of packagedCandidates) {
+      if (await executableFile(candidate.command) && await executableFile(candidate.helper)) {
+        return { command: candidate.command, args: [], source: 'packaged' };
+      }
+    }
+  }
 
   if (await commandWorks('codex-app-server', ['--help'], env)) return { command: 'codex-app-server', args: [], source: 'path' };
   const codexOverride = String(env.CUPPET_CODEX_BIN || '').trim();
@@ -158,9 +170,10 @@ export function codexRuntimeKey(platform = process.platform, arch = process.arch
 }
 
 function executableName(platform) { return platform === 'win32' ? 'codex-app-server.exe' : 'codex-app-server'; }
-async function executable(path) { try { await access(path, constants.X_OK); return true; } catch { return false; } }
+function codeModeHostName(platform) { return platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'; }
+async function executableFile(path) { try { await access(path, constants.X_OK); return true; } catch { return false; } }
 async function executableCommand(command, args) {
-  if ((command.includes('/') || command.includes('\\')) && !await executable(command)) throw new Error(`Codex app-server is not executable: ${command}`);
+  if ((command.includes('/') || command.includes('\\')) && !await executableFile(command)) throw new Error(`Codex app-server is not executable: ${command}`);
   return { command, args, source: 'override' };
 }
 function commandWorks(command, args, env) {
