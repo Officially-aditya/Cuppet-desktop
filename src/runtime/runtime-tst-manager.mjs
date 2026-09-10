@@ -14,8 +14,8 @@ export class RuntimeTstManager {
 
   async runWithProject({ sessionId = null, projectId = null, projectRoot = null } = {}, operation) {
     if (typeof operation !== 'function') throw new Error('TST project context requires an operation');
-    if (projectId && projectRoot && sessionId) await this.#manager.bindSession(sessionId, projectId, projectRoot);
-    else if (projectId && projectRoot) await this.#manager.forProject(projectId, projectRoot);
+    // Keep ordinary runtime/session operations independent from managed TST health.
+    // TST-backed methods bind lazily through #ensureSession/#projectHandle when they actually need it.
     return this.#context.run({ sessionId, projectId, projectRoot }, operation);
   }
 
