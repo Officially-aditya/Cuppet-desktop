@@ -103,6 +103,11 @@ function renameSession(params = {}) {
 function archiveSession(params = {}, archived) {
   const sessionId = boundedId(params.sessionId);
   if (!sessionId) throw new Error('sessionId is required');
+  const existing = localState.getSessionSummary(sessionId);
+  if (!existing) throw new Error(`unknown session: ${sessionId}`);
+  if (!archived && existing.deletedAt && Date.now() - Number(existing.deletedAt) >= DELETED_CHAT_RETENTION_MS) {
+    throw new Error("This chat's 7-day recovery window has expired.");
+  }
   if (!archived && purgingSessions.has(sessionId)) throw new Error('This chat has reached the end of its 7-day recovery window and is being removed.');
   assertSessionIdle(sessionId, archived ? 'archive' : 'restore');
   const session = localState.archiveSession(sessionId, archived);
