@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, providerSettings, providerPresets, preload, index, entry, controls, reactCss, settingsCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
+const [pkgText, main, codexAuth, providerSettings, providerPresets, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
@@ -16,6 +16,8 @@ const [pkgText, main, codexAuth, providerSettings, providerPresets, preload, ind
   read('src/renderer/controls.css'),
   read('src/renderer/react.css'),
   read('src/renderer/settings.css'),
+  read('src/renderer/usage.css'),
+  read('src/renderer/composer-refinements.css'),
   read('src/renderer/react/SelectControl.tsx'),
   read('src/renderer/react/ModelPicker.tsx'),
   read('src/renderer/react/App.tsx'),
@@ -36,6 +38,7 @@ assert.equal(pkg.scripts?.['renderer:verify'], 'tsc --noEmit && vite build && no
 assert.ok(pkg.build.files.includes('dist-renderer/**/*'), 'compiled Vite renderer is not packaged');
 assert.ok(!pkg.build.files.includes('src/renderer/**/*'), 'raw renderer source must not be packaged');
 assert.match(main, /dist-renderer.*index\.html/s, 'Electron does not load compiled Vite renderer');
+assert.match(main, /cuppet:usage:summary/, 'Electron does not bridge exact token usage');
 assert.doesNotMatch(main, /join\(here, '\.\.', 'renderer', 'index\.html'\)/, 'Electron still loads legacy renderer source');
 assert.match(index, /id="root"/);
 assert.match(index, /type="module"\s+src="(?:\.\/)?main\.tsx"/, 'Vite mount shell does not load the TypeScript entry');
@@ -43,6 +46,8 @@ assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|ex
 assert.match(entry, /createRoot/);
 assert.match(entry, /<App\s*\/>/);
 assert.match(entry, /import '\.\/controls\.css'/, 'app-wide control skin is not loaded by the React renderer');
+assert.match(entry, /import '\.\/usage\.css'/, 'token usage dashboard styles are not loaded');
+assert.match(entry, /import '\.\/composer-refinements\.css'/, 'composer refinement layer is not loaded');
 assert.match(controls, /-webkit-appearance:none/, 'native Chromium/macOS form appearance is not disabled');
 assert.match(controls, /input\[type="checkbox"\].*input\[type="radio"\]/s, 'checkbox/radio controls are not custom skinned');
 assert.match(controls, /\.cuppet-select-menu/, 'custom dropdown surface is not styled');
@@ -65,6 +70,12 @@ assert.match(app, /event\.type === 'pe3\.routed'/, 'React event path does not fo
 assert.match(chat, /currentSlashQuery/, 'typed slash palette activation missing');
 assert.match(chat, /ArrowDown|ArrowUp/, 'slash palette keyboard navigation missing');
 assert.match(chat, /aria-label=.*Send/s, 'arrow send action missing');
+assert.match(chat, /aria-label="Pause"/, 'running composer does not reuse the send slot as a pause action');
+assert.doesNotMatch(chat, /className="stop-button"/, 'separate Stop button returned to the composer');
+assert.match(chat, /thread-activity/, 'tool activity is not rendered in the chat thread');
+assert.doesNotMatch(chat, /function ActivityPanel|activity-status.*✓/s, 'separate/ticked activity component returned');
+assert.match(composerCss, /\.thread-activity-line\.running\{[^}]*animation:thread-activity-pulse/s, 'running tool activity does not pulse');
+assert.match(composerCss, /@keyframes thread-activity-pulse/, 'tool activity pulse keyframes missing');
 assert.match(chat, /aria-label="Attach files"/, 'composer attachment action missing');
 assert.match(chat, /type="file"\s+multiple/, 'composer attachment action is not backed by the native OS file picker');
 assert.match(chat, /composer-attachments/, 'selected attachment chips missing');
@@ -72,6 +83,8 @@ assert.match(chat, /<ModelPicker disabled=\{running\}\s*\/>/, 'composer does not
 assert.doesNotMatch(chat, /className=\{`mode-inline-button/, 'Build/Plan button returned to the permanent composer controls');
 assert.match(chat, /data-message-id=\{message\.id\}/, 'messages are not addressable for exact search navigation');
 assert.match(modelPicker, /aria-label="Select model"/, 'model picker trigger is not accessible');
+assert.match(modelPicker, /stage === 'models'/, 'model picker does not transition from model selection to effort selection in one menu');
+assert.doesNotMatch(modelPicker, /effort-picker-trigger|model-picker-custom|Custom model ID|placeholder="Model ID"/, 'model picker returned a second effort control or manual model ID field');
 assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does not read the authoritative current model');
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
 assert.match(modelPicker, /window\.cuppet\.codexAuth\.models/, 'Codex model picker does not use the app-server catalog');
@@ -88,12 +101,15 @@ assert.match(providerPresets, /id:\s*'kimi'.*baseUrl:\s*'https:\/\/api\.moonshot
 assert.match(providerPresets, /id:\s*'zai'.*baseUrl:\s*'https:\/\/api\.z\.ai\/api\/paas\/v4'/s, 'Z.ai provider preset or general API endpoint missing');
 assert.match(providerPresets, /models:\s*models\.map/, 'provider preset projection does not expose its model family');
 assert.match(preload, /platform:\s*process\.platform/, 'renderer cannot detect macOS for native sidebar affordances');
+assert.match(preload, /cuppet:usage:summary/, 'bounded preload does not expose token usage summary');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
 assert.match(search, /scrollIntoView/, 'exact message search result does not scroll into view');
 assert.match(sidebar, /project-new-chat-button/, 'project hover new-chat button missing');
 assert.match(sidebar, /New chat in \$\{project\.name\}/, 'project hover new-chat action is not labelled per project');
+assert.match(sidebar, /window\.cuppet\.sessions\.rename/, 'chat rename is not wired through the bounded renderer API');
+assert.match(sidebar, /sidebar-rename-dialog/, 'chat rename does not use the custom React surface');
 assert.match(sidebar, /Remove project/, 'project hamburger remove action missing');
 assert.doesNotMatch(sidebar, /Remove registration/, 'legacy remove-registration wording returned');
 assert.match(sidebar, /SIDEBAR_WIDTH_KEY/, 'resizable sidebar persistence missing');
@@ -110,6 +126,9 @@ assert.match(reactCss, /\.react-sidebar\.collapsed\{[^}]*42px/, 'collapsed macOS
 assert.match(settings, /Account/);
 assert.match(settings, /Personalisation/);
 assert.match(settings, /Token usage/);
+assert.match(settings, /window\.cuppet\.usage\.summary/, 'Token usage settings do not read runtime telemetry');
+assert.doesNotMatch(settings, /Not tracked yet|does not yet persist exact provider token counts/, 'placeholder token usage UI returned');
+assert.match(usageCss, /\.usage-stats/, 'token usage totals are not styled');
 assert.match(settings, /Connected devices/);
 assert.match(settings, /OpenRouter|presets\.map/, 'provider preset selector missing');
 assert.match(settings, /Continue with ChatGPT/, 'Codex subscription connection UI missing');
@@ -133,4 +152,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the app-wide Cuppet control skin replaces native macOS form chrome and native dropdowns, the composer model picker exposes current provider families including Kimi and Z.ai plus the Codex catalog, the macOS sidebar has a persisted collapse control with 13px item text, slash dispatch is single-path, project-scoped new chat and composer attachments are wired, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 13px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
