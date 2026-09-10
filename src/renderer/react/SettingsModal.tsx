@@ -283,7 +283,6 @@ function UsagePanel({ current, usage, loading, onRefresh }: { current: ProviderS
         <span>{unreported ? `${unreported} successful provider call${unreported === 1 ? '' : 's'} did not return token telemetry and are excluded from token totals. ` : ''}Cached-input and reasoning counts are shown only when a provider reports them.</span>
         {usage.lastTrackedAt && <span>Last exact report {formatUsageTime(usage.lastTrackedAt)}.</span>}
       </div>
-      <div className="usage-footnote"><span>Provider validation probes are intentionally excluded from conversation usage totals.</span></div>
     </>}
   </div>;
 }
