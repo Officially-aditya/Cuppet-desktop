@@ -47,10 +47,24 @@ export class CodexSubscriptionProvider {
           if (delta) { text += delta; onDelta(delta); }
           return;
         }
+        if (message.method === 'thread/tokenUsage/updated') {
+          const eventThreadId = String(params.threadId ?? '');
+          const eventTurnId = String(params.turnId ?? '');
+          if (threadId && eventThreadId && eventThreadId !== threadId) return;
+          if (turnId && eventTurnId && eventTurnId !== turnId) return;
+          const tokenUsage = record(params.tokenUsage);
+          const nextUsage = normalizeUsage(tokenUsage.total) ?? normalizeUsage(tokenUsage.last);
+          if (nextUsage) usage = nextUsage;
+          return;
+        }
         if (message.method === 'turn/completed') {
           const turn = record(params.turn);
-          usage = normalizeUsage(turn.usage ?? params.usage);
-          completed.resolve({ status: String(turn.status ?? params.status ?? 'completed'), usage });
+          const completedTurnId = String(turn.id ?? params.turnId ?? '');
+          const completedThreadId = String(params.threadId ?? '');
+          if (threadId && completedThreadId && completedThreadId !== threadId) return;
+          if (turnId && completedTurnId && completedTurnId !== turnId) return;
+          const legacyUsage = normalizeUsage(turn.usage ?? params.usage);
+          completed.resolve({ status: String(turn.status ?? params.status ?? 'completed'), usage: usage ?? legacyUsage });
         }
       });
       client.on('exit', ({ code, signal: exitSignal }) => completed.reject(new Error(`Codex app-server exited during turn (${code ?? 'null'}${exitSignal ? `, ${exitSignal}` : ''})`)));
