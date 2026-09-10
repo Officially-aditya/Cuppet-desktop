@@ -1,4 +1,5 @@
-const SAFE_LINK = /^(https?:|mailto:|#|\/)/i;
+const EXTERNAL_LINK = /^(https?:|mailto:)/i;
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export function renderMarkdown(value: unknown) {
   const source = String(value ?? '').replace(/\r\n?/g, '\n');
@@ -92,8 +93,15 @@ export function renderInline(value: unknown) {
 
   source = source.replace(/`([^`\n]+)`/g, (_match, code) => reserve(`<code>${escapeHtml(code)}</code>`));
   source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_match, label, href) => {
-    const safe = safeHref(href);
-    return safe ? reserve(`<a href="${escapeAttribute(safe)}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`) : escapeHtml(label);
+    const target = safeLink(href);
+    if (!target) return escapeHtml(label);
+    if (target.kind === 'external') {
+      return reserve(`<a href="${escapeAttribute(target.href)}" data-cuppet-external="true" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`);
+    }
+    if (target.kind === 'project') {
+      return reserve(`<a href="#" data-cuppet-project-file="${escapeAttribute(target.path)}">${escapeHtml(label)}</a>`);
+    }
+    return reserve(`<a href="${escapeAttribute(target.href)}">${escapeHtml(label)}</a>`);
   });
 
   source = escapeHtml(source)
@@ -131,9 +139,17 @@ function renderParagraphs(lines: string[]) {
   return lines.join('\n').split(/\n\s*\n/).map((part) => `<p>${renderInline(part.replace(/\n/g, ' '))}</p>`).join('');
 }
 
-function safeHref(value: unknown) {
+function safeLink(value: unknown): { kind: 'external' | 'anchor'; href: string } | { kind: 'project'; path: string } | null {
   const href = String(value ?? '').trim().slice(0, 2048);
-  return SAFE_LINK.test(href) ? href : '';
+  if (!href || href.includes('\0')) return null;
+  if (EXTERNAL_LINK.test(href)) return { kind: 'external', href };
+  if (href.startsWith('#')) return { kind: 'anchor', href };
+  if (href.startsWith('//') || URL_SCHEME.test(href)) return null;
+
+  const path = href.replace(/^[/\\]+/, '').replace(/^\.\//, '').replaceAll('\\', '/');
+  if (!path || path === '..' || path.startsWith('../') || path.includes('/../')) return null;
+  if (!path.includes('/') && !/^[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+$/.test(path)) return null;
+  return { kind: 'project', path: path.slice(0, 1024) };
 }
 
 export function escapeHtml(value: unknown) {
