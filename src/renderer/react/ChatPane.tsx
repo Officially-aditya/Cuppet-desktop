@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { renderMarkdown } from './markdown';
+import {
+  GENERAL_SETTINGS_EVENT,
+  readPermissionMode,
+  readSendBehavior,
+} from './behavior-preferences';
 
 export type DeliveryMode = 'queue' | 'steer';
 export type ActivityEntry = {
@@ -24,6 +29,7 @@ type TraceTool = {
 };
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
+type QueuedMessage = { text: string; attachments: Attachment[] };
 
 type Props = {
   session: Session | null;
@@ -42,13 +48,15 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('queue');
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
+  const [queuedBySession, setQueuedBySession] = useState<Record<string, QueuedMessage[]>>({});
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const [traceByMessage, setTraceByMessage] = useState<Record<string, TraceItem[]>>({});
   const [preview, setPreview] = useState<{ messageId: string; content: string } | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const queueDispatching = useRef(false);
 
   const palette = useMemo(() => {
     const query = currentSlashQuery(value);
@@ -70,6 +78,27 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     setPreview(null);
     setTraceByMessage(loadStoredTraces(session));
   }, [session?.id]);
+
+  useEffect(() => {
+    void applyPermissionPreference(session);
+  }, [session?.id, session?.projectId]);
+
+  useEffect(() => {
+    const sync = () => {
+      setDeliveryMode(readSendBehavior());
+      void applyPermissionPreference(session);
+    };
+    window.addEventListener(GENERAL_SETTINGS_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(GENERAL_SETTINGS_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, [session?.id, session?.projectId]);
+
+  useEffect(() => {
+    if (running) setDeliveryMode(readSendBehavior());
+  }, [running]);
 
   useEffect(() => window.cuppet.onEvent((event) => {
     if (!session?.id || String(event?.sessionId ?? '') !== session.id) return;
@@ -130,18 +159,63 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
   }, [session?.messages, traceByMessage, preview?.content]);
 
+  useEffect(() => {
+    const sessionId = session?.id;
+    if (!sessionId || running || queueDispatching.current) return;
+    const next = queuedBySession[sessionId]?.[0];
+    if (!next) return;
+
+    queueDispatching.current = true;
+    setQueuedBySession((current) => {
+      const remaining = (current[sessionId] ?? []).slice(1);
+      if (remaining.length) return { ...current, [sessionId]: remaining };
+      const copy = { ...current };
+      delete copy[sessionId];
+      return copy;
+    });
+
+    void onSend(next.text, 'queue', next.attachments)
+      .then((result) => {
+        if (result.commandResult) setCommandResult(result.commandResult);
+        if (!result.clear) {
+          setValue((current) => current || next.text);
+          setAttachments((current) => current.length ? current : next.attachments);
+          requestAnimationFrame(() => resize(textarea.current));
+        }
+      })
+      .finally(() => { queueDispatching.current = false; });
+  }, [onSend, queuedBySession, running, session?.id]);
+
+  const clearComposer = () => {
+    setValue('');
+    setAttachments([]);
+    if (fileInput.current) fileInput.current.value = '';
+    resize(textarea.current);
+    textarea.current?.focus();
+  };
+
   const submit = async () => {
     const raw = value.trim();
     if (!raw && !attachments.length) return;
+    const shouldQueue = Boolean(
+      running
+      && session?.id
+      && !raw.startsWith('/')
+      && (deliveryMode === 'queue' || attachments.length > 0),
+    );
+    if (shouldQueue && session?.id) {
+      const queued: QueuedMessage = { text: raw, attachments: attachments.map((item) => ({ ...item })) };
+      setQueuedBySession((current) => ({
+        ...current,
+        [session.id]: [...(current[session.id] ?? []), queued],
+      }));
+      clearComposer();
+      return;
+    }
+
     const result = await onSend(raw, deliveryMode, attachments);
     if (result.commandResult) setCommandResult(result.commandResult);
-    if (result.clear) {
-      setValue('');
-      setAttachments([]);
-      if (fileInput.current) fileInput.current.value = '';
-      resize(textarea.current);
-      textarea.current?.focus();
-    }
+    if (result.clear) clearComposer();
   };
 
   const addFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -224,6 +298,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
   const runningTrace = runningAssistant ? traceByMessage[runningAssistant.id] ?? [] : [];
+  const queuedCount = session?.id ? queuedBySession[session.id]?.length ?? 0 : 0;
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -275,7 +350,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             </button>
             {running && (
               <div className="delivery-controls react-delivery-controls" aria-label="While running">
-                <button type="button" className={`delivery-mode-button${deliveryMode === 'queue' ? ' active' : ''}`} onClick={() => setDeliveryMode('queue')}>Queue</button>
+                <button type="button" className={`delivery-mode-button${deliveryMode === 'queue' ? ' active' : ''}`} onClick={() => setDeliveryMode('queue')}>Queue{queuedCount ? ` · ${queuedCount}` : ''}</button>
                 <button type="button" className={`delivery-mode-button${deliveryMode === 'steer' ? ' active' : ''}`} onClick={() => setDeliveryMode('steer')}>Steer</button>
               </div>
             )}
@@ -445,6 +520,12 @@ function exactSlash(value: string, item: CommandDefinition) {
 
 function attachmentKey(value: Attachment) {
   return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
+}
+
+async function applyPermissionPreference(session: Session | null) {
+  if (!session?.id) return;
+  const auto = readPermissionMode() === 'auto' && Boolean(session.projectId);
+  await window.cuppet.permissions.autoSet(session.id, auto).catch(() => undefined);
 }
 
 function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {
