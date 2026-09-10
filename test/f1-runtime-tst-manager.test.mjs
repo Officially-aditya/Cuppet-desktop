@@ -30,24 +30,34 @@ class FakeManager {
   }
 }
 
-test('project graph operations stay inside the active project context', async () => {
+test('ordinary project-scoped runtime work does not eagerly bind managed TST', async () => {
+  const manager = new FakeManager();
+  const tst = new RuntimeTstManager({ manager });
+  const result = await tst.runWithProject(
+    { sessionId: 'source-session', projectId: 'project-a', projectRoot: '/workspace/a' },
+    async () => 'ok',
+  );
+  assert.equal(result, 'ok');
+  assert.deepEqual(manager.binds, []);
+  assert.deepEqual(manager.projectCalls, []);
+});
+
+test('project graph operations bind lazily inside the active project context', async () => {
   const manager = new FakeManager();
   const tst = new RuntimeTstManager({ manager });
   const result = await tst.runWithProject({ projectId: 'project-a', projectRoot: '/workspace/a' }, () => tst.graphLocate('alphaOne'));
   assert.deepEqual(result, { projectId: 'project-a', projectRoot: '/workspace/a', pattern: 'alphaOne' });
   assert.deepEqual(manager.projectCalls, [
     { projectId: 'project-a', projectRoot: '/workspace/a' },
-    { projectId: 'project-a', projectRoot: '/workspace/a' },
   ]);
 });
 
-test('a PE3-created session inherits the current project before its first TST call', async () => {
+test('a PE3-created session inherits the current project on its first TST call', async () => {
   const manager = new FakeManager();
   const tst = new RuntimeTstManager({ manager });
   const result = await tst.runWithProject({ sessionId: 'source-session', projectId: 'project-a', projectRoot: '/workspace/a' }, () => tst.queryMemory('target-session', 'marker'));
   assert.deepEqual(result, { sessionId: 'target-session', query: 'marker' });
   assert.deepEqual(manager.binds, [
-    { sessionId: 'source-session', projectId: 'project-a', projectRoot: '/workspace/a' },
     { sessionId: 'target-session', projectId: 'project-a', projectRoot: '/workspace/a' },
   ]);
 });
