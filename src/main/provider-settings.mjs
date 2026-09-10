@@ -23,6 +23,7 @@ export class ProviderSettingsStore {
   #path;
   #value = structuredClone(DEFAULTS);
   #encryptedApiKey;
+  #primaryEffort = '';
 
   constructor(path) { this.#path = path; }
 
@@ -31,9 +32,11 @@ export class ProviderSettingsStore {
       const parsed = JSON.parse(await readFile(this.#path, 'utf8'));
       this.#value = serializableProviderConfiguration({ ...DEFAULTS, ...parsed });
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
+      this.#primaryEffort = this.#value.providerID === 'codex' ? effortID(parsed.primaryEffort) : '';
     } catch {
       this.#value = structuredClone(DEFAULTS);
       this.#encryptedApiKey = undefined;
+      this.#primaryEffort = '';
     }
   }
 
@@ -56,6 +59,7 @@ export class ProviderSettingsStore {
       requiresChatGPTAuth: chatGPTProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
+      primaryEffort: projection.providerID === 'codex' ? (this.#primaryEffort || null) : (projection.primary?.variant ?? null),
       encryptionAvailable: storage.available,
       encryptionBackend: storage.backend,
       encryptionUnavailableReason: storage.reason,
@@ -64,10 +68,13 @@ export class ProviderSettingsStore {
 
   runtimeValue() {
     const selectedPreset = providerPreset(this.#value.providerID);
-    return normalizeProviderConfiguration({
+    const normalized = normalizeProviderConfiguration({
       ...this.#value,
       apiKey: selectedPreset?.authType === 'chatgpt' ? '' : this.#decryptApiKey(),
     });
+    return this.#value.providerID === 'codex' && this.#primaryEffort
+      ? { ...normalized, primaryEffort: this.#primaryEffort }
+      : normalized;
   }
 
   async save(input) {
@@ -92,6 +99,10 @@ export class ProviderSettingsStore {
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
     const secondaryEffort = preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
     const chatGPTProvider = preset?.authType === 'chatgpt';
+    const codexEffortProvided = providerID === 'codex' && Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
+    const codexEffort = providerID === 'codex'
+      ? (codexEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
+      : '';
 
     if (!baseUrl) throw new Error('Provider base URL is required');
     if (!chatGPTProvider) {
@@ -114,6 +125,7 @@ export class ProviderSettingsStore {
     if (secondaryEffort) next.secondary = resolveAdvertisedSelection(next, { ...next.secondary, variant: secondaryEffort });
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
+    this.#primaryEffort = codexEffort;
 
     if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
@@ -123,7 +135,7 @@ export class ProviderSettingsStore {
       this.#encryptedApiKey = safeStorage.encryptString(source.apiKey.trim()).toString('base64');
     }
 
-    await writeSettingsAtomically(this.#path, `${JSON.stringify({ ...this.#value, apiKey: this.#encryptedApiKey }, null, 2)}\n`);
+    await writeSettingsAtomically(this.#path, `${JSON.stringify({ ...this.#value, ...(this.#primaryEffort ? { primaryEffort: this.#primaryEffort } : {}), apiKey: this.#encryptedApiKey }, null, 2)}\n`);
     return this.rendererValue();
   }
 
@@ -151,6 +163,14 @@ function modelID(value) {
   const id = value.trim().slice(0, 240);
   if (!id) return '';
   if (/\s|[\u0000-\u001f\u007f]/.test(id)) throw new Error('Model ID contains unsupported characters');
+  return id;
+}
+function effortID(value) {
+  if (value == null || value === '') return '';
+  if (typeof value !== 'string') throw new Error('Reasoning effort must be a string');
+  const id = value.trim().slice(0, 80);
+  if (!id) return '';
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error('Reasoning effort contains unsupported characters');
   return id;
 }
 function isLocalhost(hostname) { return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'; }
