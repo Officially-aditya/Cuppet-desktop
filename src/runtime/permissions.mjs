@@ -49,7 +49,9 @@ export class PermissionBroker {
   }
   forgetSession(sessionId) {
     if (!sessionId) return { sessionId, forgotten: false };
-    let forgotten = this.#autoSessions.delete(sessionId) || this.#always.delete(sessionId);
+    const removedAuto = this.#autoSessions.delete(sessionId);
+    const removedAlways = this.#always.delete(sessionId);
+    let forgotten = removedAuto || removedAlways;
     for (const [requestId, pending] of this.#pending) {
       if (pending.request.sessionId !== sessionId) continue;
       this.#pending.delete(requestId);
