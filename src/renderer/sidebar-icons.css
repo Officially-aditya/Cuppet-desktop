@@ -51,3 +51,43 @@
   -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10' cy='10' r='2.7'/%3E%3Cpath d='M10 2.5v1.3M10 16.2v1.3M17.5 10h-1.3M3.8 10H2.5M15.3 4.7l-.9.9M5.6 14.4l-.9.9M15.3 15.3l-.9-.9M5.6 5.6l-.9-.9M14.7 7.3a5.3 5.3 0 1 1-2-2'/%3E%3C/svg%3E");
   mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10' cy='10' r='2.7'/%3E%3Cpath d='M10 2.5v1.3M10 16.2v1.3M17.5 10h-1.3M3.8 10H2.5M15.3 4.7l-.9.9M5.6 14.4l-.9.9M15.3 15.3l-.9-.9M5.6 5.6l-.9-.9M14.7 7.3a5.3 5.3 0 1 1-2-2'/%3E%3C/svg%3E");
 }
+
+/* Collapsed macOS rail keeps the same actions visible as icon-only buttons. */
+.react-sidebar.collapsed .sidebar-compact-nav{
+  position:absolute;
+  top:44px;
+  left:5px;
+  right:5px;
+  display:grid;
+  gap:2px;
+  margin:0;
+}
+.react-sidebar.collapsed .sidebar-compact-action{
+  width:32px;
+  min-width:32px;
+  max-width:32px;
+  height:32px;
+  min-height:32px;
+  justify-content:center;
+  gap:0;
+  padding:0;
+  border-radius:7px;
+}
+.react-sidebar.collapsed .sidebar-compact-action::before{
+  width:16px;
+  height:16px;
+  flex-basis:16px;
+  -webkit-mask-size:16px 16px;
+  mask-size:16px 16px;
+}
+.react-sidebar.collapsed .sidebar-compact-bottom{
+  position:absolute;
+  left:5px;
+  right:5px;
+  bottom:7px;
+  padding:0;
+}
+.react-sidebar.collapsed .sidebar-compact-bottom .ghost-button{
+  display:flex;
+  margin:0;
+}
