@@ -11,6 +11,7 @@ import './composer-refinements.css';
 import './message-controls.css';
 import './sidebar-icons.css';
 import './controls.css';
+import './provider-model-settings.css';
 import { App } from './react/App';
 import './types';
 
