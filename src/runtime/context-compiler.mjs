@@ -131,7 +131,7 @@ function injectBlocks(messages, contextBlock, planBlock) {
   target.splice(Math.max(0, index), 0, synthetic); return target;
 }
 function canTrim({ messages, estimated, usableTokens, epoch, mode }) {
-  if (messages.filter((message) => message.role === 'user').length <= 2 || usableTokens <= 0 || estimated <= usableTokens * .5) return false;
+  if (messages.filter((message) => message.role === 'user').length <= 2 || usableTokens <= 0 || !Number.isFinite(estimated)) return false;
   if (!epoch.block || !epoch.observationComplete || !epoch.hasStm) return false;
   return mode === 'stm_events' || mode === 'foreground' || mode === 'stm_only';
 }
