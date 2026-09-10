@@ -10,7 +10,7 @@ function sessionHash(value) {
   return createHash('sha256').update(Buffer.from(value, 'utf8')).digest('hex');
 }
 
-test('edited files are derived from applied mutation journal state and deduplicated', async () => {
+test('edited file events preserve repeated edits across turns while excluding undone and unsafe paths', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-edited-files-'));
   const sessionId = 'session_edited';
   try {
@@ -20,23 +20,25 @@ test('edited files are derived from applied mutation journal state and deduplica
       schema: 1,
       sessionId,
       entries: [
-        { kind: 'file', state: 'applied', path: 'src/a.ts', tool: 'workspace_edit', createdAt: 10 },
-        { kind: 'batch', state: 'applied', files: [{ path: 'src/b.ts' }, { path: 'src/a.ts' }], tool: 'tst_edit_batch', createdAt: 20 },
-        { kind: 'barrier', state: 'applied', paths: ['package.json'], tool: 'bash', createdAt: 30 },
-        { kind: 'file', state: 'undone', path: 'src/undone.ts', tool: 'workspace_write', createdAt: 40 },
-        { kind: 'file', state: 'applied', path: '../escape.ts', tool: 'workspace_write', createdAt: 50 },
+        { id: 'm1', executionId: 'e1', kind: 'file', state: 'applied', path: 'src/a.ts', tool: 'workspace_edit', createdAt: 10 },
+        { id: 'm2', executionId: 'e2', kind: 'batch', state: 'applied', files: [{ path: 'src/b.ts' }, { path: 'src/a.ts' }], tool: 'tst_edit_batch', createdAt: 20 },
+        { id: 'm3', executionId: 'e3', kind: 'barrier', state: 'applied', paths: ['package.json'], tool: 'bash', createdAt: 30 },
+        { id: 'm4', executionId: 'e4', kind: 'file', state: 'undone', path: 'src/undone.ts', tool: 'workspace_write', createdAt: 40 },
+        { id: 'm5', executionId: 'e5', kind: 'file', state: 'applied', path: '../escape.ts', tool: 'workspace_write', createdAt: 50 },
       ],
     }), 'utf8');
 
     const files = await listSessionEditedFiles(dir, sessionId);
-    assert.deepEqual(files.map((file) => file.path), ['package.json', 'src/a.ts', 'src/b.ts']);
-    assert.equal(files.find((file) => file.path === 'src/a.ts')?.tool, 'tst_edit_batch');
+    assert.deepEqual(files.map((file) => file.path), ['src/a.ts', 'src/a.ts', 'src/b.ts', 'package.json']);
+    assert.deepEqual(files.filter((file) => file.path === 'src/a.ts').map((file) => file.mutationId), ['m1', 'm2']);
+    assert.equal(files.some((file) => file.path === 'src/undone.ts'), false);
+    assert.equal(files.some((file) => file.path === '../escape.ts'), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test('workspace links stay behind the project-scoped main-process boundary', async () => {
+test('workspace links, turn-scoped edited files, dynamic user messages, and working state stay behind their intended surfaces', async () => {
   const [host, preload, markdown, enhancements, styles] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
@@ -55,7 +57,13 @@ test('workspace links stay behind the project-scoped main-process boundary', asy
   assert.match(preload, /editedFiles:.*cuppet:session:edited-files/s);
   assert.match(markdown, /data-cuppet-project-file/);
   assert.match(markdown, /data-cuppet-external/);
-  assert.match(enhancements, /file\{files\.length === 1 \? '' : 's'\} edited/);
+  assert.match(enhancements, /groupEditedFilesByTurn/);
+  assert.match(enhancements, /owner\.status === 'streaming'/);
+  assert.match(enhancements, /data-cuppet-edited-files-summary/);
+  assert.doesNotMatch(enhancements, /react-composer-wrap|workspace-edited-files-mount|createPortal/);
   assert.match(enhancements, /CODE_FILE/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
+  assert.match(styles, /content:'Working…'/);
+  assert.match(styles, /:has\(\.composer-pause-button\)/);
+  assert.doesNotMatch(styles, /workspace-edited-files-mount/);
 });
