@@ -27,7 +27,7 @@ class FakeCodexClient extends EventEmitter {
       return { turn: { id: 'turn-1' } };
     }
     if (method === 'turn/interrupt') {
-      queueMicrotask(() => this.emit('notification', { method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'interrupted' } } }));
+      queueMicrotask(() => this.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'interrupted' } } }));
       return {};
     }
     return {};
@@ -39,7 +39,31 @@ class FakeCodexClient extends EventEmitter {
   respondError(id, message, code) { this.responses.push({ id, error: { message, code } }); }
   finish() {
     this.emit('notification', { method: 'item/agentMessage/delta', params: { delta: 'done' } });
-    this.emit('notification', { method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed', usage: { inputTokens: 11, outputTokens: 3, totalTokens: 14 } } } });
+    this.emit('notification', {
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: {
+            inputTokens: 24,
+            cachedInputTokens: 10,
+            outputTokens: 7,
+            reasoningOutputTokens: 2,
+            totalTokens: 31,
+          },
+          last: {
+            inputTokens: 5,
+            cachedInputTokens: 3,
+            outputTokens: 2,
+            reasoningOutputTokens: 1,
+            totalTokens: 7,
+          },
+          modelContextWindow: 258400,
+        },
+      },
+    });
+    this.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
   }
 }
 
@@ -62,7 +86,11 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
 
   assert.equal(result.text, 'done');
   assert.deepEqual(deltas, ['done']);
-  assert.equal(result.usage.totalTokens, 14);
+  assert.equal(result.usage.totalTokens, 31);
+  assert.equal(result.usage.inputTokens, 24);
+  assert.equal(result.usage.outputTokens, 7);
+  assert.equal(result.usage.cachedInputTokens, 10);
+  assert.equal(result.usage.reasoningTokens, 2);
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].name, 'echo_tool');
   assert.deepEqual(JSON.parse(toolCalls[0].arguments), { value: 'hello' });
