@@ -26,6 +26,7 @@ async function bootstrap() {
 function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   ipcMain.handle('cuppet:health', () => request('health'));
+  ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));
   ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
