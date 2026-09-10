@@ -37,6 +37,19 @@ export class QuestionBroker {
     this.#pending.clear();
   }
 
+  forgetSession(sessionId) {
+    if (!sessionId) return { sessionId, forgotten: false };
+    let forgotten = false;
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.request.sessionId !== sessionId) continue;
+      this.#pending.delete(requestId);
+      pending.signal?.removeEventListener('abort', pending.abortListener);
+      pending.reject(abortError());
+      forgotten = true;
+    }
+    return { sessionId, forgotten };
+  }
+
   list(sessionId = null) {
     return [...this.#pending.values()].map((entry) => structuredClone(entry.request)).filter((request) => !sessionId || request.sessionId === sessionId);
   }
