@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { renderMarkdown } from './markdown';
+import { CUPPET_LOGO_URL } from './brand';
 import {
   GENERAL_SETTINGS_EVENT,
   readPermissionMode,
@@ -306,7 +307,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     <main className="main-pane react-main-pane">
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
-          <div className="empty-state"><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
+          <div className="empty-state"><img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
         ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceByMessage[message.id] ?? []} />)}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Session } from '../types';
+import { CUPPET_LOGO_URL } from './brand';
 
 const SIDEBAR_WIDTH_KEY = 'cuppet.desktop.sidebar-width';
 const SIDEBAR_COLLAPSED_KEY = 'cuppet.desktop.sidebar-collapsed';
@@ -170,6 +171,7 @@ export function Sidebar(props: Props) {
 
       {sidebarCollapsed && (
         <>
+          <div className="sidebar-collapsed-brand" title="Cuppet"><img src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /></div>
           <nav className="primary-nav sidebar-compact-nav" aria-label="Primary">
             <button type="button" className="nav-button sidebar-compact-action" aria-label="New chat" title="New chat" onClick={props.onNewChat} />
             <button type="button" className="nav-button sidebar-compact-action" aria-label="Search" title="Search" onClick={props.onSearch} />
@@ -185,7 +187,7 @@ export function Sidebar(props: Props) {
       {!sidebarCollapsed && <>
         <div className="sidebar-top">
           <div className="brand-row">
-            <div className="brand-mark" aria-hidden="true">C</div>
+            <img className="brand-mark" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" />
             <div className="brand-title">Cuppet</div>
           </div>
           <nav className="primary-nav" aria-label="Primary">

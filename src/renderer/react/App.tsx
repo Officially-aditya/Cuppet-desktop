@@ -22,6 +22,7 @@ import { SettingsModal } from './SettingsModal';
 import { PermissionModal } from './PermissionModal';
 import { QuestionModal } from './QuestionModal';
 import { Toast } from './Toast';
+import { CUPPET_LOGO_URL } from './brand';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
@@ -374,7 +375,7 @@ export function App() {
 
   const generalSessions = useMemo(() => sessions.filter((session) => !session.projectId && !session.archivedAt), [sessions]);
 
-  if (loading) return <div className="react-boot">Starting Cuppet…</div>;
+  if (loading) return <div className="react-boot"><div className="react-boot-brand"><img src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><span>Starting Cuppet…</span></div></div>;
 
   return (
     <div className="app-shell react-app">

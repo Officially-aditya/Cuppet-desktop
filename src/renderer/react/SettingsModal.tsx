@@ -3,6 +3,7 @@ import type { ProviderPreset, ProviderSettings, RemoteDevice, Session, TokenUsag
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
+import { CUPPET_LOGO_URL } from './brand';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -126,7 +127,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       <section className="react-modal settings-hub-dialog react-settings-hub" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="settings-hub-shell">
           <aside className="settings-hub-sidebar">
-            <div className="settings-hub-brand"><div className="settings-hub-mark" aria-hidden="true">C</div><div><strong>Settings</strong><span>Cuppet</span></div></div>
+            <div className="settings-hub-brand"><img className="settings-hub-mark" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><div><strong>Settings</strong><span>Cuppet</span></div></div>
             <nav className="settings-hub-nav" aria-label="Settings sections">
               {Object.entries(SECTION_META).map(([id, [label]]) => <button type="button" key={id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>{label}</button>)}
             </nav>
@@ -381,7 +382,7 @@ function PrivacyPanel() {
 }
 
 function AboutPanel() {
-  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and Remote.</p></div></div><div className="settings-row"><div><strong>Renderer</strong><span>React + TypeScript, compiled with Vite.</span></div><span className="settings-value">React</span></div><div className="settings-row"><div><strong>Runtime</strong><span>Electron host with the independent Cuppet runtime.</span></div><span className="settings-value">Desktop</span></div></div>;
+  return <div className="settings-card about-card"><div className="about-brand"><img src={CUPPET_LOGO_URL} alt="Cuppet" /><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and Remote.</p></div></div><div className="settings-row"><div><strong>Renderer</strong><span>React + TypeScript, compiled with Vite.</span></div><span className="settings-value">React</span></div><div className="settings-row"><div><strong>Runtime</strong><span>Electron host with the independent Cuppet runtime.</span></div><span className="settings-value">Desktop</span></div></div>;
 }
 
 function deletedRecoveryLabel(session: Session, now = Date.now()) {

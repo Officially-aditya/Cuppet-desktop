@@ -73,18 +73,24 @@
       "src/runtime/**/*",
       "src/cli/**/*",
       "dist-renderer/**/*",
+      "src/remote-app/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "vendor/tst",
         "to": "tst",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "vendor/codex",
         "to": "codex",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "directories": {
@@ -92,14 +98,20 @@
     },
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     },
     "linux": {
       "category": "Development",
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     },
     "win": {
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     }
   }
 }

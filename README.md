@@ -1,5 +1,7 @@
 # Cuppet Desktop
 
+<p align="center"><img src="src/renderer/assets/cuppet.png" alt="Cuppet" width="88" /></p>
+
 Independent desktop/runtime migration for Cuppet.
 
 ## Current increment

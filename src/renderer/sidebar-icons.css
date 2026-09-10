@@ -55,7 +55,7 @@
 /* Collapsed macOS rail keeps the same actions visible as icon-only buttons. */
 .react-sidebar.collapsed .sidebar-compact-nav{
   position:absolute;
-  top:44px;
+  top:78px;
   left:5px;
   right:5px;
   display:grid;
