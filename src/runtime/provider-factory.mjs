@@ -5,19 +5,20 @@ import { CodexSubscriptionProvider } from './codex-provider.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
 export function createChatProvider(configuration = {}) {
-  let provider;
-  if (String(configuration?.providerID ?? '').toLowerCase() === 'codex') provider = new CodexSubscriptionProvider(configuration);
-  else {
-    const kind = resolvedNativeKind(configuration);
-    if (kind) {
-      const sourceFetch = configuration?.fetchImpl ?? globalThis.fetch;
-      const prepared = typeof sourceFetch === 'function'
-        ? { ...configuration, fetchImpl: nativeFetchGuard(kind, sourceFetch) }
-        : configuration;
-      provider = createNativeProvider(prepared);
-    } else provider = new OpenAICompatibleChatProvider(configuration);
+  return trackUsage(createUntrackedChatProvider(configuration), providerIdentity(configuration));
+}
+
+export function createUntrackedChatProvider(configuration = {}) {
+  if (String(configuration?.providerID ?? '').toLowerCase() === 'codex') return new CodexSubscriptionProvider(configuration);
+  const kind = resolvedNativeKind(configuration);
+  if (kind) {
+    const sourceFetch = configuration?.fetchImpl ?? globalThis.fetch;
+    const prepared = typeof sourceFetch === 'function'
+      ? { ...configuration, fetchImpl: nativeFetchGuard(kind, sourceFetch) }
+      : configuration;
+    return createNativeProvider(prepared);
   }
-  return trackUsage(provider, providerIdentity(configuration));
+  return new OpenAICompatibleChatProvider(configuration);
 }
 
 function trackUsage(provider, identity) {
