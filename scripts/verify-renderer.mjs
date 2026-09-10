@@ -119,6 +119,10 @@ assert.match(search, /sessions\.restore/, 'React archived-search recovery missin
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
 assert.match(search, /scrollIntoView/, 'exact message search result does not scroll into view');
 assert.match(sidebar, /project-new-chat-button/, 'project hover new-chat button missing');
+assert.match(sidebar, /MAX_VISIBLE_CHATS = 5/, 'sidebar chat groups are not capped at five by default');
+assert.match(sidebar, /session-show-more/, 'sidebar chat groups do not expose a show-more control');
+assert.match(sidebar, /Show less.*Show more|Show more.*Show less/s, 'sidebar chat disclosure does not support both expansion states');
+assert.match(reactCss, /\.session-show-more/, 'sidebar show-more control is not styled');
 assert.match(sidebar, /New chat in \$\{project\.name\}/, 'project hover new-chat action is not labelled per project');
 assert.match(sidebar, /window\.cuppet\.sessions\.rename/, 'chat rename is not wired through the bounded renderer API');
 assert.match(sidebar, /sidebar-rename-dialog/, 'chat rename does not use the custom React surface');

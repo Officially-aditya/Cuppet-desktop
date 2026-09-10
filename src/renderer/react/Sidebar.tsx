@@ -8,6 +8,8 @@ const MIN_WIDTH = 220;
 const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 286;
 const COLLAPSED_WIDTH = 42;
+const MAX_VISIBLE_CHATS = 5;
+const GENERAL_CHAT_GROUP = '__general__';
 
 type Props = {
   projects: Project[];
@@ -38,6 +40,7 @@ export function Sidebar(props: Props) {
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState('');
   const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
+  const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());
   const dragging = useRef(false);
   const isMac = window.cuppet.native.platform === 'darwin';
   const sidebarCollapsed = isMac && collapsed;
@@ -112,6 +115,30 @@ export function Sidebar(props: Props) {
     }
     return map;
   }, [props.sessions]);
+
+  useEffect(() => {
+    if (!props.activeSessionId) return;
+    const projectSession = props.sessions.find((session) => session.id === props.activeSessionId);
+    const groupKey = projectSession?.projectId ?? (props.generalSessions.some((session) => session.id === props.activeSessionId) ? GENERAL_CHAT_GROUP : null);
+    if (!groupKey) return;
+    const groupSessions = groupKey === GENERAL_CHAT_GROUP ? props.generalSessions : (sessionsByProject.get(groupKey) ?? []);
+    if (groupSessions.findIndex((session) => session.id === props.activeSessionId) < MAX_VISIBLE_CHATS) return;
+    setExpandedChatGroups((current) => {
+      if (current.has(groupKey)) return current;
+      const next = new Set(current);
+      next.add(groupKey);
+      return next;
+    });
+  }, [props.activeSessionId, props.sessions, props.generalSessions, sessionsByProject]);
+
+  const toggleChatGroup = (groupKey: string) => {
+    setExpandedChatGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   const openMenu = (event: React.MouseEvent, kind: 'project' | 'session', id: string) => {
     event.preventDefault();
@@ -206,6 +233,9 @@ export function Sidebar(props: Props) {
         <div className="project-list" aria-label="Projects and conversations">
           {props.projects.map((project) => {
             const projectActive = props.activeSessionId === null && props.selectedProjectId === project.id;
+            const projectSessions = sessionsByProject.get(project.id) ?? [];
+            const chatsExpanded = expandedChatGroups.has(project.id);
+            const visibleProjectSessions = chatsExpanded ? projectSessions : projectSessions.slice(0, MAX_VISIBLE_CHATS);
             return (
               <section className="project-group" key={project.id}>
                 <div className={`project-row${projectActive ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
@@ -230,9 +260,17 @@ export function Sidebar(props: Props) {
                   >+</button>
                   <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
                 </div>
-                {(sessionsByProject.get(project.id) ?? []).map((session) => (
+                {visibleProjectSessions.map((session) => (
                   <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
                 ))}
+                {projectSessions.length > MAX_VISIBLE_CHATS && (
+                  <button
+                    type="button"
+                    className="session-show-more"
+                    aria-expanded={chatsExpanded}
+                    onClick={() => toggleChatGroup(project.id)}
+                  >{chatsExpanded ? 'Show less' : 'Show more'}</button>
+                )}
               </section>
             );
           })}
@@ -240,9 +278,17 @@ export function Sidebar(props: Props) {
           {props.generalSessions.length > 0 && (
             <section className="project-group general-group">
               <div className="general-label">General</div>
-              {props.generalSessions.map((session) => (
+              {(expandedChatGroups.has(GENERAL_CHAT_GROUP) ? props.generalSessions : props.generalSessions.slice(0, MAX_VISIBLE_CHATS)).map((session) => (
                 <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
               ))}
+              {props.generalSessions.length > MAX_VISIBLE_CHATS && (
+                <button
+                  type="button"
+                  className="session-show-more"
+                  aria-expanded={expandedChatGroups.has(GENERAL_CHAT_GROUP)}
+                  onClick={() => toggleChatGroup(GENERAL_CHAT_GROUP)}
+                >{expandedChatGroups.has(GENERAL_CHAT_GROUP) ? 'Show less' : 'Show more'}</button>
+              )}
             </section>
           )}
 
