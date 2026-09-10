@@ -6,6 +6,13 @@
   max-width:min(680px,86%);
 }
 
+/* Reasoning stays in the assistant message. The Cuppet disclosure is tool activity only. */
+.message-trace .message-trace-reasoning{display:none!important}
+.message-visible-reasoning{margin-top:0;margin-bottom:7px;color:inherit}
+.message-visible-reasoning-segment+.message-visible-reasoning-segment{margin-top:10px}
+.message-visible-reasoning-segment>p:first-child{margin-top:0}
+.message-visible-reasoning-segment>p:last-child{margin-bottom:0}
+
 .message-edited-files{position:relative;margin-top:8px;max-width:min(430px,100%)}
 .message-edited-files-trigger{display:inline-flex;align-items:center;gap:5px;min-height:25px;padding:2px 5px;border:0;border-radius:6px;background:transparent;color:#7f8996;font-size:11px;line-height:18px}
 .message-edited-files-trigger:hover,.message-edited-files.open .message-edited-files-trigger{background:#171c22;color:#cdd5df}
