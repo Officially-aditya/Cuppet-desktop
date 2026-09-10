@@ -1,28 +1,101 @@
-import { useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { PermissionRequest } from '../types';
+
+type Anchor = { left: number; width: number; bottom: number };
 
 export function PermissionModal({ request, onResolve }: { request: PermissionRequest; onResolve: (reply: 'once' | 'always' | 'reject', enableAuto?: boolean) => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const resources = request.resources ?? [];
+  const resourceSummary = useMemo(() => summarizeResources(resources), [resources]);
+
+  useLayoutEffect(() => {
+    const composer = document.querySelector<HTMLElement>('.react-composer');
+    const mainPane = document.querySelector<HTMLElement>('.react-main-pane');
+    if (!composer) return;
+
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const rect = composer.getBoundingClientRect();
+        setAnchor({
+          left: Math.round(rect.left),
+          width: Math.round(rect.width),
+          bottom: Math.max(8, Math.round(window.innerHeight - rect.top + 8)),
+        });
+      });
+    };
+
+    const resize = new ResizeObserver(measure);
+    resize.observe(composer);
+    if (mainPane) resize.observe(mainPane);
+    window.addEventListener('resize', measure);
+    measure();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      resize.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
   const run = async (reply: 'once' | 'always' | 'reject', enableAuto = false) => {
     setBusy(true);
     try { await onResolve(reply, enableAuto); }
     finally { setBusy(false); }
   };
+
+  const style: CSSProperties | undefined = anchor
+    ? { left: anchor.left, width: anchor.width, bottom: anchor.bottom }
+    : undefined;
+
   return (
-    <div className="modal-backdrop modal-priority" role="presentation">
-      <section className="react-modal settings-dialog" role="alertdialog" aria-modal="true" aria-labelledby="permission-title">
-        <div className="dialog-header"><div><h2 id="permission-title">Tool permission</h2><p>Cuppet is waiting for approval before the model can continue.</p></div></div>
-        <div className="dialog-note">{request.action || 'tool'} · session {String(request.sessionId || '').slice(0, 24)}</div>
-        <p>{request.description || 'The model requested a protected tool operation.'}</p>
-        <pre className="permission-resources">{(request.resources || []).map((value) => `• ${value}`).join('\n') || 'No resource details were supplied.'}</pre>
-        <p className="settings-note">{request.autoEligible ? 'Guarded auto only approves ordinary workspace reads/edits/writes. Sensitive files, shell commands, and path escapes still require approval.' : 'This request is not eligible for guarded auto approval.'}</p>
-        <div className="dialog-actions">
-          <button type="button" className="ghost-button" disabled={busy} onClick={() => void run('reject')}>Reject</button>
-          {request.autoEligible && <button type="button" className="ghost-button" disabled={busy} onClick={() => void run('once', true)}>Enable guarded auto</button>}
-          <button type="button" className="ghost-button" disabled={busy} onClick={() => void run('always')}>Always this exact request</button>
-          <button type="button" className="primary-button" disabled={busy} onClick={() => void run('once')}>Allow once</button>
-        </div>
-      </section>
-    </div>
+    <section
+      className={`permission-inline${anchor ? ' anchored' : ''}`}
+      style={style}
+      role="alert"
+      aria-labelledby="permission-title"
+    >
+      <div className="permission-inline-copy">
+        <strong id="permission-title">Permission required</strong>
+        <span className="permission-inline-description">{request.description || 'Cuppet wants to perform a protected action.'}</span>
+        {resourceSummary && <span className="permission-inline-resource" title={resources.join('\n')}>{resourceSummary}</span>}
+      </div>
+      <div className="permission-inline-actions">
+        <button type="button" className="permission-inline-button" disabled={busy} onClick={() => void run('reject')}>Deny</button>
+        {request.autoEligible && (
+          <button
+            type="button"
+            className="permission-inline-button"
+            aria-label="Enable guarded auto"
+            title="Enable guarded auto for eligible project actions"
+            disabled={busy}
+            onClick={() => void run('once', true)}
+          >Auto</button>
+        )}
+        <button
+          type="button"
+          className="permission-inline-button"
+          title="Always allow this exact request"
+          disabled={busy}
+          onClick={() => void run('always')}
+        >Always</button>
+        <button type="button" className="permission-inline-button primary" disabled={busy} onClick={() => void run('once')}>Allow</button>
+      </div>
+    </section>
   );
+}
+
+function summarizeResources(resources: string[]) {
+  const cleaned = resources.map((value) => String(value).trim()).filter(Boolean);
+  if (!cleaned.length) return '';
+  if (cleaned.length === 1) return compact(cleaned[0]);
+  return `${compact(cleaned[0])} + ${cleaned.length - 1} more`;
+}
+
+function compact(value: string) {
+  const normalized = value.replace(/[\r\n\t]+/g, ' ').trim();
+  return normalized.length > 82 ? `${normalized.slice(0, 79)}…` : normalized;
 }
