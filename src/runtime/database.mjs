@@ -168,7 +168,7 @@ export class ConversationDatabase {
   }
   listExpiredDeleted(cutoff,limit=100){ return this.#db.prepare(`SELECT id,project_id AS projectId,deleted_at AS deletedAt FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at<=? ORDER BY deleted_at ASC LIMIT ?`).all(cutoff,Math.min(Math.max(Number(limit)||100,1),500)); }
   deleteSession(id){ this.#db.prepare('DELETE FROM search_index WHERE session_id=?').run(id); const result=this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id); return result.changes>0; }
-  touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=?,updated_at=? WHERE id=?').run(now,now,id); }
+  touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now,id); }
   search(query,{limit=50,includeArchived=false}={}){
     const match=ftsQuery(query); if(!match) return [];
     const archivedClause=includeArchived?'':'AND s.archived_at IS NULL';
