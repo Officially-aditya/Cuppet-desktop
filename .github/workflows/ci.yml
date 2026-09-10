@@ -1,11 +1,15 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-  pull_request:
+    branches:
+      - feat/e2-apple-silicon-test
+    paths:
+      - .github/test-trigger
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +25,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm install --ignore-scripts
+      - run: npm run renderer:verify
       - run: npm run phase0:verify
       - run: npm run phase1:verify
       - run: npm run phaseb:verify
@@ -36,10 +41,11 @@ jobs:
       - run: npm run d3:verify
       - run: npm run e1:verify
       - run: npm run f1:verify
+      - run: npm run e2:verify
 
   packaged-runtime-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
@@ -63,8 +69,13 @@ jobs:
       - name: Stage verified TST resource for desktop
         run: npm run f1:stage-tst -- --source=.f1/tst-runtime
       - run: npm run f1:verify-staged-tst
+      - name: Stage pinned official Codex app-server
+        run: npm run e2:stage-codex
+      - run: npm run e2:verify-staged-codex
       - run: npm install
       - run: npm run e1:audit-runtime
+      - run: npm run e2:verify
       - run: npm run pack:dir
       - run: npm run e1:package-smoke
       - run: npm run f1:package-smoke
+      - run: npm run e2:package-smoke

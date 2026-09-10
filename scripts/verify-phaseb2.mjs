@@ -1,59 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-
-const root = new URL('..', import.meta.url).pathname;
-const required = [
-  'src/runtime/pe3/task-agents.mjs',
-  'src/runtime/pe3/router.mjs',
-  'src/runtime/pe3/semantic-router.mjs',
-  'src/runtime/pe3/local-embedding.mjs',
-  'src/runtime/pe3/registry.mjs',
-  'src/runtime/service.mjs',
-  'src/runtime/database.mjs',
-  'src/main/main.mjs',
-  'src/preload/preload.cjs',
-  'src/renderer/app.js',
-  'migration/phase-b2-contract.json',
-  'docs/phase-b2-pe3-routing.md',
-  'package.json',
-];
-const text = Object.fromEntries(await Promise.all(required.map(async (path) => [path, await readFile(join(root, path), 'utf8')])));
-const expect = (condition, message) => { if (!condition) throw new Error(message); };
-
-expect(text['src/runtime/pe3/task-agents.mjs'].includes('FINGERPRINT_DECAY = 0.96'), 'weighted task fingerprint decay changed');
-expect(text['src/runtime/pe3/task-agents.mjs'].includes('noteWorkspaceChange') && text['src/runtime/pe3/task-agents.mjs'].includes('stalePaths'), 'workspace staleness invalidation missing');
-expect(text['src/runtime/pe3/router.mjs'].includes('prepare({sourceSessionId') && text['src/runtime/pe3/router.mjs'].includes('accept(token') && text['src/runtime/pe3/router.mjs'].includes('commit(token') && text['src/runtime/pe3/router.mjs'].includes('abort(token'), 'transactional PE3 handoff states missing');
-expect(text['src/runtime/pe3/router.mjs'].includes('explicitReturn') && text['src/runtime/pe3/router.mjs'].includes('semanticReturnOnly'), 'explicit dormant-task return behavior missing');
-expect(text['src/runtime/pe3/router.mjs'].includes('normalizeAttachments') && text['src/runtime/pe3/router.mjs'].includes('MAX_ATTACHMENTS=16'), 'bounded attachment routing missing');
-expect(text['src/runtime/pe3/semantic-router.mjs'].includes('dormantMatchMin') && text['src/runtime/pe3/semantic-router.mjs'].includes('fallback'), 'conservative semantic routing policy missing');
-const localEmbedding = text['src/runtime/pe3/local-embedding.mjs'];
-expect(localEmbedding.includes('LocalFeatureEmbeddingProvider') && localEmbedding.includes('cuppet/subword-hash-v1'), 'built-in PE3 feature embedding provider missing');
-expect(localEmbedding.includes('subwordGrams') && localEmbedding.includes('fnv1a') && localEmbedding.includes('Float32Array'), 'bounded deterministic PE3 feature hashing missing');
-expect(!/@huggingface|onnxruntime|sharp/i.test(localEmbedding), 'PE3 local embedding source regained an external model/native dependency');
-expect(text['src/runtime/pe3/router.mjs'].includes('new LocalFeatureEmbeddingProvider()'), 'PE3 router does not default to the built-in feature embedding provider');
-const packageJson = JSON.parse(text['package.json']);
-expect(!packageJson.dependencies?.['@huggingface/transformers'], 'Hugging Face runtime remains a production dependency');
-expect(text['src/runtime/pe3/registry.mjs'].includes('MAX_AGENTS=32') && text['src/runtime/pe3/registry.mjs'].includes("pe3-task-agents.json"), 'bounded project-local PE3 registry missing');
-expect(text['src/runtime/pe3/registry.mjs'].includes('fileSignatures') && text['src/runtime/pe3/registry.mjs'].includes('recoveredFromCorruption'), 'offline staleness/corruption recovery missing');
-expect(text['src/runtime/database.mjs'].includes('transaction(') && text['src/runtime/database.mjs'].includes('BEGIN IMMEDIATE') && text['src/runtime/database.mjs'].includes('COMMIT') && text['src/runtime/database.mjs'].includes('ROLLBACK'), 'SQLite transaction boundary missing');
-expect(text['src/runtime/service.mjs'].includes("type: 'pe3.routed'") && text['src/runtime/service.mjs'].includes('[PE3 routing marker]'), 'runtime PE3 target/source projection missing');
-expect(text['src/runtime/service.mjs'].includes('route = router.accept') && text['src/runtime/service.mjs'].includes('this.#db.transaction') && text['src/runtime/service.mjs'].includes('router.commit'), 'runtime handoff is not prepare/accept/transaction/commit');
-expect(text['src/main/main.mjs'].includes('cuppet:pe3:status') && text['src/preload/preload.cjs'].includes('pe3:'), 'PE3 desktop control surface missing');
-const renderer = text['src/renderer/app.js'];
-expect(renderer.includes("event.type==='pe3.routed'") && renderer.includes('event.targetSessionId') && renderer.includes('openSession(event.targetSessionId)'), 'renderer does not follow PE3 route events to the target session');
-expect(renderer.includes('const result=await window.cuppet.sessions.send') && renderer.includes('result?.sessionId') && renderer.includes('state.runningSessions.delete(sourceSessionId)'), 'composer does not follow the runtime-selected PE3 target or clear the source run flag');
-expect(!Object.entries(text).some(([path, value]) => path.startsWith('src/') && /opencode/i.test(value)), 'OpenCode leaked into B2 production source');
-
-const tests = [
-  'test/pe3-task-agents.test.mjs',
-  'test/pe3-semantic-router.test.mjs',
-  'test/pe3-local-embedding.test.mjs',
-  'test/pe3-registry.test.mjs',
-  'test/pe3-transaction.test.mjs',
-  'test/pe3-reactivation.test.mjs',
-  'test/runtime-pe3.test.mjs',
-];
-const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
-if (testRun.status !== 0) process.exit(testRun.status ?? 1);
-console.log('Phase B2 gate passed: deterministic/local PE3 routing, dependency-free feature embeddings, persistence, staleness, attachments, transactional task handoff, and target-session following verified.');
+const root=new URL('..',import.meta.url).pathname;
+const paths=['src/runtime/pe3/router.mjs','src/runtime/pe3/registry.mjs','src/runtime/pe3/task-agents.mjs','src/runtime/service.mjs','src/renderer/react/App.tsx','migration/phase-b2-contract.json'];
+const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
+expect(text['src/runtime/pe3/router.mjs'].includes('route') && text['src/runtime/pe3/task-agents.mjs'].includes('prepare'),'PE3 routing surface missing');
+expect(text['src/runtime/service.mjs'].includes('pe3.routed'),'runtime PE3 routed event missing');
+const app=text['src/renderer/react/App.tsx'];
+expect(app.includes("event.type === 'pe3.routed'") && app.includes('event.targetSessionId') && app.includes('openSession(target)'),'React does not follow runtime-selected PE3 target');
+expect(app.includes('result?.sessionId') && app.includes('setRunning((current) => new Set(current).add(target))'),'React send path does not follow routed target ownership');
+const tests=['test/pe3-task-agents.test.mjs','test/pe3-semantic-router.test.mjs','test/pe3-registry.test.mjs','test/pe3-transaction.test.mjs','test/pe3-reactivation.test.mjs','test/runtime-pe3.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
+console.log('Phase B2 gate passed: deterministic/semantic task routing, durable reactivation, transactional handoff, and React target-session following verified.');

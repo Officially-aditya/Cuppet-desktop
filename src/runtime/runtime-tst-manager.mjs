@@ -1,17 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ManagedTstManager } from './tst-supervisor.mjs';
+import { prepareManagedTstDataDir } from './tst-data-alias.mjs';
 
 export class RuntimeTstManager {
   #manager; #context = new AsyncLocalStorage(); #closing;
 
-  constructor(options = {}) { this.#manager = options.manager ?? new ManagedTstManager(options); }
+  constructor(options = {}) {
+    if (options.manager) this.#manager = options.manager;
+    else this.#manager = new ManagedTstManager({ ...options, dataDir: prepareManagedTstDataDir(options.dataDir) });
+  }
   get configured() { return this.#manager.configured; }
   get status() { return this.#manager.status; }
 
   async runWithProject({ sessionId = null, projectId = null, projectRoot = null } = {}, operation) {
     if (typeof operation !== 'function') throw new Error('TST project context requires an operation');
-    if (projectId && projectRoot && sessionId) await this.#manager.bindSession(sessionId, projectId, projectRoot);
-    else if (projectId && projectRoot) await this.#manager.forProject(projectId, projectRoot);
+    // Keep ordinary runtime/session operations independent from managed TST health.
+    // TST-backed methods bind lazily through #ensureSession/#projectHandle when they actually need it.
     return this.#context.run({ sessionId, projectId, projectRoot }, operation);
   }
 

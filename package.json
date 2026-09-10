@@ -10,15 +10,22 @@
     "cuppet": "src/cli/main.mjs"
   },
   "scripts": {
-    "start": "electron .",
+    "build:renderer": "vite build",
+    "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
+    "start": "npm run build:renderer && electron .",
+    "dev:renderer": "vite",
     "test": "node --test",
-    "pack:dir": "node scripts/verify-staged-tst.mjs && electron-builder --dir --publish never",
+    "pack:dir": "node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run renderer:verify && electron-builder --dir --publish never",
     "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
     "f1:stage-tst": "node scripts/stage-tst-runtime.mjs",
     "f1:verify-staged-tst": "node scripts/verify-staged-tst.mjs",
     "f1:package-smoke": "node scripts/smoke-packaged-tst.mjs",
     "f1:verify": "node scripts/verify-f1.mjs",
+    "e2:stage-codex": "node scripts/stage-codex-app-server.mjs",
+    "e2:verify-staged-codex": "node scripts/verify-staged-codex.mjs",
+    "e2:package-smoke": "node scripts/smoke-packaged-codex.mjs",
+    "e2:verify": "node scripts/verify-e2.mjs",
     "remote-control": "node src/cli/main.mjs remote-control",
     "relay": "node src/cli/main.mjs relay",
     "remote-enroll": "node src/cli/main.mjs remote-enroll",
@@ -40,8 +47,17 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
     "electron": "44.3.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "qrcode": "1.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "typescript": "5.9.2",
+    "vite": "7.1.5"
   },
   "engines": {
     "node": ">=22"
@@ -52,13 +68,22 @@
     "executableName": "cuppet",
     "asar": true,
     "files": [
-      "src/**/*",
+      "src/main/**/*",
+      "src/preload/**/*",
+      "src/runtime/**/*",
+      "src/cli/**/*",
+      "dist-renderer/**/*",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "vendor/tst",
         "to": "tst",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "vendor/codex",
+        "to": "codex",
         "filter": ["**/*"]
       }
     ],

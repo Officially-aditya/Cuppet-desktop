@@ -1,0 +1,6 @@
+.general-settings-card{width:100%;box-sizing:border-box}
+.general-settings-row>div:first-child{min-width:0;max-width:520px}
+.general-settings-control{flex:0 0 180px!important;width:180px;display:block!important}
+.general-settings-control .cuppet-select{width:100%}
+.general-settings-note{margin-top:12px;color:#727d89;font-size:10px;line-height:1.5}
+@media(max-width:760px){.general-settings-row{align-items:flex-start}.general-settings-control{flex:0 0 150px!important;width:150px}}

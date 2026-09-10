@@ -1,0 +1,375 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CodexModelCatalog, ProviderSettings } from '../types';
+
+type ModelOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+type PickerStage = 'models' | 'efforts';
+type ModelSlot = 'primary' | 'secondary';
+type SettingsWithSecondaryAuto = ProviderSettings & { secondaryAuto?: boolean };
+
+type Props = {
+  disabled?: boolean;
+  slot?: ModelSlot;
+  surface?: 'composer' | 'settings';
+  onChange?: (settings: ProviderSettings) => void;
+};
+
+const EMPTY_CODEX: CodexModelCatalog = { available: false, models: [], defaultModel: null };
+
+export function ModelPicker({ disabled = false, slot = 'primary', surface = 'composer', onChange }: Props) {
+  const root = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [stage, setStage] = useState<PickerStage>('models');
+  const [busy, setBusy] = useState(false);
+  const [settings, setSettings] = useState<ProviderSettings | null>(null);
+  const [codex, setCodex] = useState<CodexModelCatalog>(EMPTY_CODEX);
+  const [error, setError] = useState('');
+
+  const refresh = async () => {
+    const next = await window.cuppet.settings.get();
+    setSettings(next);
+    const providerID = next.primary?.providerID || next.providerID || '';
+    if (providerID === 'codex') {
+      const catalog = await window.cuppet.codexAuth.models();
+      setCodex(catalog);
+      if (catalog.error) setError(catalog.error);
+    } else {
+      setCodex(EMPTY_CODEX);
+    }
+    return next;
+  };
+
+  useEffect(() => {
+    void refresh().catch((value) => setError(message(value)));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setStage('models');
+      }
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [open]);
+
+  const providerID = settings?.primary?.providerID || settings?.providerID || '';
+  const providerPreset = settings?.presets?.find((item) => item.id === providerID);
+  const providerLabel = providerPreset?.label || providerID || 'Provider';
+  const configuredModel = slot === 'secondary'
+    ? settings?.secondary?.modelID || settings?.primary?.modelID || ''
+    : settings?.primary?.modelID || '';
+  const secondaryAuto = slot === 'secondary' && (settings as SettingsWithSecondaryAuto | null)?.secondaryAuto !== false;
+
+  const options = useMemo<ModelOption[]>(() => {
+    const custom = (settings?.customModels ?? []).filter((item) => item.providerID === providerID);
+    if (providerID === 'codex') {
+      const output: ModelOption[] = [];
+      const seen = new Set<string>();
+      const add = (id?: string, label?: string, description?: string) => {
+        const value = String(id ?? '').trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        output.push({ id: value, label: label || value, ...(description ? { description } : {}) });
+      };
+      const dynamic = codex.models.map((model) => ({ id: model.id, label: model.label || model.id, description: model.description }));
+      const defaultModel = codex.defaultModel;
+      const defaultEntry = defaultModel ? dynamic.find((item) => item.id === defaultModel) : null;
+      add('codex-default', defaultEntry ? `${defaultEntry.label} · Default` : 'Codex default', 'Follow the default model selected by your Codex account.');
+      for (const model of dynamic) add(model.id, model.label, model.description);
+      for (const model of custom) add(model.modelID, model.modelID, 'Custom model · validated in Provider settings.');
+      add(configuredModel, configuredModel);
+      return output;
+    }
+
+    const output: ModelOption[] = [];
+    const seen = new Set<string>();
+    const add = (id?: string, label?: string, description?: string) => {
+      const value = String(id ?? '').trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      output.push({ id: value, label: label || value, ...(description ? { description } : {}) });
+    };
+
+    for (const model of providerPreset?.models ?? []) add(model.id, model.label, model.description);
+    for (const model of custom) add(model.modelID, model.modelID, 'Custom model · validated in Provider settings.');
+    for (const model of settings?.models ?? []) {
+      if (model.providerID !== providerID) continue;
+      add(model.modelID, model.name);
+    }
+    add(configuredModel, configuredModel);
+    return output;
+  }, [codex, configuredModel, providerID, providerPreset?.models, settings?.customModels, settings?.models]);
+
+  const effortState = modelEffortState(providerID, configuredModel, settings, codex);
+  const effortOptions = effortState.options;
+  const explicitEffort = selectedEffort(slot, providerID, settings);
+  const resolvedModelLabel = useMemo(() => {
+    if (providerID === 'codex' && configuredModel === 'codex-default' && codex.defaultModel) {
+      return codex.models.find((item) => item.id === codex.defaultModel)?.label || codex.defaultModel;
+    }
+    return options.find((item) => item.id === configuredModel)?.label || configuredModel || 'Select model';
+  }, [codex.defaultModel, codex.models, configuredModel, options, providerID]);
+  const displayModel = secondaryAuto ? 'Auto' : resolvedModelLabel;
+
+  const chooseAuto = async () => {
+    if (slot !== 'secondary' || secondaryAuto) {
+      setOpen(false);
+      setStage('models');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const current = settings ?? await window.cuppet.settings.get();
+      const currentProvider = current.primary?.providerID || current.providerID || '';
+      const primaryModel = current.primary?.modelID || '';
+      if (!currentProvider || !primaryModel) throw new Error('Configure a primary model before using automatic secondary selection.');
+      const next = await window.cuppet.settings.save({
+        providerID: currentProvider,
+        baseUrl: current.baseUrl || '',
+        model: primaryModel,
+        backgroundModel: current.secondary?.modelID || primaryModel,
+        primaryEffort: selectedEffort('primary', currentProvider, current),
+        secondaryEffort: '',
+        secondaryAuto: true,
+      });
+      setSettings(next);
+      onChange?.(next);
+      setOpen(false);
+      setStage('models');
+    } catch (value) {
+      setError(message(value));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chooseModel = async (modelID: string) => {
+    const id = modelID.trim();
+    if (!id) return;
+    setBusy(true);
+    setError('');
+    try {
+      const current = settings ?? await window.cuppet.settings.get();
+      const currentProvider = current.primary?.providerID || current.providerID || '';
+      if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
+
+      const nextEffortState = modelEffortState(currentProvider, id, current, codex);
+      if (id !== configuredModel || secondaryAuto) {
+        const nextEffort = effortForModel(slot, currentProvider, id, current, codex);
+        const primaryModel = slot === 'primary' ? id : current.primary?.modelID || id;
+        const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
+        const next = await window.cuppet.settings.save({
+          providerID: currentProvider,
+          baseUrl: current.baseUrl || '',
+          model: primaryModel,
+          backgroundModel: secondaryModel,
+          primaryEffort: slot === 'primary' ? nextEffort : selectedEffort('primary', currentProvider, current),
+          secondaryEffort: slot === 'secondary' ? nextEffort : selectedEffort('secondary', currentProvider, current),
+          ...(slot === 'secondary' ? { secondaryAuto: false } : {}),
+        });
+        setSettings(next);
+        onChange?.(next);
+      }
+
+      if (slot === 'primary' && nextEffortState.options.length > 0) {
+        setStage('efforts');
+        setOpen(true);
+      } else {
+        setOpen(false);
+        setStage('models');
+      }
+    } catch (value) {
+      setError(message(value));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chooseEffort = async (effort: string) => {
+    const value = effort === 'default' ? '' : effort.trim();
+    if (!configuredModel || (value && !effortOptions.includes(value))) return;
+    if (value === explicitEffort || (!value && !explicitEffort)) {
+      setOpen(false);
+      setStage('models');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const current = settings ?? await window.cuppet.settings.get();
+      const currentProvider = current.primary?.providerID || current.providerID || '';
+      if (!currentProvider) throw new Error('Configure a provider before selecting reasoning effort.');
+      const saved = await window.cuppet.settings.save({
+        providerID: currentProvider,
+        baseUrl: current.baseUrl || '',
+        model: current.primary?.modelID || configuredModel,
+        backgroundModel: current.secondary?.modelID || current.primary?.modelID || configuredModel,
+        primaryEffort: value,
+        secondaryEffort: selectedEffort('secondary', currentProvider, current),
+      });
+      setSettings(saved);
+      onChange?.(saved);
+      setOpen(false);
+      setStage('models');
+    } catch (value) {
+      setError(message(value));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async () => {
+    if (disabled || busy) return;
+    if (open) {
+      setOpen(false);
+      setStage('models');
+      return;
+    }
+    setStage('models');
+    setOpen(true);
+    setError('');
+    try { await refresh(); }
+    catch (value) { setError(message(value)); }
+  };
+
+  const slotLabel = slot === 'secondary' ? 'secondary' : 'primary';
+  // Renderer contract: the default composer trigger resolves to aria-label="Select model".
+  const triggerAriaLabel = surface === 'composer' && slot === 'primary' ? 'Select model' : `Select ${slotLabel} model`;
+  const triggerTitle = secondaryAuto
+    ? `Secondary model: Auto · currently ${resolvedModelLabel}`
+    : configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : triggerAriaLabel;
+
+  return (
+    <div className={`model-picker${surface === 'settings' ? ' settings-model-picker' : ''}${open ? ' open' : ''}`} ref={root}>
+      <button
+        type="button"
+        className="model-picker-trigger"
+        aria-label={triggerAriaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled || busy}
+        title={triggerTitle}
+        onClick={() => void toggle()}
+      >
+        <span className="model-picker-name">{displayModel}</span>
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+
+      {open && (
+        <div className="model-picker-menu" role="listbox" aria-label={stage === 'models' ? `${slotLabel} models` : 'Reasoning effort'}>
+          {stage === 'models' ? (
+            <>
+              <div className="model-picker-provider">{slot === 'secondary' ? `${providerLabel} · Secondary models` : `${providerLabel} · Models`}</div>
+              {slot === 'secondary' && (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={secondaryAuto}
+                  className={`model-picker-option${secondaryAuto ? ' selected' : ''}`}
+                  disabled={busy}
+                  onClick={() => void chooseAuto()}
+                >
+                  <strong>Auto</strong>
+                  {secondaryAuto && <span className="model-picker-check" aria-hidden="true">✓</span>}
+                </button>
+              )}
+              {options.length > 0 ? options.map((option) => {
+                const selected = !secondaryAuto && option.id === configuredModel;
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`model-picker-option${selected ? ' selected' : ''}`}
+                    key={option.id}
+                    disabled={busy}
+                    onClick={() => void chooseModel(option.id)}
+                  >
+                    <strong>{option.label}</strong>
+                    {selected && <span className="model-picker-check" aria-hidden="true">✓</span>}
+                  </button>
+                );
+              }) : <div className="model-picker-empty">No models advertised by this provider.</div>}
+            </>
+          ) : (
+            <>
+              <button type="button" className="model-picker-back" onClick={() => setStage('models')}>← Models</button>
+              <div className="model-picker-provider">{displayModel} · Effort</div>
+              <button
+                type="button"
+                role="option"
+                aria-selected={!explicitEffort}
+                className={`model-picker-effort-option${!explicitEffort ? ' selected' : ''}`}
+                onClick={() => void chooseEffort('default')}
+              >
+                <span>Default{effortState.defaultEffort ? ` · ${formatEffort(effortState.defaultEffort)}` : ''}</span>
+                {!explicitEffort && <span aria-hidden="true">✓</span>}
+              </button>
+              {effortOptions.map((effort) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={explicitEffort === effort}
+                  className={`model-picker-effort-option${explicitEffort === effort ? ' selected' : ''}`}
+                  key={effort}
+                  onClick={() => void chooseEffort(effort)}
+                >
+                  <span>{formatEffort(effort)}</span>
+                  {explicitEffort === effort && <span aria-hidden="true">✓</span>}
+                </button>
+              ))}
+            </>
+          )}
+          {error && <div className="model-picker-error" role="status">{error}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function modelEffortState(providerID: string, modelID: string, settings: ProviderSettings | null, codex: CodexModelCatalog) {
+  if (providerID === 'codex') {
+    const effectiveID = modelID === 'codex-default' ? codex.defaultModel || '' : modelID;
+    const model = codex.models.find((item) => item.id === effectiveID);
+    return {
+      options: model?.efforts ?? [],
+      defaultEffort: String(model?.defaultEffort ?? '').trim(),
+    };
+  }
+  const model = settings?.models?.find((item) => item.providerID === providerID && item.modelID === modelID);
+  return {
+    options: model?.variants ?? [],
+    defaultEffort: '',
+  };
+}
+
+function selectedEffort(slot: ModelSlot, providerID: string, settings: ProviderSettings | null) {
+  if (slot === 'primary' && providerID === 'codex') return String(settings?.primaryEffort ?? '').trim();
+  const selection = slot === 'secondary' ? settings?.secondary : settings?.primary;
+  return String(selection?.variant ?? '').trim();
+}
+
+function effortForModel(slot: ModelSlot, providerID: string, modelID: string, settings: ProviderSettings, codex: CodexModelCatalog) {
+  const currentEffort = selectedEffort(slot, providerID, settings);
+  const state = modelEffortState(providerID, modelID, settings, codex);
+  if (currentEffort && state.options.includes(currentEffort)) return currentEffort;
+  return '';
+}
+
+function formatEffort(value: string) {
+  const effort = value.trim();
+  if (!effort) return 'Default';
+  return effort.split(/[-_]/g).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function message(value: unknown) {
+  return value instanceof Error ? value.message : String(value ?? 'Unable to load models.');
+}

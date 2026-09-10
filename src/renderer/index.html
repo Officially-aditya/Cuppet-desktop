@@ -1,61 +1,14 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Cuppet</title><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="commands.css" /><link rel="stylesheet" href="navigation.css" />
-</head>
-<body>
-<div class="app-shell">
-  <aside class="sidebar">
-    <div class="sidebar-top">
-      <div class="brand-row"><div class="brand-mark" aria-hidden="true">C</div><div><div class="brand-title">Cuppet</div><div class="brand-subtitle">Desktop alpha</div></div></div>
-      <button id="new-chat" class="primary-button full">New chat</button>
-      <nav class="primary-nav" aria-label="Primary"><button id="search-button" class="nav-button">Search</button><button class="nav-button" disabled>Agents</button><button id="remote-button" class="nav-button">Remote</button></nav>
-    </div>
-    <div class="projects-header"><span>Projects</span><button id="add-project" class="text-button">Add</button></div>
-    <div id="project-list" class="project-list" aria-label="Projects and conversations"></div>
-    <div class="sidebar-bottom"><button id="settings-button" class="ghost-button full">Provider settings</button></div>
-  </aside>
-  <main class="main-pane">
-    <header class="topbar">
-      <div><div id="conversation-title" class="conversation-title">New chat</div><div id="project-status" class="project-status">General chat</div><div id="runtime-status" class="runtime-status">Starting runtime…</div></div>
-      <div class="topbar-actions">
-        <button id="mode-toggle" type="button" class="control-pill" title="Switch this chat between Build and Plan mode">Build</button>
-        <button id="undo-button" type="button" class="control-pill" title="Undo the latest Cuppet-owned reversible workspace mutation">Undo</button>
-        <button id="orchestrator-toggle" type="button" class="control-pill" title="Primary model curates context explicitly when enabled">Orchestrator off</button>
-        <button id="background-toggle" type="button" class="control-pill" title="Pause or resume background memory enrichment">Background on</button>
-        <span id="tst-pill" class="provider-pill">TST off</span>
-        <span id="provider-pill" class="provider-pill">Provider not configured</span>
-      </div>
-    </header>
-    <section id="messages" class="messages" aria-live="polite" tabindex="0"></section>
-    <footer class="composer-wrap"><form id="composer" class="composer"><textarea id="prompt" rows="1" placeholder="Message Cuppet…" autocomplete="off"></textarea><div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline · / for commands</span><button id="stop-button" type="button" class="stop-button hidden">Stop</button><button id="send-button" type="submit" class="send-button">Send</button></div></form></footer>
-  </main>
-</div>
-
-<dialog id="new-chat-dialog" class="settings-dialog"><form id="new-chat-form" method="dialog"><div class="dialog-header"><div><h2>New chat</h2><p>Choose a project or start a general chat without filesystem access.</p></div><button id="new-chat-close" type="button" class="icon-button" aria-label="Close">×</button></div><label>Project<select id="new-chat-project"><option value="">General chat</option></select></label><div class="dialog-actions"><button type="button" id="new-chat-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Start chat</button></div></form></dialog>
-
-<dialog id="add-project-dialog" class="settings-dialog wide-dialog"><div class="dialog-header dialog-pad"><div><h2>Add project</h2><p>Register a folder or clone an explicitly chosen GitHub repository.</p></div><button id="add-project-close" type="button" class="icon-button" aria-label="Close">×</button></div><div class="add-project-grid">
-  <section class="project-method"><h3>Local folder</h3><p>Add an existing folder. Its Git root and origin are detected when present.</p><input id="local-project-name" type="text" placeholder="Project name (optional)"/><button id="add-local-project" class="ghost-button">Choose folder</button></section>
-  <section class="project-method"><h3>GitHub URL</h3><p>HTTPS and SSH github.com repository URLs are supported. Embedded credentials are rejected.</p><input id="github-url" type="text" placeholder="https://github.com/owner/repo.git"/><button id="clone-url-project" class="ghost-button">Choose destination & clone</button></section>
-  <section class="project-method picker-method"><h3>GitHub repositories</h3><p>Uses an existing authenticated GitHub CLI session; no second OAuth app is created.</p><div class="inline-row"><input id="github-search" type="search" placeholder="Filter repositories"/><button id="load-github-repos" class="ghost-button">Load</button></div><div id="github-repo-results" class="repo-results"></div></section>
-</div><div id="add-project-note" class="dialog-note dialog-pad"></div></dialog>
-
-<dialog id="remote-dialog" class="settings-dialog wide-dialog"><div class="dialog-header dialog-pad"><div><h2>Remote control</h2><p>Your computer stays authoritative. The relay transports commands and events; provider keys never leave this machine.</p></div><button id="remote-close" type="button" class="icon-button" aria-label="Close">×</button></div><div class="remote-grid dialog-pad">
-  <section class="project-method"><h3>Host</h3><div id="remote-status" class="settings-note">Remote control is off.</div><label>Relay URL<input id="remote-relay-url" type="url" placeholder="wss://relay.example.com" /></label><label>Cuppet API <span class="muted-inline">for app-link setup</span><input id="remote-api-base" type="url" placeholder="https://api.example.com" /></label><div class="inline-row"><button id="remote-start" type="button" class="primary-button">Start with relay</button><button id="remote-setup" type="button" class="ghost-button">Link Cuppet app</button><button id="remote-stop" type="button" class="ghost-button">Stop</button></div></section>
-  <section class="project-method"><h3>Pair a device</h3><p>Pairing codes are single-use and expire quickly. Viewer devices get read-only scope.</p><div class="inline-row"><button id="remote-invite-trusted" type="button" class="ghost-button">Trusted invite</button><button id="remote-invite-viewer" type="button" class="ghost-button">Viewer invite</button></div><div id="remote-invite" class="settings-note">Start remote control to create a pairing invite.</div></section>
-  <section class="project-method"><h3>Paired devices</h3><div id="remote-devices" class="repo-results"></div></section>
-</div><div id="remote-note" class="dialog-note dialog-pad"></div></dialog>
-
-<dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-header"><div><h2>Provider settings</h2><p>The endpoint and API key stay local. Model roles and effort are stored as non-secret request policy.</p></div><button id="settings-close" type="button" class="icon-button" aria-label="Close">×</button></div>
-<label>Provider ID<input id="provider-id" type="text" required placeholder="openai-compatible" /></label>
-<label>Base URL<input id="provider-base-url" type="url" required placeholder="https://api.openai.com/v1" /></label>
-<label>Primary model<input id="provider-model" type="text" required placeholder="Your foreground model ID" /></label>
-<label>Primary effort<select id="provider-primary-effort"><option value="">Default model effort</option></select></label>
-<label>Secondary model <span class="muted-inline">background / worker</span><input id="provider-background-model" type="text" placeholder="Defaults to primary model" /></label>
-<label>Secondary effort<select id="provider-secondary-effort"><option value="">Default model effort</option></select></label>
-<label>API key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key" /></label><div id="settings-note" class="settings-note"></div><div class="dialog-actions"><button type="button" id="settings-cancel" class="ghost-button">Cancel</button><button type="submit" class="primary-button">Save</button></div></form></dialog>
-<div id="toast" class="toast hidden" role="status"></div><script src="app.js" defer></script><script src="commands.js" defer></script><script src="permissions.js" defer></script><script src="questions.js" defer></script><script src="undo.js" defer></script><script src="remote.js" defer></script><script src="d1-navigation.js" defer></script><script type="module" src="execution-ui.mjs"></script>
-</body></html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Cuppet</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

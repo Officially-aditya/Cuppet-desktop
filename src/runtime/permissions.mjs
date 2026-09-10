@@ -47,6 +47,20 @@ export class PermissionBroker {
     if (enabled) this.#autoSessions.add(sessionId); else this.#autoSessions.delete(sessionId);
     return this.autoStatus(sessionId);
   }
+  forgetSession(sessionId) {
+    if (!sessionId) return { sessionId, forgotten: false };
+    const removedAuto = this.#autoSessions.delete(sessionId);
+    const removedAlways = this.#always.delete(sessionId);
+    let forgotten = removedAuto || removedAlways;
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.request.sessionId !== sessionId) continue;
+      this.#pending.delete(requestId);
+      pending.signal?.removeEventListener('abort', pending.abortListener);
+      pending.reject(abortError());
+      forgotten = true;
+    }
+    return { sessionId, forgotten };
+  }
 
   list(sessionId = null) {
     return [...this.#pending.values()]

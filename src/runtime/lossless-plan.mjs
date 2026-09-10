@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SCHEMA_VERSION = 1;
@@ -71,6 +71,17 @@ export class LosslessPlanStore {
     plan.updatedAt = Date.now();
     await this.#save(plan);
     return structuredClone(plan);
+  }
+
+  async delete(sessionID) {
+    const id = String(sessionID ?? '');
+    if (!id) return { sessionID: id, deleted: false };
+    const pending = this.#writes.get(id);
+    if (pending) await pending.catch(() => undefined);
+    this.#writes.delete(id);
+    const cached = this.#plans.delete(id);
+    if (this.#directory) await rm(this.#path(id), { force: true });
+    return { sessionID: id, deleted: cached || Boolean(this.#directory) };
   }
 
   async fork(sourceSessionID, targetSessionID, messageMap = {}) {
