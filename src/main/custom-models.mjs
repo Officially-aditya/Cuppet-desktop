@@ -5,6 +5,7 @@ export const CUSTOM_MODEL_PROBE_PROMPT = 'Reply only with OK.';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_PROVIDERS = 64;
 const MAX_MODELS_PER_PROVIDER = 64;
+const MAX_ID_LENGTH = 240;
 
 export async function probeCustomModel(configuration, modelID, { providerFactory = createChatProvider, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const id = normalizeCustomModelID(modelID);
@@ -96,15 +97,16 @@ export function customModelEntries(value) {
 
 export function normalizeCustomModelID(value) {
   if (typeof value !== 'string') throw new Error('Custom model ID is required');
-  const id = value.trim().slice(0, 240);
+  const id = value.trim();
   if (!id) throw new Error('Custom model ID is required');
+  if (id.length > MAX_ID_LENGTH) throw new Error(`Custom model ID must be ${MAX_ID_LENGTH} characters or fewer`);
   if (/\s|[\u0000-\u001f\u007f]/.test(id)) throw new Error('Custom model ID contains unsupported whitespace or control characters');
   return id;
 }
 
 function normalizeProviderID(value) {
-  const id = text(value);
-  if (!id || /\s|[\u0000-\u001f\u007f]/.test(id)) return '';
+  const id = typeof value === 'string' ? value.trim() : '';
+  if (!id || id.length > MAX_ID_LENGTH || /\s|[\u0000-\u001f\u007f]/.test(id) || ['__proto__', 'prototype', 'constructor'].includes(id)) return '';
   return id;
 }
 function cleanError(error) {
@@ -112,5 +114,5 @@ function cleanError(error) {
     .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
     .slice(0, 600);
 }
-function text(value) { return typeof value === 'string' ? value.trim().slice(0, 240) : ''; }
+function text(value) { return typeof value === 'string' ? value.trim().slice(0, MAX_ID_LENGTH) : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
