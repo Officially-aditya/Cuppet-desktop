@@ -33,6 +33,10 @@ export function Sidebar(props: Props) {
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   const [menu, setMenu] = useState<{ kind: 'project' | 'session'; id: string; x: number; y: number } | null>(null);
+  const [renameSession, setRenameSession] = useState<Session | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
   const dragging = useRef(false);
   const isMac = window.cuppet.native.platform === 'darwin';
   const sidebarCollapsed = isMac && collapsed;
@@ -83,6 +87,20 @@ export function Sidebar(props: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    setTitleOverrides((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const session of props.sessions) {
+        if (next[session.id] && next[session.id] === session.title) {
+          delete next[session.id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [props.sessions]);
+
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, Session[]>();
     for (const session of props.sessions) {
@@ -98,6 +116,32 @@ export function Sidebar(props: Props) {
     event.preventDefault();
     event.stopPropagation();
     setMenu({ kind, id, x: Math.min(event.clientX || event.currentTarget.getBoundingClientRect().right, window.innerWidth - 200), y: Math.min(event.clientY || event.currentTarget.getBoundingClientRect().bottom, window.innerHeight - 180) });
+  };
+
+  const beginRenameSession = (session: Session) => {
+    setMenu(null);
+    setRenameSession(session);
+    setRenameValue(titleOverrides[session.id] || session.title || 'New chat');
+    setRenameError('');
+  };
+
+  const saveRenameSession = async () => {
+    if (!renameSession) return;
+    const value = renameValue.trim();
+    if (!value) return;
+    if (value === (titleOverrides[renameSession.id] || renameSession.title || 'New chat')) {
+      setRenameSession(null);
+      return;
+    }
+    setRenameError('');
+    try {
+      await window.cuppet.sessions.rename(renameSession.id, value);
+      setTitleOverrides((current) => ({ ...current, [renameSession.id]: value }));
+      if (props.activeSessionId === renameSession.id) await props.onSession(renameSession.id);
+      setRenameSession(null);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : String(error ?? 'Unable to rename chat.'));
+    }
   };
 
   const toggleSidebar = () => {
@@ -171,7 +215,7 @@ export function Sidebar(props: Props) {
                   <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
                 </div>
                 {(sessionsByProject.get(project.id) ?? []).map((session) => (
-                  <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+                  <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
                 ))}
               </section>
             );
@@ -181,7 +225,7 @@ export function Sidebar(props: Props) {
             <section className="project-group general-group">
               <div className="general-label">General</div>
               {props.generalSessions.map((session) => (
-                <SessionRow key={session.id} session={session} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+                <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
               ))}
             </section>
           )}
@@ -219,25 +263,52 @@ export function Sidebar(props: Props) {
           }}
         />
 
-        {menu && <ContextMenu {...props} menu={menu} onClose={() => setMenu(null)} />}
+        {menu && <ContextMenu {...props} menu={menu} onClose={() => setMenu(null)} onStartRenameSession={beginRenameSession} />}
       </>}
+
+      {renameSession && (
+        <div className="sidebar-rename-backdrop" onPointerDown={() => setRenameSession(null)}>
+          <form className="sidebar-rename-dialog" onPointerDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveRenameSession(); }}>
+            <label htmlFor="sidebar-chat-rename">Rename chat</label>
+            <input
+              id="sidebar-chat-rename"
+              autoFocus
+              value={renameValue}
+              maxLength={160}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setRenameSession(null);
+                }
+              }}
+            />
+            {renameError && <div className="sidebar-rename-error" role="alert">{renameError}</div>}
+            <div className="sidebar-rename-actions">
+              <button type="button" onClick={() => setRenameSession(null)}>Cancel</button>
+              <button type="submit" disabled={!renameValue.trim()}>Save</button>
+            </div>
+          </form>
+        </div>
+      )}
     </aside>
   );
 }
 
-function SessionRow({ session, active, onOpen, onMenu }: { session: Session; active: boolean; onOpen: (id: string) => void | Promise<void>; onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void }) {
+function SessionRow({ session, title, active, onOpen, onMenu }: { session: Session; title?: string; active: boolean; onOpen: (id: string) => void | Promise<void>; onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void }) {
+  const displayTitle = title || session.title || 'New chat';
   return (
     <div className="session-row" onContextMenu={(event) => onMenu(event, 'session', session.id)}>
       <button type="button" className={`session-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} onClick={() => void onOpen(session.id)}>
-        <div className="session-title">{session.title || 'New chat'}</div>
+        <div className="session-title">{displayTitle}</div>
         <div className="session-meta">{session.lastStatus === 'streaming' ? 'Generating…' : relativeTime(session.updatedAt)}</div>
       </button>
-      <button type="button" className="session-menu-button" aria-label={`Actions for ${session.title || 'chat'}`} onClick={(event) => onMenu(event, 'session', session.id)}>⋯</button>
+      <button type="button" className="session-menu-button" aria-label={`Actions for ${displayTitle}`} onClick={(event) => onMenu(event, 'session', session.id)}>⋯</button>
     </div>
   );
 }
 
-function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onRenameSession, onArchiveSession, onDeleteSession }: Props & { menu: { kind: 'project' | 'session'; id: string; x: number; y: number }; onClose: () => void }) {
+function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onArchiveSession, onDeleteSession, onStartRenameSession }: Props & { menu: { kind: 'project' | 'session'; id: string; x: number; y: number }; onClose: () => void; onStartRenameSession: (session: Session) => void }) {
   const project = menu.kind === 'project' ? projects.find((item) => item.id === menu.id) : null;
   const session = menu.kind === 'session' ? sessions.find((item) => item.id === menu.id) : null;
   const run = (action: () => void | Promise<void>) => {
@@ -253,7 +324,7 @@ function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRem
         <button type="button" className="danger" onClick={() => run(() => onRemoveProject(project))}>Remove project</button>
       </>}
       {session && <>
-        <button type="button" onClick={() => run(() => onRenameSession(session))}>Rename chat</button>
+        <button type="button" onClick={() => onStartRenameSession(session)}>Rename chat</button>
         <button type="button" onClick={() => run(() => onArchiveSession(session))}>Archive chat</button>
         <hr />
         <button type="button" className="danger" onClick={() => run(() => onDeleteSession(session))}>Delete chat…</button>
