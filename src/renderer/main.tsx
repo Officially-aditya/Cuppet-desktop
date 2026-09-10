@@ -15,7 +15,10 @@ import './provider-model-settings.css';
 import './general-settings.css';
 import './permission-inline.css';
 import { App } from './react/App';
+import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
+
+installSessionRetentionCleanup();
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Renderer root is missing');
