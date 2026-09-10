@@ -13,6 +13,7 @@ import './sidebar-icons.css';
 import './controls.css';
 import './provider-model-settings.css';
 import './general-settings.css';
+import './permission-inline.css';
 import { App } from './react/App';
 import './types';
 
