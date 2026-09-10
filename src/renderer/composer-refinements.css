@@ -15,4 +15,5 @@
 
 /* Streaming state belongs to the composer/stop affordance, not the transcript. */
 .message-status:not(.error){display:none}
+.message.assistant:has(.message-content:empty){display:none}
 .message.assistant .message-content:empty::after{content:none!important}
