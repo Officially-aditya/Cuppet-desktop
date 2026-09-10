@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "benchmarkVersion": "desktop-marathon-1",
+  "name": "cuppet-desktop-12-task-marathon",
+  "sourceBenchmark": "Cuppet-code Issue #4 12-task marathon",
+  "fixture": "benchmarks/fixtures/marathon",
+  "model": {
+    "provider": "openai",
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "low",
+    "contextWindowTokens": 1048576,
+    "outputLimit": 16384
+  },
+  "workspace": {
+    "timeoutMs": 900000
+  },
+  "repetitions": 2,
+  "tasks": [
+    {
+      "id": "task-tracker-cross-file",
+      "title": "Task Tracker cross-file refactor",
+      "prompt": "Work on the seeded Task Tracker fixture in games/task-tracker/. Rename Task.dueDate to Task.deadline everywhere, including the --deadline CLI option. Add required Task.priority with low, normal, and high values; default new tasks to normal; reject invalid priorities. Add indexed --status, --priority, and --tag list filters and keep the CLI to API to query to store/index path correct. Reject malformed and past deadlines. Fix the store defect that drops deadlines and the stale-index defect after status, priority, or tag updates. Preserve the named exports and existing task-tracker scripts. Use only TypeScript and local Node conventions; do not add dependencies, use the network, inspect credentials, or modify unrelated projects. Run npm run task-tracker:test, npm run task-tracker:typecheck, and npm run task-tracker:run -- --help before finishing.",
+      "verification": [
+        { "id": "task-tracker-hidden-contract", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "task-tracker-cross-file", "--workspace", "{workspace}"], "timeoutMs": 120000 },
+        { "id": "task-tracker-tests", "command": "npm", "args": ["run", "task-tracker:test"], "timeoutMs": 120000 },
+        { "id": "task-tracker-typecheck", "command": "npm", "args": ["run", "task-tracker:typecheck"], "timeoutMs": 120000 },
+        { "id": "task-tracker-help", "command": "npm", "args": ["run", "task-tracker:run", "--", "--help"], "timeoutMs": 20000 }
+      ]
+    },
+    {
+      "id": "quiz-game-greenfield",
+      "title": "Greenfield quiz game",
+      "prompt": "Build a complete local quiz game inside projects/quiz-game. Create index.html, styles.css, app.js, and README.md without dependencies, network, or remote assets. Include a start state, at least five local multiple-choice questions, one question at a time, answer selection, feedback, progress, score tracking, next-question flow, final results, and restart. Use accessible controls, prevent double answers, make the layout responsive, and modify no other project or root file. Inspect the state transitions before finishing.",
+      "verification": [{ "id": "quiz-game-hidden-contract", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "quiz-game-greenfield", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "persistent-build-stage-1",
+      "title": "Persistent build stage 1: mini CRM foundation",
+      "prompt": "Start a cumulative build in projects/mini-crm. Create a dependency-free local contact dashboard with index.html, styles.css, app.js, and README.md. Add a clear semantic shell, a contact form with name and email, a contact list, and local seed data. Do not use the network or edit unrelated files. This is stage 1 of a persistent multi-stage benchmark; leave the project in a runnable state.",
+      "verification": [{ "id": "persistent-stage-1", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "persistent-build-stage-1", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "persistent-build-stage-2",
+      "title": "Persistent build stage 2: search and persistence",
+      "prompt": "Continue the existing projects/mini-crm build from the previous stage. Add create, edit, delete, search, and favorite behavior, persist contacts with localStorage, and preserve the existing semantic layout and local-only constraint. Inspect the current implementation before editing and keep the project runnable. Do not modify unrelated files.",
+      "verification": [{ "id": "persistent-stage-2", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "persistent-build-stage-2", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "persistent-build-stage-3",
+      "title": "Persistent build stage 3: regression and accessibility pass",
+      "prompt": "Finish the existing projects/mini-crm build. Review the complete flow, fix regressions, add visible focus styles, keyboard-friendly controls, empty-state text, and a responsive layout. Keep CRUD, search, favorites, and localStorage behavior working. Do not add dependencies, use the network, or change unrelated files. Report the exact files and checks you inspected.",
+      "verification": [{ "id": "persistent-stage-3", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "persistent-build-stage-3", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-a-auth",
+      "title": "Discontinuity A1: local auth notes",
+      "prompt": "Create projects/discontinuity-auth/README.md with a concise local design note for an offline session-token store. Include token expiry, refresh rotation, and logout invariants. Do not touch other projects or use the network.",
+      "verification": [{ "id": "switch-a-auth", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-a-auth", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-a-followup",
+      "title": "Discontinuity A2: auth acceptance cases",
+      "prompt": "Return to the authentication note in projects/discontinuity-auth/README.md. Add concrete acceptance cases for expired access tokens, one-time refresh rotation, logout invalidation, and clock-skew handling. Preserve the existing invariants and do not edit unrelated projects.",
+      "verification": [{ "id": "switch-a-followup", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-a-followup", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-b-auth",
+      "title": "Discontinuity B1: billing notes",
+      "prompt": "Switch to a separate task. Create projects/discontinuity-billing/README.md with a local design note for idempotent invoice retries, including duplicate-request and retry-window invariants. Do not edit the authentication project or use the network.",
+      "verification": [{ "id": "switch-b-auth", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-b-auth", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-b-followup",
+      "title": "Discontinuity B2: billing acceptance cases",
+      "prompt": "Continue the billing task in projects/discontinuity-billing/README.md. Add acceptance cases for duplicate idempotency keys, failed payment retries, successful replay, and audit ordering. Do not change the authentication project or unrelated files.",
+      "verification": [{ "id": "switch-b-followup", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-b-followup", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-c",
+      "title": "Discontinuity C: release checklist",
+      "prompt": "Switch to a third unrelated task. Create projects/discontinuity-release/README.md with a local release checklist covering versioning, migration order, rollback, and smoke validation. Keep both earlier projects unchanged.",
+      "verification": [{ "id": "switch-c", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-c", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "switch-a-return",
+      "title": "Discontinuity A3: return to auth",
+      "prompt": "Return to the authentication task. Review projects/discontinuity-auth/README.md and add a short section connecting refresh-token rotation to logout invalidation without weakening any prior invariant. Do not edit billing or release projects.",
+      "verification": [{ "id": "switch-a-return", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "switch-a-return", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    },
+    {
+      "id": "long-tool-use-dashboard",
+      "title": "Long tool-use dashboard",
+      "prompt": "Build a dependency-free local operations dashboard inside projects/operations-dashboard. Create index.html, styles.css, app.js, and README.md. Include a sidebar, header, metric cards, a searchable table of at least eight local records, status and priority filters, a details panel, an empty state, responsive layout, visible focus styles, and local-only interactions. Inspect every main state path and do not use dependencies, network, remote assets, credentials, or unrelated files.",
+      "verification": [{ "id": "long-tool-use-hidden-contract", "command": "node", "args": ["{controllerRoot}/scripts/benchmark-verifier.mjs", "--task", "long-tool-use-dashboard", "--workspace", "{workspace}"], "timeoutMs": 30000 }]
+    }
+  ]
+}
