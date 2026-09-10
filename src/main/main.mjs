@@ -1,20 +1,24 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
-import { join, dirname } from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { realpath, stat } from 'node:fs/promises';
+import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
+import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let runtime;
 let settings;
 let mainWindow;
+let runtimeDataDir;
 
 async function bootstrap() {
   const userData = app.getPath('userData');
+  runtimeDataDir = join(userData, 'runtime');
   settings = new ProviderSettingsStore(join(userData, 'provider-settings.json'));
   await settings.load();
-  runtime = new RuntimeClient({ entry: join(here, '..', 'runtime', 'main.mjs'), dataDir: join(userData, 'runtime') });
+  runtime = new RuntimeClient({ entry: join(here, '..', 'runtime', 'main.mjs'), dataDir: runtimeDataDir });
   runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
   await runtime.start();
@@ -62,6 +66,13 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:deleted:list', () => request('session.deleted.list'));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
+  ipcMain.handle('cuppet:session:edited-files', async (_event, sessionId) => {
+    const id = boundedId(sessionId);
+    if (!id) throw new Error('sessionId is required');
+    const session = await request('session.get', { sessionId: id });
+    const files = await listSessionEditedFiles(runtimeDataDir, id);
+    return { sessionId: id, projectId: session?.projectId ?? null, files };
+  });
   ipcMain.handle('cuppet:session:search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
   ipcMain.handle('cuppet:session:rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));
   ipcMain.handle('cuppet:session:archive', (_event, sessionId) => request('session.archive', { sessionId: boundedId(sessionId) }));
@@ -88,6 +99,8 @@ function registerIpc() {
   ipcMain.handle('cuppet:project:relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
   ipcMain.handle('cuppet:project:remove', (_event, projectId) => request('project.remove', { projectId }));
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
+  ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
+  ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
 
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
@@ -224,9 +237,40 @@ async function chooseFolder(options) {
   return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
+async function openProjectFile(request, projectId, value) {
+  const id = boundedId(projectId);
+  const path = typeof value === 'string' ? value.trim().slice(0, 1024) : '';
+  if (!id || !path || path.includes('\0')) throw new Error('A project and file path are required.');
+  const project = await request('project.get', { projectId: id });
+  if (!project?.canonicalPath || project.missing) throw new Error('The project folder is unavailable.');
+  const root = await realpath(project.canonicalPath);
+  const requested = resolve(root, path.replace(/^[/\\]+/, ''));
+  const actual = await realpath(requested);
+  const child = relative(root, actual);
+  if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('File path escapes the project workspace.');
+  const metadata = await stat(actual);
+  if (!metadata.isFile()) throw new Error('Only project files can be opened from chat.');
+  const message = await shell.openPath(actual);
+  if (message) throw new Error(`Could not open ${child}: ${message}`);
+  return { opened: true, path: child.replaceAll('\\', '/') };
+}
+
+async function openExternal(value) {
+  const raw = typeof value === 'string' ? value.trim().slice(0, 2048) : '';
+  let url;
+  try { url = new URL(raw); } catch { throw new Error('Invalid external link.'); }
+  if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) throw new Error('Only web and email links can be opened externally.');
+  await shell.openExternal(url.toString());
+  return { opened: true };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({ width: 1180, height: 800, minWidth: 860, minHeight: 620, show: false, backgroundColor: '#0d0f12', title: 'Cuppet', webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(?:https?:|mailto:)/i.test(url)) void openExternal(url).catch(() => undefined);
+    return { action: 'deny' };
+  });
   mainWindow.loadFile(join(here, '..', '..', 'dist-renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = undefined; });
