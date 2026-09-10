@@ -1,0 +1,40 @@
+name: Temporary fix copy summary
+on:
+  push:
+    branches: [ui/cuppet-branding]
+    paths: ['.github/workflows/tmp-fix-copy-summary.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ui/cuppet-branding
+      - name: Patch copy target
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/renderer/react/ChatPane.tsx')
+          s = p.read_text()
+          old = """  const [traceOpen, setTraceOpen] = useState(false);\n  const [copied, setCopied] = useState(false);\n"""
+          new = """  const [traceOpen, setTraceOpen] = useState(false);\n  const [copied, setCopied] = useState(false);\n  const responseRef = useRef<HTMLDivElement | null>(null);\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      await navigator.clipboard.writeText(content);\n"""
+          new = """      const rendered = responseRef.current?.innerText?.trim();\n      const value = rendered || content.trim();\n      if (!value) return;\n      await navigator.clipboard.writeText(value);\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """        content ? <div className=\"message-content markdown-rendered\" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null\n"""
+          new = """        content ? <div ref={responseRef} className=\"message-content markdown-rendered\" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git rm .github/workflows/tmp-fix-copy-summary.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/renderer/react/ChatPane.tsx
+          git commit -m 'fix: copy rendered assistant response'
+          git push origin HEAD:ui/cuppet-branding
