@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ProviderPreset, ProviderSettings, RemoteDevice } from '../types';
+import type { ProviderPreset, ProviderSettings, RemoteDevice, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 
 const SECTION_META: Record<string, [string, string]> = {
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
-  usage: ['Token usage', 'Review model usage when exact provider telemetry is available.'],
+  usage: ['Token usage', 'Review exact token counts reported by your model providers.'],
   devices: ['Connected devices', 'Review devices paired through Cuppet Remote.'],
   privacy: ['Data & privacy', 'Understand where desktop data and credentials live.'],
   about: ['About', 'Desktop runtime and build information.'],
@@ -33,6 +33,8 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   const [busy, setBusy] = useState(false);
   const [codex, setCodex] = useState<any>({ available: false, loggedIn: false, loginRunning: false, message: 'Checking…' });
   const [devices, setDevices] = useState<RemoteDevice[]>([]);
+  const [usage, setUsage] = useState<TokenUsageSummary | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [compact, setCompact] = useState(localStorage.getItem(PREF_COMPACT) === '1');
   const [reduceMotion, setReduceMotion] = useState(localStorage.getItem(PREF_MOTION) === '1');
 
@@ -58,7 +60,15 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     catch { setDevices([]); }
   }, []);
 
+  const refreshUsage = useCallback(async () => {
+    setUsageLoading(true);
+    try { setUsage(await window.cuppet.usage.summary()); }
+    catch (error) { onError(error); }
+    finally { setUsageLoading(false); }
+  }, [onError]);
+
   useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); }, [refresh, refreshCodex, refreshDevices]);
+  useEffect(() => { if (section === 'usage') void refreshUsage(); }, [refreshUsage, section]);
 
   useEffect(() => {
     document.body.classList.toggle('compact-sidebar', compact);
@@ -119,7 +129,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
-              {section === 'usage' && <UsagePanel current={current} />}
+              {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
               {section === 'privacy' && <PrivacyPanel />}
               {section === 'about' && <AboutPanel />}
@@ -174,9 +184,44 @@ function PersonalisationPanel({ compact, reduceMotion, onCompact, onReduceMotion
   </div>;
 }
 
-function UsagePanel({ current }: { current: ProviderSettings | null }) {
-  const label = current?.presets?.find((item) => item.id === current.providerID)?.label || current?.providerID || 'Current provider';
-  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Token usage</h3><p>Understand model usage across local Cuppet conversations.</p></div><span className="settings-status-pill muted">Not tracked yet</span></div><div className="usage-placeholder"><strong>{label}</strong><span>The runtime does not yet persist exact provider token counts, so Cuppet does not invent an estimate.</span></div></div>;
+function UsagePanel({ current, usage, loading, onRefresh }: { current: ProviderSettings | null; usage: TokenUsageSummary | null; loading: boolean; onRefresh: () => void | Promise<void> }) {
+  const providerLabel = (providerID: string) => current?.presets?.find((item) => item.id === providerID)?.label || providerID;
+  const tracked = usage?.trackedRequests ?? 0;
+  const requests = usage?.requests ?? 0;
+  const unreported = usage?.unreportedRequests ?? 0;
+
+  return <div className="settings-card usage-card">
+    <div className="settings-card-heading">
+      <div><h3>Token usage</h3><p>Exact counts returned by model providers across local Cuppet model calls.</p></div>
+      <div className="usage-heading-actions"><span className={`settings-status-pill${tracked ? '' : ' muted'}`}>{tracked ? `${tracked}/${requests} tracked` : requests ? 'No token telemetry' : 'No usage yet'}</span><button type="button" className="ghost-button settings-action-button" disabled={loading} onClick={() => void onRefresh()}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
+    </div>
+    {!usage || !requests ? (
+      <div className="usage-placeholder"><strong>No provider calls tracked yet</strong><span>Counts begin with this build. Cuppet records provider-reported usage only and never estimates tokens for older conversations.</span></div>
+    ) : <>
+      <div className="usage-stats" aria-label="Token usage totals">
+        <UsageStat label="Total tokens" value={formatTokens(usage.totalTokens)} strong />
+        <UsageStat label="Input" value={formatTokens(usage.inputTokens)} />
+        <UsageStat label="Output" value={formatTokens(usage.outputTokens)} />
+        <UsageStat label="API calls" value={formatInteger(requests)} />
+        {usage.cachedInputTokens > 0 && <UsageStat label="Cached input" value={formatTokens(usage.cachedInputTokens)} />}
+        {usage.reasoningTokens > 0 && <UsageStat label="Reasoning" value={formatTokens(usage.reasoningTokens)} />}
+      </div>
+      <div className="usage-model-list">
+        {usage.byModel.map((item) => <div className="usage-model-row" key={`${item.providerID}:${item.modelID}`}>
+          <div className="usage-model-copy"><strong>{item.modelID}</strong><span>{providerLabel(item.providerID)} · {item.trackedRequests}/{item.requests} calls reported tokens</span></div>
+          <div className="usage-model-values"><strong>{formatTokens(item.totalTokens)}</strong><span>{formatTokens(item.inputTokens)} in · {formatTokens(item.outputTokens)} out</span></div>
+        </div>)}
+      </div>
+      <div className="usage-footnote">
+        <span>{unreported ? `${unreported} successful provider call${unreported === 1 ? '' : 's'} did not return token telemetry and are excluded from token totals. ` : ''}Cached-input and reasoning counts are shown only when a provider reports them.</span>
+        {usage.lastTrackedAt && <span>Last exact report {formatUsageTime(usage.lastTrackedAt)}.</span>}
+      </div>
+    </>}
+  </div>;
+}
+
+function UsageStat({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+  return <div className={`usage-stat${strong ? ' primary' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function DevicesPanel({ devices, onOpenRemote }: { devices: RemoteDevice[]; onOpenRemote: () => void }) {
@@ -193,4 +238,17 @@ function PrivacyPanel() {
 
 function AboutPanel() {
   return <div className="settings-card"><div className="settings-card-heading"><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and Remote.</p></div></div><div className="settings-row"><div><strong>Renderer</strong><span>React + TypeScript, compiled with Vite.</span></div><span className="settings-value">React</span></div><div className="settings-row"><div><strong>Runtime</strong><span>Electron host with the independent Cuppet runtime.</span></div><span className="settings-value">Desktop</span></div></div>;
+}
+
+function formatTokens(value: number) {
+  if (!Number.isFinite(value)) return '0';
+  const amount = Math.max(0, Math.trunc(value));
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(amount >= 10_000_000 ? 1 : 2).replace(/\.0+$/, '')}M`;
+  if (amount >= 1_000) return `${(amount / 1_000).toFixed(amount >= 100_000 ? 0 : 1).replace(/\.0$/, '')}K`;
+  return amount.toLocaleString();
+}
+function formatInteger(value: number) { return Math.max(0, Math.trunc(Number(value) || 0)).toLocaleString(); }
+function formatUsageTime(value: number) {
+  try { return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
+  catch { return 'recently'; }
 }
