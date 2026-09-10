@@ -7,6 +7,7 @@ import { RemoteManager } from './remote/manager.mjs';
 import { normalizeProviderConfiguration } from './provider-policy.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 import { RuntimeTstManager } from './runtime-tst-manager.mjs';
+import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -51,6 +52,7 @@ async function handle(method, params = {}) {
   switch (method) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
+    case 'usage.summary': return providerUsageSummary();
     case 'session.send': return sendOrQueue(params);
     case 'session.search': return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true });
     case 'session.rename': return renameSession(params);
@@ -188,7 +190,11 @@ input.on('line', async (line) => {
 let closing;
 async function shutdown() {
   if (closing) return closing;
-  closing = remote.close().catch(() => undefined).then(() => service.close()).catch(() => undefined).then(() => localState.close()).catch(() => undefined).finally(() => process.exit(0));
+  closing = remote.close().catch(() => undefined)
+    .then(() => service.close()).catch(() => undefined)
+    .then(() => closeProviderUsageLedger()).catch(() => undefined)
+    .then(() => localState.close()).catch(() => undefined)
+    .finally(() => process.exit(0));
   return closing;
 }
 process.on('SIGTERM', () => void shutdown());
