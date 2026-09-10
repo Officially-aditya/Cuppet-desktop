@@ -51,6 +51,5 @@ export function GeneralPanel() {
         />
       </div>
     </div>
-    <div className="settings-note general-settings-note">Auto is guarded and project-scoped. Queue waits for the current run; Steer interrupts it and redirects Cuppet with the new message.</div>
   </div>;
 }
