@@ -38,7 +38,7 @@ test('edited file events preserve repeated edits across turns while excluding un
   }
 });
 
-test('workspace links, turn-scoped edited files, dynamic user messages, and working state stay behind their intended surfaces', async () => {
+test('workspace links, turn-scoped edited files, dynamic user messages, working state, and reasoning surfaces stay separated', async () => {
   const [host, preload, markdown, enhancements, styles] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
@@ -62,8 +62,13 @@ test('workspace links, turn-scoped edited files, dynamic user messages, and work
   assert.match(enhancements, /data-cuppet-edited-files-summary/);
   assert.doesNotMatch(enhancements, /react-composer-wrap|workspace-edited-files-mount|createPortal/);
   assert.match(enhancements, /CODE_FILE/);
+  assert.match(enhancements, /event\?\.type === 'message\.reasoning'/);
+  assert.match(enhancements, /data-cuppet-visible-reasoning/);
+  assert.match(enhancements, /readStoredReasoning/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
   assert.match(styles, /content:'Working…'/);
   assert.match(styles, /:has\(\.composer-pause-button\)/);
+  assert.match(styles, /\.message-trace \.message-trace-reasoning\{display:none!important\}/);
+  assert.match(styles, /\.message-visible-reasoning/);
   assert.doesNotMatch(styles, /workspace-edited-files-mount/);
 });
