@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProviderPreset, ProviderSettings, RemoteDevice, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
+import { GeneralPanel } from './GeneralPanel';
 
 const SECTION_META: Record<string, [string, string]> = {
+  general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
@@ -132,6 +134,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
           <div className="settings-hub-main">
             <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
+              {section === 'general' && <GeneralPanel />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
