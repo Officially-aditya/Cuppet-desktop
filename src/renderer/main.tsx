@@ -7,6 +7,7 @@ import './settings.css';
 import './execution.css';
 import './react.css';
 import './controls.css';
+import './composer-refinements.css';
 import { App } from './react/App';
 import './types';
 
