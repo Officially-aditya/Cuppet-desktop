@@ -168,6 +168,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             </div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
+        {selected && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
       <div className="settings-form-footer">
         <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store. Primary drives foreground work; secondary drives background/worker work.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
@@ -175,6 +176,72 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
       </div>
     </div>
   </form>;
+}
+
+function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex, codex }: { current: ProviderSettings | null; providerID: string; providerLabel: string; apiKey: string; isCodex: boolean; codex: any }) {
+  const [modelID, setModelID] = useState('');
+  const [snapshot, setSnapshot] = useState<ProviderSettings | null>(current);
+  const [testing, setTesting] = useState(false);
+  const [status, setStatus] = useState('');
+
+  useEffect(() => { if (current) setSnapshot(current); }, [current]);
+  useEffect(() => { setModelID(''); setStatus(''); }, [providerID]);
+
+  const activeProviderID = snapshot?.providerID || snapshot?.primary?.providerID || '';
+  const savedModels = (snapshot?.customModels ?? []).filter((item) => item.providerID === providerID).map((item) => item.modelID);
+  const credentialReady = isCodex ? Boolean(codex.loggedIn) : Boolean(snapshot?.apiKeyConfigured);
+  const providerReady = activeProviderID === providerID && credentialReady && !apiKey.trim();
+
+  const add = async () => {
+    const value = modelID.trim();
+    if (!value || !providerReady || testing) return;
+    setTesting(true);
+    setStatus('Testing model…');
+    try {
+      const next = await window.cuppet.settings.save({ providerID, customModel: value });
+      setSnapshot(next);
+      setModelID('');
+      setStatus(`${value} validated and added to ${providerLabel}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const blockedReason = activeProviderID !== providerID
+    ? `Save ${providerLabel} first, then add a custom model.`
+    : apiKey.trim()
+      ? 'Save the API key change first so the validation uses the saved provider credential.'
+      : !credentialReady
+        ? (isCodex ? 'Connect ChatGPT first so Cuppet can validate this Codex model.' : 'Save an API key first so Cuppet can validate this model.')
+        : 'Cuppet sends one tiny tool-free request before saving the model ID.';
+
+  return <div className="provider-auth-card">
+    <div className="provider-auth-copy">
+      <div className="provider-auth-title-row"><strong>Custom model ID</strong>{savedModels.length > 0 && <span className="settings-status-pill compact">{savedModels.length} saved</span>}</div>
+      <span>{status || blockedReason}</span>
+      {savedModels.length > 0 && <span>Saved: {savedModels.join(' · ')}</span>}
+    </div>
+    <div className="provider-auth-actions">
+      <input
+        aria-label="Custom model ID"
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        value={modelID}
+        disabled={!providerReady || testing}
+        placeholder="provider/model-id"
+        onChange={(event) => { setModelID(event.target.value); if (status) setStatus(''); }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          void add();
+        }}
+      />
+      <button type="button" className="ghost-button settings-action-button" disabled={!providerReady || testing || !modelID.trim()} onClick={() => void add()}>{testing ? 'Testing…' : 'Test & add'}</button>
+    </div>
+  </div>;
 }
 
 function PersonalisationPanel({ compact, reduceMotion, onCompact, onReduceMotion }: { compact: boolean; reduceMotion: boolean; onCompact: (value: boolean) => void; onReduceMotion: (value: boolean) => void }) {
