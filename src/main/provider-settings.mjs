@@ -4,6 +4,13 @@ import { safeStorage } from 'electron';
 import { credentialStorageStatus } from './credential-storage.mjs';
 import { providerPreset, providerPresetList } from './provider-presets.mjs';
 import {
+  addCustomModelToRegistry,
+  customModelEntries,
+  normalizeCustomModelID,
+  normalizeCustomModelRegistry,
+  probeCustomModel,
+} from './custom-models.mjs';
+import {
   DEFAULT_BASE_URL,
   DEFAULT_PROVIDER_ID,
   normalizeProviderConfiguration,
@@ -24,6 +31,7 @@ export class ProviderSettingsStore {
   #value = structuredClone(DEFAULTS);
   #encryptedApiKey;
   #primaryEffort = '';
+  #customModels = {};
 
   constructor(path) { this.#path = path; }
 
@@ -33,10 +41,12 @@ export class ProviderSettingsStore {
       this.#value = serializableProviderConfiguration({ ...DEFAULTS, ...parsed });
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
       this.#primaryEffort = this.#value.providerID === 'codex' ? effortID(parsed.primaryEffort) : '';
+      this.#customModels = normalizeCustomModelRegistry(parsed.customModels);
     } catch {
       this.#value = structuredClone(DEFAULTS);
       this.#encryptedApiKey = undefined;
       this.#primaryEffort = '';
+      this.#customModels = {};
     }
   }
 
@@ -59,6 +69,7 @@ export class ProviderSettingsStore {
       requiresChatGPTAuth: chatGPTProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
+      customModels: customModelEntries(this.#customModels),
       primaryEffort: projection.providerID === 'codex' ? (this.#primaryEffort || null) : (projection.primary?.variant ?? null),
       encryptionAvailable: storage.available,
       encryptionBackend: storage.backend,
@@ -79,6 +90,8 @@ export class ProviderSettingsStore {
 
   async save(input) {
     const source = input && typeof input === 'object' ? input : {};
+    if (Object.prototype.hasOwnProperty.call(source, 'customModel')) return this.#saveCustomModel(source);
+
     const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim()
       ? source.providerID.trim()
       : this.#value.providerID || DEFAULT_PROVIDER_ID;
@@ -135,8 +148,33 @@ export class ProviderSettingsStore {
       this.#encryptedApiKey = safeStorage.encryptString(source.apiKey.trim()).toString('base64');
     }
 
-    await writeSettingsAtomically(this.#path, `${JSON.stringify({ ...this.#value, ...(this.#primaryEffort ? { primaryEffort: this.#primaryEffort } : {}), apiKey: this.#encryptedApiKey }, null, 2)}\n`);
+    await this.#persist();
     return this.rendererValue();
+  }
+
+  async #saveCustomModel(source) {
+    const activeProviderID = this.#value.providerID || DEFAULT_PROVIDER_ID;
+    const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim() ? source.providerID.trim() : activeProviderID;
+    const preset = providerPreset(requestedProviderID);
+    const providerID = preset?.id ?? requestedProviderID;
+    if (providerID !== activeProviderID) throw new Error('Save this provider first, then add its custom model.');
+
+    const customModel = normalizeCustomModelID(source.customModel);
+    if (preset?.models?.some((item) => item.id === customModel)) throw new Error(`${customModel} is already available in the model picker.`);
+
+    const probe = await probeCustomModel(this.runtimeValue(), customModel);
+    this.#customModels = addCustomModelToRegistry(this.#customModels, providerID, customModel);
+    await this.#persist();
+    return { ...this.rendererValue(), customModelProbe: probe };
+  }
+
+  async #persist() {
+    await writeSettingsAtomically(this.#path, `${JSON.stringify({
+      ...this.#value,
+      ...(this.#primaryEffort ? { primaryEffort: this.#primaryEffort } : {}),
+      customModels: this.#customModels,
+      apiKey: this.#encryptedApiKey,
+    }, null, 2)}\n`);
   }
 
   #decryptApiKey() {
