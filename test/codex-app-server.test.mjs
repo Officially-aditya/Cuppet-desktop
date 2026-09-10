@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CodexAppServerClient } from '../src/runtime/codex-app-server.mjs';
+import { CodexAppServerClient, resolveCodexAppServerCommand } from '../src/runtime/codex-app-server.mjs';
 import { parseCodexAccount } from '../src/runtime/codex-account.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-codex-app-server.mjs', import.meta.url));
@@ -49,6 +52,25 @@ test('Codex app-server transport exposes ChatGPT login start and completion', as
     assert.equal(notification.params.success, true);
   } finally {
     await client.close();
+  }
+});
+
+test('packaged Codex resolver requires and uses the canonical code-mode host package', async () => {
+  const resources = await mkdtemp(join(tmpdir(), 'cuppet-codex-package-'));
+  const bin = join(resources, 'codex', 'darwin-arm64', 'bin');
+  const appServer = join(bin, 'codex-app-server');
+  const codeModeHost = join(bin, 'codex-code-mode-host');
+  try {
+    await mkdir(bin, { recursive: true });
+    await writeFile(appServer, '#!/bin/sh\nexit 0\n');
+    await writeFile(codeModeHost, '#!/bin/sh\nexit 0\n');
+    await chmod(appServer, 0o755);
+    await chmod(codeModeHost, 0o755);
+
+    const resolved = await resolveCodexAppServerCommand({ resourcesPath: resources, env: {}, platform: 'darwin', arch: 'arm64' });
+    assert.deepEqual(resolved, { command: appServer, args: [], source: 'packaged' });
+  } finally {
+    await rm(resources, { recursive: true, force: true });
   }
 });
 
