@@ -63,19 +63,23 @@
 .settings-hub-dialog .settings-form-grid label{margin:8px 0}
 .settings-hub-dialog .settings-action-button{width:auto;min-width:0;height:30px;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:600;line-height:1;white-space:nowrap}
 .settings-hub-dialog .settings-card-heading>.settings-action-button{margin-top:-2px}
+.platform-settings-form{width:100%}
 .platform-settings-form .dialog-actions{margin:0}
-.platform-provider-card{display:grid;gap:0}
-.provider-simple-form{display:grid;gap:12px;max-width:620px}
-.settings-hub-dialog .provider-simple-form label{margin:0;display:grid;gap:7px}
+.platform-provider-card{display:grid;gap:0;width:100%;box-sizing:border-box}
+.provider-simple-form{display:grid;gap:14px;width:100%;max-width:none}
+.settings-hub-dialog .provider-simple-form label{width:100%;margin:0;display:grid;gap:7px}
 .settings-hub-dialog .provider-simple-form select,.settings-hub-dialog .provider-simple-form input{width:100%}
-.provider-preset-note{margin-top:-2px;padding:9px 11px;border-radius:8px;background:#14191f;color:#7e8895;font-size:10px;line-height:1.5}
+.provider-preset-note{width:100%;box-sizing:border-box;margin-top:-2px;padding:9px 11px;border-radius:8px;background:#14191f;color:#7e8895;font-size:10px;line-height:1.5}
 .provider-internal-fields{display:none!important}
-.provider-auth-card{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 13px;border:1px solid #272e37;border-radius:9px;background:#11161c}
+.provider-auth-card{display:flex;align-items:center;justify-content:space-between;gap:18px;width:100%;box-sizing:border-box;padding:12px 13px;border:1px solid #272e37;border-radius:9px;background:#11161c}
 .provider-auth-copy{display:grid;gap:5px;min-width:0;flex:1}
 .provider-auth-title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .provider-auth-title-row strong{font-size:12px;color:#e5e9ee}
 .provider-auth-copy>span{color:#7e8895;font-size:10px;line-height:1.5}
 .provider-auth-actions,.codex-auth-actions{display:flex!important;gap:8px;align-items:center;justify-content:flex-end;flex:0 0 auto}
+.custom-model-card{display:grid;grid-template-columns:minmax(0,.9fr) minmax(320px,1.1fr);align-items:center}
+.custom-model-card .provider-auth-actions{display:grid!important;grid-template-columns:minmax(0,1fr) auto;width:100%;min-width:0}
+.custom-model-card .provider-auth-actions input{min-width:0}
 .codex-auth-row{align-items:center}
 .settings-form-footer{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-top:16px;padding-top:14px;border-top:1px solid #222831}
 .settings-form-footer .settings-note{min-height:0;max-width:560px;margin:0;flex:1}
@@ -92,4 +96,4 @@
 body.compact-sidebar .project-button{padding-top:6px;padding-bottom:6px}
 body.compact-sidebar .session-item{padding-top:5px;padding-bottom:5px}
 body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
-@media(max-width:760px){.settings-hub-dialog{width:calc(100vw - 24px);height:calc(100vh - 24px)}.settings-hub-shell{grid-template-columns:150px minmax(0,1fr)}.settings-hub-sidebar{padding-inline:8px}.settings-hub-content,.settings-hub-header{padding-left:18px;padding-right:18px}.settings-form-grid{grid-template-columns:1fr}.settings-grid-full{grid-column:auto}.codex-auth-row,.provider-auth-card,.settings-form-footer{display:grid;gap:12px}.codex-auth-actions,.provider-auth-actions,.settings-form-footer .dialog-actions{justify-content:start}}
+@media(max-width:760px){.settings-hub-dialog{width:calc(100vw - 24px);height:calc(100vh - 24px)}.settings-hub-shell{grid-template-columns:150px minmax(0,1fr)}.settings-hub-sidebar{padding-inline:8px}.settings-hub-content,.settings-hub-header{padding-left:18px;padding-right:18px}.settings-form-grid{grid-template-columns:1fr}.settings-grid-full{grid-column:auto}.codex-auth-row,.provider-auth-card,.settings-form-footer{display:grid;gap:12px}.custom-model-card{grid-template-columns:1fr}.custom-model-card .provider-auth-actions{grid-template-columns:minmax(0,1fr) auto}.codex-auth-actions,.provider-auth-actions,.settings-form-footer .dialog-actions{justify-content:start}}
