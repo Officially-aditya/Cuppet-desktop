@@ -63,11 +63,15 @@ jobs:
           npm run f1:stage-tst -- --source=.e2/tst-runtime
           npm run f1:verify-staged-tst
 
-      - name: Stage and verify official Codex app-server
+      - name: Stage and verify official Codex app-server package
         run: |
           npm run e2:stage-codex
           npm run e2:verify-staged-codex
-          lipo -archs vendor/codex/darwin-arm64/codex-app-server | grep -qw arm64
+          CODEX_DIR="vendor/codex/darwin-arm64/bin"
+          test -x "$CODEX_DIR/codex-app-server"
+          test -x "$CODEX_DIR/codex-code-mode-host"
+          lipo -archs "$CODEX_DIR/codex-app-server" | grep -qw arm64
+          lipo -archs "$CODEX_DIR/codex-code-mode-host" | grep -qw arm64
 
       - name: Install desktop dependencies
         run: npm install
@@ -93,7 +97,8 @@ jobs:
           fi
           APP_EXEC="$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)"
           TST_BIN="$APP/Contents/Resources/tst/darwin-arm64/tst-daemon"
-          CODEX_BIN="$APP/Contents/Resources/codex/darwin-arm64/codex-app-server"
+          CODEX_BIN="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-app-server"
+          CODEX_CODE_MODE_HOST="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-code-mode-host"
           if [[ -z "$APP_EXEC" ]]; then
             echo "No executable found inside $APP/Contents/MacOS" >&2
             exit 1
@@ -101,13 +106,17 @@ jobs:
           test -x "$APP_EXEC"
           test -x "$TST_BIN"
           test -x "$CODEX_BIN"
+          test -x "$CODEX_CODE_MODE_HOST"
+          test -f "$APP/Contents/Resources/codex/darwin-arm64/codex-package.json"
           lipo -archs "$APP_EXEC" | grep -qw arm64
           lipo -archs "$TST_BIN" | grep -qw arm64
           lipo -archs "$CODEX_BIN" | grep -qw arm64
+          lipo -archs "$CODEX_CODE_MODE_HOST" | grep -qw arm64
           test -f "$APP/Contents/Resources/app.asar"
           echo "APP=$APP" >> "$GITHUB_ENV"
           echo "APP_EXEC=$APP_EXEC" >> "$GITHUB_ENV"
           echo "CODEX_BIN=$CODEX_BIN" >> "$GITHUB_ENV"
+          echo "CODEX_CODE_MODE_HOST=$CODEX_CODE_MODE_HOST" >> "$GITHUB_ENV"
 
       - name: Run packaged runtime acceptance
         run: |
@@ -141,10 +150,10 @@ jobs:
           - Settings > Platform > Codex: API-key field is replaced by the ChatGPT account flow
           - complete ChatGPT sign-in in the browser and confirm Settings reports Connected
           - send a general Codex-backed chat and restart the app
-          - open a project and ask Codex to read a file through Cuppet tools
+          - open a project and ask Codex to read a file through Cuppet tools; workspace tools should start without codex-code-mode-host errors
           - approve a small edit, run validation, then verify /undo restores it
           - confirm permission prompts/audit activity still appear for Codex tool calls
-          - create/open two local projects
+          - create/open two local projects and verify only the active project OR active chat is highlighted, never both
           - TST-backed graph/context behavior in both projects
           - memory persistence after restart
           - project isolation
@@ -177,5 +186,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance, including the bundled official OpenAI Codex app-server handshake." \
+            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package, including codex-code-mode-host." \
             --prerelease
