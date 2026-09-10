@@ -8,6 +8,7 @@ import { normalizeProviderConfiguration } from './provider-policy.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
+import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -18,6 +19,8 @@ let remote;
 const activeSessions = new Set();
 const queuedTurns = new Map();
 const queueOwnerByRun = new Map();
+const purgingSessions = new Set();
+let purgePromise;
 const emit = (event) => {
   if (event?.type === 'run.started' && event.sessionId) activeSessions.add(event.sessionId);
   if (event?.type === 'run.finished' && event.sessionId) {
@@ -47,14 +50,17 @@ const service = {
   async close() { await Promise.all([runtimeService.close(), tst.close()]); },
 };
 remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
+const purgeTimer = setInterval(() => { void purgeExpiredDeleted(); }, DELETED_CHAT_PURGE_INTERVAL_MS);
+purgeTimer.unref?.();
 
 async function handle(method, params = {}) {
   switch (method) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'usage.summary': return providerUsageSummary();
+    case 'session.list': { await purgeExpiredDeleted(); return service.handle('session.list', params); }
     case 'session.send': return sendOrQueue(params);
-    case 'session.search': return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true });
+    case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
     case 'session.archive': return archiveSession(params, true);
     case 'session.restore': return archiveSession(params, false);
@@ -97,6 +103,7 @@ function renameSession(params = {}) {
 function archiveSession(params = {}, archived) {
   const sessionId = boundedId(params.sessionId);
   if (!sessionId) throw new Error('sessionId is required');
+  if (!archived && purgingSessions.has(sessionId)) throw new Error('This chat has reached the end of its 7-day recovery window and is being removed.');
   assertSessionIdle(sessionId, archived ? 'archive' : 'restore');
   const session = localState.archiveSession(sessionId, archived);
   emit({ type: archived ? 'session.archived' : 'session.restored', session, sessionId });
@@ -108,9 +115,46 @@ function deleteSession(params = {}) {
   if (!sessionId) throw new Error('sessionId is required');
   assertSessionIdle(sessionId, 'delete');
   if (!localState.getSessionSummary(sessionId)) throw new Error(`unknown session: ${sessionId}`);
-  const deleted = localState.deleteSession(sessionId);
-  emit({ type: 'session.deleted', sessionId });
-  return { deleted, sessionId };
+  const session = localState.trashSession(sessionId);
+  const purgeAt = Number(session.deletedAt) + DELETED_CHAT_RETENTION_MS;
+  emit({ type: 'session.deleted', sessionId, session, purgeAt });
+  return { deleted: true, archived: true, sessionId, deletedAt: session.deletedAt, purgeAt };
+}
+
+async function purgeExpiredDeleted(now = Date.now()) {
+  if (purgePromise) return purgePromise;
+  purgePromise = (async () => {
+    const cutoff = now - DELETED_CHAT_RETENTION_MS;
+    let purged = 0;
+    for (const candidate of localState.listExpiredDeleted(cutoff, 100)) {
+      const sessionId = boundedId(candidate.id);
+      if (!sessionId || activeSessions.has(sessionId) || queuedTurns.get(sessionId)?.length || purgingSessions.has(sessionId)) continue;
+      const current = localState.getSession(sessionId);
+      if (!current?.deletedAt || current.deletedAt > cutoff) continue;
+      purgingSessions.add(sessionId);
+      try {
+        await service.handle('session.cleanup', { sessionId });
+        await purgeSessionArtifacts({ dataDir, sessionId });
+        const latest = localState.getSessionSummary(sessionId);
+        if (!latest?.deletedAt || latest.deletedAt > cutoff) continue;
+        const deleted = localState.deleteSession(sessionId);
+        if (!deleted) continue;
+        purged += 1;
+        emit({
+          type: 'session.purged',
+          sessionId,
+          messageIds: current.messages.map((message) => message.id),
+          preserved: ['tst-memory', 'project-files'],
+        });
+      } catch (error) {
+        emit({ type: 'session.purge.failed', sessionId, message: cleanError(error) });
+      } finally {
+        purgingSessions.delete(sessionId);
+      }
+    }
+    return { purged, cutoff };
+  })().finally(() => { purgePromise = undefined; });
+  return purgePromise;
 }
 
 function renameProject(params = {}) {
@@ -190,6 +234,7 @@ input.on('line', async (line) => {
 let closing;
 async function shutdown() {
   if (closing) return closing;
+  clearInterval(purgeTimer);
   closing = remote.close().catch(() => undefined)
     .then(() => service.close()).catch(() => undefined)
     .then(() => closeProviderUsageLedger()).catch(() => undefined)
