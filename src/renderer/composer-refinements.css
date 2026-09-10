@@ -31,8 +31,9 @@
 /* Tool progress is part of the transcript while a run is active, not a separate composer card. */
 .thread-activity{max-width:820px;margin:-8px auto 22px;display:grid;gap:3px;color:#77818e;font-size:11px;line-height:1.5}
 .thread-activity-line{min-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.thread-activity-line.running{color:#a7b0bc;animation:activity-pulse 1.2s ease-in-out infinite}
+.thread-activity-line.running{color:#a7b0bc;animation:thread-activity-pulse 1.15s ease-in-out infinite}
 .thread-activity-line.error{color:#d99b9b}
+@keyframes thread-activity-pulse{0%,100%{opacity:.38}50%{opacity:1}}
 
 /* Running reuses the send-button footprint instead of adding a large Stop control. */
 .composer-pause-button{width:34px;height:34px;display:grid;place-items:center;padding:0}
