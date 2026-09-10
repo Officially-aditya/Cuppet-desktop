@@ -60,20 +60,24 @@ export function ModelPicker({ disabled = false }: Props) {
   const configuredModel = settings?.primary?.modelID || '';
 
   const options = useMemo<ModelOption[]>(() => {
+    const custom = (settings?.customModels ?? []).filter((item) => item.providerID === providerID);
     if (providerID === 'codex') {
-      const dynamic = codex.models.map((model) => ({
-        id: model.id,
-        label: model.label || model.id,
-        description: model.description,
-      }));
+      const output: ModelOption[] = [];
+      const seen = new Set<string>();
+      const add = (id?: string, label?: string, description?: string) => {
+        const value = String(id ?? '').trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        output.push({ id: value, label: label || value, ...(description ? { description } : {}) });
+      };
+      const dynamic = codex.models.map((model) => ({ id: model.id, label: model.label || model.id, description: model.description }));
       const defaultModel = codex.defaultModel;
       const defaultEntry = defaultModel ? dynamic.find((item) => item.id === defaultModel) : null;
-      const special: ModelOption = {
-        id: 'codex-default',
-        label: defaultEntry ? `${defaultEntry.label} · Default` : 'Codex default',
-        description: 'Follow the default model selected by your Codex account.',
-      };
-      return [special, ...dynamic];
+      add('codex-default', defaultEntry ? `${defaultEntry.label} · Default` : 'Codex default', 'Follow the default model selected by your Codex account.');
+      for (const model of dynamic) add(model.id, model.label, model.description);
+      for (const model of custom) add(model.modelID, model.modelID, 'Custom model · validated in Provider settings.');
+      add(configuredModel, configuredModel);
+      return output;
     }
 
     const output: ModelOption[] = [];
@@ -86,13 +90,14 @@ export function ModelPicker({ disabled = false }: Props) {
     };
 
     for (const model of providerPreset?.models ?? []) add(model.id, model.label, model.description);
+    for (const model of custom) add(model.modelID, model.modelID, 'Custom model · validated in Provider settings.');
     for (const model of settings?.models ?? []) {
       if (model.providerID !== providerID) continue;
       add(model.modelID, model.name);
     }
     add(configuredModel, configuredModel);
     return output;
-  }, [codex, configuredModel, providerID, providerPreset?.models, settings?.models]);
+  }, [codex, configuredModel, providerID, providerPreset?.models, settings?.customModels, settings?.models]);
 
   const effortState = modelEffortState(providerID, configuredModel, settings, codex);
   const effortOptions = effortState.options;
@@ -211,7 +216,7 @@ export function ModelPicker({ disabled = false }: Props) {
         <div className="model-picker-menu" role="listbox" aria-label={stage === 'models' ? 'Models' : 'Reasoning effort'}>
           {stage === 'models' ? (
             <>
-              <div className="model-picker-provider">{providerID === 'codex' ? providerLabel : `${providerLabel} · Latest models`}</div>
+              <div className="model-picker-provider">{providerLabel} · Models</div>
               {options.length > 0 ? options.map((option) => (
                 <button
                   type="button"
