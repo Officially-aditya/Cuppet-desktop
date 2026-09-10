@@ -180,7 +180,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
         {transientActivity.length > 0 && (
           <div className="thread-activity" aria-label="Agent activity">
             {transientActivity.slice(-12).map((entry) => (
-              <div key={entry.id} className={`thread-activity-line ${entry.status || 'complete'}`}>{entry.label}</div>
+              <div key={entry.id} className={`thread-activity-line ${entry.status || 'complete'}`}>{friendlyActivityLabel(entry)}</div>
             ))}
           </div>
         )}
@@ -337,6 +337,36 @@ function exactSlash(value: string, item: CommandDefinition) {
 
 function attachmentKey(value: Attachment) {
   return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
+}
+
+function friendlyActivityLabel(entry: ActivityEntry) {
+  if (entry.kind !== 'tool') return entry.label;
+  const raw = String(entry.label || '').toLowerCase();
+  const failed = entry.status === 'error' || raw.includes(' failed');
+  const complete = entry.status === 'complete' || raw.includes(' finished') || raw.includes(' completed');
+  const state = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
+
+  if (raw.includes('tst_read')) return state('Reading file…', 'Read file', 'Couldn’t read file');
+  if (raw.includes('tst_explore')) return state('Exploring…', 'Explored', 'Couldn’t explore');
+  if (raw.includes('tst_edit_batch')) return state('Editing files…', 'Edited files', 'Couldn’t edit files');
+  if (raw.includes('tst_validate')) return state('Validating…', 'Validated', 'Validation failed');
+  if (raw.includes('workspace_write')) return state('Writing file…', 'Wrote file', 'Couldn’t write file');
+  if (raw.includes('workspace_edit')) return state('Editing file…', 'Edited file', 'Couldn’t edit file');
+  if (raw.includes('cuppet_memory_search')) return state('Searching memory…', 'Searched memory', 'Couldn’t search memory');
+  if (raw.includes('cuppet_plan')) return state('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
+  if (/\bbash\b/.test(raw)) return state('Running command…', 'Ran command', 'Command failed');
+  if (/\bquestion\b/.test(raw)) return state('Waiting for input…', 'Received input', 'Input request failed');
+
+  const internal = raw.match(/(?:running\s+)?([a-z0-9]+(?:_[a-z0-9]+)+)(?:\s+(?:finished|completed|failed))?/i)?.[1];
+  if (internal) {
+    const readable = internal.replace(/^(?:tst|cuppet|workspace)_/, '').replaceAll('_', ' ');
+    return state(`${capitalize(readable)}…`, capitalize(readable), `${capitalize(readable)} failed`);
+  }
+  return entry.label;
+}
+
+function capitalize(value: string) {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }
 
 function compactActivity(activity: ActivityEntry[]) {
