@@ -59,6 +59,13 @@ async function handle(method, params = {}) {
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'usage.summary': return providerUsageSummary();
     case 'session.list': { await purgeExpiredDeleted(); return service.handle('session.list', params); }
+    case 'session.deleted.list': {
+      await purgeExpiredDeleted();
+      const now = Date.now();
+      return localState.listSessions({ archived: true })
+        .filter((session) => Number(session.deletedAt) > 0 && now - Number(session.deletedAt) < DELETED_CHAT_RETENTION_MS)
+        .map((session) => ({ ...session, purgeAt: Number(session.deletedAt) + DELETED_CHAT_RETENTION_MS }));
+    }
     case 'session.send': return sendOrQueue(params);
     case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
