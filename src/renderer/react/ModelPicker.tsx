@@ -279,7 +279,6 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
                 >
                   <strong>Auto</strong>
                   {secondaryAuto && <span className="model-picker-check" aria-hidden="true">✓</span>}
-                  <small>Cuppet automatically selects the Context Memory model. Currently {resolvedModelLabel}.</small>
                 </button>
               )}
               {options.length > 0 ? options.map((option) => {
@@ -296,7 +295,6 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
                   >
                     <strong>{option.label}</strong>
                     {selected && <span className="model-picker-check" aria-hidden="true">✓</span>}
-                    {option.description && <small>{option.description}</small>}
                   </button>
                 );
               }) : <div className="model-picker-empty">No models advertised by this provider.</div>}
