@@ -185,18 +185,18 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             </div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
-        {selected && <div className="provider-model-section">
-          <div className="provider-model-grid">
-            <div className="provider-model-field">
-              <div className="provider-model-copy"><strong>Primary model</strong><span>Foreground work</span></div>
+        {selected && <div className="platform-model-section">
+          <div className="platform-model-grid">
+            <div className="platform-model-field">
+              <div className="platform-model-copy"><strong>Primary model</strong><span>Foreground work</span></div>
               <ModelPicker slot="primary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
             </div>
-            <div className="provider-model-field">
-              <div className="provider-model-copy"><strong>Secondary model</strong><span>Context Memory</span></div>
+            <div className="platform-model-field">
+              <div className="platform-model-copy"><strong>Secondary model</strong><span>Context Memory</span></div>
               <ModelPicker slot="secondary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
             </div>
           </div>
-          {modelHint && <div className="provider-model-hint">{modelHint}</div>}
+          {modelHint && <div className="platform-model-hint">{modelHint}</div>}
         </div>}
         {selected && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
