@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { discoverAcpModelCatalog } from '../runtime/acp-cli-provider.mjs';
+import { discoverAcpRuntimeCatalog } from '../runtime/providers/transports/acp/acp-discovery.mjs';
 import { localCliDescriptor } from '../runtime/local-cli-descriptors.mjs';
 
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -20,7 +20,7 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
   if (descriptor) {
     if (descriptor.transport === 'acp') {
       try {
-        const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpModelCatalog;
+        const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpRuntimeCatalog;
         const catalog = await discover(providerID, { configuration });
         return normalizeCatalog(providerID, 'acp', catalog, configuredModel);
       } catch (error) {
