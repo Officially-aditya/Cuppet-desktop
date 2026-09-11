@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('composer model picker listens for provider settings changes and requests live catalog', async () => {
+test('composer model picker listens for provider settings changes and requests generic live catalog', async () => {
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
   const modal = await readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8');
   assert.match(picker, /PROVIDER_SETTINGS_EVENT/);
   assert.match(picker, /window\.cuppet\.settings\.models\(\)/);
+  assert.doesNotMatch(picker, /codexAuth\.models/);
   assert.match(modal, /notifyProviderSettingsChanged\(\)/);
 });
 
-test('ModelPicker refreshes ACP candidate capabilities before deciding effort and persisting', async () => {
+test('ModelPicker refreshes model-dependent capabilities before deciding effort and persisting', async () => {
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
   const start = picker.indexOf('const chooseModel = async');
   const end = picker.indexOf('const chooseEffort = async');
@@ -22,7 +23,8 @@ test('ModelPicker refreshes ACP candidate capabilities before deciding effort an
   assert.ok(refresh >= 0, 'candidate model capabilities must be refreshed');
   assert.ok(refresh < effort, 'candidate capabilities must be known before effort is resolved');
   assert.ok(effort < save, 'effort validity must be resolved before settings are persisted');
-  assert.match(picker, /if \(exactAcpSnapshot\)/);
+  assert.match(picker, /if \(exactLiveSnapshot\)/);
+  assert.match(picker, /advertised\.source === 'acp' \|\| advertised\.source === 'codex'/);
   assert.match(picker, /advertised\.reasoning\?\.options/);
 });
 
@@ -36,8 +38,10 @@ test('candidate model refresh crosses preload and main IPC without persisting se
   assert.match(types, /models: \(options\?: \{ model\?: string \}\) => Promise<ProviderModelCatalog>/);
 });
 
-test('ModelPicker reads ACP-advertised reasoning options', async () => {
+test('ModelPicker reads provider-advertised reasoning through the generic catalog', async () => {
   const source = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
   assert.match(source, /advertised\.reasoning/);
   assert.match(source, /settings\?\.primaryEffort/);
+  assert.match(source, /advertised\.defaultModel/);
+  assert.doesNotMatch(source, /CodexModelCatalog/);
 });
