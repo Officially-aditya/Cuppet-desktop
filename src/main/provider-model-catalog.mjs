@@ -19,7 +19,16 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
   const configuredModel = requestedModel || text(configuration.primary?.modelID || configuration.model);
   const discoveryConfiguration = requestedModel ? configurationForCandidateModel(configuration, requestedModel) : configuration;
   if (!providerID) return unavailable('', 'none', 'No active provider is configured.');
-  if (providerID === 'codex') return unavailable(providerID, 'codex', 'Codex model discovery is handled by the Codex app-server catalog.');
+
+  if (providerID === 'codex') {
+    try {
+      const discover = typeof options.codexDiscover === 'function' ? options.codexDiscover : null;
+      if (!discover) return unavailable(providerID, 'codex', 'Codex model discovery is unavailable in this host.');
+      return catalogFromCodexModels(await discover(), configuredModel);
+    } catch (error) {
+      return unavailable(providerID, 'codex', cleanError(error));
+    }
+  }
 
   const descriptor = localCliDescriptor(providerID);
   if (descriptor) {
@@ -57,6 +66,62 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
   } catch (error) {
     return unavailable(providerID, 'api', cleanError(error));
   }
+}
+
+export function catalogFromCodexModels(catalog = {}, configuredModel = '') {
+  const input = record(catalog);
+  const rawModels = array(input.models);
+  const models = [];
+  const sourceById = new Map();
+  const seen = new Set();
+  for (const raw of rawModels) {
+    const item = record(raw);
+    const id = text(item.id || item.model);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    sourceById.set(id, item);
+    models.push({
+      id,
+      label: text(item.label || item.displayName) || id,
+      ...(text(item.description) ? { description: text(item.description) } : {}),
+      ...(item.isDefault === true ? { isDefault: true } : {}),
+    });
+  }
+
+  const declaredDefault = text(input.defaultModel);
+  const rowDefault = models.find((item) => item.isDefault)?.id || '';
+  const defaultModel = models.some((item) => item.id === declaredDefault) ? declaredDefault : rowDefault || null;
+  const configured = text(configuredModel);
+  const effectiveModel = configured === 'codex-default' ? defaultModel : configured;
+  const selected = effectiveModel ? sourceById.get(effectiveModel) : null;
+  const efforts = [];
+  const effortSeen = new Set();
+  for (const raw of array(selected?.efforts ?? selected?.supportedReasoningEfforts)) {
+    const value = typeof raw === 'string' ? raw : record(raw).reasoningEffort ?? record(raw).id;
+    const id = text(value);
+    if (!id || effortSeen.has(id)) continue;
+    effortSeen.add(id);
+    efforts.push({ id, label: id });
+  }
+  const declaredEffort = text(selected?.defaultEffort ?? selected?.defaultReasoningEffort);
+  const defaultEffort = efforts.some((item) => item.id === declaredEffort) ? declaredEffort : null;
+  const reasoning = efforts.length ? {
+    configId: 'model_reasoning_effort',
+    currentValue: defaultEffort,
+    options: efforts,
+  } : null;
+
+  return {
+    providerID: 'codex',
+    available: input.available !== false && models.length > 0,
+    source: 'codex',
+    models,
+    defaultModel,
+    configuredModel: configured || null,
+    fetchedAt: Date.now(),
+    ...(reasoning ? { reasoning } : {}),
+    ...(text(input.error) ? { error: text(input.error) } : {}),
+  };
 }
 
 export function parseApiCatalog(providerID, payload = {}) {
