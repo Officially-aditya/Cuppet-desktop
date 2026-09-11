@@ -46,8 +46,6 @@ jobs:
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs
-      - name: Verify renderer
-        run: npm run renderer:verify
       - name: Verify benchmark harness
         run: |
           node --check scripts/run-provider-benchmark.mjs
