@@ -59,19 +59,22 @@ export class ProviderSettingsStore {
     const storage = credentialStorageStatus(safeStorage);
     const selectedPreset = providerPreset(projection.providerID ?? effective.providerID);
     const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
+    const localCliProvider = selectedPreset?.authType === 'local-cli';
+    const externalCredentialProvider = chatGPTProvider || localCliProvider;
     const encryptedApiKeyConfigured = Boolean(this.#encryptedApiKey);
-    const credentialConfigured = chatGPTProvider || (storage.available && encryptedApiKeyConfigured);
+    const credentialConfigured = externalCredentialProvider || (storage.available && encryptedApiKeyConfigured);
     return {
       ...projection,
       secondaryAuto: this.#secondaryAuto,
       configured: credentialConfigured && Boolean(projection.primary?.modelID),
       // Compatibility for the current renderer send gate. For Codex this means the provider's
       // credential requirement is satisfied by its separate ChatGPT OAuth flow; no API key exists.
-      apiKeyConfigured: chatGPTProvider ? true : encryptedApiKeyConfigured,
+      apiKeyConfigured: externalCredentialProvider ? true : encryptedApiKeyConfigured,
       credentialConfigured,
-      credentialMode: chatGPTProvider ? 'chatgpt' : 'api-key',
+      credentialMode: selectedPreset?.authType ?? 'api-key',
       authType: selectedPreset?.authType ?? 'api-key',
       requiresChatGPTAuth: chatGPTProvider,
+      requiresLocalCli: localCliProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
       customModels: customModelEntries(this.#customModels),
@@ -87,7 +90,7 @@ export class ProviderSettingsStore {
     const selectedPreset = providerPreset(effective.providerID);
     const normalized = normalizeProviderConfiguration({
       ...effective,
-      apiKey: selectedPreset?.authType === 'chatgpt' ? '' : this.#decryptApiKey(),
+      apiKey: ['chatgpt', 'local-cli'].includes(selectedPreset?.authType) ? '' : this.#decryptApiKey(),
     });
     return effective.providerID === 'codex' && this.#primaryEffort
       ? { ...normalized, primaryEffort: this.#primaryEffort }
@@ -122,13 +125,15 @@ export class ProviderSettingsStore {
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
     const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
     const chatGPTProvider = preset?.authType === 'chatgpt';
+    const localCliProvider = preset?.authType === 'local-cli';
+    const externalCredentialProvider = chatGPTProvider || localCliProvider;
     const codexEffortProvided = providerID === 'codex' && Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
     const codexEffort = providerID === 'codex'
       ? (codexEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
       : '';
 
     if (!baseUrl) throw new Error('Provider base URL is required');
-    if (!chatGPTProvider) {
+    if (!externalCredentialProvider) {
       let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
       if (parsed.username || parsed.password) throw new Error('Provider base URL must not contain embedded credentials');
       if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
@@ -138,7 +143,7 @@ export class ProviderSettingsStore {
     let next = normalizeProviderConfiguration({
       ...this.#value,
       providerID,
-      baseUrl: chatGPTProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
+      baseUrl: externalCredentialProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
       model,
       backgroundModel: backgroundModel || model,
       primary: { providerID, modelID: model },
@@ -151,7 +156,7 @@ export class ProviderSettingsStore {
     this.#primaryEffort = codexEffort;
     this.#secondaryAuto = secondaryAuto;
 
-    if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
+    if (externalCredentialProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
     } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
       const storage = credentialStorageStatus(safeStorage);
@@ -169,6 +174,7 @@ export class ProviderSettingsStore {
     const preset = providerPreset(requestedProviderID);
     const providerID = preset?.id ?? requestedProviderID;
     if (providerID !== activeProviderID) throw new Error('Save this provider first, then add its custom model.');
+    if (preset?.authType === 'local-cli') throw new Error('Local CLI providers manage their model catalog inside the CLI.');
 
     const customModel = normalizeCustomModelID(source.customModel);
     if (preset?.models?.some((item) => item.id === customModel)) throw new Error(`${customModel} is already available in the model picker.`);

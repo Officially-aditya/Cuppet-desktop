@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { AcpCliAgentProvider } from '../src/runtime/acp-cli-provider.mjs';
+
+const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
+
+test('ACP CLI provider delegates filesystem and terminal operations through Cuppet', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-acp-'));
+  await writeFile(join(root, 'sample.txt'), 'hello');
+  const calls = [];
+  const permissions = [];
+  let streamed = '';
+  const provider = new AcpCliAgentProvider({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+  try {
+    const result = await provider.stream([{ role: 'user', content: 'Update the sample.' }], {
+      projectRoot: root,
+      onDelta: async (delta) => { streamed += delta; },
+      requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
+      executeTool: async (call) => {
+        calls.push(call);
+        const args = JSON.parse(call.arguments);
+        if (call.name === 'workspace_read') return { success: true, output: 'hello', paths: ['sample.txt'], mutation: false };
+        if (call.name === 'workspace_write') return { success: true, output: `Wrote ${args.path}`, paths: ['sample.txt'], mutation: true };
+        if (call.name === 'bash') return { success: true, output: 'stdout:\nok\nexit code: 0', paths: [], mutation: false };
+        return { success: false, output: `unexpected ${call.name}`, paths: [], mutation: false };
+      },
+    });
+    assert.equal(result.text, 'Working. Done.');
+    assert.equal(streamed, 'Working. Done.');
+    assert.deepEqual(calls.map((call) => call.name), ['workspace_read', 'workspace_write', 'bash']);
+    assert.equal(permissions.length, 1);
+    assert.equal(permissions[0].kind, 'edit');
+    assert.equal(result.usage.totalTokens, 12);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

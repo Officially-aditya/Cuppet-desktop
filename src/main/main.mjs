@@ -4,6 +4,7 @@ import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
+import { cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
@@ -112,6 +113,7 @@ function registerIpc() {
     return { copied: true };
   });
 
+  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID)));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const result = await settings.save(value);
@@ -187,6 +189,12 @@ function desktopProviderAuthority(request) {
       return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
     },
   };
+}
+
+function validateCliProviderID(value) {
+  const id = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!['opencode', 'grok-build'].includes(id)) throw new Error('Unsupported local CLI provider.');
+  return id;
 }
 
 function validateCommandInput(value) {

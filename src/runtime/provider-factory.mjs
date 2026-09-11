@@ -2,6 +2,7 @@ import { OpenAICompatibleChatProvider } from './provider.mjs';
 import { providerRequest } from './provider-policy.mjs';
 import { createNativeProvider, nativeProviderKind } from './native-provider.mjs';
 import { CodexSubscriptionProvider } from './codex-provider.mjs';
+import { AcpCliAgentProvider, isAcpCliProvider } from './acp-cli-provider.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
 export function createChatProvider(configuration = {}) {
@@ -9,7 +10,9 @@ export function createChatProvider(configuration = {}) {
 }
 
 export function createUntrackedChatProvider(configuration = {}) {
-  if (String(configuration?.providerID ?? '').toLowerCase() === 'codex') return new CodexSubscriptionProvider(configuration);
+  const providerID = String(configuration?.providerID ?? '').toLowerCase();
+  if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
+  if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
   const kind = resolvedNativeKind(configuration);
   if (kind) {
     const sourceFetch = configuration?.fetchImpl ?? globalThis.fetch;

@@ -54,7 +54,27 @@ export class ToolRuntime {
 
     for (;;) {
       if (signal?.aborted) throw abortError();
-      const response = await adapter.stream(conversation, { signal, onDelta, tools: definitions, projectRoot, executeTool });
+      const response = await adapter.stream(conversation, {
+        signal,
+        onDelta,
+        tools: definitions,
+        projectRoot,
+        executeTool,
+        requestAgentPermission: async (request) => {
+          const resources = agentPermissionResources(request);
+          const permission = await this.#permissions.authorize({
+            sessionId,
+            projectRoot,
+            planMode: mode === 'plan',
+            signal,
+            action: agentPermissionAction(request?.kind),
+            resources,
+            description: String(request?.title || 'Allow local coding agent action').slice(0, 500),
+            fingerprintKey: stableJson(request?.rawInput ?? {}),
+          });
+          return permission.source === 'session-exact' ? 'always' : 'once';
+        },
+      });
       usage = response?.usage ?? usage;
       const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
       if (!toolCalls.length) return { toolSteps, usage };
@@ -124,6 +144,7 @@ export class ToolRuntime {
       case 'question': return this.#question(sessionId, args, signal);
       case 'tst_explore': return this.#explore(sessionId, args);
       case 'tst_read': return this.#read(projectRoot, args, authorize);
+      case 'workspace_read': return this.#rawRead(projectRoot, args, authorize);
       case 'tst_edit_batch': return this.#batchEdit({ sessionId, projectRoot, executionId, args, authorize });
       case 'tst_validate': return this.#validate(projectRoot, args, authorize, signal);
       case 'workspace_edit': return this.#mutating(projectRoot, () => this.#edit(projectRoot, args, authorize));
@@ -301,6 +322,18 @@ export class ToolRuntime {
     return { output: `Edited ${resolved.relative}${args.replace_all === true ? ` (${count} replacements)` : ''}.`, paths: [resolved.relative], mutation: true };
   }
 
+  async #rawRead(projectRoot, args, authorize) {
+    const resolved = await resolveWorkspacePath(projectRoot, args.path, { mustExist: true });
+    await authorize({ action: 'read', resources: [resolved.relative], description: `Read ${resolved.relative}` });
+    const content = await readFile(resolved.absolute, 'utf8');
+    const start = Math.max(1, Number.isInteger(args.start_line) ? args.start_line : 1);
+    const lines = content.split(/\r?\n/);
+    const limit = Number.isInteger(args.line_limit) ? Math.max(1, Math.min(args.line_limit, 20_000)) : null;
+    const output = limit ? lines.slice(start - 1, start - 1 + limit).join('\n') : start > 1 ? lines.slice(start - 1).join('\n') : content;
+    if (Buffer.byteLength(output) > MAX_FILE_BYTES) throw new Error(`Read exceeds ${MAX_FILE_BYTES} byte limit`);
+    return { output, paths: [resolved.relative], mutation: false };
+  }
+
   async #write(projectRoot, args, authorize) {
     const resolved = await resolveWorkspacePath(projectRoot, args.path, { mustExist: false });
     await authorize({ action: 'write', resources: [resolved.relative], description: `Write ${resolved.relative}` });
@@ -403,6 +436,18 @@ function injectToolPolicy(messages, projectBound, mode) {
   return [{ role: 'system', content: policy }, ...messages.map((message) => ({ ...message }))];
 }
 function parseArguments(value) { try { const parsed = JSON.parse(value || '{}'); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { throw new Error('Tool arguments were not valid JSON'); } }
+function agentPermissionAction(kind) {
+  const value = String(kind ?? '').toLowerCase();
+  if (['read', 'search'].includes(value)) return 'read';
+  if (['edit', 'delete', 'move', 'write'].includes(value)) return 'edit';
+  if (['execute', 'terminal'].includes(value)) return 'bash';
+  return 'agent-tool';
+}
+function agentPermissionResources(request) {
+  const locations = Array.isArray(request?.locations) ? request.locations : [];
+  const paths = locations.flatMap((item) => typeof item?.path === 'string' && item.path.trim() ? [item.path.trim().slice(0, 1024)] : []);
+  return paths.length ? paths.slice(0, 16) : [String(request?.title || request?.kind || 'agent-tool').slice(0, 1024)];
+}
 function cleanPrefix(value) { const text = typeof value === 'string' ? value.trim().slice(0, 512) : ''; return text || undefined; }
 function clamp(value, min, max) { const number = Number.isFinite(value) ? Math.floor(value) : min; return Math.min(Math.max(number, min), max); }
 function capText(value, max) { const text = String(value); return Buffer.byteLength(text) <= max ? text : `${Buffer.from(text).subarray(0, Math.max(0, max - 64)).toString('utf8')}\n… Results truncated; narrow the query or scope.`; }

@@ -9,6 +9,30 @@ export const PROVIDER_PRESETS = Object.freeze({
     authLabel: 'ChatGPT account',
     note: 'Uses your existing ChatGPT Codex subscription through the official OpenAI Codex app-server. Cuppet never reads or stores Codex OAuth credentials.',
   }),
+  opencode: Object.freeze({
+    id: 'opencode',
+    label: 'OpenCode',
+    baseUrl: 'cli://opencode',
+    model: 'cli-default',
+    models: Object.freeze([
+      Object.freeze({ id: 'cli-default', label: 'OpenCode default', description: 'Use the model/provider selected in your local OpenCode configuration.' }),
+    ]),
+    authType: 'local-cli',
+    authLabel: 'Local OpenCode CLI',
+    note: 'Uses your locally installed OpenCode CLI through ACP. Cuppet never reads or stores OpenCode provider credentials.',
+  }),
+  'grok-build': Object.freeze({
+    id: 'grok-build',
+    label: 'Grok Build',
+    baseUrl: 'cli://grok-build',
+    model: 'cli-default',
+    models: Object.freeze([
+      Object.freeze({ id: 'cli-default', label: 'Grok Build default', description: 'Use the default model selected by your local Grok Build account/configuration.' }),
+    ]),
+    authType: 'local-cli',
+    authLabel: 'Local Grok Build CLI',
+    note: 'Uses your locally installed and authenticated Grok Build CLI through ACP. Cuppet never reads or stores Grok credentials.',
+  }),
   openai: Object.freeze({
     id: 'openai',
     label: 'OpenAI',

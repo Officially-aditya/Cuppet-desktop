@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('cuppet', {
     devices: () => ipcRenderer.invoke('cuppet:remote:devices'),
     revoke: (deviceId) => ipcRenderer.invoke('cuppet:remote:revoke', deviceId),
   },
+  cliAgents: {
+    status: (providerID) => ipcRenderer.invoke('cuppet:cli-agent:status', providerID),
+  },
   codexAuth: {
     status: () => ipcRenderer.invoke('cuppet:codex-auth:status'),
     models: () => ipcRenderer.invoke('cuppet:codex-auth:models'),

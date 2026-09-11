@@ -93,7 +93,9 @@ export type ProviderPreset = {
   baseUrl?: string;
   model?: string;
   models?: ProviderPresetModel[];
-  authType?: 'api-key' | 'chatgpt' | string;
+  authType?: 'api-key' | 'chatgpt' | 'local-cli' | string;
+  authLabel?: string;
+  note?: string;
 };
 
 export type ProviderCustomModel = {
@@ -109,6 +111,7 @@ export type ProviderSettings = {
   credentialMode?: 'api-key' | 'chatgpt' | string;
   authType?: string;
   requiresChatGPTAuth?: boolean;
+  requiresLocalCli?: boolean;
   presetID?: string | null;
   presets?: ProviderPreset[];
   customModels?: ProviderCustomModel[];
@@ -171,6 +174,16 @@ export type CodexModelCatalog = {
     efforts?: string[];
     defaultEffort?: string | null;
   }>;
+};
+
+export type CliAgentStatus = {
+  providerID: string;
+  label?: string;
+  available: boolean;
+  installed?: boolean;
+  version?: string | null;
+  loginHint?: string;
+  message?: string;
 };
 
 export type BrowserControlStatus = {
@@ -280,6 +293,9 @@ export type CuppetApi = {
     invite: (role?: string) => Promise<RemoteInvite>;
     devices: () => Promise<RemoteDevice[]>;
     revoke: (deviceId: string) => Promise<any>;
+  };
+  cliAgents: {
+    status: (providerID: string) => Promise<CliAgentStatus>;
   };
   codexAuth: {
     status: () => Promise<any>;

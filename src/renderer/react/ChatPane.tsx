@@ -648,6 +648,9 @@ function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceToo
   const many = targets.length > 1 ? `${targets.length} files` : '';
   const target = one || many;
 
+  if (toolName === 'workspace_read') return target
+    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
+    : phrase('Reading…', 'Read file', 'Couldn’t read file');
   if (toolName === 'tst_read') return target
     ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
     : phrase('Reading…', 'Read files', 'Couldn’t read files');
@@ -687,7 +690,7 @@ function toolTargets(toolName: string, args: Record<string, unknown>) {
     if (path && !values.includes(path)) values.push(path);
   };
 
-  if (toolName === 'tst_read') {
+  if (toolName === 'tst_read' || toolName === 'workspace_read') {
     add(args.path);
     for (const item of arrayRecords(args.reads)) add(item.path);
     for (const item of arrayRecords(args.targets)) add(item.path);
