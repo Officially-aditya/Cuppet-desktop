@@ -41,7 +41,7 @@ async function codexAuthStatus() {
   }
 }
 
-async function listCodexModels() {
+export async function listCodexModels() {
   const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
   if (!launch) return { available: false, loggedIn: false, models: [], defaultModel: null };
   try {
