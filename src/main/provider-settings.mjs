@@ -41,7 +41,7 @@ export class ProviderSettingsStore {
       const parsed = JSON.parse(await readFile(this.#path, 'utf8'));
       this.#value = serializableProviderConfiguration({ ...DEFAULTS, ...parsed });
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
-      this.#primaryEffort = this.#value.providerID === 'codex' ? effortID(parsed.primaryEffort) : '';
+      this.#primaryEffort = effortID(parsed.primaryEffort);
       this.#secondaryAuto = parsed.secondaryAuto !== false;
       this.#customModels = normalizeCustomModelRegistry(parsed.customModels);
     } catch {
@@ -59,23 +59,26 @@ export class ProviderSettingsStore {
     const storage = credentialStorageStatus(safeStorage);
     const selectedPreset = providerPreset(projection.providerID ?? effective.providerID);
     const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
+    const localCliProvider = selectedPreset?.authType === 'local-cli';
+    const externalCredentialProvider = chatGPTProvider || localCliProvider;
     const encryptedApiKeyConfigured = Boolean(this.#encryptedApiKey);
-    const credentialConfigured = chatGPTProvider || (storage.available && encryptedApiKeyConfigured);
+    const credentialConfigured = externalCredentialProvider || (storage.available && encryptedApiKeyConfigured);
     return {
       ...projection,
       secondaryAuto: this.#secondaryAuto,
       configured: credentialConfigured && Boolean(projection.primary?.modelID),
       // Compatibility for the current renderer send gate. For Codex this means the provider's
       // credential requirement is satisfied by its separate ChatGPT OAuth flow; no API key exists.
-      apiKeyConfigured: chatGPTProvider ? true : encryptedApiKeyConfigured,
+      apiKeyConfigured: externalCredentialProvider ? true : encryptedApiKeyConfigured,
       credentialConfigured,
-      credentialMode: chatGPTProvider ? 'chatgpt' : 'api-key',
+      credentialMode: selectedPreset?.authType ?? 'api-key',
       authType: selectedPreset?.authType ?? 'api-key',
       requiresChatGPTAuth: chatGPTProvider,
+      requiresLocalCli: localCliProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
       customModels: customModelEntries(this.#customModels),
-      primaryEffort: projection.providerID === 'codex' ? (this.#primaryEffort || null) : (projection.primary?.variant ?? null),
+      primaryEffort: this.#primaryEffort || projection.primary?.variant || null,
       encryptionAvailable: storage.available,
       encryptionBackend: storage.backend,
       encryptionUnavailableReason: storage.reason,
@@ -87,11 +90,9 @@ export class ProviderSettingsStore {
     const selectedPreset = providerPreset(effective.providerID);
     const normalized = normalizeProviderConfiguration({
       ...effective,
-      apiKey: selectedPreset?.authType === 'chatgpt' ? '' : this.#decryptApiKey(),
+      apiKey: ['chatgpt', 'local-cli'].includes(selectedPreset?.authType) ? '' : this.#decryptApiKey(),
     });
-    return effective.providerID === 'codex' && this.#primaryEffort
-      ? { ...normalized, primaryEffort: this.#primaryEffort }
-      : normalized;
+    return this.#primaryEffort ? { ...normalized, primaryEffort: this.#primaryEffort } : normalized;
   }
 
   async save(input) {
@@ -119,16 +120,19 @@ export class ProviderSettingsStore {
     const backgroundModel = secondaryAuto
       ? autoSecondaryModel(preset, model)
       : requestedBackgroundModel || currentSecondaryModel || model;
+    const chatGPTProvider = preset?.authType === 'chatgpt';
+    const localCliProvider = preset?.authType === 'local-cli';
+    const externalCredentialProvider = chatGPTProvider || localCliProvider;
+    const persistentEffortProvider = providerID === 'codex' || localCliProvider;
+    const primaryEffortProvided = Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
+    const persistedPrimaryEffort = persistentEffortProvider
+      ? (primaryEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
+      : '';
     const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
     const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
-    const chatGPTProvider = preset?.authType === 'chatgpt';
-    const codexEffortProvided = providerID === 'codex' && Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
-    const codexEffort = providerID === 'codex'
-      ? (codexEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
-      : '';
 
     if (!baseUrl) throw new Error('Provider base URL is required');
-    if (!chatGPTProvider) {
+    if (!externalCredentialProvider) {
       let parsed; try { parsed = new URL(baseUrl); } catch { throw new Error('Provider base URL must be a valid URL'); }
       if (parsed.username || parsed.password) throw new Error('Provider base URL must not contain embedded credentials');
       if (parsed.protocol !== 'https:' && !isLocalhost(parsed.hostname)) throw new Error('Provider base URL must use HTTPS unless it points to localhost');
@@ -138,7 +142,7 @@ export class ProviderSettingsStore {
     let next = normalizeProviderConfiguration({
       ...this.#value,
       providerID,
-      baseUrl: chatGPTProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
+      baseUrl: externalCredentialProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
       model,
       backgroundModel: backgroundModel || model,
       primary: { providerID, modelID: model },
@@ -148,10 +152,10 @@ export class ProviderSettingsStore {
     if (secondaryEffort) next.secondary = resolveAdvertisedSelection(next, { ...next.secondary, variant: secondaryEffort });
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
-    this.#primaryEffort = codexEffort;
+    this.#primaryEffort = persistedPrimaryEffort;
     this.#secondaryAuto = secondaryAuto;
 
-    if (chatGPTProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
+    if (externalCredentialProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
     } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
       const storage = credentialStorageStatus(safeStorage);
@@ -169,6 +173,7 @@ export class ProviderSettingsStore {
     const preset = providerPreset(requestedProviderID);
     const providerID = preset?.id ?? requestedProviderID;
     if (providerID !== activeProviderID) throw new Error('Save this provider first, then add its custom model.');
+    if (preset?.authType === 'local-cli') throw new Error('Local CLI providers manage their model catalog inside the CLI.');
 
     const customModel = normalizeCustomModelID(source.customModel);
     if (preset?.models?.some((item) => item.id === customModel)) throw new Error(`${customModel} is already available in the model picker.`);
@@ -222,29 +227,9 @@ async function writeSettingsAtomically(path, content) {
   }
 }
 
-function autoSecondaryModel(preset, primaryModel) {
-  const fallback = modelID(primaryModel);
-  const models = Array.isArray(preset?.models) ? preset.models : [];
-  if (!models.length) return fallback;
-  let best = { id: fallback, score: 0 };
-  for (const item of models) {
-    const id = modelID(item?.id);
-    if (!id) continue;
-    const text = `${id} ${item?.label ?? ''} ${item?.description ?? ''}`.toLowerCase();
-    let score = 0;
-    if (text.includes('flash-lite')) score += 100;
-    if (text.includes('luna')) score += 90;
-    if (text.includes('flash')) score += 80;
-    if (text.includes('turbo')) score += 70;
-    if (text.includes('cost-efficient') || text.includes('lower-cost') || text.includes('low-latency')) score += 60;
-    if (text.includes('fast')) score += 50;
-    if (text.includes('small') || text.includes('27b')) score += 45;
-    if (text.includes('balanced') || text.includes('sonnet')) score += 35;
-    if (text.includes('opus') || text.includes('max') || text.includes(' pro ')) score -= 20;
-    if (text.includes('flagship') || text.includes('advanced') || text.includes('hardest')) score -= 10;
-    if (score > best.score) best = { id, score };
-  }
-  return best.score > 0 ? best.id : fallback;
+function autoSecondaryModel(_preset, primaryModel) {
+  // Auto means follow provider/user authority exactly; Cuppet never guesses a different model.
+  return modelID(primaryModel);
 }
 
 function modelID(value) {

@@ -1,0 +1,39 @@
+/* Keep the composer mode picker visually aligned with the model picker trigger. */
+.composer-mode-select{
+  width:auto;
+  min-width:0;
+  height:30px;
+  min-height:30px;
+  flex:0 0 auto;
+  border:0;
+  border-radius:7px;
+  background-color:transparent;
+  color:#8993a0;
+  padding:5px 24px 5px 7px;
+  font-size:11px;
+  line-height:20px;
+  outline:0;
+  box-shadow:none;
+  cursor:pointer;
+  -webkit-appearance:none;
+  appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='m2.25 3.5 2.75 2.75L7.75 3.5' fill='none' stroke='%236f7986' stroke-width='1.15' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position:right 8px center;
+  background-size:9px 9px;
+  background-repeat:no-repeat;
+  transition:background-color .12s ease,color .12s ease,box-shadow .12s ease;
+}
+.composer-mode-select:hover{
+  border:0;
+  background-color:#20262e;
+  color:#e7ebf0;
+}
+.composer-mode-select:focus,
+.composer-mode-select:focus-visible{
+  border:0;
+  background-color:transparent;
+  color:#e7ebf0;
+  outline:0;
+  box-shadow:0 0 0 2px rgba(130,145,165,.16);
+}
+.composer-mode-select:disabled{opacity:.45;cursor:not-allowed}

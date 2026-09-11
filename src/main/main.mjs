@@ -1,13 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { realpath, stat } from 'node:fs/promises';
 import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
+import { fetchProviderModelCatalog } from './provider-model-catalog.mjs';
+import { cliAgentConnect, cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
 let runtime;
 let settings;
 let mainWindow;
@@ -24,6 +27,7 @@ async function bootstrap() {
   await runtime.start();
   await runtime.request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
   registerIpc();
+  if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON);
   createWindow();
 }
 
@@ -31,11 +35,14 @@ function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   ipcMain.handle('cuppet:health', () => request('health'));
   ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));
+  ipcMain.handle('cuppet:browser-control:status', () => request('integration.browser.status'));
+  ipcMain.handle('cuppet:browser-control:connect', () => request('integration.browser.connect'));
+  ipcMain.handle('cuppet:browser-control:disconnect', () => request('integration.browser.disconnect'));
   ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
   ipcMain.handle('cuppet:session:auto:get', (_event, sessionId) => request('session.auto.get', { sessionId }));
-  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: Boolean(enabled) }));
+  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: enabled === 'full' ? 'full' : Boolean(enabled) }));
   ipcMain.handle('cuppet:permission:list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
   ipcMain.handle('cuppet:permission:reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
   ipcMain.handle('cuppet:question:list', (_event, sessionId) => request('question.list', { sessionId: sessionId ?? null }));
@@ -101,10 +108,34 @@ function registerIpc() {
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
   ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
+  ipcMain.handle('cuppet:native:copy-text', (_event, value) => {
+    const text = typeof value === 'string' ? value.slice(0, 2_000_000) : '';
+    clipboard.writeText(text);
+    return { copied: true };
+  });
 
+  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
+  ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => cliAgentConnect(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
+  ipcMain.handle('cuppet:settings:models', () => fetchProviderModelCatalog(settings.runtimeValue()));
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
-    const result = await settings.save(value);
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    let result = await settings.save(source);
+    const explicitModel = typeof source.model === 'string' && source.model.trim();
+    const resolveDefault = source.resolveDefault === true;
+    if (resolveDefault && !explicitModel && result.authType === 'local-cli') {
+      const advertised = await fetchProviderModelCatalog(settings.runtimeValue()).catch(() => null);
+      const exactDefault = typeof advertised?.defaultModel === 'string' ? advertised.defaultModel.trim() : '';
+      if (exactDefault && exactDefault !== 'cli-default' && exactDefault !== result.primary?.modelID) {
+        result = await settings.save({
+providerID: result.primary?.providerID || result.providerID,
+baseUrl: result.baseUrl || '',
+model: exactDefault,
+backgroundModel: exactDefault,
+secondaryAuto: true,
+        });
+      }
+    }
     await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
     return result;
   });
@@ -177,6 +208,12 @@ function desktopProviderAuthority(request) {
       return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
     },
   };
+}
+
+function validateCliProviderID(value) {
+  const id = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!['opencode', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'].includes(id)) throw new Error('Unsupported local CLI provider.');
+  return id;
 }
 
 function validateCommandInput(value) {
@@ -265,7 +302,7 @@ async function openExternal(value) {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({ width: 1180, height: 800, minWidth: 860, minHeight: 620, show: false, backgroundColor: '#0d0f12', title: 'Cuppet', webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  mainWindow = new BrowserWindow({ width: 1180, height: 800, minWidth: 860, minHeight: 620, show: false, backgroundColor: '#0d0f12', title: 'Cuppet', icon: APP_ICON, webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(?:https?:|mailto:)/i.test(url)) void openExternal(url).catch(() => undefined);

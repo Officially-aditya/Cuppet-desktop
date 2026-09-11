@@ -4,6 +4,13 @@ contextBridge.exposeInMainWorld('cuppet', {
   usage: {
     summary: () => ipcRenderer.invoke('cuppet:usage:summary'),
   },
+  integrations: {
+    browserControl: {
+      status: () => ipcRenderer.invoke('cuppet:browser-control:status'),
+      connect: () => ipcRenderer.invoke('cuppet:browser-control:connect'),
+      disconnect: () => ipcRenderer.invoke('cuppet:browser-control:disconnect'),
+    },
+  },
   cognitive: {
     status: () => ipcRenderer.invoke('cuppet:cognitive:status'),
     modeGet: (sessionId) => ipcRenderer.invoke('cuppet:session:mode:get', sessionId),
@@ -38,6 +45,10 @@ contextBridge.exposeInMainWorld('cuppet', {
     invite: (role = 'trusted') => ipcRenderer.invoke('cuppet:remote:invite', role),
     devices: () => ipcRenderer.invoke('cuppet:remote:devices'),
     revoke: (deviceId) => ipcRenderer.invoke('cuppet:remote:revoke', deviceId),
+  },
+  cliAgents: {
+    status: (providerID) => ipcRenderer.invoke('cuppet:cli-agent:status', providerID),
+    connect: (providerID) => ipcRenderer.invoke('cuppet:cli-agent:connect', providerID),
   },
   codexAuth: {
     status: () => ipcRenderer.invoke('cuppet:codex-auth:status'),
@@ -83,7 +94,8 @@ contextBridge.exposeInMainWorld('cuppet', {
     chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
     openProjectFile: (projectId, path) => ipcRenderer.invoke('cuppet:native:open-project-file', projectId, path),
     openExternal: (url) => ipcRenderer.invoke('cuppet:native:open-external', url),
+    copyText: (text) => ipcRenderer.invoke('cuppet:native:copy-text', text),
   },
-  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
+  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), models: () => ipcRenderer.invoke('cuppet:settings:models'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
   onEvent: (callback) => { if (typeof callback !== 'function') return () => {}; const listener = (_event, payload) => callback(payload); ipcRenderer.on('cuppet:event', listener); return () => ipcRenderer.removeListener('cuppet:event', listener); },
 });

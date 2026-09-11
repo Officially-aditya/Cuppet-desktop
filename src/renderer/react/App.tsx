@@ -13,7 +13,7 @@ import type {
   Session,
 } from '../types';
 import { Sidebar } from './Sidebar';
-import { ChatPane, type ActivityEntry, type DeliveryMode } from './ChatPane';
+import { ChatPane, type ActivityEntry, type ComposerMode, type DeliveryMode } from './ChatPane';
 import { NewChatModal } from './NewChatModal';
 import { AddProjectModal } from './AddProjectModal';
 import { SearchModal } from './SearchModal';
@@ -22,6 +22,7 @@ import { SettingsModal } from './SettingsModal';
 import { PermissionModal } from './PermissionModal';
 import { QuestionModal } from './QuestionModal';
 import { Toast } from './Toast';
+import { CUPPET_LOGO_URL } from './brand';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
@@ -49,6 +50,7 @@ export function App() {
   const activeProjectId = active?.projectId ?? draft?.projectId ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
   const activeRunning = Boolean(active?.id && running.has(active.id));
+  const activeComposerMode: ComposerMode = cognitive.orchestratorEnabled ? 'orchestrate' : mode;
 
   const showToast = useCallback((message: unknown) => {
     setToast(message instanceof Error ? message.message : String(message ?? ''));
@@ -281,6 +283,10 @@ export function App() {
       if (target !== session.id) await openSession(target);
       return { clear: true };
     } catch (error) {
+      if (String(error instanceof Error ? error.message : error).includes('Settings > General > Integrations')) {
+        setSettingsSection('general');
+        setModal('settings');
+      }
       showToast(error);
       return { clear: false };
     }
@@ -343,14 +349,17 @@ export function App() {
     } catch (error) { showToast(error); }
   }, [active?.id, openSession, refreshLists, showToast, startDraft]);
 
-  const changeMode = useCallback(async () => {
-    const next = mode === 'plan' ? 'build' : 'plan';
+  const changeMode = useCallback(async (next: ComposerMode) => {
+    const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';
+    const orchestratorEnabled = next === 'orchestrate';
     try {
-      if (active) await window.cuppet.cognitive.modeSet(active.id, next);
-      else setDraft((current) => current ? { ...current, mode: next } : current);
-      setMode(next);
+      if (active) await window.cuppet.cognitive.modeSet(active.id, sessionMode);
+      else setDraft((current) => current ? { ...current, mode: sessionMode } : current);
+      setMode(sessionMode);
+      await window.cuppet.cognitive.orchestratorSet(orchestratorEnabled);
+      setCognitive((current) => ({ ...current, orchestratorEnabled }));
     } catch (error) { showToast(error); }
-  }, [active, mode, showToast]);
+  }, [active, showToast]);
 
   const resolvePermission = useCallback(async (reply: 'once' | 'always' | 'reject', enableAuto = false) => {
     if (!permission) return;
@@ -374,7 +383,7 @@ export function App() {
 
   const generalSessions = useMemo(() => sessions.filter((session) => !session.projectId && !session.archivedAt), [sessions]);
 
-  if (loading) return <div className="react-boot">Starting Cuppet…</div>;
+  if (loading) return <div className="react-boot"><div className="react-boot-brand"><img src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><span>Starting Cuppet…</span></div></div>;
 
   return (
     <div className="app-shell react-app">
@@ -403,12 +412,13 @@ export function App() {
         draft={draft}
         project={activeProject}
         mode={mode}
+        activeMode={activeComposerMode}
         running={activeRunning}
         commands={commands}
         activity={active?.id ? activities[active.id] ?? [] : []}
         onSend={send}
         onStop={stop}
-        onToggleMode={changeMode}
+        onModeChange={changeMode}
       />
 
       {modal === 'new-chat' && <NewChatModal projects={projects} selectedProjectId={activeProjectId} onClose={() => setModal(null)} onStart={(projectId) => { startDraft(projectId); setModal(null); }} />}

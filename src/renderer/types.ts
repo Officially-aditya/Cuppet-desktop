@@ -93,7 +93,9 @@ export type ProviderPreset = {
   baseUrl?: string;
   model?: string;
   models?: ProviderPresetModel[];
-  authType?: 'api-key' | 'chatgpt' | string;
+  authType?: 'api-key' | 'chatgpt' | 'local-cli' | string;
+  authLabel?: string;
+  note?: string;
 };
 
 export type ProviderCustomModel = {
@@ -109,6 +111,7 @@ export type ProviderSettings = {
   credentialMode?: 'api-key' | 'chatgpt' | string;
   authType?: string;
   requiresChatGPTAuth?: boolean;
+  requiresLocalCli?: boolean;
   presetID?: string | null;
   presets?: ProviderPreset[];
   customModels?: ProviderCustomModel[];
@@ -158,6 +161,29 @@ export type TokenUsageSummary = {
   byModel: TokenUsageBucket[];
 };
 
+export type ProviderModelCatalog = {
+  providerID: string;
+  available: boolean;
+  source: 'api' | 'acp' | 'cli' | 'codex' | 'none' | string;
+  defaultModel?: string | null;
+  configuredModel?: string | null;
+  fetchedAt?: number;
+  error?: string;
+  reasoning?: {
+    configId: string;
+    currentValue?: string | null;
+    options: Array<{ id: string; label?: string; description?: string }>;
+  };
+  models: Array<{
+    id: string;
+    label?: string;
+    description?: string;
+    context?: number;
+    outputLimit?: number;
+    isDefault?: boolean;
+  }>;
+};
+
 export type CodexModelCatalog = {
   available: boolean;
   loggedIn?: boolean;
@@ -171,6 +197,30 @@ export type CodexModelCatalog = {
     efforts?: string[];
     defaultEffort?: string | null;
   }>;
+};
+
+export type CliAgentStatus = {
+  providerID: string;
+  label?: string;
+  available: boolean;
+  installed?: boolean;
+  connected?: boolean;
+  version?: string | null;
+  action?: 'connect' | 'ready' | string;
+  canAutoInstall?: boolean;
+  loginHint?: string;
+  message?: string;
+};
+
+export type BrowserControlStatus = {
+  id?: string;
+  available?: boolean;
+  running?: boolean;
+  connected?: boolean;
+  extensionConnected?: boolean;
+  toolCount?: number;
+  port?: number;
+  message?: string;
 };
 
 export type CognitiveStatus = {
@@ -228,6 +278,13 @@ export type CuppetApi = {
   usage: {
     summary: () => Promise<TokenUsageSummary>;
   };
+  integrations: {
+    browserControl: {
+      status: () => Promise<BrowserControlStatus>;
+      connect: () => Promise<BrowserControlStatus>;
+      disconnect: () => Promise<BrowserControlStatus>;
+    };
+  };
   cognitive: {
     status: () => Promise<CognitiveStatus>;
     modeGet: (sessionId: string) => Promise<{ mode?: 'plan' | 'build' }>;
@@ -248,7 +305,7 @@ export type CuppetApi = {
     list: (sessionId?: string | null) => Promise<PermissionRequest[]>;
     reply: (requestId: string, reply: 'once' | 'always' | 'reject') => Promise<any>;
     autoGet: (sessionId: string) => Promise<any>;
-    autoSet: (sessionId: string, enabled: boolean) => Promise<any>;
+    autoSet: (sessionId: string, enabled: boolean | 'full') => Promise<any>;
   };
   questions: {
     list: (sessionId?: string | null) => Promise<QuestionRequest[]>;
@@ -262,6 +319,10 @@ export type CuppetApi = {
     invite: (role?: string) => Promise<RemoteInvite>;
     devices: () => Promise<RemoteDevice[]>;
     revoke: (deviceId: string) => Promise<any>;
+  };
+  cliAgents: {
+    status: (providerID: string) => Promise<CliAgentStatus>;
+    connect: (providerID: string) => Promise<CliAgentStatus>;
   };
   codexAuth: {
     status: () => Promise<any>;
@@ -304,9 +365,11 @@ export type CuppetApi = {
   native: {
     platform: string;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
+    copyText: (text: string) => Promise<{ copied: boolean }>;
   };
   settings: {
     get: () => Promise<ProviderSettings>;
+    models: () => Promise<ProviderModelCatalog>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
   onEvent: (handler: (event: RuntimeEvent) => void) => () => void;

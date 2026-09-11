@@ -9,6 +9,7 @@ import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
+import { BrowserControlManager } from './browser-control-manager.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -34,7 +35,8 @@ const emit = (event) => {
 };
 const localState = new ConversationDatabase(databasePath);
 const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
-const runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst });
+const browserControl = new BrowserControlManager({ emit });
+const runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst, browserControl });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);
@@ -47,7 +49,7 @@ const service = {
     if ((method === 'project.remove' || method === 'project.relocate') && params.projectId) await tst.unregisterProject(params.projectId).catch(() => undefined);
     return result;
   },
-  async close() { await Promise.all([runtimeService.close(), tst.close()]); },
+  async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close()]); },
 };
 remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
 const purgeTimer = setInterval(() => { void purgeExpiredDeleted(); }, DELETED_CHAT_PURGE_INTERVAL_MS);
@@ -58,6 +60,9 @@ async function handle(method, params = {}) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'usage.summary': return providerUsageSummary();
+    case 'integration.browser.status': return browserControl.status();
+    case 'integration.browser.connect': return browserControl.connect();
+    case 'integration.browser.disconnect': return browserControl.disconnect();
     case 'session.list': { await purgeExpiredDeleted(); return service.handle('session.list', params); }
     case 'session.deleted.list': {
       await purgeExpiredDeleted();

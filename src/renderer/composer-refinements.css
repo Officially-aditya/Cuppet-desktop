@@ -76,3 +76,8 @@
 .message-status:not(.error){display:none}
 .message.assistant:has(.message-content:empty){display:none}
 .message.assistant .message-content:empty::after{content:none!important}
+
+.composer-integration-chips{display:flex;gap:6px;align-items:center;padding:0 10px 6px}
+.composer-integration-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(82,101,122,.22);background:rgba(82,101,122,.08);border-radius:999px;padding:4px 8px;color:inherit;font:inherit;font-size:11px;cursor:pointer}
+.composer-integration-chip:hover{background:rgba(82,101,122,.14);border-color:rgba(82,101,122,.34)}
+.integration-mention-palette .command-option{cursor:pointer}

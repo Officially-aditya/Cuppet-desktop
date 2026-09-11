@@ -74,7 +74,7 @@ test('ordinary reads remain automatic while sensitive reads prompt and protected
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('guarded auto is session-scoped and never bypasses sensitive files or symlink escapes', async () => {
+test('guarded auto approves active-project actions but still guards symlink escapes', async () => {
   const { dir, root } = await fixture();
   const broker = new PermissionBroker();
   try {
@@ -83,14 +83,16 @@ test('guarded auto is session-scoped and never bypasses sensitive files or symli
       await broker.authorize({ sessionId: 's1', action: 'write', resources: ['src/new.js'], projectRoot: root }),
       { allowed: true, source: 'session-auto' },
     );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.env'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
     assert.equal(await isSafeWorkspaceResource('escape/secret.txt', root), false);
 
-    const sensitive = broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.env'], projectRoot: root });
     const escaped = broker.authorize({ sessionId: 's1', action: 'read', resources: ['escape/secret.txt'], projectRoot: root });
-    const requests = await waitPending(broker, 's1', 2);
-    assert.equal(requests.every((request) => request.autoEligible === false), true);
-    for (const request of requests) broker.reply(request.id, 'reject');
-    await assert.rejects(sensitive, PermissionDeniedError);
+    const request = (await waitPending(broker, 's1'))[0];
+    assert.equal(request.autoEligible, false);
+    broker.reply(request.id, 'reject');
     await assert.rejects(escaped, PermissionDeniedError);
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });

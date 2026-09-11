@@ -1,0 +1,28 @@
+/* Keep chat actions inside the highlighted sidebar row and swap them with metadata. */
+.react-sidebar .session-row{
+  position:relative;
+}
+
+.react-sidebar .session-item{
+  width:100%;
+  padding-right:30px;
+}
+
+.react-sidebar .session-meta{
+  transition:opacity .12s ease,visibility .12s ease;
+}
+
+.react-sidebar .session-menu-button{
+  position:absolute;
+  z-index:2;
+  top:50%;
+  right:5px;
+  margin:0;
+  transform:translateY(-50%);
+}
+
+.react-sidebar .session-row:hover .session-meta,
+.react-sidebar .session-row:focus-within .session-meta{
+  opacity:0;
+  visibility:hidden;
+}

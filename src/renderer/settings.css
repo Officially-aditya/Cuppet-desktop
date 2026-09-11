@@ -9,7 +9,7 @@
 .settings-hub-shell{display:grid;grid-template-columns:210px minmax(0,1fr);height:100%}
 .settings-hub-sidebar{display:flex;flex-direction:column;padding:18px 12px;background:#0d1116;border-right:1px solid #242a32}
 .settings-hub-brand{display:flex;align-items:center;gap:10px;padding:2px 8px 18px}
-.settings-hub-mark{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:#eef1f5;color:#111318;font-weight:800}
+.settings-hub-mark{width:28px;height:28px;display:block;object-fit:contain;border-radius:8px}
 .settings-hub-brand>div:last-child{display:grid;gap:2px}
 .settings-hub-brand strong{font-size:13px}
 .settings-hub-brand span{color:#747e8b;font-size:10px}
@@ -27,7 +27,7 @@
 .settings-panel{display:none}
 .settings-panel.active{display:block}
 .settings-card{border:1px solid #292f38;background:#0f1318;border-radius:12px;padding:18px}
-.settings-card+.settings-card{margin-top:14px}
+.settings-card+.settings-card{margin-top:14px}.about-brand{display:flex;align-items:center;gap:14px;margin-bottom:16px}.about-brand img{display:block;width:48px;height:48px;object-fit:contain;border-radius:12px}.about-brand>div{min-width:0}.about-brand h3{margin:0 0 4px;font-size:15px}.about-brand p{margin:0;color:#7f8997;font-size:11px;line-height:1.5}
 .settings-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:14px}
 .settings-card-heading h3{margin:0 0 4px;font-size:14px}
 .settings-card-heading p{margin:0;color:#7f8997;font-size:11px;line-height:1.5}

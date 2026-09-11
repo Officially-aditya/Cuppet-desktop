@@ -46,6 +46,8 @@ jobs:
   packaged-runtime-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
@@ -53,6 +55,12 @@ jobs:
           repository: Officially-aditya/Cuppet-code
           ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
           path: .f1/cuppet-code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/browserControl
+          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          path: .f1/browsercontrol
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
@@ -72,6 +80,14 @@ jobs:
       - name: Stage pinned official Codex app-server
         run: npm run e2:stage-codex
       - run: npm run e2:verify-staged-codex
+      - name: Build pinned browserControl runtime
+        working-directory: .f1/browsercontrol
+        run: |
+          npm ci
+          npm run build
+      - name: Stage verified browserControl resource for desktop
+        run: npm run browsercontrol:stage -- --source=.f1/browsercontrol
+      - run: npm run browsercontrol:verify
       - run: npm install
       - run: npm run e1:audit-runtime
       - run: npm run e2:verify
@@ -79,3 +95,4 @@ jobs:
       - run: npm run e1:package-smoke
       - run: npm run f1:package-smoke
       - run: npm run e2:package-smoke
+      - run: npm run browsercontrol:package-smoke

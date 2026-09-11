@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { renderMarkdown } from './markdown';
+import { CUPPET_LOGO_URL } from './brand';
 import {
   GENERAL_SETTINGS_EVENT,
   readPermissionMode,
@@ -9,6 +10,7 @@ import {
 } from './behavior-preferences';
 
 export type DeliveryMode = 'queue' | 'steer';
+export type ComposerMode = 'build' | 'plan' | 'orchestrate';
 export type ActivityEntry = {
   id: string;
   kind: 'tool' | 'queue' | 'validation' | string;
@@ -30,21 +32,23 @@ type TraceTool = {
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 type QueuedMessage = { text: string; attachments: Attachment[] };
+const BROWSERCONTROL_MENTION = '@browserControl';
 
 type Props = {
   session: Session | null;
   draft: Draft;
   project: Project | null;
   mode: 'plan' | 'build';
+  activeMode: ComposerMode;
   running: boolean;
   commands: CommandDefinition[];
   activity: ActivityEntry[];
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
-  onToggleMode: () => void | Promise<void>;
+  onModeChange: (mode: ComposerMode) => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, running, commands, activity: _activity, onSend, onStop }: Props) {
+export function ChatPane({ session, draft, project, mode, activeMode, running, commands, activity: _activity, onSend, onStop, onModeChange }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
@@ -66,8 +70,15 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
       return !query || [item.slash, item.title, item.description, ...(item.aliases ?? [])].filter(Boolean).join(' ').toLowerCase().includes(query);
     }).slice(0, 16);
   }, [commands, value]);
+  const integrationMentionQuery = currentIntegrationMentionQuery(value);
+  const browserControlMentioned = hasBrowserControlMention(value);
 
   useEffect(() => setSelected(0), [value]);
+
+  // Re-measure after React commits any programmatic composer value change, including send/queue clears.
+  useEffect(() => {
+    resize(textarea.current);
+  }, [value]);
 
   useEffect(() => {
     setAttachments([]);
@@ -190,7 +201,8 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     setValue('');
     setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
-    resize(textarea.current);
+    // Collapse immediately; the value effect above re-measures after the empty value is committed.
+    if (textarea.current) textarea.current.style.height = '54px';
     textarea.current?.focus();
   };
 
@@ -260,7 +272,30 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     });
   };
 
+  const chooseBrowserControl = () => {
+    setValue((current) => insertBrowserControlMention(current));
+    requestAnimationFrame(() => {
+      const node = textarea.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(node.value.length, node.value.length);
+      resize(node);
+    });
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery)) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setValue((current) => current.replace(/@[^\s]*$/, ''));
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !hasBrowserControlMention(value)) {
+        event.preventDefault();
+        chooseBrowserControl();
+        return;
+      }
+    }
     if (palette.length) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -298,7 +333,6 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
   const runningTrace = runningAssistant ? traceByMessage[runningAssistant.id] ?? [] : [];
-  const queuedCount = session?.id ? queuedBySession[session.id]?.length ?? 0 : 0;
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -306,7 +340,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     <main className="main-pane react-main-pane">
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
-          <div className="empty-state"><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
+          <div className="empty-state"><img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
         ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceByMessage[message.id] ?? []} />)}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView
@@ -320,6 +354,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 
       <footer className="composer-wrap react-composer-wrap">
         {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
+        {integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery) && !hasBrowserControlMention(value) && <IntegrationMentionPalette onChoose={chooseBrowserControl} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={addFiles} />
@@ -327,11 +362,18 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             ref={textarea}
             rows={1}
             value={value}
-            placeholder={running ? (deliveryMode === 'steer' ? 'Steer the active run…' : 'Queue a message…') : 'Message Cuppet…'}
+            placeholder="Message Cuppet…"
             autoComplete="off"
             onChange={(event) => { setValue(event.target.value); resize(event.target); }}
             onKeyDown={onKeyDown}
           />
+          {browserControlMentioned && (
+            <div className="composer-integration-chips" aria-label="Active integrations">
+              <button type="button" className="composer-integration-chip" title="Remove browserControl" onClick={() => setValue((current) => removeBrowserControlMention(current))}>
+                <span>{BROWSERCONTROL_MENTION}</span><span aria-hidden="true">×</span>
+              </button>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="composer-attachments" aria-label="Attached files">
               {attachments.map((attachment, index) => (
@@ -348,12 +390,17 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
-            {running && (
-              <div className="delivery-controls react-delivery-controls" aria-label="While running">
-                <button type="button" className={`delivery-mode-button${deliveryMode === 'queue' ? ' active' : ''}`} onClick={() => setDeliveryMode('queue')}>Queue{queuedCount ? ` · ${queuedCount}` : ''}</button>
-                <button type="button" className={`delivery-mode-button${deliveryMode === 'steer' ? ' active' : ''}`} onClick={() => setDeliveryMode('steer')}>Steer</button>
-              </div>
-            )}
+            <select
+              className="composer-mode-select"
+              aria-label="Mode"
+              title="Mode"
+              value={activeMode}
+              onChange={(event) => void onModeChange(event.currentTarget.value as ComposerMode)}
+            >
+              <option value="build">Build</option>
+              <option value="plan">Plan</option>
+              <option value="orchestrate">Orchestrate</option>
+            </select>
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
             {running ? (
@@ -379,16 +426,24 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
   const [traceOpen, setTraceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const responseRef = useRef<HTMLDivElement | null>(null);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
   const hasTrace = assistant && trace.length > 0;
   const canCopy = assistant && !live && message.status !== 'streaming' && Boolean(content.trim());
 
+  useEffect(() => {
+    if (!live) setTraceOpen(false);
+  }, [live]);
+
   const copySummary = async () => {
     if (!canCopy) return;
     try {
-      await navigator.clipboard.writeText(content);
+      const rendered = responseRef.current?.innerText?.trim();
+      const value = rendered || content.trim();
+      if (!value) return;
+      await window.cuppet.native.copyText(value);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {
@@ -399,7 +454,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
       <div className="message-role">
-        {hasTrace ? (
+        {hasTrace && !live ? (
           <button
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
@@ -412,9 +467,10 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} />}
+      {hasTrace && live && <TraceView trace={trace} />}
+      {hasTrace && !live && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
-        content ? <div className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
+        content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
         <div className="message-content">{content}</div>
       )}
@@ -438,6 +494,18 @@ function TraceView({ trace }: { trace: TraceItem[] }) {
       ) : (
         <div key={item.id} className={`thread-activity-line ${item.status}`}>{friendlyActivityLabel({ id: item.id, kind: 'tool', status: item.status, label: item.label, details: item.details })}</div>
       ))}
+    </div>
+  );
+}
+
+function IntegrationMentionPalette({ onChoose }: { onChoose: () => void }) {
+  return (
+    <div className="command-palette react-command-palette integration-mention-palette" role="listbox" aria-label="Cuppet integrations">
+      <button type="button" className="command-option selected" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={onChoose}>
+        <div className="command-name">{BROWSERCONTROL_MENTION}</div>
+        <div className="command-description">Use your connected Chrome through browserControl for this turn.</div>
+        <div className="command-meta">integration · explicit per-turn access</div>
+      </button>
     </div>
   );
 }
@@ -506,6 +574,28 @@ async function executePaletteAction(item: CommandDefinition, sessionId: string |
   return window.cuppet.commands.execute(sessionId, { id: item.id, input });
 }
 
+function currentIntegrationMentionQuery(value: string) {
+  const match = value.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/);
+  return match ? match[1].toLowerCase() : null;
+}
+function browserControlMentionMatches(query: string) {
+  return !query || 'browsercontrol'.startsWith(query) || 'chrome'.startsWith(query);
+}
+function hasBrowserControlMention(value: string) {
+  return /(^|\s)@browsercontrol(?=$|\s|[.,!?;:])/i.test(value);
+}
+function insertBrowserControlMention(value: string) {
+  if (hasBrowserControlMention(value)) return value;
+  const match = value.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/);
+  if (!match || match.index === undefined) return `${value}${value && !/\s$/.test(value) ? ' ' : ''}${BROWSERCONTROL_MENTION} `;
+  const prefix = value.slice(0, match.index);
+  const spacer = match[0].startsWith(' ') || match[0].startsWith('\n') || !prefix ? match[0].slice(0, 1) : ' ';
+  return `${prefix}${spacer}${BROWSERCONTROL_MENTION} `;
+}
+function removeBrowserControlMention(value: string) {
+  return value.replace(/(^|\s)@browsercontrol(?=$|\s|[.,!?;:])/ig, '$1').replace(/[ \t]{2,}/g, ' ').trimStart();
+}
+
 function currentSlashQuery(value: string) {
   if (!value.startsWith('/') || value.includes('\n')) return null;
   const trimmed = value.trim();
@@ -524,8 +614,11 @@ function attachmentKey(value: Attachment) {
 
 async function applyPermissionPreference(session: Session | null) {
   if (!session?.id) return;
-  const auto = readPermissionMode() === 'auto' && Boolean(session.projectId);
-  await window.cuppet.permissions.autoSet(session.id, auto).catch(() => undefined);
+  const preference = readPermissionMode();
+  const effective: boolean | 'full' = session.projectId
+    ? preference === 'full' ? 'full' : preference === 'auto'
+    : false;
+  await window.cuppet.permissions.autoSet(session.id, effective).catch(() => undefined);
 }
 
 function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {
@@ -564,6 +657,9 @@ function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceToo
   const many = targets.length > 1 ? `${targets.length} files` : '';
   const target = one || many;
 
+  if (toolName === 'workspace_read') return target
+    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
+    : phrase('Reading…', 'Read file', 'Couldn’t read file');
   if (toolName === 'tst_read') return target
     ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
     : phrase('Reading…', 'Read files', 'Couldn’t read files');
@@ -603,7 +699,7 @@ function toolTargets(toolName: string, args: Record<string, unknown>) {
     if (path && !values.includes(path)) values.push(path);
   };
 
-  if (toolName === 'tst_read') {
+  if (toolName === 'tst_read' || toolName === 'workspace_read') {
     add(args.path);
     for (const item of arrayRecords(args.reads)) add(item.path);
     for (const item of arrayRecords(args.targets)) add(item.path);

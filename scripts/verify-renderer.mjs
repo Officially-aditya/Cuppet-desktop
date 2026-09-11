@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all([
+const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
@@ -30,6 +30,8 @@ const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels
   read('src/renderer/react/RemoteModal.tsx'),
   read('src/renderer/react/PermissionModal.tsx'),
   read('src/renderer/react/QuestionModal.tsx'),
+  read('src/renderer/react/GeneralPanel.tsx'),
+  read('src/renderer/general-settings.css'),
 ]);
 const pkg = JSON.parse(pkgText);
 
@@ -68,6 +70,9 @@ assert.match(app, /sessions\.send\(session\.id, value, attachments\)/, 'composer
 assert.match(app, /onNewProjectChat=\{\(projectId\) => startDraft\(projectId\)\}/, 'project hover new-chat action does not create a project-bound draft');
 assert.match(app, /result\?\.sessionId/, 'React send path does not follow PE3-selected target sessions');
 assert.match(app, /event\.type === 'pe3\.routed'/, 'React event path does not follow PE3 routing');
+const runtimeService = await read('src/runtime/service.mjs');
+assert.match(runtimeService, /generateChatTitle/, 'first-turn secondary-model title generation missing');
+assert.match(runtimeService, /current\.title !== provisionalTitle/, 'async title generation can overwrite manual chat renames');
 assert.match(chat, /currentSlashQuery/, 'typed slash palette activation missing');
 assert.match(chat, /ArrowDown|ArrowUp/, 'slash palette keyboard navigation missing');
 assert.match(chat, /aria-label=.*Send/s, 'arrow send action missing');
@@ -77,6 +82,10 @@ assert.match(chat, /thread-activity/, 'tool activity is not rendered in the chat
 assert.doesNotMatch(chat, /function ActivityPanel|activity-status.*✓/s, 'separate/ticked activity component returned');
 assert.match(composerCss, /\.thread-activity-line\.running\{[^}]*animation:thread-activity-pulse/s, 'running tool activity does not pulse');
 assert.match(composerCss, /@keyframes thread-activity-pulse/, 'tool activity pulse keyframes missing');
+assert.match(chat, /@browserControl/, 'browserControl mention surface missing');
+assert.match(chat, /currentIntegrationMentionQuery/, 'browserControl mention autocomplete missing');
+assert.match(chat, /composer-integration-chip/, 'active browserControl mention chip missing');
+assert.match(app, /Settings > General > Integrations/, 'browserControl disconnected mention does not route to General integrations');
 assert.match(chat, /aria-label="Attach files"/, 'composer attachment action missing');
 assert.match(chat, /type="file"\s+multiple/, 'composer attachment action is not backed by the native OS file picker');
 assert.match(chat, /composer-attachments/, 'selected attachment chips missing');
@@ -109,11 +118,37 @@ assert.match(providerPresets, /id:\s*'zai'.*baseUrl:\s*'https:\/\/api\.z\.ai\/ap
 assert.match(providerPresets, /models:\s*models\.map/, 'provider preset projection does not expose its model family');
 assert.match(preload, /platform:\s*process\.platform/, 'renderer cannot detect macOS for native sidebar affordances');
 assert.match(preload, /cuppet:usage:summary/, 'bounded preload does not expose token usage summary');
+assert.match(main, /cuppet:cli-agent:connect/, 'Electron main does not expose automatic local provider linking');
+assert.match(preload, /cuppet:cli-agent:connect/, 'bounded preload does not expose automatic local provider linking');
+assert.match(settings, /window\.cuppet\.cliAgents\.connect/, 'Provider settings does not use one-click local provider linking');
+assert.match(settings, /Cuppet installs the official CLI when needed/, 'Provider settings does not explain automatic CLI installation');
+assert.doesNotMatch(settings, /cliStatus\?\.loginHint/, 'Provider settings still exposes manual Terminal login instructions');
+assert.doesNotMatch(settings, /onRefreshCli/, 'Provider settings still exposes a manual CLI refresh/link step');
+assert.match(main, /cuppet:browser-control:status/, 'Electron main does not expose browserControl status');
+assert.match(main, /integration\.browser\.connect/, 'Electron main does not route browserControl connect');
+assert.match(preload, /browserControl:\s*\{/, 'bounded preload does not expose browserControl integration');
+assert.match(preload, /cuppet:browser-control:connect/, 'bounded preload does not expose Connect Chrome');
+assert.match(generalPanel, /<h3>Integrations<\/h3>/, 'General settings integrations section missing');
+assert.match(generalPanel, /Connect Chrome/, 'General settings Connect Chrome action missing');
+assert.match(generalPanel, /window\.cuppet\.integrations\.browserControl\.connect/, 'Connect Chrome does not use bounded browserControl API');
+assert.match(generalPanel, /integration\.browser-control\.updated/, 'General settings does not follow browserControl connection events');
+assert.match(generalSettingsCss, /\.integration-row/, 'browserControl integration row is not styled');
+assert.match(main, /cuppet:native:copy-text/, 'Electron main process does not expose native clipboard copy');
+assert.match(main, /clipboard\.writeText\(text\)/, 'native clipboard IPC does not write through Electron clipboard');
+assert.match(preload, /copyText: \(text\) => ipcRenderer\.invoke\('cuppet:native:copy-text'/, 'bounded preload does not expose native clipboard copy');
+assert.match(chat, /window\.cuppet\.native\.copyText\(value\)/, 'assistant copy button does not use the native clipboard bridge');
+assert.doesNotMatch(chat, /navigator\.clipboard/, 'assistant copy path returned to fragile renderer clipboard access');
 assert.match(search, /sessions\.search/, 'React local search missing');
 assert.match(search, /sessions\.restore/, 'React archived-search recovery missing');
 assert.match(search, /focusMessage\(result\.itemId\)/, 'exact matching message navigation missing');
 assert.match(search, /scrollIntoView/, 'exact message search result does not scroll into view');
 assert.match(sidebar, /project-new-chat-button/, 'project hover new-chat button missing');
+assert.match(sidebar, /MAX_VISIBLE_CHATS = 5/, 'sidebar chat groups are not capped at five by default');
+assert.match(sidebar, /session-show-more/, 'sidebar chat groups do not expose a show-more control');
+assert.doesNotMatch(sidebar, /GENERAL_CHAT_GROUP/, 'General chats should remain unbounded');
+assert.match(sidebar, /props\.generalSessions\.map\(\(session\) =>/, 'General chats are not rendered freely');
+assert.match(sidebar, /Show less.*Show more|Show more.*Show less/s, 'sidebar chat disclosure does not support both expansion states');
+assert.match(reactCss, /\.session-show-more/, 'sidebar show-more control is not styled');
 assert.match(sidebar, /New chat in \$\{project\.name\}/, 'project hover new-chat action is not labelled per project');
 assert.match(sidebar, /window\.cuppet\.sessions\.rename/, 'chat rename is not wired through the bounded renderer API');
 assert.match(sidebar, /sidebar-rename-dialog/, 'chat rename does not use the custom React surface');
@@ -124,10 +159,10 @@ assert.match(sidebar, /SIDEBAR_COLLAPSED_KEY/, 'macOS sidebar collapse persisten
 assert.match(sidebar, /sidebar-toggle-button/, 'macOS sidebar collapse button missing');
 assert.match(sidebar, /event\.metaKey.*event\.altKey.*event\.key\.toLowerCase\(\) !== 's'/s, 'macOS sidebar toggle shortcut is missing');
 assert.match(sidebar, /window\.cuppet\.native\.platform === 'darwin'/, 'sidebar collapse control is not scoped to macOS');
-assert.match(reactCss, /\.react-sidebar \.nav-button\{[^}]*font-size:13px/, 'primary sidebar navigation text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.project-name\{[^}]*font-size:13px/, 'project sidebar text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:13px/, 'chat/session sidebar text is not 13px');
-assert.match(reactCss, /\.react-sidebar \.sidebar-bottom \.ghost-button\{[^}]*font-size:13px/, 'sidebar footer action text is not 13px');
+assert.match(reactCss, /\.react-sidebar \.nav-button\{[^}]*font-size:14px/, 'primary sidebar navigation text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.project-name\{[^}]*font-size:14px/, 'project sidebar text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.session-title\{[^}]*font-size:14px/, 'chat/session sidebar text is not 14px');
+assert.match(reactCss, /\.react-sidebar \.sidebar-bottom \.ghost-button\{[^}]*font-size:14px/, 'sidebar footer action text is not 14px');
 assert.match(settingsCss, /\.settings-hub-nav button\{[^}]*font-size:12px/, 'Settings navigation baseline font size changed unexpectedly');
 assert.match(reactCss, /\.react-sidebar\.collapsed\{[^}]*42px/, 'collapsed macOS sidebar rail styling missing');
 assert.match(settings, /Account/);
@@ -162,4 +197,4 @@ const deadControllers = [
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
 
-console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 13px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
+console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 14px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');

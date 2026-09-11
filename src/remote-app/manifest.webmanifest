@@ -1,1 +1,1 @@
-{"name":"Cuppet Remote","short_name":"Cuppet","start_url":"/app","display":"standalone","background_color":"#0d0f12","theme_color":"#0d0f12","icons":[]}
+{"name":"Cuppet Remote","short_name":"Cuppet","start_url":"/app","display":"standalone","background_color":"#0d0f12","theme_color":"#0d0f12","icons":[{"src":"/app/cuppet-app-icon.png","sizes":"512x512","type":"image/png","purpose":"any"}]}

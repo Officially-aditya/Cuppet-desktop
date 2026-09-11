@@ -10,12 +10,14 @@
     "cuppet": "src/cli/main.mjs"
   },
   "scripts": {
+    "prebuild:renderer": "npm run mac:prepare-icon",
     "build:renderer": "vite build",
     "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test",
-    "pack:dir": "node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run renderer:verify && electron-builder --dir --publish never",
+    "mac:prepare-icon": "node scripts/prepare-macos-icon.mjs",
+    "pack:dir": "npm run mac:prepare-icon && node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run browsercontrol:verify && npm run renderer:verify && electron-builder --dir --publish never",
     "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
     "f1:stage-tst": "node scripts/stage-tst-runtime.mjs",
@@ -43,7 +45,10 @@
     "original-c2:verify": "node scripts/verify-original-c2.mjs",
     "d1:verify": "node scripts/verify-d1.mjs",
     "d3:verify": "node scripts/verify-d3.mjs",
-    "e1:verify": "node scripts/verify-e1.mjs"
+    "e1:verify": "node scripts/verify-e1.mjs",
+    "browsercontrol:stage": "node scripts/stage-browsercontrol-runtime.mjs",
+    "browsercontrol:verify": "node scripts/verify-staged-browsercontrol.mjs",
+    "browsercontrol:package-smoke": "node scripts/smoke-packaged-browsercontrol.mjs"
   },
   "dependencies": {},
   "devDependencies": {
@@ -73,33 +78,53 @@
       "src/runtime/**/*",
       "src/cli/**/*",
       "dist-renderer/**/*",
+      "src/remote-app/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "vendor/tst",
         "to": "tst",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "vendor/codex",
         "to": "codex",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/browsercontrol",
+        "to": "browsercontrol",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "directories": {
       "output": "dist"
     },
     "mac": {
+      "icon": "build/icon-macos.png",
       "category": "public.app-category.developer-tools",
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     },
     "linux": {
       "category": "Development",
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     },
     "win": {
-      "target": ["dir"]
+      "target": [
+        "dir"
+      ]
     }
   }
 }
