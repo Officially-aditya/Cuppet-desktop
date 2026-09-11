@@ -52,7 +52,14 @@ export class ProviderRuntimeManager {
 
   async cancel(sessionId) {
     const entry = this.#entries.get(String(sessionId ?? ''));
-    await entry?.runtime?.cancel?.();
+    if (!entry) return false;
+    const toolSession = entry.activeToolSession;
+    if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
+    await Promise.allSettled([
+      Promise.resolve(entry.runtime?.cancel?.()),
+      Promise.resolve(toolSession?.close?.()),
+    ]);
+    return true;
   }
 
   async forget(sessionId) {
@@ -61,7 +68,7 @@ export class ProviderRuntimeManager {
     if (!entry) return false;
     this.#entries.delete(id);
     clearTimeout(entry.idleTimer);
-    await entry.runtime.close().catch(() => undefined);
+    await closeManagedEntry(entry);
     return true;
   }
 
@@ -71,7 +78,7 @@ export class ProviderRuntimeManager {
     const entries = [...this.#entries.values()];
     this.#entries.clear();
     for (const entry of entries) clearTimeout(entry.idleTimer);
-    await Promise.all(entries.map((entry) => entry.runtime.close().catch(() => undefined)));
+    await Promise.all(entries.map((entry) => closeManagedEntry(entry)));
   }
 
   get size() { return this.#entries.size; }
@@ -82,12 +89,12 @@ export class ProviderRuntimeManager {
     if (entry && entry.fingerprint !== fingerprint) {
       this.#entries.delete(sessionId);
       clearTimeout(entry.idleTimer);
-      await entry.runtime.close().catch(() => undefined);
+      await closeManagedEntry(entry);
       entry = null;
     }
     if (!entry) {
       const runtime = this.#acpRuntimeFactory({ backendId, descriptor, configuration: providerConfig, projectRoot });
-      entry = { runtime, backendId, fingerprint, started: false, turns: 0, idleTimer: null, busy: false };
+      entry = { runtime, backendId, fingerprint, started: false, turns: 0, idleTimer: null, busy: false, activeToolSession: null };
       this.#entries.set(sessionId, entry);
     }
     if (entry.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
@@ -101,6 +108,7 @@ export class ProviderRuntimeManager {
         toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
         await toolSession.start();
         toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
+        entry.activeToolSession = toolSession;
       }
       const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [] };
       if (!entry.started) {
@@ -131,10 +139,11 @@ export class ProviderRuntimeManager {
     } catch (error) {
       if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId);
       clearTimeout(entry.idleTimer);
-      await entry.runtime.close().catch(() => undefined);
+      await closeManagedEntry(entry);
       throw error;
     } finally {
       await toolSession?.close().catch(() => undefined);
+      if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
       entry.busy = false;
       if (this.#entries.get(sessionId) === entry) this.#armIdle(sessionId, entry);
     }
@@ -145,10 +154,19 @@ export class ProviderRuntimeManager {
     entry.idleTimer = setTimeout(() => {
       if (entry.busy || this.#entries.get(sessionId) !== entry) return;
       this.#entries.delete(sessionId);
-      void entry.runtime.close().catch(() => undefined);
+      void closeManagedEntry(entry);
     }, this.#idleMs);
     entry.idleTimer.unref?.();
   }
+}
+
+async function closeManagedEntry(entry) {
+  const toolSession = entry?.activeToolSession;
+  if (entry?.activeToolSession === toolSession) entry.activeToolSession = null;
+  await Promise.allSettled([
+    Promise.resolve(toolSession?.close?.()),
+    Promise.resolve(entry?.runtime?.close?.()),
+  ]);
 }
 
 export function acpRuntimeFingerprint({ backendId, descriptor = null, configuration = {}, projectRoot = null } = {}) {
