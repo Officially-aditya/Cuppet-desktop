@@ -1,0 +1,707 @@
+name: Provider Model Sync Temp
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/provider-model-sync-temp.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply provider/model synchronization
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              source = file.read_text()
+              if old not in source:
+                  raise SystemExit(f"Missing patch anchor in {path}: {old[:160]!r}")
+              file.write_text(source.replace(old, new, 1))
+
+          Path('src/main/provider-model-catalog.mjs').write_text(r'''import { spawn } from 'node:child_process';
+import { discoverAcpModelCatalog } from '../runtime/acp-cli-provider.mjs';
+import { localCliDescriptor } from '../runtime/local-cli-descriptors.mjs';
+
+const ANTHROPIC_VERSION = '2023-06-01';
+const FETCH_TIMEOUT_MS = 10_000;
+const CLI_TIMEOUT_MS = 10_000;
+
+/**
+ * Ask the active provider for the models it actually advertises to this account.
+ * No model is invented here: ordering and ids come from the provider/CLI response.
+ */
+export async function fetchProviderModelCatalog(configuration = {}, options = {}) {
+  const providerID = text(configuration.providerID || configuration.primary?.providerID).toLowerCase();
+  const configuredModel = text(configuration.primary?.modelID || configuration.model);
+  if (!providerID) return unavailable('', 'none', 'No active provider is configured.');
+  if (providerID === 'codex') return unavailable(providerID, 'codex', 'Codex model discovery is handled by the Codex app-server catalog.');
+
+  const descriptor = localCliDescriptor(providerID);
+  if (descriptor) {
+    if (descriptor.transport === 'acp') {
+      try {
+        const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpModelCatalog;
+        const catalog = await discover(providerID);
+        return normalizeCatalog(providerID, 'acp', catalog, configuredModel);
+      } catch (error) {
+        return unavailable(providerID, 'acp', cleanError(error));
+      }
+    }
+    if (descriptor.id === 'antigravity') {
+      try {
+        const discover = typeof options.cliDiscover === 'function' ? options.cliDiscover : discoverAntigravityModels;
+        const catalog = await discover(descriptor);
+        return normalizeCatalog(providerID, 'cli', catalog, configuredModel);
+      } catch (error) {
+        return unavailable(providerID, 'cli', cleanError(error));
+      }
+    }
+    return unavailable(providerID, 'cli', `${descriptor.label} does not advertise a model catalog through its current transport.`);
+  }
+
+  const apiKey = text(configuration.apiKey);
+  if (!apiKey) return unavailable(providerID, 'api', 'Save this provider credential before loading its advertised models.');
+  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : globalThis.fetch;
+  if (typeof fetchImpl !== 'function') return unavailable(providerID, 'api', 'Model discovery fetch is unavailable.');
+
+  try {
+    const request = apiCatalogRequest(providerID, configuration.baseUrl, apiKey);
+    const payload = await requestJson(fetchImpl, request.url, request.headers);
+    const parsed = parseApiCatalog(providerID, payload);
+    return normalizeCatalog(providerID, 'api', parsed, configuredModel);
+  } catch (error) {
+    return unavailable(providerID, 'api', cleanError(error));
+  }
+}
+
+export function parseApiCatalog(providerID, payload = {}) {
+  const provider = text(providerID).toLowerCase();
+  const source = record(payload);
+  const rows = provider === 'google'
+    ? array(source.models).filter((item) => {
+        const methods = array(item?.supportedGenerationMethods ?? item?.supported_generation_methods).map((value) => text(value).toLowerCase());
+        return methods.length === 0 || methods.includes('generatecontent') || methods.includes('generate_content');
+      })
+    : firstArray(source.data, source.models, source.data?.models, source.result?.data, source.result?.models);
+
+  const models = [];
+  const seen = new Set();
+  for (const raw of rows) {
+    const item = record(raw);
+    let id = text(item.id || item.model_id || item.modelId || item.model || item.name);
+    if (provider === 'google') id = id.replace(/^models\//, '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const rawName = text(item.display_name || item.displayName || item.label || item.name);
+    const label = rawName && rawName !== `models/${id}` && rawName !== id ? rawName : id;
+    const description = text(item.description || item.summary);
+    const context = positiveInt(item.context_length ?? item.contextWindow ?? item.max_input_tokens ?? item.inputTokenLimit);
+    const outputLimit = positiveInt(item.max_completion_tokens ?? item.output_limit ?? item.max_tokens ?? item.outputTokenLimit ?? item.top_provider?.max_completion_tokens);
+    models.push({
+      id,
+      label,
+      ...(description ? { description } : {}),
+      ...(context ? { context } : {}),
+      ...(outputLimit ? { outputLimit } : {}),
+      ...(explicitDefault(item) ? { isDefault: true } : {}),
+    });
+    if (models.length >= 512) break;
+  }
+
+  const declaredDefault = text(source.default_model || source.defaultModel || source.current_model || source.currentModel);
+  const rowDefault = models.find((item) => item.isDefault)?.id || '';
+  return { models, defaultModel: declaredDefault || rowDefault || null };
+}
+
+export async function discoverAntigravityModels(descriptor, { commandOverride = '', runImpl = runCommand } = {}) {
+  const command = text(commandOverride) || text(process.env[descriptor.envOverride]) || descriptor.command;
+  const { stdout } = await runImpl(command, ['models'], CLI_TIMEOUT_MS);
+  const models = [];
+  const seen = new Set();
+  for (const rawLine of String(stdout ?? '').split(/\r?\n/)) {
+    const line = stripAnsi(rawLine).trim();
+    if (!line) continue;
+    const match = line.match(/^([^\s]+)\s{2,}(.+)$/);
+    if (!match) continue;
+    const id = text(match[1]);
+    const label = text(match[2]);
+    if (!id || !label || seen.has(id) || /^(model|models|slug)$/i.test(id)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$/.test(id)) continue;
+    seen.add(id);
+    models.push({ id, label });
+    if (models.length >= 512) break;
+  }
+  return { available: models.length > 0, models, defaultModel: null };
+}
+
+function apiCatalogRequest(providerID, baseUrlValue, apiKey) {
+  const provider = text(providerID).toLowerCase();
+  const baseUrl = stripSlash(text(baseUrlValue));
+  if (!baseUrl) throw new Error('Provider base URL is unavailable.');
+  if (provider === 'anthropic') return {
+    url: `${baseUrl}/models?limit=1000`,
+    headers: { 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION, accept: 'application/json' },
+  };
+  if (provider === 'google') return {
+    url: `${baseUrl}/models`,
+    headers: { 'x-goog-api-key': apiKey, accept: 'application/json' },
+  };
+  if (provider === 'qwen') {
+    const root = baseUrl.replace(/\/compatible-mode\/v1$/i, '/api/v1');
+    return { url: `${root}/models?providers=qwen`, headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' } };
+  }
+  const suffix = provider === 'openrouter' ? '/models?supported_parameters=tools' : '/models';
+  return { url: `${baseUrl}${suffix}`, headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' } };
+}
+
+async function requestJson(fetchImpl, url, headers) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, { method: 'GET', headers, signal: controller.signal, cache: 'no-store' });
+    if (!response?.ok) {
+      let detail = '';
+      try {
+        const payload = await response.json();
+        detail = text(payload?.error?.message || payload?.message || payload?.error);
+      } catch {}
+      throw new Error(`Model catalog request failed (${Number(response?.status) || 0})${detail ? `: ${detail}` : ''}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeCatalog(providerID, source, catalog, configuredModel) {
+  const input = record(catalog);
+  const models = [];
+  const seen = new Set();
+  for (const raw of array(input.models)) {
+    const item = record(raw);
+    const id = text(item.id || item.value || item.modelID);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      label: text(item.label || item.name) || id,
+      ...(text(item.description) ? { description: text(item.description) } : {}),
+      ...(positiveInt(item.context) ? { context: positiveInt(item.context) } : {}),
+      ...(positiveInt(item.outputLimit) ? { outputLimit: positiveInt(item.outputLimit) } : {}),
+      ...(item.isDefault === true ? { isDefault: true } : {}),
+    });
+  }
+  const declaredDefault = text(input.defaultModel || input.currentModel || input.currentValue);
+  const exactDefault = declaredDefault && models.some((item) => item.id === declaredDefault) ? declaredDefault : null;
+  const configured = text(configuredModel);
+  return {
+    providerID,
+    available: models.length > 0,
+    source,
+    models,
+    defaultModel: exactDefault,
+    configuredModel: configured || null,
+    fetchedAt: Date.now(),
+    ...(text(input.error) ? { error: text(input.error) } : {}),
+  };
+}
+
+function unavailable(providerID, source, error) {
+  return { providerID, available: false, source, models: [], defaultModel: null, configuredModel: null, fetchedAt: Date.now(), ...(error ? { error } : {}) };
+}
+
+function runCommand(command, args, timeoutMs) {
+  return new Promise((resolveRun, rejectRun) => {
+    let stdout = '';
+    let stderr = '';
+    let child;
+    try {
+      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false, env: { ...process.env } });
+    } catch (error) { rejectRun(error); return; }
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      rejectRun(new Error(`${command} timed out while advertising models.`));
+    }, timeoutMs);
+    child.stdout?.on('data', (chunk) => { stdout = `${stdout}${String(chunk)}`.slice(-512_000); });
+    child.stderr?.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-64_000); });
+    child.once('error', (error) => { clearTimeout(timer); rejectRun(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolveRun({ stdout, stderr });
+      else rejectRun(new Error((stderr || stdout || `${command} exited with code ${code}`).trim().slice(-1200)));
+    });
+  });
+}
+
+function explicitDefault(item) { return item?.is_default === true || item?.isDefault === true || item?.default === true; }
+function firstArray(...values) { return values.find(Array.isArray) ?? []; }
+function positiveInt(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0; }
+function stripSlash(value) { return value.replace(/\/+$/, ''); }
+function stripAnsi(value) { return String(value ?? '').replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, ''); }
+function cleanError(error) { return String(error instanceof Error ? error.message : error ?? '').replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 1000); }
+function text(value) { return typeof value === 'string' ? value.trim().slice(0, 1000) : ''; }
+function array(value) { return Array.isArray(value) ? value : []; }
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+''')
+
+          Path('src/renderer/react/provider-settings-events.ts').write_text(r'''export const PROVIDER_SETTINGS_EVENT = 'cuppet:provider-settings-changed';
+
+export function notifyProviderSettingsChanged() {
+  window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_EVENT));
+}
+''')
+
+          # ACP: advertise exact model options and apply exact selected option.
+          acp = 'src/runtime/acp-cli-provider.mjs'
+          replace_once(
+              acp,
+              "export function acpCliDescriptor(value) {\n  const descriptor = localCliDescriptor(value);\n  return descriptor?.transport === 'acp' ? descriptor : null;\n}\n\nexport class AcpCliAgentProvider {\n",
+              r'''export function acpCliDescriptor(value) {
+  const descriptor = localCliDescriptor(value);
+  return descriptor?.transport === 'acp' ? descriptor : null;
+}
+
+export function acpModelCatalogFromSession(session = {}) {
+  const source = record(session);
+  const configOptions = Array.isArray(source.configOptions) ? source.configOptions : [];
+  const selector = configOptions.find((item) => String(item?.category ?? '').toLowerCase() === 'model')
+    ?? configOptions.find((item) => item?.type === 'select' && /model/i.test(String(item?.id ?? item?.name ?? '')));
+  const rawOptions = Array.isArray(selector?.options) ? selector.options : [];
+  const models = [];
+  const seen = new Set();
+  for (const raw of rawOptions) {
+    const option = record(raw);
+    const id = text(option.value || option.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, label: text(option.name || option.label) || id, ...(text(option.description) ? { description: text(option.description) } : {}) });
+  }
+
+  // A few ACP agents shipped the older models object before configOptions stabilized.
+  const legacy = record(source.models);
+  if (!models.length) {
+    const legacyModels = Array.isArray(legacy.availableModels) ? legacy.availableModels : Array.isArray(legacy.models) ? legacy.models : [];
+    for (const raw of legacyModels) {
+      const option = record(raw);
+      const id = text(option.modelId || option.id || option.value);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      models.push({ id, label: text(option.name || option.label) || id, ...(text(option.description) ? { description: text(option.description) } : {}) });
+    }
+  }
+  const currentModel = text(selector?.currentValue || legacy.currentModelId || legacy.currentModel);
+  if (currentModel && !seen.has(currentModel)) models.unshift({ id: currentModel, label: currentModel });
+  return {
+    available: models.length > 0,
+    source: 'acp',
+    configId: text(selector?.id) || null,
+    defaultModel: currentModel || null,
+    currentModel: currentModel || null,
+    models,
+  };
+}
+
+export async function discoverAcpModelCatalog(providerID, options = {}) {
+  const descriptor = acpCliDescriptor(providerID);
+  if (!descriptor) throw new Error(`Unsupported ACP provider: ${providerID ?? 'unknown'}`);
+  const configuration = record(options.configuration);
+  const command = text(configuration.cliCommand) || text(process.env[descriptor.envOverride]) || descriptor.command;
+  const args = Array.isArray(configuration.cliArgs) && configuration.cliArgs.length ? configuration.cliArgs.map((value) => String(value)) : [...descriptor.args];
+  const cwd = text(options.cwd) || tmpdir();
+  const child = spawn(command, args, { cwd, env: providerEnvironment(descriptor.id), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
+  const rpc = new AcpRpcClient({ child, descriptor, projectRoot: null, executeTool: undefined, requestAgentPermission: undefined, onDelta: async () => {} });
+  try {
+    await rpc.ready();
+    const initialized = await rpc.request('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
+    }, REQUEST_TIMEOUT_MS);
+    await authenticateIfNeeded(rpc, descriptor, initialized);
+    const session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+    return { providerID: descriptor.id, ...acpModelCatalogFromSession(session) };
+  } catch (error) {
+    throw enrichProviderError(descriptor, error, rpc.stderr());
+  } finally {
+    rpc.close();
+  }
+}
+
+export class AcpCliAgentProvider {
+''')
+          replace_once(
+              acp,
+              "      sessionId = text(session?.sessionId);\n      if (!sessionId) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);\n\n      abortListener = () => {\n",
+              "      sessionId = text(session?.sessionId);\n      if (!sessionId) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);\n      await applyAdvertisedAcpModel(rpc, this.#descriptor, sessionId, session, configuredAcpModel(this.#configuration));\n\n      abortListener = () => {\n",
+          )
+          replace_once(
+              acp,
+              "function sessionPromptParams(descriptor, sessionId, textValue) {\n",
+              r'''async function applyAdvertisedAcpModel(rpc, descriptor, sessionId, session, requestedModel) {
+  const requested = text(requestedModel);
+  if (!requested || requested === 'cli-default') return;
+  const catalog = acpModelCatalogFromSession(session);
+  if (!catalog.configId) throw new Error(`${descriptor.label} does not advertise a switchable model selector; leaving its provider default unchanged.`);
+  if (!catalog.models.some((item) => item.id === requested)) throw new Error(`${descriptor.label} no longer advertises model '${requested}'. Refresh the model picker.`);
+  if (catalog.currentModel === requested) return;
+  await rpc.request('session/set_config_option', { sessionId, configId: catalog.configId, value: requested }, REQUEST_TIMEOUT_MS);
+}
+function configuredAcpModel(configuration) {
+  return text(configuration?.primary?.modelID || configuration?.model);
+}
+
+function sessionPromptParams(descriptor, sessionId, textValue) {
+''')
+
+          # Antigravity: use exact selected slug when the user pins one.
+          antigravity = 'src/runtime/antigravity-provider.mjs'
+          replace_once(
+              antigravity,
+              "    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', '-p', prompt];\n",
+              "    const selectedModel = text(this.#configuration?.primary?.modelID || this.#configuration?.model);\n    const modelArgs = selectedModel && selectedModel !== 'cli-default' ? ['--model', selectedModel] : [];\n    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', ...modelArgs, '-p', prompt];\n",
+          )
+
+          # Synthetic Auto must never guess a fast/cheap model from naming heuristics.
+          settings_store = 'src/main/provider-settings.mjs'
+          old_auto = r'''function autoSecondaryModel(preset, primaryModel) {
+  const fallback = modelID(primaryModel);
+  const models = Array.isArray(preset?.models) ? preset.models : [];
+  if (!models.length) return fallback;
+  let best = { id: fallback, score: 0 };
+  for (const item of models) {
+    const id = modelID(item?.id);
+    if (!id) continue;
+    const text = `${id} ${item?.label ?? ''} ${item?.description ?? ''}`.toLowerCase();
+    let score = 0;
+    if (text.includes('flash-lite')) score += 100;
+    if (text.includes('luna')) score += 90;
+    if (text.includes('flash')) score += 80;
+    if (text.includes('turbo')) score += 70;
+    if (text.includes('cost-efficient') || text.includes('lower-cost') || text.includes('low-latency')) score += 60;
+    if (text.includes('fast')) score += 50;
+    if (text.includes('small') || text.includes('27b')) score += 45;
+    if (text.includes('balanced') || text.includes('sonnet')) score += 35;
+    if (text.includes('opus') || text.includes('max') || text.includes(' pro ')) score -= 20;
+    if (text.includes('flagship') || text.includes('advanced') || text.includes('hardest')) score -= 10;
+    if (score > best.score) best = { id, score };
+  }
+  return best.score > 0 ? best.id : fallback;
+}
+'''
+          replace_once(settings_store, old_auto, "function autoSecondaryModel(_preset, primaryModel) {\n  // Auto means follow provider/user authority exactly; Cuppet never guesses a different model.\n  return modelID(primaryModel);\n}\n")
+
+          # Main process: expose live catalog and adopt only an explicitly advertised CLI default.
+          main = 'src/main/main.mjs'
+          replace_once(
+              main,
+              "import { ProviderSettingsStore } from './provider-settings.mjs';\n",
+              "import { ProviderSettingsStore } from './provider-settings.mjs';\nimport { fetchProviderModelCatalog } from './provider-model-catalog.mjs';\n",
+          )
+          replace_once(
+              main,
+              "  ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());\n  ipcMain.handle('cuppet:settings:save', async (_event, value) => {\n    const result = await settings.save(value);\n    await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);\n    return result;\n  });\n",
+              r'''  ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
+  ipcMain.handle('cuppet:settings:models', () => fetchProviderModelCatalog(settings.runtimeValue()));
+  ipcMain.handle('cuppet:settings:save', async (_event, value) => {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    let result = await settings.save(source);
+    const explicitModel = typeof source.model === 'string' && source.model.trim();
+    if (!explicitModel && result.authType === 'local-cli') {
+      const advertised = await fetchProviderModelCatalog(settings.runtimeValue()).catch(() => null);
+      const exactDefault = typeof advertised?.defaultModel === 'string' ? advertised.defaultModel.trim() : '';
+      if (exactDefault && exactDefault !== 'cli-default' && exactDefault !== result.primary?.modelID) {
+        result = await settings.save({
+          providerID: result.primary?.providerID || result.providerID,
+          baseUrl: result.baseUrl || '',
+          model: exactDefault,
+          backgroundModel: exactDefault,
+          secondaryAuto: true,
+        });
+      }
+    }
+    await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+    return result;
+  });
+''')
+
+          # Preload/types: renderer access to the live catalog.
+          preload = 'src/preload/preload.cjs'
+          replace_once(
+              preload,
+              "  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },\n",
+              "  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), models: () => ipcRenderer.invoke('cuppet:settings:models'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },\n",
+          )
+
+          types = 'src/renderer/types.ts'
+          replace_once(
+              types,
+              "export type CodexModelCatalog = {\n",
+              r'''export type ProviderModelCatalog = {
+  providerID: string;
+  available: boolean;
+  source: 'api' | 'acp' | 'cli' | 'codex' | 'none' | string;
+  defaultModel?: string | null;
+  configuredModel?: string | null;
+  fetchedAt?: number;
+  error?: string;
+  models: Array<{
+    id: string;
+    label?: string;
+    description?: string;
+    context?: number;
+    outputLimit?: number;
+    isDefault?: boolean;
+  }>;
+};
+
+export type CodexModelCatalog = {
+''')
+          replace_once(
+              types,
+              "  settings: {\n    get: () => Promise<ProviderSettings>;\n    save: (value: Record<string, unknown>) => Promise<ProviderSettings>;\n  };\n",
+              "  settings: {\n    get: () => Promise<ProviderSettings>;\n    models: () => Promise<ProviderModelCatalog>;\n    save: (value: Record<string, unknown>) => Promise<ProviderSettings>;\n  };\n",
+          )
+
+          # ModelPicker: live provider catalog, cross-surface refresh, exact fallback semantics.
+          picker = 'src/renderer/react/ModelPicker.tsx'
+          replace_once(
+              picker,
+              "import type { CodexModelCatalog, ProviderSettings } from '../types';\n",
+              "import type { CodexModelCatalog, ProviderModelCatalog, ProviderSettings } from '../types';\nimport { PROVIDER_SETTINGS_EVENT, notifyProviderSettingsChanged } from './provider-settings-events';\n",
+          )
+          replace_once(
+              picker,
+              "const EMPTY_CODEX: CodexModelCatalog = { available: false, models: [], defaultModel: null };\n",
+              "const EMPTY_CODEX: CodexModelCatalog = { available: false, models: [], defaultModel: null };\nconst EMPTY_ADVERTISED: ProviderModelCatalog = { providerID: '', available: false, source: 'none', models: [], defaultModel: null };\n",
+          )
+          replace_once(
+              picker,
+              "  const [codex, setCodex] = useState<CodexModelCatalog>(EMPTY_CODEX);\n  const [error, setError] = useState('');\n",
+              "  const [codex, setCodex] = useState<CodexModelCatalog>(EMPTY_CODEX);\n  const [advertised, setAdvertised] = useState<ProviderModelCatalog>(EMPTY_ADVERTISED);\n  const [error, setError] = useState('');\n",
+          )
+          replace_once(
+              picker,
+              r'''  const refresh = async () => {
+    const next = await window.cuppet.settings.get();
+    setSettings(next);
+    const providerID = next.primary?.providerID || next.providerID || '';
+    if (providerID === 'codex') {
+      const catalog = await window.cuppet.codexAuth.models();
+      setCodex(catalog);
+      if (catalog.error) setError(catalog.error);
+    } else {
+      setCodex(EMPTY_CODEX);
+    }
+    return next;
+  };
+
+  useEffect(() => {
+    void refresh().catch((value) => setError(message(value)));
+  }, []);
+''',
+              r'''  const refresh = async () => {
+    const next = await window.cuppet.settings.get();
+    setSettings(next);
+    const providerID = next.primary?.providerID || next.providerID || '';
+    setError('');
+    if (providerID === 'codex') {
+      const catalog = await window.cuppet.codexAuth.models();
+      setCodex(catalog);
+      setAdvertised(EMPTY_ADVERTISED);
+      if (catalog.error) setError(catalog.error);
+    } else {
+      setCodex(EMPTY_CODEX);
+      const catalog = await window.cuppet.settings.models();
+      setAdvertised(catalog.providerID === providerID ? catalog : EMPTY_ADVERTISED);
+      if (catalog.error && !catalog.models.length) setError(catalog.error);
+    }
+    return next;
+  };
+
+  useEffect(() => {
+    void refresh().catch((value) => setError(message(value)));
+    const sync = () => { void refresh().catch((value) => setError(message(value))); };
+    window.addEventListener(PROVIDER_SETTINGS_EVENT, sync);
+    return () => window.removeEventListener(PROVIDER_SETTINGS_EVENT, sync);
+  }, []);
+''')
+          replace_once(
+              picker,
+              "    for (const model of providerPreset?.models ?? []) add(model.id, model.label, model.description);\n",
+              "    const liveModels = advertised.providerID === providerID ? advertised.models : [];\n    const fallbackModels = liveModels.length ? [] : providerPreset?.models ?? [];\n    for (const model of liveModels) add(model.id, model.label, model.description);\n    for (const model of fallbackModels) add(model.id, model.label, model.description);\n",
+          )
+          replace_once(
+              picker,
+              "  }, [codex, configuredModel, providerID, providerPreset?.models, settings?.customModels, settings?.models]);\n",
+              "  }, [advertised, codex, configuredModel, providerID, providerPreset?.models, settings?.customModels, settings?.models]);\n",
+          )
+          replace_once(
+              picker,
+              "      setSettings(next);\n      onChange?.(next);\n      setOpen(false);\n",
+              "      setSettings(next);\n      onChange?.(next);\n      notifyProviderSettingsChanged();\n      setOpen(false);\n",
+          )
+          # chooseModel has a different save variable name and can be patched independently.
+          replace_once(
+              picker,
+              "        setSettings(next);\n        onChange?.(next);\n      }\n\n      if (slot === 'primary' && nextEffortState.options.length > 0) {\n",
+              "        setSettings(next);\n        onChange?.(next);\n        notifyProviderSettingsChanged();\n      }\n\n      if (slot === 'primary' && nextEffortState.options.length > 0) {\n",
+          )
+          replace_once(
+              picker,
+              "      setSettings(saved);\n      onChange?.(saved);\n      setOpen(false);\n",
+              "      setSettings(saved);\n      onChange?.(saved);\n      notifyProviderSettingsChanged();\n      setOpen(false);\n",
+          )
+          replace_once(
+              picker,
+              "                    <strong>{option.label}</strong>\n                    {selected && <span className=\"model-picker-check\" aria-hidden=\"true\">✓</span>}\n",
+              "                    <strong>{option.label}</strong>\n                    {option.description && <small>{option.description}</small>}\n                    {selected && <span className=\"model-picker-check\" aria-hidden=\"true\">✓</span>}\n",
+          )
+
+          # Settings saves notify the already-mounted composer immediately.
+          modal = 'src/renderer/react/SettingsModal.tsx'
+          replace_once(
+              modal,
+              "import { CUPPET_LOGO_URL } from './brand';\n",
+              "import { CUPPET_LOGO_URL } from './brand';\nimport { notifyProviderSettingsChanged } from './provider-settings-events';\n",
+          )
+          replace_once(
+              modal,
+              "      onSaved(projected);\n      setNote(`${selected.label || selected.id} connected and selected.`);\n",
+              "      onSaved(projected);\n      notifyProviderSettingsChanged();\n      setNote(`${selected.label || selected.id} connected and selected.`);\n",
+          )
+          replace_once(
+              modal,
+              "      onSaved({ ...saved, ...(isCodex ? { credentialConfigured: codex.loggedIn, configured: codex.loggedIn && Boolean(saved.primary?.modelID) } : {}), ...(isLocalCli ? { credentialConfigured: true, configured: Boolean(cliStatus?.available && saved.primary?.modelID) } : {}) });\n      setNote(isCodex ? 'Codex subscription provider saved.' : isLocalCli ? `${selected.label || selected.id} local CLI provider saved.` : `${selected.label || selected.id} saved.`);\n",
+              "      onSaved({ ...saved, ...(isCodex ? { credentialConfigured: codex.loggedIn, configured: codex.loggedIn && Boolean(saved.primary?.modelID) } : {}), ...(isLocalCli ? { credentialConfigured: true, configured: Boolean(cliStatus?.available && saved.primary?.modelID) } : {}) });\n      notifyProviderSettingsChanged();\n      setNote(isCodex ? 'Codex subscription provider saved.' : isLocalCli ? `${selected.label || selected.id} local CLI provider saved.` : `${selected.label || selected.id} saved.`);\n",
+          )
+          replace_once(
+              modal,
+              "  const modelSaved = useCallback((saved: ProviderSettings) => {\n    setCurrent(saved);\n    onSaved(saved);\n  }, [onSaved]);\n",
+              "  const modelSaved = useCallback((saved: ProviderSettings) => {\n    setCurrent(saved);\n    onSaved(saved);\n    notifyProviderSettingsChanged();\n  }, [onSaved]);\n",
+          )
+
+          # Make the Build/Plan chevron visibly smaller and consistent with the model picker.
+          mode_css = 'src/renderer/composer-mode.css'
+          replace_once(
+              mode_css,
+              "  background-image:linear-gradient(45deg,transparent 50%,#6f7986 50%),linear-gradient(135deg,#6f7986 50%,transparent 50%);\n  background-position:calc(100% - 11px) 12px,calc(100% - 8px) 12px;\n  background-size:3px 3px,3px 3px;\n  background-repeat:no-repeat;\n",
+              "  background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='m2.25 3.5 2.75 2.75L7.75 3.5' fill='none' stroke='%236f7986' stroke-width='1.15' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\");\n  background-position:right 8px center;\n  background-size:9px 9px;\n  background-repeat:no-repeat;\n",
+          )
+
+          # Tests for exact advertised catalogs and exact Auto preservation.
+          Path('test/provider-model-catalog.test.mjs').write_text(r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fetchProviderModelCatalog, parseApiCatalog, discoverAntigravityModels } from '../src/main/provider-model-catalog.mjs';
+import { acpModelCatalogFromSession } from '../src/runtime/acp-cli-provider.mjs';
+
+test('OpenAI-compatible catalog preserves provider ids including exact auto ids', async () => {
+  const requests = [];
+  const catalog = await fetchProviderModelCatalog({ providerID: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'secret', model: 'openrouter/auto' }, {
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      return { ok: true, json: async () => ({ data: [
+        { id: 'openrouter/auto', name: 'Auto Router', description: 'Provider-owned routing', supported_parameters: ['tools'] },
+        { id: 'vendor/model-a', name: 'Model A', supported_parameters: ['tools'] },
+      ] }) };
+    },
+  });
+  assert.equal(catalog.source, 'api');
+  assert.deepEqual(catalog.models.map((item) => item.id), ['openrouter/auto', 'vendor/model-a']);
+  assert.equal(catalog.defaultModel, null);
+  assert.match(requests[0].url, /supported_parameters=tools/);
+  assert.equal(requests[0].init.headers.authorization, 'Bearer secret');
+});
+
+test('Anthropic model list uses provider-advertised labels and explicit defaults only', () => {
+  const catalog = parseApiCatalog('anthropic', { data: [
+    { id: 'claude-sonnet-x', display_name: 'Claude Sonnet X', max_input_tokens: 200000 },
+    { id: 'auto', display_name: 'Auto', is_default: true },
+  ] });
+  assert.deepEqual(catalog.models.map((item) => item.id), ['claude-sonnet-x', 'auto']);
+  assert.equal(catalog.defaultModel, 'auto');
+  assert.equal(catalog.models[0].label, 'Claude Sonnet X');
+});
+
+test('Gemini catalog keeps only entries the API advertises for generateContent', () => {
+  const catalog = parseApiCatalog('google', { models: [
+    { name: 'models/gemini-live', displayName: 'Gemini Live', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 1000 },
+    { name: 'models/text-embedding', displayName: 'Embedding', supportedGenerationMethods: ['embedContent'] },
+  ] });
+  assert.deepEqual(catalog.models.map((item) => item.id), ['gemini-live']);
+});
+
+test('ACP session config model selector preserves exact current Auto value', () => {
+  const catalog = acpModelCatalogFromSession({
+    configOptions: [{
+      id: 'model', category: 'model', type: 'select', currentValue: 'auto',
+      options: [{ value: 'auto', name: 'Auto' }, { value: 'provider/model-x', name: 'Model X' }],
+    }],
+  });
+  assert.equal(catalog.configId, 'model');
+  assert.equal(catalog.defaultModel, 'auto');
+  assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
+});
+
+test('Antigravity model command parser uses advertised slugs without choosing a default', async () => {
+  const catalog = await discoverAntigravityModels({ command: 'agy', envOverride: 'CUPPET_ANTIGRAVITY_BIN' }, {
+    runImpl: async () => ({ stdout: 'gemini-3.8-flash-high     Gemini 3.8 Flash (High)\nclaude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)\n' }),
+  });
+  assert.deepEqual(catalog.models.map((item) => item.id), ['gemini-3.8-flash-high', 'claude-sonnet-4-6']);
+  assert.equal(catalog.defaultModel, null);
+});
+''')
+
+          # Renderer contract guard for the provider change sync path.
+          Path('test/provider-model-renderer-sync.test.mjs').write_text(r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+test('composer model picker listens for provider settings changes and requests live catalog', async () => {
+  const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
+  const modal = await readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8');
+  assert.match(picker, /PROVIDER_SETTINGS_EVENT/);
+  assert.match(picker, /window\.cuppet\.settings\.models\(\)/);
+  assert.match(modal, /notifyProviderSettingsChanged\(\)/);
+});
+''')
+          PY
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Verify provider model pipeline
+        run: node --test test/provider-model-catalog.test.mjs test/provider-model-renderer-sync.test.mjs test/acp-cli-provider.test.mjs
+
+      - name: Verify renderer
+        run: npm run renderer:verify
+
+      - name: Commit implementation and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/provider-model-sync-temp.yml
+          git add src/main/provider-model-catalog.mjs src/main/provider-settings.mjs src/main/main.mjs src/preload/preload.cjs src/runtime/acp-cli-provider.mjs src/runtime/antigravity-provider.mjs src/renderer/types.ts src/renderer/react/ModelPicker.tsx src/renderer/react/SettingsModal.tsx src/renderer/react/provider-settings-events.ts src/renderer/composer-mode.css test/provider-model-catalog.test.mjs test/provider-model-renderer-sync.test.mjs
+          git commit -m "feat: sync advertised provider models"
+          git push origin HEAD:ui/cuppet-branding
