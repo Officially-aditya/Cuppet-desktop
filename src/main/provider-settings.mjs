@@ -41,7 +41,7 @@ export class ProviderSettingsStore {
       const parsed = JSON.parse(await readFile(this.#path, 'utf8'));
       this.#value = serializableProviderConfiguration({ ...DEFAULTS, ...parsed });
       this.#encryptedApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : undefined;
-      this.#primaryEffort = this.#value.providerID === 'codex' ? effortID(parsed.primaryEffort) : '';
+      this.#primaryEffort = effortID(parsed.primaryEffort);
       this.#secondaryAuto = parsed.secondaryAuto !== false;
       this.#customModels = normalizeCustomModelRegistry(parsed.customModels);
     } catch {
@@ -78,7 +78,7 @@ export class ProviderSettingsStore {
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
       customModels: customModelEntries(this.#customModels),
-      primaryEffort: projection.providerID === 'codex' ? (this.#primaryEffort || null) : (projection.primary?.variant ?? null),
+      primaryEffort: this.#primaryEffort || projection.primary?.variant || null,
       encryptionAvailable: storage.available,
       encryptionBackend: storage.backend,
       encryptionUnavailableReason: storage.reason,
@@ -92,9 +92,7 @@ export class ProviderSettingsStore {
       ...effective,
       apiKey: ['chatgpt', 'local-cli'].includes(selectedPreset?.authType) ? '' : this.#decryptApiKey(),
     });
-    return effective.providerID === 'codex' && this.#primaryEffort
-      ? { ...normalized, primaryEffort: this.#primaryEffort }
-      : normalized;
+    return this.#primaryEffort ? { ...normalized, primaryEffort: this.#primaryEffort } : normalized;
   }
 
   async save(input) {
@@ -122,15 +120,16 @@ export class ProviderSettingsStore {
     const backgroundModel = secondaryAuto
       ? autoSecondaryModel(preset, model)
       : requestedBackgroundModel || currentSecondaryModel || model;
-    const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
-    const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
     const chatGPTProvider = preset?.authType === 'chatgpt';
     const localCliProvider = preset?.authType === 'local-cli';
     const externalCredentialProvider = chatGPTProvider || localCliProvider;
-    const codexEffortProvided = providerID === 'codex' && Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
-    const codexEffort = providerID === 'codex'
-      ? (codexEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
+    const persistentEffortProvider = providerID === 'codex' || localCliProvider;
+    const primaryEffortProvided = Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
+    const persistedPrimaryEffort = persistentEffortProvider
+      ? (primaryEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
       : '';
+    const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
+    const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
 
     if (!baseUrl) throw new Error('Provider base URL is required');
     if (!externalCredentialProvider) {
@@ -153,7 +152,7 @@ export class ProviderSettingsStore {
     if (secondaryEffort) next.secondary = resolveAdvertisedSelection(next, { ...next.secondary, variant: secondaryEffort });
     next = normalizeProviderConfiguration(next);
     this.#value = serializableProviderConfiguration(next);
-    this.#primaryEffort = codexEffort;
+    this.#primaryEffort = persistedPrimaryEffort;
     this.#secondaryAuto = secondaryAuto;
 
     if (externalCredentialProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {

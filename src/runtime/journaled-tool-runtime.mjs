@@ -28,6 +28,17 @@ export class JournaledToolRuntime {
         if (!messageId) return;
         this.#emit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
+      onProviderEvent: (event) => {
+        if (!messageId || !event || typeof event !== 'object') return;
+        if (event.type === 'reasoning') {
+          const segment = typeof event.text === 'string' ? event.text.trim() : '';
+          if (segment) this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
+          return;
+        }
+        if (event.type === 'tool.started' || event.type === 'tool.finished') {
+          this.#emit({ ...event, sessionId: options.sessionId, messageId });
+        }
+      },
     });
     this.#captures.set(options.sessionId, capture);
     try {
@@ -54,9 +65,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, onReasoning = () => {}, onPreview = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onProviderEvent;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, onReasoning = () => {}, onPreview = () => {}, onProviderEvent = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onProviderEvent = onProviderEvent;
   }
 
   async stream(messages, options) {
@@ -85,7 +96,7 @@ class ToolMutationCapture {
       : undefined;
     let response;
     try {
-      response = await this.#adapter.stream(messages, { ...options, onDelta: previewDelta, ...(executeTool ? { executeTool } : {}) });
+      response = await this.#adapter.stream(messages, { ...options, onDelta: previewDelta, onProviderEvent: async (event) => this.#onProviderEvent(event), ...(executeTool ? { executeTool } : {}) });
     } catch (error) {
       this.#onPreview('');
       throw error;

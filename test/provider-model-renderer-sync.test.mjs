@@ -9,3 +9,10 @@ test('composer model picker listens for provider settings changes and requests l
   assert.match(picker, /window\.cuppet\.settings\.models\(\)/);
   assert.match(modal, /notifyProviderSettingsChanged\(\)/);
 });
+
+
+test('ModelPicker reads ACP-advertised reasoning options', async () => {
+  const source = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
+  assert.match(source, /advertised\.reasoning/);
+  assert.match(source, /settings\?\.primaryEffort/);
+});

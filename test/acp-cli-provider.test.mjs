@@ -61,3 +61,29 @@ test('Kiro ACP compatibility accepts content prompts and session/notification up
   assert.equal(result.text, 'Kiro ready.');
   assert.equal(streamed, 'Kiro ready.');
 });
+
+
+test('ACP provider applies advertised model and reasoning effort and surfaces native activity', async () => {
+  const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+  const provider = new AcpCliAgentProvider({
+    providerID: 'opencode',
+    cliCommand: process.execPath,
+    cliArgs: [configFixture],
+    primary: { providerID: 'opencode', modelID: 'provider/model-b' },
+    primaryEffort: 'max',
+  });
+  const activity = [];
+  let streamed = '';
+  const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
+    projectRoot: tmpdir(),
+    onDelta: async (delta) => { streamed += delta; },
+    onProviderEvent: async (event) => { activity.push(event); },
+  });
+  assert.equal(result.text, 'Done.');
+  assert.equal(streamed, 'Done.');
+  assert.deepEqual(activity.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
+  assert.equal(activity[0].text, 'Inspecting project.');
+  assert.equal(activity[1].callId, 'tool-1');
+  assert.equal(activity[1].tool, 'Search files');
+  assert.equal(activity[2].success, true);
+});

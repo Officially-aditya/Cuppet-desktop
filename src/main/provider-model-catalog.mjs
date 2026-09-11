@@ -21,7 +21,7 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
     if (descriptor.transport === 'acp') {
       try {
         const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpModelCatalog;
-        const catalog = await discover(providerID);
+        const catalog = await discover(providerID, { configuration });
         return normalizeCatalog(providerID, 'acp', catalog, configuredModel);
       } catch (error) {
         return unavailable(providerID, 'acp', cleanError(error));
@@ -174,6 +174,18 @@ function normalizeCatalog(providerID, source, catalog, configuredModel) {
   const declaredDefault = text(input.defaultModel || input.currentModel || input.currentValue);
   const exactDefault = declaredDefault && models.some((item) => item.id === declaredDefault) ? declaredDefault : null;
   const configured = text(configuredModel);
+  const reasoningSource = record(input.reasoning);
+  const reasoningOptions = array(reasoningSource.options).flatMap((raw) => {
+    const item = record(raw);
+    const id = text(item.id || item.value);
+    return id ? [{ id, label: text(item.label || item.name) || id, ...(text(item.description) ? { description: text(item.description) } : {}) }] : [];
+  });
+  const reasoningConfigId = text(reasoningSource.configId || reasoningSource.id);
+  const reasoning = reasoningConfigId && reasoningOptions.length ? {
+    configId: reasoningConfigId,
+    currentValue: text(reasoningSource.currentValue) || null,
+    options: reasoningOptions,
+  } : null;
   return {
     providerID,
     available: models.length > 0,
@@ -182,6 +194,7 @@ function normalizeCatalog(providerID, source, catalog, configuredModel) {
     defaultModel: exactDefault,
     configuredModel: configured || null,
     fetchedAt: Date.now(),
+    ...(reasoning ? { reasoning } : {}),
     ...(text(input.error) ? { error: text(input.error) } : {}),
   };
 }

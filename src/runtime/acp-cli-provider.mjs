@@ -22,6 +22,10 @@ export function acpCliDescriptor(value) {
 export function acpModelCatalogFromSession(session = {}) {
   const source = record(session);
   const configOptions = Array.isArray(source.configOptions) ? source.configOptions : [];
+  const normalizedConfigOptions = configOptions.flatMap((item) => {
+    const normalized = normalizeAcpSelectOption(item);
+    return normalized ? [normalized] : [];
+  });
   const selector = configOptions.find((item) => String(item?.category ?? '').toLowerCase() === 'model')
     ?? configOptions.find((item) => item?.type === 'select' && /model/i.test(String(item?.id ?? item?.name ?? '')));
   const rawOptions = Array.isArray(selector?.options) ? selector.options : [];
@@ -49,6 +53,8 @@ export function acpModelCatalogFromSession(session = {}) {
   }
   const currentModel = text(selector?.currentValue || legacy.currentModelId || legacy.currentModel);
   if (currentModel && !seen.has(currentModel)) models.unshift({ id: currentModel, label: currentModel });
+  const reasoning = normalizedConfigOptions.find((item) => item.category === 'thought_level')
+    ?? normalizedConfigOptions.find((item) => /(effort|reason|thought)/i.test(`${item.id} ${item.name}`));
   return {
     available: models.length > 0,
     source: 'acp',
@@ -56,6 +62,12 @@ export function acpModelCatalogFromSession(session = {}) {
     defaultModel: currentModel || null,
     currentModel: currentModel || null,
     models,
+    configOptions: normalizedConfigOptions,
+    reasoning: reasoning ? {
+      configId: reasoning.id,
+      currentValue: reasoning.currentValue || null,
+      options: reasoning.options,
+    } : null,
   };
 }
 
@@ -76,7 +88,9 @@ export async function discoverAcpModelCatalog(providerID, options = {}) {
       clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
     }, REQUEST_TIMEOUT_MS);
     await authenticateIfNeeded(rpc, descriptor, initialized);
-    const session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+    let session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+    session = await applyAdvertisedAcpModel(rpc, descriptor, text(session?.sessionId), session, configuredAcpModel(configuration));
+    session = await applyAdvertisedAcpEffort(rpc, descriptor, text(session?.sessionId), session, configuredAcpEffort(configuration));
     return { providerID: descriptor.id, ...acpModelCatalogFromSession(session) };
   } catch (error) {
     throw enrichProviderError(descriptor, error, rpc.stderr());
@@ -96,7 +110,7 @@ export class AcpCliAgentProvider {
     this.#descriptor = descriptor;
   }
 
-  async stream(messages, { signal, onDelta = async () => {}, projectRoot = null, executeTool, requestAgentPermission } = {}) {
+  async stream(messages, { signal, onDelta = async () => {}, onProviderEvent = async () => {}, projectRoot = null, executeTool, requestAgentPermission } = {}) {
     if (signal?.aborted) throw abortError();
     const command = text(this.#configuration.cliCommand) || text(process.env[this.#descriptor.envOverride]) || this.#descriptor.command;
     const args = Array.isArray(this.#configuration.cliArgs) && this.#configuration.cliArgs.length
@@ -124,6 +138,7 @@ export class AcpCliAgentProvider {
       executeTool,
       requestAgentPermission,
       onDelta,
+      onProviderEvent,
     });
     let sessionId = '';
     let abortListener;
@@ -138,10 +153,11 @@ export class AcpCliAgentProvider {
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, REQUEST_TIMEOUT_MS);
       await authenticateIfNeeded(rpc, this.#descriptor, initialized);
-      const session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+      let session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
       sessionId = text(session?.sessionId);
       if (!sessionId) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
-      await applyAdvertisedAcpModel(rpc, this.#descriptor, sessionId, session, configuredAcpModel(this.#configuration));
+      session = await applyAdvertisedAcpModel(rpc, this.#descriptor, sessionId, session, configuredAcpModel(this.#configuration));
+      session = await applyAdvertisedAcpEffort(rpc, this.#descriptor, sessionId, session, configuredAcpEffort(this.#configuration));
 
       abortListener = () => {
         rpc.notify('session/cancel', { sessionId });
@@ -167,17 +183,18 @@ export class AcpCliAgentProvider {
 }
 
 class AcpRpcClient {
-  #child; #descriptor; #projectRoot; #executeTool; #requestAgentPermission; #onDelta;
+  #child; #descriptor; #projectRoot; #executeTool; #requestAgentPermission; #onDelta; #onProviderEvent;
   #pending = new Map(); #nextID = 1; #stderr = ''; #text = ''; #lastUpdateAt = 0; #closed = false;
   #terminals = new Map(); #nextTerminal = 1; #readyPromise;
 
-  constructor({ child, descriptor, projectRoot, executeTool, requestAgentPermission, onDelta }) {
+  constructor({ child, descriptor, projectRoot, executeTool, requestAgentPermission, onDelta, onProviderEvent }) {
     this.#child = child;
     this.#descriptor = descriptor;
     this.#projectRoot = projectRoot ? resolve(projectRoot) : null;
     this.#executeTool = executeTool;
     this.#requestAgentPermission = requestAgentPermission;
     this.#onDelta = typeof onDelta === 'function' ? onDelta : async () => {};
+    this.#onProviderEvent = typeof onProviderEvent === 'function' ? onProviderEvent : async () => {};
     this.#readyPromise = new Promise((resolveReady, rejectReady) => {
       let settled = false;
       const ready = () => { if (settled) return; settled = true; resolveReady(); };
@@ -275,12 +292,27 @@ class AcpRpcClient {
   async #handleUpdate(update) {
     const source = record(update);
     this.#lastUpdateAt = Date.now();
-    if (normalizeUpdateKind(source.sessionUpdate ?? source.type ?? source.kind) === 'agent_message_chunk') {
+    const kind = normalizeUpdateKind(source.sessionUpdate ?? source.type ?? source.kind);
+    if (kind === 'agent_message_chunk') {
       const delta = contentText(source.content);
       if (!delta) return;
       this.#text += delta;
       await this.#onDelta(delta);
+      return;
     }
+    if (kind === 'agent_thought_chunk') {
+      const reasoning = contentText(source.content);
+      if (reasoning) await this.#safeProviderEvent({ type: 'reasoning', text: reasoning });
+      return;
+    }
+    if (kind === 'tool_call' || kind === 'tool_call_update') {
+      const event = acpProviderToolEvent(source);
+      if (event) await this.#safeProviderEvent(event);
+    }
+  }
+
+  async #safeProviderEvent(event) {
+    try { await this.#onProviderEvent(event); } catch {}
   }
 
   async #handleServerRequest(message) {
@@ -371,15 +403,38 @@ class AcpRpcClient {
 
 async function applyAdvertisedAcpModel(rpc, descriptor, sessionId, session, requestedModel) {
   const requested = text(requestedModel);
-  if (!requested || requested === 'cli-default') return;
+  if (!requested || requested === 'cli-default') return session;
   const catalog = acpModelCatalogFromSession(session);
   if (!catalog.configId) throw new Error(`${descriptor.label} does not advertise a switchable model selector; leaving its provider default unchanged.`);
   if (!catalog.models.some((item) => item.id === requested)) throw new Error(`${descriptor.label} no longer advertises model '${requested}'. Refresh the model picker.`);
-  if (catalog.currentModel === requested) return;
-  await rpc.request('session/set_config_option', { sessionId, configId: catalog.configId, value: requested }, REQUEST_TIMEOUT_MS);
+  if (catalog.currentModel === requested) return session;
+  const result = await rpc.request('session/set_config_option', { sessionId, configId: catalog.configId, value: requested }, REQUEST_TIMEOUT_MS);
+  return sessionWithConfigOptions(session, result);
+}
+
+async function applyAdvertisedAcpEffort(rpc, descriptor, sessionId, session, requestedEffort) {
+  const requested = text(requestedEffort);
+  if (!requested) return session;
+  const catalog = acpModelCatalogFromSession(session);
+  const reasoning = catalog.reasoning;
+  if (!reasoning?.configId) throw new Error(`${descriptor.label} does not advertise a reasoning-effort selector for the selected model.`);
+  if (!reasoning.options.some((item) => item.id === requested)) {
+    throw new Error(`${descriptor.label} no longer advertises reasoning effort '${requested}' for the selected model. Refresh the model picker.`);
+  }
+  if (reasoning.currentValue === requested) return session;
+  const result = await rpc.request('session/set_config_option', { sessionId, configId: reasoning.configId, value: requested }, REQUEST_TIMEOUT_MS);
+  return sessionWithConfigOptions(session, result);
+}
+
+function sessionWithConfigOptions(session, result) {
+  const configOptions = Array.isArray(result?.configOptions) ? result.configOptions : null;
+  return configOptions ? { ...record(session), configOptions } : session;
 }
 function configuredAcpModel(configuration) {
   return text(configuration?.primary?.modelID || configuration?.model);
+}
+function configuredAcpEffort(configuration) {
+  return text(configuration?.primaryEffort || configuration?.primary?.variant);
 }
 
 function sessionPromptParams(descriptor, sessionId, textValue) {
@@ -393,6 +448,55 @@ function contentText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(contentText).join('');
   return typeof value?.text === 'string' ? value.text : '';
+}
+function normalizeAcpSelectOption(value) {
+  const source = record(value);
+  if (source.type !== 'select') return null;
+  const id = text(source.id);
+  if (!id) return null;
+  const options = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(source.options) ? source.options : []) {
+    const option = record(raw);
+    const optionID = text(option.value || option.id);
+    if (!optionID || seen.has(optionID)) continue;
+    seen.add(optionID);
+    options.push({ id: optionID, label: text(option.name || option.label) || optionID, ...(text(option.description) ? { description: text(option.description) } : {}) });
+  }
+  return {
+    id,
+    name: text(source.name) || id,
+    category: normalizeUpdateKind(source.category),
+    currentValue: text(source.currentValue || source.current_value),
+    options,
+  };
+}
+function acpProviderToolEvent(source) {
+  const callId = text(source.toolCallId || source.tool_call_id || source.id);
+  if (!callId) return null;
+  const status = normalizeUpdateKind(source.status);
+  const finished = ['completed', 'complete', 'failed', 'error', 'cancelled', 'canceled'].includes(status);
+  const failed = ['failed', 'error', 'cancelled', 'canceled'].includes(status);
+  const tool = text(source.title) || text(source.kind) || 'agent-tool';
+  const argumentsJson = traceJson(source.rawInput ?? source.raw_input ?? source.input ?? {});
+  const detail = contentText(source.content) || traceDetail(source.rawOutput ?? source.raw_output ?? source.output);
+  return {
+    type: finished ? 'tool.finished' : 'tool.started',
+    callId,
+    tool,
+    argumentsJson,
+    ...(finished ? { success: !failed } : {}),
+    ...(detail ? { message: detail } : {}),
+  };
+}
+function traceJson(value) {
+  try { return JSON.stringify(value && typeof value === 'object' ? value : { value: String(value ?? '') }).slice(0, 20_000); }
+  catch { return '{}'; }
+}
+function traceDetail(value) {
+  if (typeof value === 'string') return value.trim().slice(0, 2000);
+  if (value == null) return '';
+  try { return JSON.stringify(value).slice(0, 2000); } catch { return ''; }
 }
 
 async function authenticateIfNeeded(rpc, descriptor, initialized) {

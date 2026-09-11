@@ -119,3 +119,26 @@ test('Codex-style in-stream dynamic tool calls split the next paragraph from pre
   assert.ok(previews.includes('I will read the workspace.'));
   assert.ok(previews.includes('Here is the final summary after the tool.'));
 });
+
+
+test('provider-native ACP reasoning and tool lifecycle are bridged into the chat trace', async () => {
+  const adapter = {
+    async stream(_messages, options) {
+      await options.onProviderEvent({ type: 'reasoning', text: 'Inspecting the repository.' });
+      await options.onProviderEvent({ type: 'tool.started', callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}' });
+      await options.onProviderEvent({ type: 'tool.finished', callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}', success: true, message: '2 matches' });
+      options.onDelta('Final answer.');
+      return { text: 'Final answer.', toolCalls: [] };
+    },
+  };
+  const h = harness(adapter);
+  await h.run();
+  assert.deepEqual(h.final, ['Final answer.']);
+  assert.ok(h.events.some((event) => event.type === 'message.reasoning' && event.messageId === 'msg_assistant' && event.segment === 'Inspecting the repository.'));
+  const started = h.events.find((event) => event.type === 'tool.started' && event.callId === 'acp_tool_1');
+  const finished = h.events.find((event) => event.type === 'tool.finished' && event.callId === 'acp_tool_1');
+  assert.equal(started?.messageId, 'msg_assistant');
+  assert.equal(started?.tool, 'search');
+  assert.equal(finished?.success, true);
+  assert.equal(finished?.message, '2 matches');
+});

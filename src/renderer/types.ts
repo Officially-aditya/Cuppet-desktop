@@ -169,6 +169,11 @@ export type ProviderModelCatalog = {
   configuredModel?: string | null;
   fetchedAt?: number;
   error?: string;
+  reasoning?: {
+    configId: string;
+    currentValue?: string | null;
+    options: Array<{ id: string; label?: string; description?: string }>;
+  };
   models: Array<{
     id: string;
     label?: string;
