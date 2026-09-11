@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PermissionBroker, PermissionDeniedError, inspectFullAccessDeletion } from '../src/runtime/permissions.mjs';
-import { agentPermissionAction, agentPermissionResources } from '../src/runtime/tool-runtime.mjs';
+import { agentPermissionAction, agentPermissionResources, runShell } from '../src/runtime/tool-runtime.mjs';
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-full-access-'));
@@ -94,7 +94,66 @@ test('plan mode remains read-only even when full access is selected', async () =
       broker.authorize({ sessionId: 's1', action: 'delete', resources: ['src/tmp'], projectRoot: root, planMode: true }),
       (error) => error instanceof PermissionDeniedError && error.code === 'plan_mode_read_only',
     );
+    await assert.rejects(
+      broker.authorize({ sessionId: 's1', action: 'browser-control', resources: ['browser_click'], projectRoot: root, planMode: true }),
+      (error) => error instanceof PermissionDeniedError && error.code === 'plan_mode_read_only',
+    );
+    await assert.rejects(
+      broker.authorize({ sessionId: 's1', action: 'agent-tool', resources: ['opaque-side-effect'], projectRoot: root, planMode: true }),
+      (error) => error instanceof PermissionDeniedError && error.code === 'plan_mode_read_only',
+    );
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+
+
+test('macOS Full access shell blocks indirect deletion outside the project at the syscall boundary', { skip: process.platform !== 'darwin' }, async () => {
+  const { dir, root, outside } = await fixture();
+  const outsideFile = join(outside, 'secret.txt');
+  const insideFile = join(root, 'src', 'tmp', 'inside.txt');
+  const commandFor = (source) => `${JSON.stringify(process.execPath)} -e ${JSON.stringify(source)}`;
+  try {
+    await writeFile(insideFile, 'inside\n');
+
+    const outsideWrite = await runShell(
+      commandFor(`require('node:fs').writeFileSync(${JSON.stringify(outsideFile)}, 'changed\\n')`),
+      root,
+      10_000,
+      undefined,
+      { fullAccess: true },
+    );
+    assert.equal(outsideWrite.code, 0, outsideWrite.stderr);
+
+    const outsideDelete = await runShell(
+      commandFor(`require('node:fs').rmSync(${JSON.stringify(outsideFile)})`),
+      root,
+      10_000,
+      undefined,
+      { fullAccess: true },
+    );
+    assert.notEqual(outsideDelete.code, 0, 'outside-project unlink unexpectedly succeeded');
+    assert.equal(await readFile(outsideFile, 'utf8'), 'changed\n');
+
+    const symlinkDelete = await runShell(
+      commandFor(`require('node:fs').rmSync(${JSON.stringify(join(root, 'escape', 'secret.txt'))})`),
+      root,
+      10_000,
+      undefined,
+      { fullAccess: true },
+    );
+    assert.notEqual(symlinkDelete.code, 0, 'symlink escape unlink unexpectedly succeeded');
+    assert.equal(await readFile(outsideFile, 'utf8'), 'changed\n');
+
+    const insideDelete = await runShell(
+      commandFor(`require('node:fs').rmSync(${JSON.stringify(insideFile)})`),
+      root,
+      10_000,
+      undefined,
+      { fullAccess: true },
+    );
+    assert.equal(insideDelete.code, 0, insideDelete.stderr);
+    await assert.rejects(readFile(insideFile, 'utf8'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 

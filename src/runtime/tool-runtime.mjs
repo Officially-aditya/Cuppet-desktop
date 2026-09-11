@@ -292,8 +292,8 @@ export class ToolRuntime {
     }
     const results = [];
     for (const command of commands) {
-      await authorize({ action: 'bash', resources: [command], description: `Run validation check in project: ${command.slice(0, 300)}` });
-      const executed = await runShell(command, projectRoot, clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal);
+      const permission = await authorize({ action: 'bash', resources: [command], description: `Run validation check in project: ${command.slice(0, 300)}` });
+      const executed = await runShell(command, projectRoot, clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal, { fullAccess: permission.source === 'session-full-access' });
       results.push({ command, exitCode: executed.code, stdout: executed.stdout, stderr: executed.stderr });
     }
     const postHashes = {};
@@ -355,9 +355,9 @@ export class ToolRuntime {
     const command = String(args.command ?? '').trim();
     if (!command) throw new Error('command is required');
     if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
-    await authorize({ action: 'bash', resources: [command], description: `Run shell command in project: ${command.slice(0, 300)}` });
+    const permission = await authorize({ action: 'bash', resources: [command], description: `Run shell command in project: ${command.slice(0, 300)}` });
     const timeoutMs = clamp(Number(args.timeout_ms) || 30000, 1000, 120000);
-    const executed = await runShell(command, projectRoot, timeoutMs, signal);
+    const executed = await runShell(command, projectRoot, timeoutMs, signal, { fullAccess: permission.source === 'session-full-access' });
     const changed = isSafeAutoBashCommand(command) ? [] : await gitChangedPaths(projectRoot).catch(() => []);
     const output = [executed.stdout ? `stdout:\n${executed.stdout}` : '', executed.stderr ? `stderr:\n${executed.stderr}` : '', `exit code: ${executed.code}`].filter(Boolean).join('\n');
     if (executed.code !== 0) throw new Error(output);
@@ -430,7 +430,7 @@ function injectToolPolicy(messages, projectBound, mode) {
     'Use the question tool only when a user decision or missing requirement genuinely blocks safe progress; do not ask for facts available from tools or project context.',
     'Do not repeat an identical tst_explore query; narrow or change it when more detail is needed.',
     projectBound ? 'This session is project-bound; workspace tools are available through the runtime permission boundary. Never delete paths outside the active project root.' : 'This is a general chat; filesystem and shell tools are unavailable.',
-    mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect but apply, generic writes, and arbitrary shell execution are blocked.' : '',
+    mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, and agent side effects are blocked.' : '',
     '</CUPPET_TOOL_POLICY>',
   ].filter(Boolean).join('\n');
   return [{ role: 'system', content: policy }, ...messages.map((message) => ({ ...message }))];
@@ -554,9 +554,10 @@ async function suggestValidationCommands(projectRoot) {
   return [...new Set(suggestions)].slice(0, MAX_VALIDATION_COMMANDS);
 }
 
-function runShell(command, cwd, timeoutMs, signal) {
+export async function runShell(command, cwd, timeoutMs, signal, { fullAccess = false } = {}) {
+  const spawnSpec = await shellSpawnSpec(command, cwd, fullAccess);
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, { cwd, shell: true, env: safeShellEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(spawnSpec.command, spawnSpec.args, { cwd, shell: spawnSpec.shell, env: safeShellEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let settled = false;
     const append = (target, chunk) => capText(target + chunk.toString('utf8'), MAX_TOOL_OUTPUT);
     child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
@@ -572,6 +573,25 @@ function runShell(command, cwd, timeoutMs, signal) {
       resolvePromise({ code: code ?? 1, stdout, stderr });
     });
   });
+}
+async function shellSpawnSpec(command, cwd, fullAccess) {
+  if (!fullAccess || process.platform !== 'darwin') return { command, args: [], shell: true };
+  return {
+    command: '/usr/bin/sandbox-exec',
+    args: ['-p', await fullAccessMacSandboxProfile(cwd), '/bin/sh', '-lc', command],
+    shell: false,
+  };
+}
+export async function fullAccessMacSandboxProfile(projectRoot) {
+  const root = await realpath(projectRoot).catch(() => resolve(projectRoot));
+  const literal = JSON.stringify(root);
+  return [
+    '(version 1)',
+    '(allow default)',
+    '(deny file-write-unlink)',
+    `(allow file-write-unlink (literal ${literal}))`,
+    `(allow file-write-unlink (subpath ${literal}))`,
+  ].join('\n');
 }
 function safeShellEnvironment() {
   const output = { ...process.env };
