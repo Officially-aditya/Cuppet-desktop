@@ -10,4 +10,13 @@ export {
 export { normalizeProviderConnection, patchProviderConnection } from './connection.mjs';
 export { activityFromLegacyProviderEvent, isProviderActivity, providerActivity } from './activity.mjs';
 export { ConversationBridge, fingerprintConversationMessages } from './conversation-bridge.mjs';
+export {
+  PROVIDER_OPERATION_NAMES,
+  invokeProviderOperation,
+  normalizeProviderInstallation,
+  normalizeProviderOperations,
+  providerOperationKind,
+  providerOperationSupport,
+  unsupportedProviderOperation,
+} from './operations.mjs';
 export { assertProviderRuntime, legacyProviderRuntime } from './runtime-contract.mjs';
