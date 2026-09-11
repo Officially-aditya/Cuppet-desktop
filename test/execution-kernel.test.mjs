@@ -5,7 +5,7 @@ import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs'
 
 const definition = (name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
 
-test('ExecutionKernel classifies optimized and fallback Cuppet execution paths', async () => {
+test('ExecutionKernel classifies and measures optimized Cuppet execution paths', async () => {
   assert.equal(executionPathForTool('tst_edit_batch'), 'optimized');
   assert.equal(executionPathForTool('tst_read'), 'optimized');
   assert.equal(executionPathForTool('workspace_read'), 'raw-fallback');
@@ -18,14 +18,27 @@ test('ExecutionKernel classifies optimized and fallback Cuppet execution paths',
   let now = 100;
   const kernel = new ExecutionKernel({ emit: (event) => events.push(event), now: () => now++ });
   const result = await kernel.execute({ id: '1', name: 'tst_edit_batch', arguments: '{}' }, {
-    sessionId: 'chat-1', projectRoot: '/tmp/project', execute: async () => ({ success: true, output: 'ok' }),
+    sessionId: 'chat-1', projectRoot: '/tmp/project', execute: async () => ({ success: true, output: 'ok', paths: ['a.ts', 'b.ts'], mutation: true }),
   });
   assert.equal(result.output, 'ok');
-  assert.equal(kernel.snapshot('chat-1').optimized, 1);
+  const metrics = kernel.snapshot('chat-1');
+  assert.equal(metrics.optimized, 1);
+  assert.equal(metrics.executed, 1);
+  assert.equal(metrics.completed, 1);
+  assert.equal(metrics.successes, 1);
+  assert.equal(metrics.optimizedExecuted, 1);
+  assert.equal(metrics.optimizedSuccesses, 1);
+  assert.equal(metrics.rawFallbackExecuted, 0);
+  assert.equal(metrics.outputBytes, 2);
+  assert.equal(metrics.pathsTouched, 2);
+  assert.equal(metrics.mutations, 1);
+  assert.equal(metrics.durationMs, 1);
   assert.deepEqual(events.map((event) => [event.type, event.path]), [
     ['execution.kernel.started', 'optimized'],
     ['execution.kernel.completed', 'optimized'],
   ]);
+  assert.equal(events[1].outputBytes, 2);
+  assert.equal(events[1].pathsTouched, 2);
 });
 
 test('provider tool surface requires structured reads before raw read fallback', async () => {
@@ -42,6 +55,7 @@ test('provider tool surface requires structured reads before raw read fallback',
   assert.equal(blocked.success, false);
   assert.match(blocked.output, /tst_explore\/tst_read/);
   assert.equal(kernel.snapshot('chat-read').blockedRawReads, 1);
+  assert.equal(kernel.snapshot('chat-read').executed, 0);
   assert.equal(kernel.snapshot('chat-read').rawReadFallback, false);
 
   await kernel.execute({ id: 'structured-read-1', name: 'tst_read', arguments: '{}' }, {
@@ -49,7 +63,10 @@ test('provider tool surface requires structured reads before raw read fallback',
   });
   const fallback = kernel.toolsForProvider(tools, { sessionId: 'chat-read' }).map((item) => item.function.name);
   assert.deepEqual(fallback, ['tst_explore', 'tst_read', 'workspace_read', 'bash']);
-  assert.equal(kernel.snapshot('chat-read').rawReadFallback, true);
+  const metrics = kernel.snapshot('chat-read');
+  assert.equal(metrics.rawReadFallback, true);
+  assert.equal(metrics.fallbackUnlocks, 1);
+  assert.equal(metrics.optimizedFailures, 1);
 });
 
 test('provider tool surface requires batch edits before raw mutation fallback', async () => {
@@ -72,7 +89,10 @@ test('provider tool surface requires batch edits before raw mutation fallback', 
   });
   const fallback = kernel.toolsForProvider(tools, { sessionId: 'chat-1' }).map((item) => item.function.name);
   assert.deepEqual(fallback, ['tst_edit_batch', 'tst_read', 'workspace_write', 'bash', 'workspace_edit']);
-  assert.equal(kernel.snapshot('chat-1').rawMutationFallback, true);
+  const metrics = kernel.snapshot('chat-1');
+  assert.equal(metrics.rawMutationFallback, true);
+  assert.equal(metrics.fallbackUnlocks, 1);
+  assert.equal(metrics.optimizedFailures, 1);
 });
 
 test('JournaledToolRuntime routes provider tool calls through the shared ExecutionKernel', async () => {
@@ -83,6 +103,7 @@ test('JournaledToolRuntime routes provider tool calls through the shared Executi
       calls.push({ call, sessionId: context.sessionId, projectRoot: context.projectRoot });
       return context.execute(call);
     },
+    snapshot(sessionId) { return { sessionId, total: calls.length }; },
     forget() {},
   };
   const adapter = {
@@ -112,5 +133,6 @@ test('JournaledToolRuntime routes provider tool calls through the shared Executi
   assert.equal(calls[0].call.name, 'cuppet_plan');
   assert.equal(calls[0].sessionId, 'chat-1');
   assert.equal(calls[0].projectRoot, '/tmp/project');
+  assert.deepEqual(runtime.executionSnapshot('chat-1'), { sessionId: 'chat-1', total: 1 });
   assert.deepEqual(final, ['Done.']);
 });
