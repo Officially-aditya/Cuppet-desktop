@@ -27,7 +27,7 @@ jobs:
       - run: npm install --ignore-scripts
       - name: Run provider architecture and ACP regressions
         run: >-
-          node --test
+          node --test --test-concurrency=1
           test/provider-architecture-v2.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-acp-runtime-v2.test.mjs
