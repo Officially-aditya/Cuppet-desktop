@@ -167,6 +167,7 @@ export type ProviderModelCatalog = {
   source: 'api' | 'acp' | 'cli' | 'codex' | 'none' | string;
   defaultModel?: string | null;
   configuredModel?: string | null;
+  modelDependentSettings?: boolean;
   fetchedAt?: number;
   error?: string;
   reasoning?: {
