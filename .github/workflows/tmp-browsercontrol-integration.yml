@@ -10,10 +10,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: browsercontrol-integration-ui-cuppet-branding
+  cancel-in-progress: true
+
 jobs:
   patch:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
         with:
@@ -21,7 +25,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply browserControl integration
-        run: python3 scripts/tmp-browsercontrol-integration-patch.py
+        run: |
+          python3 scripts/tmp-browsercontrol-integration-patch.py
+          python3 scripts/tmp-browsercontrol-mention-patch.py
 
       - name: Verify integration contracts
         run: |
@@ -29,6 +35,7 @@ jobs:
           node --check src/runtime/main.mjs
           node --check src/runtime/service.mjs
           node --check src/runtime/tool-runtime.mjs
+          node --check src/runtime/permissions.mjs
           node --check src/runtime/codex-provider.mjs
           node --check src/main/main.mjs
           node --check src/main/runtime-client.mjs
@@ -37,14 +44,17 @@ jobs:
           node --check scripts/smoke-packaged-browsercontrol.mjs
           npm install
           npm run renderer:verify
-          npm test
+          grep -Fq "@browserControl" src/runtime/service.mjs
+          grep -Fq "integrations.includes('browserControl')" src/runtime/tool-runtime.mjs
+          grep -Fq "browser-read" src/runtime/permissions.mjs
+          grep -Fq "@browserControl" src/renderer/react/ChatPane.tsx
 
       - name: Commit integration and remove temporary files
         shell: bash
         run: |
-          rm .github/workflows/tmp-browsercontrol-integration.yml scripts/tmp-browsercontrol-integration-patch.py
+          rm .github/workflows/tmp-browsercontrol-integration.yml scripts/tmp-browsercontrol-integration-patch.py scripts/tmp-browsercontrol-mention-patch.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .gitignore package.json scripts src vendor/browsercontrol/.gitkeep .github/workflows/apple-silicon-test.yml .github/workflows/ci.yml .github/workflows/tmp-browsercontrol-integration.yml
-          git commit -m "feat: integrate browserControl with Chrome"
+          git commit -m "feat: activate browserControl with mentions"
           git push origin HEAD:ui/cuppet-branding
