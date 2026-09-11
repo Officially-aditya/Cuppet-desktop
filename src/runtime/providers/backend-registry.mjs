@@ -51,8 +51,10 @@ export function normalizeBackendDefinition(input = {}) {
     id,
     label,
     transport,
+    // Keep the legacy metadata flags descriptive. operationSupport is the
+    // authoritative map for whether an operation is actually invokable.
     supportsInstallation: source.supportsInstallation === true || typeof operations.install === 'function',
-    supportsAuthentication: source.supportsAuthentication !== false && typeof operations.authenticate === 'function',
+    supportsAuthentication: source.supportsAuthentication !== false,
     operations,
     operationSupport: providerOperationSupport(operations),
     createRuntime: source.createRuntime,
