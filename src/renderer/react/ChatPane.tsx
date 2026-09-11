@@ -10,6 +10,7 @@ import {
 } from './behavior-preferences';
 
 export type DeliveryMode = 'queue' | 'steer';
+export type ComposerMode = 'build' | 'plan' | 'orchestrate';
 export type ActivityEntry = {
   id: string;
   kind: 'tool' | 'queue' | 'validation' | string;
@@ -38,15 +39,16 @@ type Props = {
   draft: Draft;
   project: Project | null;
   mode: 'plan' | 'build';
+  activeMode: ComposerMode;
   running: boolean;
   commands: CommandDefinition[];
   activity: ActivityEntry[];
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
-  onToggleMode: () => void | Promise<void>;
+  onModeChange: (mode: ComposerMode) => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, running, commands, activity: _activity, onSend, onStop }: Props) {
+export function ChatPane({ session, draft, project, mode, activeMode, running, commands, activity: _activity, onSend, onStop, onModeChange }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
@@ -331,7 +333,6 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
   const runningTrace = runningAssistant ? traceByMessage[runningAssistant.id] ?? [] : [];
-  const queuedCount = session?.id ? queuedBySession[session.id]?.length ?? 0 : 0;
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -361,7 +362,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             ref={textarea}
             rows={1}
             value={value}
-            placeholder={running ? (deliveryMode === 'steer' ? 'Steer the active run…' : 'Queue a message…') : 'Message Cuppet…'}
+            placeholder="Message Cuppet…"
             autoComplete="off"
             onChange={(event) => { setValue(event.target.value); resize(event.target); }}
             onKeyDown={onKeyDown}
@@ -389,12 +390,17 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
-            {running && (
-              <div className="delivery-controls react-delivery-controls" aria-label="While running">
-                <button type="button" className={`delivery-mode-button${deliveryMode === 'queue' ? ' active' : ''}`} onClick={() => setDeliveryMode('queue')}>Queue{queuedCount ? ` · ${queuedCount}` : ''}</button>
-                <button type="button" className={`delivery-mode-button${deliveryMode === 'steer' ? ' active' : ''}`} onClick={() => setDeliveryMode('steer')}>Steer</button>
-              </div>
-            )}
+            <select
+              className="composer-mode-select"
+              aria-label="Mode"
+              title="Mode"
+              value={activeMode}
+              onChange={(event) => void onModeChange(event.currentTarget.value as ComposerMode)}
+            >
+              <option value="build">Build</option>
+              <option value="plan">Plan</option>
+              <option value="orchestrate">Orchestrate</option>
+            </select>
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
             {running ? (
