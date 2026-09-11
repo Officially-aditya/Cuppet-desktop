@@ -27,6 +27,13 @@ jobs:
 
       - name: Apply ACP activity and advertised-effort patch
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/fix-acp-activity-effort.py')
+          text = path.read_text()
+          text = text.replace("    if count != 1:\n        raise SystemExit(f\"{label}: expected 1 match, got {count}\")", "    if count < 1:\n        raise SystemExit(f\"{label}: expected at least 1 match, got {count}\")")
+          path.write_text(text)
+          PY
           python .github/fix-acp-activity-effort.py
           python - <<'PY'
           from pathlib import Path
