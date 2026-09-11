@@ -1,0 +1,214 @@
+name: Full Access Hardened Release Temp
+
+on:
+  push:
+    branches: [ui/cuppet-branding]
+    paths:
+      - .github/workflows/full-access-release-temp.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: full-access-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: macos-15
+    timeout-minutes: 50
+    env:
+      TARGET_SHA: d3b65364d982c64c3fad5df09a027f995e3391be
+      TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/Cuppet-code
+          ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+          path: .release/cuppet-code
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/browserControl
+          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          path: .release/browsercontrol
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify Apple Silicon runner
+        run: |
+          test "$(uname -m)" = "arm64"
+          test -x /usr/bin/sandbox-exec
+          sw_vers
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.88 --profile minimal --no-self-update
+          rustup default 1.88
+          rustc --version
+
+      - name: Build pinned native TST daemon
+        run: cargo build --locked -p tst-daemon --release --manifest-path .release/cuppet-code/Cargo.toml
+
+      - name: Build standalone TST artifact
+        working-directory: .release/cuppet-code
+        run: |
+          GITHUB_SHA="$TST_SOURCE_REVISION" node scripts/package-tst-runtime.mjs \
+            --source=target/release/tst-daemon \
+            --output="${GITHUB_WORKSPACE}/.release/tst-runtime"
+
+      - name: Stage and verify native TST runtime
+        run: |
+          npm run f1:stage-tst -- --source=.release/tst-runtime
+          npm run f1:verify-staged-tst
+
+      - name: Stage and verify official Codex app-server package
+        run: |
+          npm run e2:stage-codex
+          npm run e2:verify-staged-codex
+          CODEX_DIR="vendor/codex/darwin-arm64/bin"
+          test -x "$CODEX_DIR/codex-app-server"
+          test -x "$CODEX_DIR/codex-code-mode-host"
+          lipo -archs "$CODEX_DIR/codex-app-server" | grep -qw arm64
+          lipo -archs "$CODEX_DIR/codex-code-mode-host" | grep -qw arm64
+
+      - name: Build pinned browserControl runtime
+        working-directory: .release/browsercontrol
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage and verify browserControl runtime
+        run: |
+          npm run browsercontrol:stage -- --source=.release/browsercontrol
+          npm run browsercontrol:verify
+
+      - name: Install desktop dependencies
+        run: npm install
+
+      - name: Verify Full access hardening
+        run: node --test test/full-access-permissions.test.mjs
+
+      - name: Verify runtime and renderer contracts
+        run: |
+          npm run e1:audit-runtime
+          npm run renderer:verify
+          npm run f1:verify
+          npm run e2:verify
+          npm run browsercontrol:verify
+
+      - name: Build Apple Silicon app bundle
+        run: npm run build:renderer && npx electron-builder --mac dir --arm64 --publish never
+
+      - name: Locate and verify arm64 app
+        shell: bash
+        run: |
+          APP="$(find dist -maxdepth 3 -type d -name '*.app' -print -quit)"
+          if [[ -z "$APP" ]]; then
+            echo "No macOS .app bundle was produced" >&2
+            exit 1
+          fi
+          APP_EXEC="$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)"
+          TST_BIN="$APP/Contents/Resources/tst/darwin-arm64/tst-daemon"
+          CODEX_BIN="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-app-server"
+          CODEX_CODE_MODE_HOST="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-code-mode-host"
+          BROWSERCONTROL_ENTRY="$APP/Contents/Resources/browsercontrol/dist/local/runtime.js"
+          test -x "$APP_EXEC"
+          test -x "$TST_BIN"
+          test -x "$CODEX_BIN"
+          test -x "$CODEX_CODE_MODE_HOST"
+          test -f "$BROWSERCONTROL_ENTRY"
+          lipo -archs "$APP_EXEC" | grep -qw arm64
+          lipo -archs "$TST_BIN" | grep -qw arm64
+          lipo -archs "$CODEX_BIN" | grep -qw arm64
+          lipo -archs "$CODEX_CODE_MODE_HOST" | grep -qw arm64
+          test -f "$APP/Contents/Resources/app.asar"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "APP_EXEC=$APP_EXEC" >> "$GITHUB_ENV"
+
+      - name: Run packaged runtime acceptance
+        run: |
+          node scripts/smoke-packaged-runtime.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-tst.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-codex.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-browsercontrol.mjs "$APP_EXEC"
+
+      - name: Ad-hoc sign app
+        run: |
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create release packages
+        shell: bash
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          SHORT_SHA="${TARGET_SHA:0:12}"
+          ZIP="dist/Cuppet-${VERSION}-full-access-hardened-arm64.zip"
+          DMG="dist/Cuppet-${VERSION}-full-access-hardened-arm64.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+          hdiutil create -volname "Cuppet" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          shasum -a 256 "$ZIP" "$DMG" > dist/SHA256SUMS.txt
+          cat > dist/RELEASE-NOTES.txt <<EOF
+          Cuppet ${VERSION} — Full access hardened Apple Silicon build
+          Source commit: ${TARGET_SHA}
+
+          This build is ARM64 and ad-hoc signed. It is not Developer ID signed or notarized.
+
+          Full access hardening:
+          - Plan mode blocks browser-control and unknown ACP side-effect actions.
+          - Full access keeps the existing explicit destructive-command path checks.
+          - Full-access shell and validation commands on macOS run under a Seatbelt unlink boundary: delete/unlink operations are denied outside the active project root even when performed indirectly by Node/Python/child processes, while ordinary reads and writes remain available.
+          - The focused Full-access regression suite, renderer verification, runtime contracts, and packaged acceptance checks passed before publication.
+          EOF
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+
+      - name: Upload Actions artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Cuppet-Full-Access-Hardened-${{ env.SHORT_SHA }}
+          path: |
+            dist/*-full-access-hardened-arm64.zip
+            dist/*-full-access-hardened-arm64.dmg
+            dist/SHA256SUMS.txt
+            dist/RELEASE-NOTES.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="full-access-hardened-${SHORT_SHA}"
+          gh release create "$TAG" \
+            dist/*-full-access-hardened-arm64.dmg \
+            dist/*-full-access-hardened-arm64.zip \
+            dist/SHA256SUMS.txt \
+            dist/RELEASE-NOTES.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_SHA" \
+            --title "Cuppet ${VERSION} Full Access Hardened (${SHORT_SHA})" \
+            --notes "Apple Silicon prerelease built from ${TARGET_SHA}. Full access now keeps Plan mode read-only for browser/ACP mutations and adds a macOS Seatbelt unlink boundary so indirect child-process deletion cannot escape the active project root. Ad-hoc signed; not notarized." \
+            --prerelease
+
+      - name: Remove temporary release workflow
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/full-access-release-temp.yml
+          git commit -m "chore: remove temporary full access release workflow"
+          git push origin HEAD:ui/cuppet-branding
