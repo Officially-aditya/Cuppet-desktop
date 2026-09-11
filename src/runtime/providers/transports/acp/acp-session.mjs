@@ -200,7 +200,13 @@ export class AcpSessionRuntime {
   }
 
   async #openSession(mcpServers = []) {
-    this.#session = await this.#rpc.request('session/new', { cwd: this.#projectRoot, mcpServers: normalizeMcpServers(mcpServers) }, REQUEST_TIMEOUT_MS);
+    const descriptorMeta = record(this.#descriptor?.sessionMeta);
+    const params = {
+      cwd: this.#projectRoot,
+      mcpServers: normalizeMcpServers(mcpServers),
+      ...(Object.keys(descriptorMeta).length ? { _meta: { ...descriptorMeta } } : {}),
+    };
+    this.#session = await this.#rpc.request('session/new', params, REQUEST_TIMEOUT_MS);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
     await this.#applyConfiguredSettings();
