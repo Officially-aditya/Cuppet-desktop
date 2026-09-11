@@ -6,10 +6,14 @@ const DESCRIPTORS = Object.freeze({
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
     loginHint: 'Run `claude-agent-acp --cli auth login` in Terminal and complete Claude sign-in, then retry.',
-    // claude-agent-acp forwards this ACP session extension into the Claude Agent SDK.
-    // It removes Claude Code's built-in Read/Write/Bash tools so normal execution
-    // must use the Cuppet MCP tool surface and therefore the shared ExecutionKernel.
-    sessionMeta: Object.freeze({ disableBuiltInTools: true }),
+    // claude-agent-acp forwards these ACP session extensions into the Claude Agent SDK.
+    // Remove Claude's built-in coding tools and filesystem settings sources so project/user
+    // MCP servers, hooks, plugins and tool settings cannot become a parallel execution path.
+    // Authentication remains Claude-owned and is resolved independently by the Agent SDK.
+    sessionMeta: {
+      disableBuiltInTools: true,
+      claudeCode: { options: { settingSources: [] } },
+    },
   }),
   'grok-build': descriptor({
     id: 'grok-build', label: 'Grok Build', transport: 'acp', command: 'grok', args: ['--no-auto-update', 'agent', 'stdio'], versionArgs: ['version'], envOverride: 'CUPPET_GROK_BIN',
@@ -39,7 +43,7 @@ export function localCliDescriptor(value) {
     ...item,
     args: [...item.args],
     versionArgs: [...item.versionArgs],
-    ...(item.sessionMeta ? { sessionMeta: { ...item.sessionMeta } } : {}),
+    ...(item.sessionMeta ? { sessionMeta: cloneValue(item.sessionMeta) } : {}),
   } : null;
 }
 
@@ -51,6 +55,16 @@ function descriptor(value) {
     ...value,
     args: Object.freeze([...value.args]),
     versionArgs: Object.freeze([...value.versionArgs]),
-    ...(value.sessionMeta ? { sessionMeta: Object.freeze({ ...value.sessionMeta }) } : {}),
+    ...(value.sessionMeta ? { sessionMeta: freezeValue(cloneValue(value.sessionMeta)) } : {}),
   });
+}
+function cloneValue(value) {
+  if (Array.isArray(value)) return value.map(cloneValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneValue(item)]));
+}
+function freezeValue(value) {
+  if (!value || typeof value !== 'object') return value;
+  for (const item of Object.values(value)) freezeValue(item);
+  return Object.freeze(value);
 }
