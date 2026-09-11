@@ -16,6 +16,7 @@ import { JournaledToolRuntime } from './journaled-tool-runtime.mjs';
 import { TstBatchEditManager } from './tst-edit-batches.mjs';
 import { ProjectWriter } from './project-writer.mjs';
 import { parseSlashCommand } from './commands.mjs';
+import { classifyProviderError } from './provider-error.mjs';
 
 export class RuntimeService {
   #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
@@ -442,9 +443,11 @@ export class RuntimeService {
       if (this.#closed) return;
       const stopped = signal.aborted || error?.name === 'AbortError';
       const current = this.#db.getMessage(assistantId);
-      completedMessage = this.#db.updateMessage(assistantId, { status: stopped ? 'stopped' : 'error', content: stopped ? current?.content ?? '' : current?.content || `Generation failed: ${cleanError(error)}` });
+      const failure = stopped ? null : classifyProviderError(error, { provider });
+      const errorContent = failure ? (current?.content ? `${current.content}\n\n${failure.chatMessage}` : failure.chatMessage) : current?.content ?? '';
+      completedMessage = this.#db.updateMessage(assistantId, { status: stopped ? 'stopped' : 'error', content: stopped ? current?.content ?? '' : errorContent });
       this.#emit({ type: 'message.completed', message: completedMessage });
-      if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: cleanError(error) });
+      if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
       if (this.#closed) return;
       const run = this.#runs.get(sessionId); this.#runs.delete(sessionId);
