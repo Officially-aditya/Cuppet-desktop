@@ -1,0 +1,61 @@
+name: Provider Model Sync Runner
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/provider-model-sync-runner.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract and apply implementation patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/provider-model-sync-temp.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = source.index(marker) + len(marker)
+          end = source.index("\n          PY\n", start)
+          body = source[start:end]
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines()) + '\n'
+          Path('/tmp/provider-model-sync.py').write_text(body)
+          PY
+          python3 /tmp/provider-model-sync.py
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Verify provider model pipeline
+        run: node --test test/provider-model-catalog.test.mjs test/provider-model-renderer-sync.test.mjs test/acp-cli-provider.test.mjs
+
+      - name: Verify renderer
+        run: npm run renderer:verify
+
+      - name: Commit implementation and remove temporary workflows
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/provider-model-sync-temp.yml .github/workflows/provider-model-sync-runner.yml
+          git add src test
+          git commit -m "feat: sync advertised provider models"
+          git push origin HEAD:ui/cuppet-branding
