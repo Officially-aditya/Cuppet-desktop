@@ -47,3 +47,5 @@ jobs:
           node --check scripts/compare-provider-benchmarks.mjs
           node --check scripts/run-provider-benchmark-suite.mjs
           node -e "const fs=require('node:fs'); const schema=JSON.parse(fs.readFileSync('benchmarks/provider-v2.schema.json','utf8')); const example=JSON.parse(fs.readFileSync('benchmarks/provider-v2.example.json','utf8')); if(schema.properties.schemaVersion.const!==1 || example.schemaVersion!==1 || !Array.isArray(example.tasks) || !example.tasks.length) process.exit(1)"
+      - name: Verify renderer contract
+        run: npm run renderer:verify
