@@ -27,6 +27,7 @@ jobs:
           python3 scripts/harden-full-access-temp.py
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('src/runtime/permissions.mjs')
           text = p.read_text()
           old = "    if (auto && projectScoped) return { effect: 'allow', source: 'session-auto-project' };\n    return { effect: 'ask', autoEligible: auto ? projectScoped : safe };"
@@ -37,10 +38,63 @@ jobs:
 
           p = Path('test/full-access-permissions.test.mjs')
           text = p.read_text()
-          old = "      { allowed: true, source: 'session-auto-project' },\n    );\n    assert.deepEqual(\n      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),"
-          new = "      { allowed: true, source: 'session-auto' },\n    );\n    assert.deepEqual(\n      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),"
+          old = "      await broker.authorize({ sessionId: 's1', action: 'read', resources: ['.env'], projectRoot: root }),\n      { allowed: true, source: 'session-auto-project' },"
+          new = "      await broker.authorize({ sessionId: 's1', action: 'read', resources: ['.env'], projectRoot: root }),\n      { allowed: true, source: 'session-auto' },"
           if text.count(old) != 1:
-              raise SystemExit(f'auto test compatibility marker mismatch: {text.count(old)}')
+              raise SystemExit(f'auto read source marker mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+          old = "      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),\n      { allowed: true, source: 'session-auto-project' },"
+          new = "      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),\n      { allowed: true, source: 'session-auto' },"
+          if text.count(old) != 1:
+              raise SystemExit(f'auto edit source marker mismatch: {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+
+          p = Path('test/c1-permissions.test.mjs')
+          text = p.read_text()
+          old = '''test('guarded auto is session-scoped and never bypasses sensitive files or symlink escapes', async () => {
+  const { dir, root } = await fixture();
+  const broker = new PermissionBroker();
+  try {
+    broker.setAuto('s1', true);
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'write', resources: ['src/new.js'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
+    assert.equal(await isSafeWorkspaceResource('escape/secret.txt', root), false);
+
+    const sensitive = broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.env'], projectRoot: root });
+    const escaped = broker.authorize({ sessionId: 's1', action: 'read', resources: ['escape/secret.txt'], projectRoot: root });
+    const requests = await waitPending(broker, 's1', 2);
+    assert.equal(requests.every((request) => request.autoEligible === false), true);
+    for (const request of requests) broker.reply(request.id, 'reject');
+    await assert.rejects(sensitive, PermissionDeniedError);
+    await assert.rejects(escaped, PermissionDeniedError);
+  } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
+});'''
+          new = '''test('guarded auto approves active-project actions but still guards symlink escapes', async () => {
+  const { dir, root } = await fixture();
+  const broker = new PermissionBroker();
+  try {
+    broker.setAuto('s1', true);
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'write', resources: ['src/new.js'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.env'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
+    assert.equal(await isSafeWorkspaceResource('escape/secret.txt', root), false);
+
+    const escaped = broker.authorize({ sessionId: 's1', action: 'read', resources: ['escape/secret.txt'], projectRoot: root });
+    const request = (await waitPending(broker, 's1'))[0];
+    assert.equal(request.autoEligible, false);
+    broker.reply(request.id, 'reject');
+    await assert.rejects(escaped, PermissionDeniedError);
+  } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
+});'''
+          if text.count(old) != 1:
+              raise SystemExit(f'c1 auto contract marker mismatch: {text.count(old)}')
           p.write_text(text.replace(old, new, 1))
           PY
       - name: Install desktop dependencies
@@ -55,7 +109,7 @@ jobs:
         run: |
           git config user.name "Aditya Yadav"
           git config user.email "93206009+Officially-aditya@users.noreply.github.com"
-          git add src/runtime/permissions.mjs src/runtime/tool-runtime.mjs src/renderer/react/GeneralPanel.tsx test/full-access-permissions.test.mjs
+          git add src/runtime/permissions.mjs src/runtime/tool-runtime.mjs src/renderer/react/GeneralPanel.tsx test/c1-permissions.test.mjs test/full-access-permissions.test.mjs
           git diff --cached --quiet && { echo "Expected permission implementation diff was empty"; exit 1; }
           git commit -m "feat: add full access permission mode"
           git push origin HEAD:ui/cuppet-branding
