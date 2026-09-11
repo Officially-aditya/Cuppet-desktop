@@ -97,7 +97,8 @@ assert.match(modelPicker, /stage === 'models'/, 'model picker does not transitio
 assert.doesNotMatch(modelPicker, /effort-picker-trigger|model-picker-custom|Custom model ID|placeholder="Model ID"/, 'model picker returned a second effort control or manual model ID field');
 assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does not read the authoritative current model');
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
-assert.match(modelPicker, /window\.cuppet\.codexAuth\.models/, 'Codex model picker does not use the app-server catalog');
+assert.match(modelPicker, /window\.cuppet\.settings\.models\(\)/, 'model picker does not use the generic provider model catalog');
+assert.doesNotMatch(modelPicker, /window\.cuppet\.codexAuth\.models/, 'model picker still leaks the Codex-specific model catalog API');
 assert.match(modelPicker, /providerPreset\?\.models/, 'provider-family model choices are not merged into the picker');
 assert.match(modelPicker, /settings\?\.customModels/, 'validated provider custom models are not merged into the picker');
 assert.match(modelPicker, /Custom model · validated in Provider settings/, 'custom models are not identified in the picker');
