@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
+import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
+import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
+import { OpenCodeAcpProviderV2 } from '../src/runtime/providers/backends/opencode.mjs';
+
+const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+
+test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', async () => {
+  const runtime = new AcpSessionRuntime({ descriptor: localCliDescriptor('opencode'), configuration: { cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, projectRoot: tmpdir() });
+  const seen = [];
+  try {
+    await runtime.start();
+    const caps = await runtime.capabilities();
+    assert.equal(caps.settings.find((item) => item.id === 'model')?.value, 'provider/model-b');
+    assert.deepEqual(caps.settings.find((item) => item.id === 'effort')?.options.map((item) => item.id), ['medium', 'max']);
+    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Inspect.' }] }, { onActivity: async (activity) => seen.push(activity) });
+    assert.equal(result.text, 'Done.');
+    assert.deepEqual(seen.map((item) => item.type), ['activity.reasoning.delta', 'activity.tool.opened', 'activity.tool.closed', 'activity.text.delta']);
+    assert.equal(seen[2].status, 'success');
+  } finally { await runtime.close(); }
+});
+
+test('OpenCode compatibility provider preserves current stream callbacks', async () => {
+  const provider = new OpenCodeAcpProviderV2({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' });
+  const events = [];
+  let text = '';
+  const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
+    projectRoot: tmpdir(),
+    onDelta: async (delta) => { text += delta; },
+    onProviderEvent: async (event) => events.push(event),
+  });
+  assert.equal(result.text, 'Done.');
+  assert.equal(text, 'Done.');
+  assert.deepEqual(events.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
+});
+
+test('OpenCode v2 delegates ACP host operations through Cuppet', async () => {
+  const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
+  const calls = [];
+  const permissions = [];
+  const provider = new OpenCodeAcpProviderV2({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+  const result = await provider.stream([{ role: 'user', content: 'Update' }], {
+    projectRoot: tmpdir(),
+    requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
+    executeTool: async (call) => {
+      calls.push(call);
+      if (call.name === 'workspace_read') return { success: true, output: 'hello' };
+      if (call.name === 'workspace_write') return { success: true, output: 'written' };
+      if (call.name === 'bash') return { success: true, output: 'stdout:\nok\nexit code: 0' };
+      return { success: false, output: 'bad' };
+    },
+  });
+  assert.equal(result.text, 'Working. Done.');
+  assert.deepEqual(calls.map((call) => call.name), ['workspace_read', 'workspace_write', 'bash']);
+  assert.equal(permissions[0].kind, 'edit');
+  assert.equal(result.usage.totalTokens, 12);
+});
+
+test('provider factory routes OpenCode to ACP v2 without moving other ACP providers yet', () => {
+  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof OpenCodeAcpProviderV2);
+  assert.equal(createUntrackedChatProvider({ providerID: 'grok-build' }).constructor.name, 'AcpCliAgentProvider');
+});

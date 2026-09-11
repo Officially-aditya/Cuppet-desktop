@@ -4,6 +4,7 @@ import { createNativeProvider, nativeProviderKind } from './native-provider.mjs'
 import { CodexSubscriptionProvider } from './codex-provider.mjs';
 import { AcpCliAgentProvider, isAcpCliProvider } from './acp-cli-provider.mjs';
 import { AntigravityHeadlessProvider } from './antigravity-provider.mjs';
+import { OpenCodeAcpProviderV2 } from './providers/backends/opencode.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
 export function createChatProvider(configuration = {}) {
@@ -13,6 +14,7 @@ export function createChatProvider(configuration = {}) {
 export function createUntrackedChatProvider(configuration = {}) {
   const providerID = String(configuration?.providerID ?? '').toLowerCase();
   if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
+  if (providerID === 'opencode') return new OpenCodeAcpProviderV2(configuration);
   if (providerID === 'antigravity') return new AntigravityHeadlessProvider(configuration);
   if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
   const kind = resolvedNativeKind(configuration);
@@ -31,7 +33,6 @@ function trackUsage(provider, identity) {
   const stream = provider.stream.bind(provider);
   provider.stream = async (...args) => {
     const result = await stream(...args);
-    // Usage bookkeeping must never turn a successful provider response into a failed generation.
     await recordProviderUsage({ ...identity, usage: result?.usage }).catch(() => undefined);
     return result;
   };
