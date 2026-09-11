@@ -20,7 +20,18 @@ jobs:
           ref: ui/cuppet-branding
           fetch-depth: 0
       - name: Apply secondary title patch
-        run: python3 scripts/tmp-secondary-title.py
+        run: |
+          python3 scripts/tmp-secondary-title.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/runtime/title-generator.mjs')
+          text = p.read_text()
+          old = ".split(/\\r?\\n/, 1)[0]\n    .replace(/^\\s*(?:title|chat title)\\s*:\\s*/i, '')\n    .replace(/^[\"'`*_#\\-\\s]+|[\"'`*_#\\-\\s]+$/g, '')"
+          new = ".split(/\\r?\\n/, 1)[0]\n    .replace(/^[\"'`*_#\\-\\s]+|[\"'`*_#\\-\\s]+$/g, '')\n    .replace(/^\\s*(?:title|chat title)\\s*:\\s*/i, '')"
+          if old not in text:
+              raise SystemExit('title sanitizer anchor missing')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - name: Verify secondary title generation
         run: |
           node --check src/runtime/title-generator.mjs
