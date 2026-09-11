@@ -13,21 +13,30 @@ import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-s
 const sessionMetaFixture = fileURLToPath(new URL('./fixtures/fake-acp-session-meta-agent.mjs', import.meta.url));
 const mcpFixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+const CLAUDE_SESSION_META = {
+  disableBuiltInTools: true,
+  claudeCode: { options: { settingSources: [] } },
+};
 
-test('Claude Code is a managed ACP backend with Cuppet-only execution policy', () => {
+test('Claude Code is a managed ACP backend with isolated Cuppet execution policy', () => {
   const descriptor = localCliDescriptor('claude-code');
   assert.equal(descriptor.transport, 'acp');
   assert.equal(descriptor.command, 'claude-agent-acp');
-  assert.deepEqual(descriptor.sessionMeta, { disableBuiltInTools: true });
+  assert.deepEqual(descriptor.sessionMeta, CLAUDE_SESSION_META);
+
+  // Callers receive a deep clone so provider/runtime code cannot mutate the
+  // canonical descriptor and re-enable Claude project/user setting sources.
+  descriptor.sessionMeta.claudeCode.options.settingSources.push('project');
+  assert.deepEqual(localCliDescriptor('claude-code').sessionMeta, CLAUDE_SESSION_META);
 
   const provider = createUntrackedChatProvider({ providerID: 'claude-code', model: 'cli-default' });
   const managed = provider.cuppetManagedRuntime();
   assert.equal(managed.protocol, 'acp');
   assert.equal(managed.backendId, 'claude-code');
-  assert.deepEqual(managed.descriptor.sessionMeta, { disableBuiltInTools: true });
+  assert.deepEqual(managed.descriptor.sessionMeta, CLAUDE_SESSION_META);
 });
 
-test('Claude Code ACP session forwards descriptor metadata that disables native tools', async () => {
+test('Claude Code ACP session forwards descriptor metadata that isolates native execution and settings', async () => {
   const descriptor = localCliDescriptor('claude-code');
   const runtime = new AcpSessionRuntime({
     descriptor,
