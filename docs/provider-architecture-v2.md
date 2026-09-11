@@ -29,7 +29,9 @@ Owning the provider process is not sufficient. Cuppet must also own execution po
                     │           │
              ACP transport   Codex app-server
                     │           │
-             ACP backends      Codex
+          ┌─────────┴──────┐    │
+       OpenCode        Claude Code
+                                Codex
 ```
 
 ACP is a transport abstraction, not Cuppet's universal architecture. Codex legitimately uses its own app-server wire protocol. Both transports converge on the same Execution Kernel, Cuppet tool surface, Activity vocabulary, permissions, journal, and optimization policy.
@@ -38,9 +40,11 @@ ACP is a transport abstraction, not Cuppet's universal architecture. Codex legit
 
 ### Backend
 
-A provider family such as Codex, OpenCode, Kiro, or Antigravity. A backend declares static identity and constructs a runtime for a configured connection. It does not own user state.
+A provider family such as Codex, OpenCode, Claude Code, Kiro, or Antigravity. A backend declares static identity and constructs a runtime for a configured connection. It does not own user state.
 
-ACP-compatible backends are descriptors plus genuine protocol quirks. OpenCode is the first production backend using the shared ACP adapter; it is not a separate runtime architecture.
+ACP-compatible backends are descriptors plus genuine protocol quirks. OpenCode was the first production backend using the shared ACP adapter. Claude Code is the second and proves the runtime is provider-neutral rather than OpenCode-shaped.
+
+Claude Code is connected through the maintained `@agentclientprotocol/claude-agent-acp` bridge for the official Claude Agent SDK. Cuppet does not copy that bridge's implementation. It treats it as an ACP-speaking backend process exactly like any other ACP backend.
 
 ### Connection
 
@@ -126,6 +130,14 @@ browser_* when enabled
 
 The provider-facing surface is filtered by Execution Kernel policy rather than exposing every primitive equally.
 
+### Claude Code execution authority
+
+Claude Code's ACP descriptor sends `session/new._meta.disableBuiltInTools = true`. The maintained Claude ACP bridge maps this to an empty Claude Agent SDK built-in tool set. That prevents Claude's native Read/Write/Bash tools from becoming a parallel execution path around Cuppet.
+
+For Cuppet-managed Claude sessions, repository operations therefore come from the Cuppet MCP server and cross the same Execution Kernel used by OpenCode and Codex dynamic tools.
+
+This is a backend descriptor policy, not a Claude-specific runtime fork. Future ACP backends may declare equivalent session metadata only where their protocol implementation supports it.
+
 ## Optimized-first execution policy
 
 Availability is not enough. Cuppet must make the optimized path authoritative.
@@ -137,9 +149,16 @@ Initial mutation policy:
 3. If `tst_edit_batch` actually fails for the session, raw mutation tools are unlocked as an explicit fallback.
 4. Raw fallback remains permissioned, journaled, bounded, and observable through ToolRuntime.
 
-This is intentionally stronger than a prompt that merely says "prefer batched edits."
+Initial read policy:
 
-Reads and shell remain available as fallbacks for now. Their optimization policy will tighten only after equivalent deterministic routing is proven not to reduce correctness.
+1. Providers receive `tst_explore` and `tst_read` but do not receive raw `workspace_read`.
+2. ACP v1 native filesystem reads are not allowed to silently bypass that rule.
+3. If `tst_read` actually fails for the session, raw read is unlocked as an explicit fallback.
+4. Structured reads remain filesystem-authoritative and bounded by ToolRuntime.
+
+Shell remains available as a fallback for now. Its optimization policy will tighten only after equivalent deterministic routing is proven not to reduce correctness.
+
+These rules are intentionally stronger than a prompt that merely says "prefer TST" or "prefer batched edits."
 
 ## ACP v1 and v2 direction
 
@@ -173,14 +192,17 @@ Codex already receives Cuppet dynamic tools and is instructed not to use its bui
 8. Cuppet's journal remains the durable authority for tool/mutation state.
 9. TST remains above provider transports.
 10. ACP backends share one protocol runtime; provider-specific runtime copies are not allowed without a real protocol incompatibility.
-11. Raw mutation is a fallback, not a peer of the optimized batch path.
+11. Raw reads and mutations are fallbacks, not peers of optimized paths.
 12. A provider process/session never owns Cuppet tool authority beyond its active scoped tool session.
+13. Backend-specific execution restrictions belong in descriptor metadata/quirks, not duplicated runtimes.
 
 ## Runtime lifecycle
 
 Managed ACP currently reuses one provider process per Cuppet chat while opening a fresh ACP logical session per turn. This avoids startup/auth churn without pretending the provider owns context that Cuppet's Conversation Bridge has not yet accounted for.
 
-A runtime is replaced when backend, project root, model, effort, command, or execution-authority configuration changes. Failure/cancellation discards ambiguous runtime state. Idle processes are evicted.
+A runtime is replaced when backend, project root, model, effort, command, session policy, or execution-authority configuration changes. Failure/cancellation discards ambiguous runtime state. Idle processes are evicted.
+
+`session.cleanup` explicitly forgets the managed provider runtime and Execution Kernel session state. Runtime/app shutdown explicitly closes all managed provider processes; idle eviction is an optimization rather than the ownership mechanism.
 
 Conversation Bridge may later permit persistent logical ACP sessions once duplicated-context semantics are proven.
 
@@ -191,16 +213,17 @@ Conversation Bridge may later permit persistent logical ACP sessions once duplic
 3. Generalize OpenCode-specific runtime management into the shared ACP adapter/runtime manager.
 4. Pass the Cuppet tool server to ACP sessions and prove ACP -> MCP -> Execution Kernel -> ToolRuntime end to end.
 5. Put ACP and Codex tool calls through the shared Execution Kernel.
-6. Enforce optimized-first mutation policy and add execution-path metrics.
+6. Enforce optimized-first mutation/read policy and add execution-path metrics.
 7. Replace ACP model/reasoning special cases with generic provider capabilities and model-dependent setting refresh.
-8. Add deterministic read/search/validation optimization where correctness can be preserved.
+8. Move Claude Code as the second ACP backend and prevent its built-in coding tools from bypassing Cuppet.
 9. Benchmark optimized execution against raw execution before scaling provider coverage.
-10. Move a second ACP backend only after the shared runtime/tool path proves provider-neutral.
-11. Move Antigravity to ACP where the native/distributable route is appropriate.
-12. Move chat/journal rendering to Activity only.
-13. Add Conversation Bridge persistence/resume after context ownership is explicit.
-14. Separate probe/install/auth/update/runtime operations and installation ownership.
-15. Remove compatibility paths only after parity tests pass.
+10. Add deterministic search/validation/shell optimization only where correctness can be preserved.
+11. Move additional ACP providers after parity fixtures prove they use the same runtime/tool authority.
+12. Move Antigravity to ACP where the native/distributable route is appropriate.
+13. Move chat/journal rendering to Activity only.
+14. Add Conversation Bridge persistence/resume after context ownership is explicit.
+15. Separate probe/install/auth/update/runtime operations and installation ownership.
+16. Remove compatibility paths only after parity tests pass.
 
 ## Testing gates
 
@@ -210,18 +233,22 @@ Before another ACP backend moves to the new path, fixtures must prove:
 same ACP runtime works for more than one backend descriptor
 Cuppet MCP tools are supplied through session/new
 optimized tools are discoverable
-raw mutation tools are hidden initially
-ACP native write cannot bypass optimized-first policy
-failed batch edit unlocks explicit raw fallback
+raw read and mutation tools are hidden initially
+ACP native read/write cannot bypass optimized-first policy
+failed structured read/batch edit unlocks only the corresponding explicit fallback
 permissions/journal/path refresh still execute in ToolRuntime
 stalled providers cancel and terminate
 old tool-session credentials cannot retain authority
+session cleanup and runtime shutdown close managed provider state
+backend-specific execution restrictions are passed as descriptor session metadata
 ```
 
 Benchmark gates should measure at least:
 
 ```text
 optimized vs raw execution path counts
+blocked bypass attempts
+fallback unlocks
 raw reads
 shell invocations
 edit operations
