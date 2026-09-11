@@ -29,6 +29,7 @@ jobs:
         run: >-
           node --test --test-concurrency=1
           test/provider-architecture-v2.test.mjs
+          test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/claude-code-provider.test.mjs
