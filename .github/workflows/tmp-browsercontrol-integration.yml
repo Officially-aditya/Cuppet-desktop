@@ -27,6 +27,13 @@ jobs:
       - name: Apply browserControl integration
         run: |
           python3 scripts/tmp-browsercontrol-integration-patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/tmp-browsercontrol-mention-patch.py')
+          text = path.read_text()
+          text = text.replace('name="browserControl" mention="@browserControl"', 'name=\\"browserControl\\" mention=\\"@browserControl\\"')
+          path.write_text(text)
+          PY
           python3 scripts/tmp-browsercontrol-mention-patch.py
 
       - name: Verify integration contracts
