@@ -1,0 +1,57 @@
+name: Fix provider settings autosave
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/fix-provider-settings-autosave.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ui/cuppet-branding
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Apply provider settings patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/fix-provider-settings-autosave.py')
+          text = path.read_text().replace("'replace save handler')\\n\n", "'replace save handler')\n\n")
+          path.write_text(text)
+          PY
+          python .github/fix-provider-settings-autosave.py
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify provider settings behavior
+        run: |
+          node --test \
+            test/provider-settings-autosave.test.mjs \
+            test/provider-model-renderer-sync.test.mjs \
+            test/provider-model-catalog.test.mjs \
+            test/acp-cli-provider.test.mjs
+          npm run renderer:verify
+
+      - name: Commit implementation and remove temporary runner
+        run: |
+          rm -f .github/fix-provider-settings-autosave.py .github/workflows/fix-provider-settings-autosave.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: make provider settings apply immediately"
+          git push origin HEAD:ui/cuppet-branding
