@@ -10,7 +10,7 @@ Cuppet currently supports several provider transports with provider-specific mod
 
 Provider Architecture V2 creates one ownership boundary around coding/model backends while keeping Cuppet's journal, TST, permissions, browserControl, remote control, and personal-agent orchestration above it.
 
-Owning the provider process is not sufficient. Cuppet must also own execution policy. A provider is a reasoning engine; Cuppet decides how repository inspection, editing, validation, memory, browser work, permissions, and fallback execution happen.
+Owning the provider process is not sufficient. Cuppet must also own execution policy. A provider is a reasoning engine; Cuppet decides how repository inspection, editing, validation, memory, browser work, permissions, command execution, and fallback execution happen.
 
 ## Target shape
 
@@ -58,7 +58,7 @@ A live provider execution environment with a small Cuppet contract: start, adver
 
 A provider-authoritative snapshot of models, runtime settings, attachment support, session features, and transport features. Runtime settings are generic select/boolean values. Cuppet may give known categories such as model or reasoning first-class UI without hardcoding provider values.
 
-Provider capabilities describe the reasoning engine. They are separate from Cuppet execution capabilities such as TST, batching, validation, memory, browser control, and shell execution.
+Provider capabilities describe the reasoning engine. They are separate from Cuppet execution capabilities such as TST, batching, validation, memory, browser control, and command execution.
 
 ### Activity
 
@@ -79,6 +79,7 @@ The kernel owns:
 ```text
 provider-facing tool surface
 optimized-vs-fallback policy
+command mediation
 execution path telemetry
 fallback unlocking
 future deterministic coalescing/routing
@@ -108,25 +109,27 @@ The MCP process is intentionally a thin protocol facade. It does not implement e
 
 Each ACP logical session receives a fresh local endpoint and short-lived random authentication token. Closing the turn closes the tool session, so an old ACP session cannot retain Cuppet execution authority.
 
-Current Cuppet MCP surface includes the existing runtime operations:
+Current provider-facing Cuppet surface includes:
 
 ```text
 cuppet_plan
 cuppet_memory_search
 question
+cuppet_execute
 
 tst_explore
 tst_read
 tst_edit_batch
 tst_validate
 
-workspace_read
-workspace_edit
-workspace_write
-bash
+workspace_read      # fallback only
+workspace_edit      # fallback only
+workspace_write     # fallback only
 
 browser_* when enabled
 ```
+
+Raw `bash` is not advertised to reasoning engines. `cuppet_execute` is the semantic command surface and is translated by the Execution Kernel into ToolRuntime's existing shell implementation after policy checks.
 
 The provider-facing surface is filtered by Execution Kernel policy rather than exposing every primitive equally.
 
@@ -142,23 +145,54 @@ This is a backend descriptor policy, not a Claude-specific runtime fork. Future 
 
 Availability is not enough. Cuppet must make the optimized path authoritative.
 
-Initial mutation policy:
+### Mutation
 
 1. Providers receive `tst_edit_batch` but do not receive raw `workspace_edit` / `workspace_write`.
 2. ACP v1 native filesystem writes are not allowed to silently bypass that rule.
-3. If `tst_edit_batch` actually fails for the session, raw mutation tools are unlocked as an explicit fallback.
-4. Raw fallback remains permissioned, journaled, bounded, and observable through ToolRuntime.
+3. Obvious shell mutation patterns through `cuppet_execute` are blocked while the optimized mutation path is available.
+4. If `tst_edit_batch` actually fails for the session, raw mutation tools are unlocked as an explicit fallback.
+5. Raw fallback remains permissioned, journaled, bounded, and observable through ToolRuntime.
 
-Initial read policy:
+### Reads
 
 1. Providers receive `tst_explore` and `tst_read` but do not receive raw `workspace_read`.
 2. ACP v1 native filesystem reads are not allowed to silently bypass that rule.
-3. If `tst_read` actually fails for the session, raw read is unlocked as an explicit fallback.
-4. Structured reads remain filesystem-authoritative and bounded by ToolRuntime.
+3. Obvious shell source-inspection patterns through `cuppet_execute` are blocked while structured retrieval is available.
+4. If `tst_read` actually fails for the session, raw read is unlocked as an explicit fallback.
+5. Structured reads remain filesystem-authoritative and bounded by ToolRuntime.
 
-Shell remains available as a fallback for now. Its optimization policy will tighten only after equivalent deterministic routing is proven not to reduce correctness.
+### Commands
+
+1. Providers see `cuppet_execute`, not raw `bash`.
+2. `cuppet_execute` is implemented by the Execution Kernel translating to ToolRuntime's existing `bash` operation after policy checks.
+3. ACP v1 native terminal requests are rejected for managed providers and directed to `cuppet_execute`.
+4. Build, test, package/tooling, generator, version, and other legitimate command workflows continue through ToolRuntime permissions and mutation observation.
+5. Direct source inspection/mutation patterns are not accepted as a shortcut around TST/batched editing until the corresponding fallback has been unlocked.
+6. Command mutations still produce a mutation-journal barrier and project path observation; semantic command mediation must never become an unjournaled side channel.
 
 These rules are intentionally stronger than a prompt that merely says "prefer TST" or "prefer batched edits."
+
+Shell classification is defense-in-depth, not a claim that arbitrary shell text can be perfectly classified. The long-term direction is to narrow command intent into stable semantic operations wherever doing so preserves real coding workflows.
+
+## Execution measurement
+
+Per Cuppet session, the Execution Kernel records at least:
+
+```text
+requested operations by path
+actual executions by path
+successes / failures
+blocked native/raw bypass attempts
+fallback unlocks
+result bytes
+paths touched
+mutations
+cumulative execution duration
+```
+
+These metrics exist to answer a concrete product question: does Cuppet's execution architecture reduce raw reads, raw edits, context volume, command use, and latency without reducing correctness?
+
+Provider coverage must not be treated as progress if these metrics show that providers are still effectively reproducing their own raw coding runtime inside Cuppet.
 
 ## ACP v1 and v2 direction
 
@@ -192,7 +226,7 @@ Codex already receives Cuppet dynamic tools and is instructed not to use its bui
 8. Cuppet's journal remains the durable authority for tool/mutation state.
 9. TST remains above provider transports.
 10. ACP backends share one protocol runtime; provider-specific runtime copies are not allowed without a real protocol incompatibility.
-11. Raw reads and mutations are fallbacks, not peers of optimized paths.
+11. Raw reads, raw writes, and raw terminal access are not peers of Cuppet semantic/optimized operations.
 12. A provider process/session never owns Cuppet tool authority beyond its active scoped tool session.
 13. Backend-specific execution restrictions belong in descriptor metadata/quirks, not duplicated runtimes.
 
@@ -216,14 +250,15 @@ Conversation Bridge may later permit persistent logical ACP sessions once duplic
 6. Enforce optimized-first mutation/read policy and add execution-path metrics.
 7. Replace ACP model/reasoning special cases with generic provider capabilities and model-dependent setting refresh.
 8. Move Claude Code as the second ACP backend and prevent its built-in coding tools from bypassing Cuppet.
-9. Benchmark optimized execution against raw execution before scaling provider coverage.
-10. Add deterministic search/validation/shell optimization only where correctness can be preserved.
-11. Move additional ACP providers after parity fixtures prove they use the same runtime/tool authority.
-12. Move Antigravity to ACP where the native/distributable route is appropriate.
-13. Move chat/journal rendering to Activity only.
-14. Add Conversation Bridge persistence/resume after context ownership is explicit.
-15. Separate probe/install/auth/update/runtime operations and installation ownership.
-16. Remove compatibility paths only after parity tests pass.
+9. Mediate command execution through `cuppet_execute` and block native ACP terminal bypass.
+10. Benchmark optimized execution against raw execution before scaling provider coverage.
+11. Add more semantic execution routing only where correctness can be preserved.
+12. Move additional ACP providers after parity fixtures prove they use the same runtime/tool authority.
+13. Move Antigravity to ACP where the native/distributable route is appropriate.
+14. Move chat/journal rendering to Activity only.
+15. Add Conversation Bridge persistence/resume after context ownership is explicit.
+16. Separate probe/install/auth/update/runtime operations and installation ownership.
+17. Remove compatibility paths only after parity tests pass.
 
 ## Testing gates
 
@@ -234,7 +269,9 @@ same ACP runtime works for more than one backend descriptor
 Cuppet MCP tools are supplied through session/new
 optimized tools are discoverable
 raw read and mutation tools are hidden initially
-ACP native read/write cannot bypass optimized-first policy
+raw bash is replaced by cuppet_execute
+ACP native read/write/terminal cannot bypass Cuppet policy
+shell read/write shortcuts cannot bypass TST/batch policy
 failed structured read/batch edit unlocks only the corresponding explicit fallback
 permissions/journal/path refresh still execute in ToolRuntime
 stalled providers cancel and terminate
@@ -250,7 +287,7 @@ optimized vs raw execution path counts
 blocked bypass attempts
 fallback unlocks
 raw reads
-shell invocations
+command invocations
 edit operations
 files per batch
 context bytes returned
