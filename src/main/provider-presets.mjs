@@ -21,6 +21,18 @@ export const PROVIDER_PRESETS = Object.freeze({
     authLabel: 'Local OpenCode CLI',
     note: 'Uses your locally installed OpenCode CLI through ACP. Cuppet never reads or stores OpenCode provider credentials.',
   }),
+  'claude-code': Object.freeze({
+    id: 'claude-code',
+    label: 'Claude Code',
+    baseUrl: 'cli://claude-code',
+    model: 'cli-default',
+    models: Object.freeze([
+      Object.freeze({ id: 'cli-default', label: 'Claude Code default', description: 'Use the model selected by your Claude account and local Claude Code configuration.' }),
+    ]),
+    authType: 'local-cli',
+    authLabel: 'Local Claude Code',
+    note: 'Uses Claude Code through the maintained Agent Client Protocol adapter for the Claude Agent SDK. Claude authentication and subscription/API billing remain owned by Claude; Cuppet supplies its own optimized tools through the shared ACP execution path.',
+  }),
   'grok-build': Object.freeze({
     id: 'grok-build',
     label: 'Grok Build',
