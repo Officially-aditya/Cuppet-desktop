@@ -12,6 +12,7 @@ import './message-controls.css';
 import './sidebar-icons.css';
 import './sidebar-row-hover.css';
 import './controls.css';
+import './composer-mode.css';
 import './provider-model-settings.css';
 import './general-settings.css';
 import './permission-inline.css';
