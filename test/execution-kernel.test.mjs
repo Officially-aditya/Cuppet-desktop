@@ -8,6 +8,7 @@ const definition = (name) => ({ type: 'function', function: { name, description:
 test('ExecutionKernel classifies optimized and fallback Cuppet execution paths', async () => {
   assert.equal(executionPathForTool('tst_edit_batch'), 'optimized');
   assert.equal(executionPathForTool('tst_read'), 'optimized');
+  assert.equal(executionPathForTool('workspace_read'), 'raw-fallback');
   assert.equal(executionPathForTool('workspace_write'), 'raw-fallback');
   assert.equal(executionPathForTool('bash'), 'raw-fallback');
   assert.equal(executionPathForTool('cuppet_memory_search'), 'semantic');
@@ -25,6 +26,30 @@ test('ExecutionKernel classifies optimized and fallback Cuppet execution paths',
     ['execution.kernel.started', 'optimized'],
     ['execution.kernel.completed', 'optimized'],
   ]);
+});
+
+test('provider tool surface requires structured reads before raw read fallback', async () => {
+  const kernel = new ExecutionKernel();
+  const tools = [definition('workspace_read'), definition('bash'), definition('tst_explore'), definition('tst_read')];
+  const initial = kernel.toolsForProvider(tools, { sessionId: 'chat-read' }).map((item) => item.function.name);
+  assert.deepEqual(initial, ['tst_explore', 'tst_read', 'bash']);
+
+  let called = false;
+  const blocked = await kernel.execute({ id: 'raw-read-1', source: 'acp-host', name: 'workspace_read', arguments: '{}' }, {
+    sessionId: 'chat-read', projectRoot: '/tmp/project', execute: async () => { called = true; return { success: true }; },
+  });
+  assert.equal(called, false);
+  assert.equal(blocked.success, false);
+  assert.match(blocked.output, /tst_explore\/tst_read/);
+  assert.equal(kernel.snapshot('chat-read').blockedRawReads, 1);
+  assert.equal(kernel.snapshot('chat-read').rawReadFallback, false);
+
+  await kernel.execute({ id: 'structured-read-1', name: 'tst_read', arguments: '{}' }, {
+    sessionId: 'chat-read', projectRoot: '/tmp/project', execute: async () => ({ success: false, output: 'unsupported file shape' }),
+  });
+  const fallback = kernel.toolsForProvider(tools, { sessionId: 'chat-read' }).map((item) => item.function.name);
+  assert.deepEqual(fallback, ['tst_explore', 'tst_read', 'workspace_read', 'bash']);
+  assert.equal(kernel.snapshot('chat-read').rawReadFallback, true);
 });
 
 test('provider tool surface requires batch edits before raw mutation fallback', async () => {
