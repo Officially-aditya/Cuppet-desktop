@@ -369,7 +369,7 @@ export type CuppetApi = {
   };
   settings: {
     get: () => Promise<ProviderSettings>;
-    models: () => Promise<ProviderModelCatalog>;
+    models: (options?: { model?: string }) => Promise<ProviderModelCatalog>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
   onEvent: (handler: (event: RuntimeEvent) => void) => () => void;
