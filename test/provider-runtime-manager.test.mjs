@@ -27,6 +27,9 @@ function managedAdapter(config, backendId = 'opencode') {
     stream: async () => ({ text: 'stateless' }),
   };
 }
+function toolDefinition(name = 'cuppet_plan') {
+  return { type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } };
+}
 
 test('manager reuses one ACP process per Cuppet session but refreshes ACP logical session per turn', async () => {
   const log = [];
@@ -75,6 +78,96 @@ test('manager evicts idle ACP processes', async () => {
   await new Promise((resolve) => setTimeout(resolve, 35));
   assert.equal(manager.size, 0);
   assert.ok(log.includes('close'));
+});
+
+test('aborting a managed ACP turn immediately revokes its Cuppet MCP tool authority', async () => {
+  const runtimeLog = [];
+  const toolLog = [];
+  let finishTurn;
+  let signalTurnStarted;
+  const turnStarted = new Promise((resolve) => { signalTurnStarted = resolve; });
+  const runtime = {
+    async start() { runtimeLog.push('start'); },
+    async newSession() { runtimeLog.push('newSession'); },
+    async runTurn(_input, hooks) {
+      runtimeLog.push('run');
+      hooks.signal?.addEventListener('abort', () => runtimeLog.push('signal-abort'), { once: true });
+      signalTurnStarted();
+      return new Promise((resolve) => { finishTurn = resolve; });
+    },
+    async cancel() { runtimeLog.push('cancel'); },
+    async close() { runtimeLog.push('close'); },
+  };
+  const manager = new ProviderRuntimeManager({
+    usageRecorder: async () => {},
+    acpRuntimeFactory: () => runtime,
+    toolSessionFactory: () => {
+      let closed = false;
+      return {
+        async start() { toolLog.push('start'); },
+        setTurn() { toolLog.push('setTurn'); },
+        descriptor() { return { name: 'cuppet-runtime', command: process.execPath, args: [], env: [] }; },
+        async close() { if (!closed) { closed = true; toolLog.push('close'); } },
+      };
+    },
+  });
+  const controller = new AbortController();
+  const stream = manager.adapterFor({ sessionId: 'chat-abort', adapter: managedAdapter({ providerID: 'opencode' }) }).stream([], {
+    signal: controller.signal,
+    tools: [toolDefinition()],
+    executeTool: async () => ({ success: true, output: 'unused' }),
+  });
+  await turnStarted;
+  controller.abort();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(runtimeLog.includes('signal-abort'));
+  assert.deepEqual(toolLog, ['start', 'setTurn', 'close']);
+
+  finishTurn({ text: '', usage: null });
+  await stream;
+  await manager.close();
+});
+
+test('manager cancel revokes active MCP authority as well as cancelling the provider runtime', async () => {
+  const runtimeLog = [];
+  const toolLog = [];
+  let finishTurn;
+  let signalTurnStarted;
+  const turnStarted = new Promise((resolve) => { signalTurnStarted = resolve; });
+  const runtime = {
+    async start() {},
+    async newSession() {},
+    async runTurn() {
+      signalTurnStarted();
+      return new Promise((resolve) => { finishTurn = resolve; });
+    },
+    async cancel() { runtimeLog.push('cancel'); },
+    async close() { runtimeLog.push('close'); },
+  };
+  const manager = new ProviderRuntimeManager({
+    usageRecorder: async () => {},
+    acpRuntimeFactory: () => runtime,
+    toolSessionFactory: () => {
+      let closed = false;
+      return {
+        async start() {},
+        setTurn() {},
+        descriptor() { return { name: 'cuppet-runtime', command: process.execPath, args: [], env: [] }; },
+        async close() { if (!closed) { closed = true; toolLog.push('close'); } },
+      };
+    },
+  });
+  const stream = manager.adapterFor({ sessionId: 'chat-cancel', adapter: managedAdapter({ providerID: 'opencode' }) }).stream([], {
+    tools: [toolDefinition()],
+    executeTool: async () => ({ success: true, output: 'unused' }),
+  });
+  await turnStarted;
+  assert.equal(await manager.cancel('chat-cancel'), true);
+  assert.deepEqual(runtimeLog, ['cancel']);
+  assert.deepEqual(toolLog, ['close']);
+  finishTurn({ text: '', usage: null });
+  await stream;
+  await manager.close();
 });
 
 test('ACP runtime fingerprint is stable and sensitive to backend execution authority', () => {
