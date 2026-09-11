@@ -37,6 +37,7 @@ jobs:
           test/cli-agent-linking.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/provider-activity-renderer.test.mjs
+          test/provider-model-renderer-sync.test.mjs
           test/acp-cuppet-tools.test.mjs
           test/acp-cuppet-tool-session-security.test.mjs
           test/execution-kernel.test.mjs
@@ -44,6 +45,8 @@ jobs:
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs
+      - name: Verify renderer
+        run: npm run renderer:verify
       - name: Verify benchmark harness
         run: |
           node --check scripts/run-provider-benchmark.mjs
