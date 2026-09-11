@@ -64,3 +64,37 @@ test('provider factory routes OpenCode to ACP v2 without moving other ACP provid
   assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof OpenCodeAcpProviderV2);
   assert.equal(createUntrackedChatProvider({ providerID: 'grok-build' }).constructor.name, 'AcpCliAgentProvider');
 });
+
+test('ACP v2 cancels and terminates a genuinely silent stalled turn', async () => {
+  const fixture = fileURLToPath(new URL('./fixtures/fake-acp-hanging-agent.mjs', import.meta.url));
+  const runtime = new AcpSessionRuntime({
+    descriptor: localCliDescriptor('opencode'),
+    configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
+    projectRoot: tmpdir(),
+    liveness: { inactivityMs: 35, cancelGraceMs: 15 },
+  });
+  const seen = [];
+  try {
+    await runtime.start();
+    await assert.rejects(
+      () => runtime.runTurn({ messages: [{ role: 'user', content: 'Hang' }] }, { onActivity: async (activity) => seen.push(activity) }),
+      /stopped responding via ACP/,
+    );
+    assert.ok(seen.some((activity) => activity.type === 'activity.warning' && activity.code === 'provider_stalled'));
+  } finally { await runtime.close(); }
+});
+
+test('ACP v2 liveness resets on genuine reasoning activity', async () => {
+  const fixture = fileURLToPath(new URL('./fixtures/fake-acp-heartbeat-agent.mjs', import.meta.url));
+  const runtime = new AcpSessionRuntime({
+    descriptor: localCliDescriptor('opencode'),
+    configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
+    projectRoot: tmpdir(),
+    liveness: { inactivityMs: 35, cancelGraceMs: 15 },
+  });
+  try {
+    await runtime.start();
+    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Long work' }] });
+    assert.equal(result.text, 'Alive.');
+  } finally { await runtime.close(); }
+});
