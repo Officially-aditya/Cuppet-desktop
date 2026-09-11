@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('cuppet', {
   },
   cliAgents: {
     status: (providerID) => ipcRenderer.invoke('cuppet:cli-agent:status', providerID),
+    connect: (providerID) => ipcRenderer.invoke('cuppet:cli-agent:connect', providerID),
   },
   codexAuth: {
     status: () => ipcRenderer.invoke('cuppet:codex-auth:status'),

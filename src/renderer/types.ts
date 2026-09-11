@@ -181,7 +181,10 @@ export type CliAgentStatus = {
   label?: string;
   available: boolean;
   installed?: boolean;
+  connected?: boolean;
   version?: string | null;
+  action?: 'connect' | 'ready' | string;
+  canAutoInstall?: boolean;
   loginHint?: string;
   message?: string;
 };
@@ -296,6 +299,7 @@ export type CuppetApi = {
   };
   cliAgents: {
     status: (providerID: string) => Promise<CliAgentStatus>;
+    connect: (providerID: string) => Promise<CliAgentStatus>;
   };
   codexAuth: {
     status: () => Promise<any>;

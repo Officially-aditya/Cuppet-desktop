@@ -110,11 +110,35 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     finally { setBusy(false); }
   };
 
+  const connectLocalCli = async () => {
+    if (!selected || !isLocalCli || !providerID) return;
+    setBusy(true);
+    setNote(`Connecting ${selected.label || selected.id}…`);
+    try {
+      setCliStatus((current) => ({ ...(current ?? { providerID }), providerID, available: false, connected: false, message: current?.installed === false ? `Installing ${selected.label || selected.id}…` : `Opening ${selected.label || selected.id} sign-in…` }));
+      const linked = await window.cuppet.cliAgents.connect(providerID);
+      setCliStatus(linked);
+      if (!(linked.connected ?? linked.available)) throw new Error(linked.message || `${selected.label || selected.id} did not finish connecting.`);
+      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '' });
+      setCurrent(saved);
+      setApiKey('');
+      const projected = { ...saved, credentialConfigured: true, configured: Boolean(saved.primary?.modelID) };
+      onSaved(projected);
+      setNote(`${selected.label || selected.id} connected and selected.`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
+      onError(error);
+      try { setCliStatus(await window.cuppet.cliAgents.status(providerID)); } catch {}
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selected) { setNote('Choose a provider.'); return; }
     if (isCodex && !codex.loggedIn) { setSection('account'); setNote('Connect ChatGPT before selecting Codex as the active provider.'); return; }
-    if (isLocalCli && !cliStatus?.available) { setNote(`${selected.label || selected.id} CLI is not installed or is not available on PATH.`); return; }
+    if (isLocalCli && !(cliStatus?.connected ?? cliStatus?.available)) { setNote(`Connect ${selected.label || selected.id} first.`); return; }
     setBusy(true);
     try {
       const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: (isCodex || isLocalCli) ? '' : apiKey });
@@ -148,7 +172,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <div className="settings-hub-content">
               {section === 'general' && <GeneralPanel />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
-              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} onRefreshCli={refreshCliStatus} />}
+              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
@@ -215,16 +239,17 @@ function AccountPanel({ codex, busy, onConnect, onDisconnect, onError }: { codex
   </>;
 }
 
-function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, isLocalCli, cliStatus, codex, note, busy, onProvider, onApiKey, onSave, onModelSaved, onClose, onConnect, onDisconnect, onRefreshCli }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; isLocalCli: boolean; cliStatus: CliAgentStatus | null; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onRefreshCli: () => void | Promise<void> }) {
+function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, isLocalCli, cliStatus, codex, note, busy, onProvider, onApiKey, onSave, onModelSaved, onClose, onConnect, onDisconnect, onConnectCli }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; isLocalCli: boolean; cliStatus: CliAgentStatus | null; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onConnectCli: () => void | Promise<void> }) {
   const activeProviderID = current?.providerID || current?.primary?.providerID || '';
-  const credentialReady = isCodex ? Boolean(codex.loggedIn) : isLocalCli ? Boolean(cliStatus?.available) : Boolean(current?.apiKeyConfigured);
+  const cliConnected = Boolean(cliStatus?.connected ?? cliStatus?.available);
+  const credentialReady = isCodex ? Boolean(codex.loggedIn) : isLocalCli ? cliConnected : Boolean(current?.apiKeyConfigured);
   const modelsReady = Boolean(selected && activeProviderID === providerID && credentialReady && !apiKey.trim());
   const modelHint = activeProviderID !== providerID
     ? `Save ${selected?.label || providerID} first to choose its models.`
     : apiKey.trim()
       ? 'Save the API key change first so model selection uses the saved credential.'
       : !credentialReady
-        ? (isCodex ? 'Connect ChatGPT first to choose Codex models.' : isLocalCli ? `Install ${selected?.label || 'the CLI'} first so Cuppet can use it.` : 'Save an API key first to choose models.')
+        ? (isCodex ? 'Connect ChatGPT first to choose Codex models.' : isLocalCli ? `Connect ${selected?.label || 'the provider'} first. Cuppet handles installation automatically.` : 'Save an API key first to choose models.')
         : '';
 
   return <form className="platform-settings-form" onSubmit={(event) => void onSave(event)}>
@@ -246,11 +271,11 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
         ) : isLocalCli ? (
           <div className="provider-auth-card">
             <div className="provider-auth-copy">
-              <div className="provider-auth-title-row"><strong>Local CLI</strong><span className={`settings-status-pill compact${cliStatus?.available ? '' : ' muted'}`}>{cliStatus?.available ? 'Detected' : cliStatus ? 'Not detected' : 'Checking…'}</span></div>
-              <span>{cliStatus?.message || `Checking for ${selected?.label || providerID} on this computer…`}</span>
-              {cliStatus?.loginHint && <span>{cliStatus.loginHint}</span>}
+              <div className="provider-auth-title-row"><strong>Provider connection</strong><span className={`settings-status-pill compact${cliConnected ? '' : ' muted'}`}>{cliConnected ? 'Connected' : busy ? 'Connecting…' : cliStatus ? 'Not connected' : 'Checking…'}</span></div>
+              <span>{cliStatus?.message || `Checking ${selected?.label || providerID}…`}</span>
+              {!cliConnected && <span>Cuppet installs the official CLI when needed and opens the provider's own sign-in flow automatically. No Terminal setup is required.</span>}
             </div>
-            <div className="provider-auth-actions"><button type="button" className="ghost-button settings-action-button" disabled={busy} onClick={() => void onRefreshCli()}>Refresh</button></div>
+            <div className="provider-auth-actions">{cliConnected ? <span className="settings-status-pill compact">Ready</span> : <button type="button" className="primary-button settings-action-button" disabled={busy || cliStatus === null} onClick={() => void onConnectCli()}>{busy ? 'Connecting…' : `Connect ${selected?.label || 'provider'}`}</button>}</div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
         {selected && <div className="platform-model-section">

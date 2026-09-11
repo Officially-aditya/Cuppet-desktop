@@ -115,6 +115,12 @@ assert.match(providerPresets, /id:\s*'zai'.*baseUrl:\s*'https:\/\/api\.z\.ai\/ap
 assert.match(providerPresets, /models:\s*models\.map/, 'provider preset projection does not expose its model family');
 assert.match(preload, /platform:\s*process\.platform/, 'renderer cannot detect macOS for native sidebar affordances');
 assert.match(preload, /cuppet:usage:summary/, 'bounded preload does not expose token usage summary');
+assert.match(main, /cuppet:cli-agent:connect/, 'Electron main does not expose automatic local provider linking');
+assert.match(preload, /cuppet:cli-agent:connect/, 'bounded preload does not expose automatic local provider linking');
+assert.match(settings, /window\.cuppet\.cliAgents\.connect/, 'Provider settings does not use one-click local provider linking');
+assert.match(settings, /Cuppet installs the official CLI when needed/, 'Provider settings does not explain automatic CLI installation');
+assert.doesNotMatch(settings, /cliStatus\?\.loginHint/, 'Provider settings still exposes manual Terminal login instructions');
+assert.doesNotMatch(settings, /onRefreshCli/, 'Provider settings still exposes a manual CLI refresh/link step');
 assert.match(main, /cuppet:browser-control:status/, 'Electron main does not expose browserControl status');
 assert.match(main, /integration\.browser\.connect/, 'Electron main does not route browserControl connect');
 assert.match(preload, /browserControl:\s*\{/, 'bounded preload does not expose browserControl integration');

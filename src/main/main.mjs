@@ -4,7 +4,7 @@ import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
-import { cliAgentStatus } from './cli-agent-status.mjs';
+import { cliAgentConnect, cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
@@ -113,7 +113,8 @@ function registerIpc() {
     return { copied: true };
   });
 
-  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID)));
+  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
+  ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => cliAgentConnect(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const result = await settings.save(value);
