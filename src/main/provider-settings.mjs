@@ -228,29 +228,9 @@ async function writeSettingsAtomically(path, content) {
   }
 }
 
-function autoSecondaryModel(preset, primaryModel) {
-  const fallback = modelID(primaryModel);
-  const models = Array.isArray(preset?.models) ? preset.models : [];
-  if (!models.length) return fallback;
-  let best = { id: fallback, score: 0 };
-  for (const item of models) {
-    const id = modelID(item?.id);
-    if (!id) continue;
-    const text = `${id} ${item?.label ?? ''} ${item?.description ?? ''}`.toLowerCase();
-    let score = 0;
-    if (text.includes('flash-lite')) score += 100;
-    if (text.includes('luna')) score += 90;
-    if (text.includes('flash')) score += 80;
-    if (text.includes('turbo')) score += 70;
-    if (text.includes('cost-efficient') || text.includes('lower-cost') || text.includes('low-latency')) score += 60;
-    if (text.includes('fast')) score += 50;
-    if (text.includes('small') || text.includes('27b')) score += 45;
-    if (text.includes('balanced') || text.includes('sonnet')) score += 35;
-    if (text.includes('opus') || text.includes('max') || text.includes(' pro ')) score -= 20;
-    if (text.includes('flagship') || text.includes('advanced') || text.includes('hardest')) score -= 10;
-    if (score > best.score) best = { id, score };
-  }
-  return best.score > 0 ? best.id : fallback;
+function autoSecondaryModel(_preset, primaryModel) {
+  // Auto means follow provider/user authority exactly; Cuppet never guesses a different model.
+  return modelID(primaryModel);
 }
 
 function modelID(value) {

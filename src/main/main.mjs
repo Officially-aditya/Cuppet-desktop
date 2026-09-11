@@ -4,6 +4,7 @@ import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
+import { fetchProviderModelCatalog } from './provider-model-catalog.mjs';
 import { cliAgentConnect, cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
@@ -116,8 +117,24 @@ function registerIpc() {
   ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => cliAgentConnect(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
+  ipcMain.handle('cuppet:settings:models', () => fetchProviderModelCatalog(settings.runtimeValue()));
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
-    const result = await settings.save(value);
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    let result = await settings.save(source);
+    const explicitModel = typeof source.model === 'string' && source.model.trim();
+    if (!explicitModel && result.authType === 'local-cli') {
+      const advertised = await fetchProviderModelCatalog(settings.runtimeValue()).catch(() => null);
+      const exactDefault = typeof advertised?.defaultModel === 'string' ? advertised.defaultModel.trim() : '';
+      if (exactDefault && exactDefault !== 'cli-default' && exactDefault !== result.primary?.modelID) {
+        result = await settings.save({
+providerID: result.primary?.providerID || result.providerID,
+baseUrl: result.baseUrl || '',
+model: exactDefault,
+backgroundModel: exactDefault,
+secondaryAuto: true,
+        });
+      }
+    }
     await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
     return result;
   });

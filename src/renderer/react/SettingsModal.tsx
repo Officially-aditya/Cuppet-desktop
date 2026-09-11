@@ -4,6 +4,7 @@ import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
 import { CUPPET_LOGO_URL } from './brand';
+import { notifyProviderSettingsChanged } from './provider-settings-events';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -124,6 +125,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setApiKey('');
       const projected = { ...saved, credentialConfigured: true, configured: Boolean(saved.primary?.modelID) };
       onSaved(projected);
+      notifyProviderSettingsChanged();
       setNote(`${selected.label || selected.id} connected and selected.`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : String(error));
@@ -145,6 +147,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setCurrent(saved);
       setApiKey('');
       onSaved({ ...saved, ...(isCodex ? { credentialConfigured: codex.loggedIn, configured: codex.loggedIn && Boolean(saved.primary?.modelID) } : {}), ...(isLocalCli ? { credentialConfigured: true, configured: Boolean(cliStatus?.available && saved.primary?.modelID) } : {}) });
+      notifyProviderSettingsChanged();
       setNote(isCodex ? 'Codex subscription provider saved.' : isLocalCli ? `${selected.label || selected.id} local CLI provider saved.` : `${selected.label || selected.id} saved.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }
@@ -153,6 +156,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   const modelSaved = useCallback((saved: ProviderSettings) => {
     setCurrent(saved);
     onSaved(saved);
+    notifyProviderSettingsChanged();
   }, [onSaved]);
 
   const [title, description] = SECTION_META[section] ?? SECTION_META.account;

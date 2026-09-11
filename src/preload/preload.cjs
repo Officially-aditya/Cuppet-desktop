@@ -96,6 +96,6 @@ contextBridge.exposeInMainWorld('cuppet', {
     openExternal: (url) => ipcRenderer.invoke('cuppet:native:open-external', url),
     copyText: (text) => ipcRenderer.invoke('cuppet:native:copy-text', text),
   },
-  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
+  settings: { get: () => ipcRenderer.invoke('cuppet:settings:get'), models: () => ipcRenderer.invoke('cuppet:settings:models'), save: (value) => ipcRenderer.invoke('cuppet:settings:save', value) },
   onEvent: (callback) => { if (typeof callback !== 'function') return () => {}; const listener = (_event, payload) => callback(payload); ipcRenderer.on('cuppet:event', listener); return () => ipcRenderer.removeListener('cuppet:event', listener); },
 });

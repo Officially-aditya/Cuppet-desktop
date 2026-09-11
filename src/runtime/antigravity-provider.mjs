@@ -24,7 +24,9 @@ export class AntigravityHeadlessProvider {
     const baseArgs = Array.isArray(this.#configuration.cliArgs) && this.#configuration.cliArgs.length
       ? this.#configuration.cliArgs.map((value) => String(value))
       : [...this.#descriptor.args];
-    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', '-p', prompt];
+    const selectedModel = text(this.#configuration?.primary?.modelID || this.#configuration?.model);
+    const modelArgs = selectedModel && selectedModel !== 'cli-default' ? ['--model', selectedModel] : [];
+    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', ...modelArgs, '-p', prompt];
     let child;
     try {
       child = spawn(command, args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });

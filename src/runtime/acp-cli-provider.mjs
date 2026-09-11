@@ -19,6 +19,72 @@ export function acpCliDescriptor(value) {
   return descriptor?.transport === 'acp' ? descriptor : null;
 }
 
+export function acpModelCatalogFromSession(session = {}) {
+  const source = record(session);
+  const configOptions = Array.isArray(source.configOptions) ? source.configOptions : [];
+  const selector = configOptions.find((item) => String(item?.category ?? '').toLowerCase() === 'model')
+    ?? configOptions.find((item) => item?.type === 'select' && /model/i.test(String(item?.id ?? item?.name ?? '')));
+  const rawOptions = Array.isArray(selector?.options) ? selector.options : [];
+  const models = [];
+  const seen = new Set();
+  for (const raw of rawOptions) {
+    const option = record(raw);
+    const id = text(option.value || option.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, label: text(option.name || option.label) || id, ...(text(option.description) ? { description: text(option.description) } : {}) });
+  }
+
+  // A few ACP agents shipped the older models object before configOptions stabilized.
+  const legacy = record(source.models);
+  if (!models.length) {
+    const legacyModels = Array.isArray(legacy.availableModels) ? legacy.availableModels : Array.isArray(legacy.models) ? legacy.models : [];
+    for (const raw of legacyModels) {
+      const option = record(raw);
+      const id = text(option.modelId || option.id || option.value);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      models.push({ id, label: text(option.name || option.label) || id, ...(text(option.description) ? { description: text(option.description) } : {}) });
+    }
+  }
+  const currentModel = text(selector?.currentValue || legacy.currentModelId || legacy.currentModel);
+  if (currentModel && !seen.has(currentModel)) models.unshift({ id: currentModel, label: currentModel });
+  return {
+    available: models.length > 0,
+    source: 'acp',
+    configId: text(selector?.id) || null,
+    defaultModel: currentModel || null,
+    currentModel: currentModel || null,
+    models,
+  };
+}
+
+export async function discoverAcpModelCatalog(providerID, options = {}) {
+  const descriptor = acpCliDescriptor(providerID);
+  if (!descriptor) throw new Error(`Unsupported ACP provider: ${providerID ?? 'unknown'}`);
+  const configuration = record(options.configuration);
+  const command = text(configuration.cliCommand) || text(process.env[descriptor.envOverride]) || descriptor.command;
+  const args = Array.isArray(configuration.cliArgs) && configuration.cliArgs.length ? configuration.cliArgs.map((value) => String(value)) : [...descriptor.args];
+  const cwd = text(options.cwd) || tmpdir();
+  const child = spawn(command, args, { cwd, env: providerEnvironment(descriptor.id), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
+  const rpc = new AcpRpcClient({ child, descriptor, projectRoot: null, executeTool: undefined, requestAgentPermission: undefined, onDelta: async () => {} });
+  try {
+    await rpc.ready();
+    const initialized = await rpc.request('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
+    }, REQUEST_TIMEOUT_MS);
+    await authenticateIfNeeded(rpc, descriptor, initialized);
+    const session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+    return { providerID: descriptor.id, ...acpModelCatalogFromSession(session) };
+  } catch (error) {
+    throw enrichProviderError(descriptor, error, rpc.stderr());
+  } finally {
+    rpc.close();
+  }
+}
+
 export class AcpCliAgentProvider {
   #configuration;
   #descriptor;
@@ -75,6 +141,7 @@ export class AcpCliAgentProvider {
       const session = await rpc.request('session/new', { cwd, mcpServers: [] }, REQUEST_TIMEOUT_MS);
       sessionId = text(session?.sessionId);
       if (!sessionId) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
+      await applyAdvertisedAcpModel(rpc, this.#descriptor, sessionId, session, configuredAcpModel(this.#configuration));
 
       abortListener = () => {
         rpc.notify('session/cancel', { sessionId });
@@ -300,6 +367,19 @@ class AcpRpcClient {
     for (const pending of this.#pending.values()) pending.reject(error instanceof Error ? error : new Error(String(error)));
     this.#pending.clear();
   }
+}
+
+async function applyAdvertisedAcpModel(rpc, descriptor, sessionId, session, requestedModel) {
+  const requested = text(requestedModel);
+  if (!requested || requested === 'cli-default') return;
+  const catalog = acpModelCatalogFromSession(session);
+  if (!catalog.configId) throw new Error(`${descriptor.label} does not advertise a switchable model selector; leaving its provider default unchanged.`);
+  if (!catalog.models.some((item) => item.id === requested)) throw new Error(`${descriptor.label} no longer advertises model '${requested}'. Refresh the model picker.`);
+  if (catalog.currentModel === requested) return;
+  await rpc.request('session/set_config_option', { sessionId, configId: catalog.configId, value: requested }, REQUEST_TIMEOUT_MS);
+}
+function configuredAcpModel(configuration) {
+  return text(configuration?.primary?.modelID || configuration?.model);
 }
 
 function sessionPromptParams(descriptor, sessionId, textValue) {

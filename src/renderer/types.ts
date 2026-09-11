@@ -161,6 +161,24 @@ export type TokenUsageSummary = {
   byModel: TokenUsageBucket[];
 };
 
+export type ProviderModelCatalog = {
+  providerID: string;
+  available: boolean;
+  source: 'api' | 'acp' | 'cli' | 'codex' | 'none' | string;
+  defaultModel?: string | null;
+  configuredModel?: string | null;
+  fetchedAt?: number;
+  error?: string;
+  models: Array<{
+    id: string;
+    label?: string;
+    description?: string;
+    context?: number;
+    outputLimit?: number;
+    isDefault?: boolean;
+  }>;
+};
+
 export type CodexModelCatalog = {
   available: boolean;
   loggedIn?: boolean;
@@ -346,6 +364,7 @@ export type CuppetApi = {
   };
   settings: {
     get: () => Promise<ProviderSettings>;
+    models: () => Promise<ProviderModelCatalog>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
   onEvent: (handler: (event: RuntimeEvent) => void) => () => void;
