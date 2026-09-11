@@ -31,6 +31,8 @@ jobs:
           test/provider-architecture-v2.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-acp-runtime-v2.test.mjs
+          test/claude-code-provider.test.mjs
+          test/runtime-service-provider-lifecycle.test.mjs
           test/acp-cuppet-tools.test.mjs
           test/acp-cuppet-tool-session-security.test.mjs
           test/execution-kernel.test.mjs
