@@ -96,6 +96,7 @@ export function createBenchmarkRecord({
   usage = null,
   elapsedMs = 0,
   correctness = { passed: true },
+  metrics: persistedMetrics = null,
   error = null,
 } = {}) {
   const state = record(execution);
@@ -105,7 +106,7 @@ export function createBenchmarkRecord({
   const optimizedExecuted = number(state.optimizedExecuted);
   const validationAttempts = number(state.validationAttempts);
   const validationSuccesses = number(state.validationSuccesses);
-  const metrics = Object.freeze({
+  const computedMetrics = {
     toolCalls: executed,
     optimizedCalls: optimizedExecuted,
     semanticCalls: number(state.semanticExecuted),
@@ -133,7 +134,9 @@ export function createBenchmarkRecord({
     totalTokens: tokens.totalTokens,
     cachedInputTokens: tokens.cachedInputTokens,
     reasoningTokens: tokens.reasoningTokens,
-  });
+  };
+  const saved = record(persistedMetrics);
+  const metrics = Object.freeze(Object.keys(saved).length ? { ...saved } : computedMetrics);
   return Object.freeze({
     schemaVersion: 1,
     taskId: requiredText(taskId, 'taskId'),
