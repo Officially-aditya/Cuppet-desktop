@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { ProviderRuntimeManager, openCodeRuntimeFingerprint } from '../src/runtime/providers/runtime-manager.mjs';
 
 function fakeRuntime(log) {
@@ -71,4 +72,43 @@ test('OpenCode runtime fingerprint is stable and sensitive to execution authorit
   const modelChanged = openCodeRuntimeFingerprint({ providerID: 'opencode', primary: { modelID: 'b' }, primaryEffort: 'high' }, '/tmp/project');
   assert.equal(one, same);
   assert.notEqual(one, modelChanged);
+});
+
+test('JournaledToolRuntime binds adapters through the session-aware runtime manager', async () => {
+  const bound = [];
+  const adapter = {
+    async stream(_messages, options) {
+      options.onDelta('Final.');
+      return { text: 'Final.', toolCalls: [] };
+    },
+  };
+  const providerRuntimeManager = {
+    adapterFor(input) { bound.push(input); return input.adapter; },
+  };
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    providerRuntimeManager,
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  const final = [];
+  await runtime.run({
+    adapter,
+    messages: [{ role: 'user', content: 'work' }],
+    sessionId: 'session-1',
+    projectRoot: '/tmp/project',
+    onDelta: async (value) => final.push(value),
+  });
+  assert.equal(bound.length, 1);
+  assert.equal(bound[0].sessionId, 'session-1');
+  assert.equal(bound[0].projectRoot, '/tmp/project');
+  assert.equal(bound[0].adapter, adapter);
+  assert.deepEqual(final, ['Final.']);
 });

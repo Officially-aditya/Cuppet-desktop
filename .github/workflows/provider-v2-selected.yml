@@ -34,4 +34,3 @@ jobs:
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs
-          test/runtime-service.test.mjs
