@@ -66,6 +66,8 @@ export class ExecutionKernel {
       });
     }
 
+    state.executed += 1;
+    state[executedPathKey(path)] += 1;
     this.#safeEmit({
       type: 'execution.kernel.started',
       sessionId: String(sessionId || ''),
@@ -78,27 +80,38 @@ export class ExecutionKernel {
 
     try {
       const result = await execute(call);
-      if (tool === 'tst_edit_batch' && result?.success !== true) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
-      if (tool === 'tst_read' && result?.success !== true) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
+      const durationMs = Math.max(0, this.#now() - startedAt);
+      const success = result?.success === true;
+      if (tool === 'tst_edit_batch' && !success) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
+      if (tool === 'tst_read' && !success) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
+      this.#recordOutcome(state, { path, result, success, durationMs });
       this.#safeEmit({
         type: 'execution.kernel.completed',
         sessionId: String(sessionId || ''),
         tool,
         path,
-        success: result?.success === true,
-        durationMs: Math.max(0, this.#now() - startedAt),
+        success,
+        durationMs,
+        outputBytes: outputBytes(result),
+        pathsTouched: resultPaths(result).length,
+        mutation: result?.mutation === true,
       });
       return result;
     } catch (error) {
+      const durationMs = Math.max(0, this.#now() - startedAt);
       if (tool === 'tst_edit_batch') this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-error');
       if (tool === 'tst_read') this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-error');
+      this.#recordOutcome(state, { path, result: null, success: false, durationMs });
       this.#safeEmit({
         type: 'execution.kernel.completed',
         sessionId: String(sessionId || ''),
         tool,
         path,
         success: false,
-        durationMs: Math.max(0, this.#now() - startedAt),
+        durationMs,
+        outputBytes: 0,
+        pathsTouched: 0,
+        mutation: false,
         error: cleanError(error),
       });
       throw error;
@@ -124,6 +137,21 @@ export class ExecutionKernel {
     return state;
   }
 
+  #recordOutcome(state, { path, result, success, durationMs }) {
+    state.completed += 1;
+    state.durationMs += durationMs;
+    state.outputBytes += outputBytes(result);
+    state.pathsTouched += resultPaths(result).length;
+    if (result?.mutation === true) state.mutations += 1;
+    if (success) {
+      state.successes += 1;
+      state[successPathKey(path)] += 1;
+    } else {
+      state.failures += 1;
+      state[failurePathKey(path)] += 1;
+    }
+  }
+
   #blockedResult({ sessionId, tool, path, reason, output }) {
     this.#safeEmit({
       type: 'execution.kernel.blocked',
@@ -138,6 +166,7 @@ export class ExecutionKernel {
   #enableFallback(sessionId, state, key, scope, reason) {
     if (state[key]) return;
     state[key] = true;
+    state.fallbackUnlocks += 1;
     this.#safeEmit({
       type: 'execution.kernel.fallback-enabled',
       sessionId: String(sessionId || ''),
@@ -167,6 +196,26 @@ function toolPriority(name) {
   return 3;
 }
 function toolName(definition) { return text(definition?.function?.name ?? definition?.name); }
+function executedPathKey(path) {
+  if (path === 'optimized') return 'optimizedExecuted';
+  if (path === 'semantic') return 'semanticExecuted';
+  if (path === 'raw-fallback') return 'rawFallbackExecuted';
+  return 'providerExtensionExecuted';
+}
+function successPathKey(path) {
+  if (path === 'optimized') return 'optimizedSuccesses';
+  if (path === 'semantic') return 'semanticSuccesses';
+  if (path === 'raw-fallback') return 'rawFallbackSuccesses';
+  return 'providerExtensionSuccesses';
+}
+function failurePathKey(path) {
+  if (path === 'optimized') return 'optimizedFailures';
+  if (path === 'semantic') return 'semanticFailures';
+  if (path === 'raw-fallback') return 'rawFallbackFailures';
+  return 'providerExtensionFailures';
+}
+function resultPaths(result) { return Array.isArray(result?.paths) ? result.paths : []; }
+function outputBytes(result) { return Buffer.byteLength(typeof result?.output === 'string' ? result.output : '', 'utf8'); }
 function emptyState() {
   return {
     total: 0,
@@ -174,6 +223,27 @@ function emptyState() {
     semantic: 0,
     'raw-fallback': 0,
     'provider-extension': 0,
+    executed: 0,
+    completed: 0,
+    successes: 0,
+    failures: 0,
+    optimizedExecuted: 0,
+    semanticExecuted: 0,
+    rawFallbackExecuted: 0,
+    providerExtensionExecuted: 0,
+    optimizedSuccesses: 0,
+    semanticSuccesses: 0,
+    rawFallbackSuccesses: 0,
+    providerExtensionSuccesses: 0,
+    optimizedFailures: 0,
+    semanticFailures: 0,
+    rawFallbackFailures: 0,
+    providerExtensionFailures: 0,
+    durationMs: 0,
+    outputBytes: 0,
+    pathsTouched: 0,
+    mutations: 0,
+    fallbackUnlocks: 0,
     blockedRawMutations: 0,
     blockedRawReads: 0,
     rawMutationFallback: false,
