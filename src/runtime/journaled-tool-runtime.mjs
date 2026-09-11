@@ -1,7 +1,7 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
-import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity } from './providers/activity.mjs';
+import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity, providerActivity } from './providers/activity.mjs';
 
 export class JournaledToolRuntime {
   #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel;
@@ -30,6 +30,10 @@ export class JournaledToolRuntime {
       projectRoot: options.projectRoot,
       adapter: options.adapter,
     });
+    const emitProviderActivity = (activity) => {
+      if (!messageId || !isProviderActivity(activity)) return;
+      this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+    };
     const capture = new ToolMutationCapture({
       journal: this.#journal,
       sessionId: options.sessionId,
@@ -39,21 +43,19 @@ export class JournaledToolRuntime {
       executionKernel: this.#executionKernel,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
-        // Temporary compatibility event. React consumes runtime.activity instead.
+        emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment }));
+        // Temporary compatibility event. The renderer bridge consumes Activity.
         this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
       },
       onPreview: (content) => {
         if (!messageId) return;
         this.#emit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
-      onActivity: (activity) => {
-        if (!messageId || !isProviderActivity(activity)) return;
-        this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
-      },
+      onActivity: emitProviderActivity,
       onProviderEvent: (event) => {
         if (!messageId || !event || typeof event !== 'object') return;
         const activity = activityFromLegacyProviderEvent(event);
-        if (activity) this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+        if (activity) emitProviderActivity(activity);
         // Keep legacy runtime events for remote/older consumers during migration.
         if (event.type === 'reasoning') {
           const segment = typeof event.text === 'string' ? event.text.trim() : '';
