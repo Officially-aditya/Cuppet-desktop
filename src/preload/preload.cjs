@@ -103,16 +103,9 @@ contextBridge.exposeInMainWorld('cuppet', {
   onEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, payload) => {
-      if (payload?.type === 'runtime.activity') {
-        // Activity is the renderer authority. Deliver the canonical envelope for
-        // new consumers, then a temporary UI projection for existing ChatPane.
-        callback(payload);
-        const projected = projectActivityForLegacyUi(payload);
-        if (projected) callback(projected);
-        return;
-      }
-      // Main/remote compatibility events remain available outside the renderer,
-      // but React must not receive a second legacy copy of Activity-backed work.
+      // runtime.activity is the renderer authority. Legacy activity-shaped runtime
+      // events remain available outside Electron while React consumes only the
+      // canonical Cuppet Activity envelope.
       if (LEGACY_ACTIVITY_EVENTS.has(String(payload?.type ?? ''))) return;
       callback(payload);
     };
@@ -120,42 +113,3 @@ contextBridge.exposeInMainWorld('cuppet', {
     return () => ipcRenderer.removeListener('cuppet:event', listener);
   },
 });
-
-function projectActivityForLegacyUi(payload) {
-  const activity = payload?.activity;
-  if (!activity || typeof activity !== 'object') return null;
-  const type = String(activity.type ?? '');
-  if (payload.source === 'provider' && type === 'activity.reasoning.delta') {
-    const segment = typeof activity.text === 'string' ? activity.text.trim() : '';
-    return segment ? {
-      type: 'message.reasoning',
-      sessionId: payload.sessionId,
-      messageId: payload.messageId,
-      segment,
-    } : null;
-  }
-  if (payload.source !== 'execution' || !type.startsWith('activity.tool.')) return null;
-  const base = {
-    sessionId: payload.sessionId,
-    messageId: payload.messageId,
-    executionId: activity.executionId,
-    callId: activity.callId,
-    tool: activity.tool,
-    argumentsJson: activity.argumentsJson,
-    message: activity.details,
-    paths: activity.paths,
-    mutation: activity.mutation,
-  };
-  if (type === 'activity.tool.closed') {
-    return {
-      ...base,
-      type: 'tool.finished',
-      success: activity.status === 'success',
-      rejected: activity.status === 'cancelled',
-    };
-  }
-  if (type === 'activity.tool.opened' || type === 'activity.tool.updated') {
-    return { ...base, type: 'tool.started' };
-  }
-  return null;
-}
