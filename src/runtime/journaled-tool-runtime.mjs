@@ -15,6 +15,7 @@ export class JournaledToolRuntime {
   }
 
   definitions(options) { return this.#inner.definitions(options); }
+  executionSnapshot(sessionId) { return this.#executionKernel.snapshot?.(sessionId) ?? null; }
   async forgetSession(sessionId) {
     this.#executionKernel.forget?.(sessionId);
     return this.#providerRuntimes.forget?.(sessionId) ?? false;
