@@ -17,7 +17,7 @@ export function GeneralPanel() {
   const [browserBusy, setBrowserBusy] = useState(false);
 
   const changePermissionMode = (value: string) => {
-    const next: PermissionMode = value === 'auto' ? 'auto' : 'default';
+    const next: PermissionMode = value === 'full' ? 'full' : value === 'auto' ? 'auto' : 'default';
     setPermissionMode(next);
     writePermissionMode(next);
   };
@@ -70,13 +70,13 @@ export function GeneralPanel() {
         <div><h3>General behaviour</h3><p>Choose how Cuppet handles permissions and messages while it is working.</p></div>
       </div>
       <div className="settings-row general-settings-row">
-        <div><strong>Permissions</strong><span>Default asks before protected actions. Auto enables guarded automatic approval for eligible actions in project chats.</span></div>
+        <div><strong>Permissions</strong><span>Default asks before protected actions. Auto approves eligible project actions. Full access removes permission prompts in project chats, while destructive deletion outside the active project stays blocked.</span></div>
         <div className="general-settings-control">
           <SelectControl
             ariaLabel="Permissions"
             value={permissionMode}
             onChange={changePermissionMode}
-            options={[{ value: 'default', label: 'Default' }, { value: 'auto', label: 'Auto' }]}
+            options={[{ value: 'default', label: 'Default' }, { value: 'auto', label: 'Auto' }, { value: 'full', label: 'Full access' }]}
           />
         </div>
       </div>

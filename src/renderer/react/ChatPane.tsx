@@ -608,8 +608,11 @@ function attachmentKey(value: Attachment) {
 
 async function applyPermissionPreference(session: Session | null) {
   if (!session?.id) return;
-  const auto = readPermissionMode() === 'auto' && Boolean(session.projectId);
-  await window.cuppet.permissions.autoSet(session.id, auto).catch(() => undefined);
+  const preference = readPermissionMode();
+  const effective: boolean | 'full' = session.projectId
+    ? preference === 'full' ? 'full' : preference === 'auto'
+    : false;
+  await window.cuppet.permissions.autoSet(session.id, effective).catch(() => undefined);
 }
 
 function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {

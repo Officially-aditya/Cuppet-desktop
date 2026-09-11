@@ -41,7 +41,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
   ipcMain.handle('cuppet:session:auto:get', (_event, sessionId) => request('session.auto.get', { sessionId }));
-  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: Boolean(enabled) }));
+  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: enabled === 'full' ? 'full' : Boolean(enabled) }));
   ipcMain.handle('cuppet:permission:list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
   ipcMain.handle('cuppet:permission:reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
   ipcMain.handle('cuppet:question:list', (_event, sessionId) => request('question.list', { sessionId: sessionId ?? null }));

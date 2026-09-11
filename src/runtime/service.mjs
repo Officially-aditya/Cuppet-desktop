@@ -92,8 +92,9 @@ export class RuntimeService {
       case 'session.auto.get': { const session = this.requireSession(params.sessionId); return this.#permissions.autoStatus(session.id); }
       case 'session.auto.set': {
         const session = this.requireSession(params.sessionId);
-        if (params.enabled && !session.projectId) throw new Error('Guarded auto mode requires a project-bound session');
-        return this.#permissions.setAuto(session.id, Boolean(params.enabled));
+        const requested = params.enabled === 'full' ? 'full' : Boolean(params.enabled);
+        if (requested && !session.projectId) throw new Error(requested === 'full' ? 'Full access requires a project-bound session' : 'Guarded auto mode requires a project-bound session');
+        return this.#permissions.setAuto(session.id, requested);
       }
       case 'permission.list': return this.#permissions.list(params.sessionId ?? null);
       case 'permission.reply': return this.#permissions.reply(params.requestId, params.reply);

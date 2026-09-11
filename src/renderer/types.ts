@@ -282,7 +282,7 @@ export type CuppetApi = {
     list: (sessionId?: string | null) => Promise<PermissionRequest[]>;
     reply: (requestId: string, reply: 'once' | 'always' | 'reject') => Promise<any>;
     autoGet: (sessionId: string) => Promise<any>;
-    autoSet: (sessionId: string, enabled: boolean) => Promise<any>;
+    autoSet: (sessionId: string, enabled: boolean | 'full') => Promise<any>;
   };
   questions: {
     list: (sessionId?: string | null) => Promise<QuestionRequest[]>;
