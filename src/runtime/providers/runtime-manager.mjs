@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { recordProviderUsage } from '../usage-ledger.mjs';
+import { ConversationBridge } from './conversation-bridge.mjs';
 import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
 import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
 import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
@@ -13,11 +14,12 @@ export class ProviderRuntimeManager {
   #acpRuntimeFactory;
   #toolSessionFactory;
   #usageRecorder;
+  #conversationBridge;
   #idleMs;
   #entries = new Map();
   #closed = false;
 
-  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, idleMs = DEFAULT_IDLE_MS } = {}) {
+  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, conversationBridge = new ConversationBridge(), idleMs = DEFAULT_IDLE_MS } = {}) {
     this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new AcpSessionRuntime({
       descriptor,
       configuration,
@@ -25,6 +27,7 @@ export class ProviderRuntimeManager {
     }));
     this.#toolSessionFactory = toolSessionFactory ?? (({ sessionId, backendId }) => new CuppetMcpToolSession({ sessionId, backendId }));
     this.#usageRecorder = usageRecorder;
+    this.#conversationBridge = conversationBridge;
     this.#idleMs = positiveMs(idleMs, DEFAULT_IDLE_MS);
   }
 
@@ -65,6 +68,7 @@ export class ProviderRuntimeManager {
   async forget(sessionId) {
     const id = String(sessionId ?? '');
     const entry = this.#entries.get(id);
+    this.#conversationBridge.forget?.(id);
     if (!entry) return false;
     this.#entries.delete(id);
     clearTimeout(entry.idleTimer);
@@ -77,17 +81,20 @@ export class ProviderRuntimeManager {
     this.#closed = true;
     const entries = [...this.#entries.values()];
     this.#entries.clear();
+    this.#conversationBridge.clear?.();
     for (const entry of entries) clearTimeout(entry.idleTimer);
     await Promise.all(entries.map((entry) => closeManagedEntry(entry)));
   }
 
   get size() { return this.#entries.size; }
+  conversationSnapshot(sessionId) { return this.#conversationBridge.snapshot?.(sessionId) ?? null; }
 
   async #runAcp({ sessionId, backendId, descriptor, providerConfig, projectRoot, messages, options }) {
     const fingerprint = acpRuntimeFingerprint({ backendId, descriptor, configuration: providerConfig, projectRoot });
     let entry = this.#entries.get(sessionId);
     if (entry && entry.fingerprint !== fingerprint) {
       this.#entries.delete(sessionId);
+      this.#conversationBridge.forget?.(sessionId);
       clearTimeout(entry.idleTimer);
       await closeManagedEntry(entry);
       entry = null;
@@ -98,6 +105,11 @@ export class ProviderRuntimeManager {
       this.#entries.set(sessionId, entry);
     }
     if (entry.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
+    const bridgePlan = this.#conversationBridge.beginTurn({
+      conversationId: sessionId,
+      runtimeFingerprint: fingerprint,
+      messages,
+    });
     entry.busy = true;
     clearTimeout(entry.idleTimer);
 
@@ -120,15 +132,15 @@ export class ProviderRuntimeManager {
         }
       }
       const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [] };
-      if (!entry.started) {
+      if (bridgePlan.providerSessionAction === 'start') {
+        if (entry.started) throw new Error('Conversation Bridge requested a provider start for an already-started runtime.');
         await entry.runtime.start(sessionOptions);
         entry.started = true;
       } else {
-        // Reuse the ACP process, but isolate each Cuppet turn in a fresh ACP logical
-        // session and a fresh authenticated Cuppet MCP tool session.
+        if (!entry.started) throw new Error('Conversation Bridge requested a new logical session before the provider runtime started.');
         await entry.runtime.newSession(sessionOptions);
       }
-      const result = await entry.runtime.runTurn({ messages }, {
+      const result = await entry.runtime.runTurn({ messages: bridgePlan.messages }, {
         signal: options.signal,
         executeTool: options.executeTool,
         requestAgentPermission: options.requestAgentPermission,
@@ -143,6 +155,7 @@ export class ProviderRuntimeManager {
           if (legacy) await options.onProviderEvent?.(legacy);
         },
       });
+      this.#conversationBridge.completeTurn(bridgePlan);
       entry.turns += 1;
       await this.#usageRecorder?.({
         providerID: backendId,
@@ -151,6 +164,7 @@ export class ProviderRuntimeManager {
       }).catch?.(() => undefined);
       return result;
     } catch (error) {
+      this.#conversationBridge.abortTurn?.(bridgePlan);
       if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId);
       clearTimeout(entry.idleTimer);
       await closeManagedEntry(entry);
@@ -169,6 +183,7 @@ export class ProviderRuntimeManager {
     entry.idleTimer = setTimeout(() => {
       if (entry.busy || this.#entries.get(sessionId) !== entry) return;
       this.#entries.delete(sessionId);
+      this.#conversationBridge.forget?.(sessionId);
       void closeManagedEntry(entry);
     }, this.#idleMs);
     entry.idleTimer.unref?.();
