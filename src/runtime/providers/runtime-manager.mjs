@@ -102,6 +102,7 @@ export class ProviderRuntimeManager {
     clearTimeout(entry.idleTimer);
 
     let toolSession = null;
+    let abortToolSession = null;
     const legacyState = new Map();
     try {
       if (Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
@@ -109,6 +110,14 @@ export class ProviderRuntimeManager {
         await toolSession.start();
         toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
         entry.activeToolSession = toolSession;
+        if (options.signal?.addEventListener) {
+          abortToolSession = () => {
+            if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
+            void Promise.resolve(toolSession?.close?.()).catch(() => undefined);
+          };
+          options.signal.addEventListener('abort', abortToolSession, { once: true });
+          if (options.signal.aborted) abortToolSession();
+        }
       }
       const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [] };
       if (!entry.started) {
@@ -142,6 +151,7 @@ export class ProviderRuntimeManager {
       await closeManagedEntry(entry);
       throw error;
     } finally {
+      if (abortToolSession) options.signal?.removeEventListener?.('abort', abortToolSession);
       await toolSession?.close().catch(() => undefined);
       if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
       entry.busy = false;
