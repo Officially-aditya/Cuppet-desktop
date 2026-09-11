@@ -104,6 +104,7 @@ export function installSpec(providerID, platform = process.platform) {
   if (platform === 'darwin' || platform === 'linux') {
     const scripts = {
       opencode: 'curl -fsSL https://opencode.ai/install | bash',
+      'claude-code': 'npm install -g @agentclientprotocol/claude-agent-acp',
       'grok-build': 'curl -fsSL https://x.ai/cli/install.sh | bash',
       'github-copilot': 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" bash',
       'mistral-vibe': 'curl -LsSf https://mistral.ai/vibe/install.sh | bash',
@@ -114,6 +115,7 @@ export function installSpec(providerID, platform = process.platform) {
   }
   if (platform === 'win32') {
     const scripts = {
+      'claude-code': "$ErrorActionPreference='Stop'; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp",
       'grok-build': "irm https://x.ai/cli/install.ps1 | iex",
       'github-copilot': 'winget install --id GitHub.Copilot -e --silent --accept-package-agreements --accept-source-agreements',
       'mistral-vibe': "$ErrorActionPreference='Stop'; if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { irm https://astral.sh/uv/install.ps1 | iex }; $uv=(Get-Command uv -ErrorAction SilentlyContinue).Source; if (-not $uv) { $uv=Join-Path $env:USERPROFILE '.local\\bin\\uv.exe' }; & $uv tool install mistral-vibe",
@@ -135,6 +137,10 @@ export function loginSpec(providerID, commandOverride = '') {
     case 'opencode':
       // OpenCode ships usable free models; provider-specific accounts are optional.
       return null;
+    case 'claude-code':
+      // The ACP adapter delegates this command to the Claude Code binary bundled
+      // by the official Agent SDK, so subscription/API auth stays with Claude.
+      return { command, args: ['--cli', 'auth', 'login'] };
     case 'grok-build':
       return { command, args: ['login'] };
     case 'github-copilot':
@@ -154,6 +160,11 @@ function canAutoInstall(providerID) { return Boolean(installSpec(providerID, pro
 
 async function probeConnection(descriptor, command) {
   if (descriptor.id === 'opencode') return true;
+  if (descriptor.id === 'claude-code') {
+    if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
+    await run(command, ['--cli', 'auth', 'status', '--json'], STATUS_TIMEOUT_MS, { stdin: 'ignore', discardOutput: true });
+    return true;
+  }
   if (descriptor.id === 'kiro') {
     await run(command, ['whoami', '--format', 'json'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
     return true;
