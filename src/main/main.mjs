@@ -117,7 +117,11 @@ function registerIpc() {
   ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => cliAgentConnect(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
-  ipcMain.handle('cuppet:settings:models', () => fetchProviderModelCatalog(settings.runtimeValue()));
+  ipcMain.handle('cuppet:settings:models', (_event, value) => fetchProviderModelCatalog(settings.runtimeValue(), {
+    model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
+      ? value.model.trim().slice(0, 1000)
+      : '',
+  }));
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     let result = await settings.save(source);
