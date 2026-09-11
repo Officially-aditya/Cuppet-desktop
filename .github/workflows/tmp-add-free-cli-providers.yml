@@ -1,0 +1,55 @@
+name: Temporary additional CLI providers
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/tmp-add-free-cli-providers.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ui/cuppet-branding
+          fetch-depth: 0
+
+      - name: Apply provider integration
+        run: python3 scripts/tmp-add-free-cli-providers.py
+
+      - name: Verify provider contracts
+        run: |
+          node --check src/runtime/local-cli-descriptors.mjs
+          node --check src/runtime/acp-cli-provider.mjs
+          node --check src/runtime/antigravity-provider.mjs
+          node --check src/runtime/provider-factory.mjs
+          node --check src/main/cli-agent-status.mjs
+          node --check src/main/provider-presets.mjs
+          node --check src/main/main.mjs
+          node --test test/acp-cli-provider.test.mjs test/antigravity-provider.test.mjs
+          npm install
+          npm run renderer:verify
+          grep -Fq "'github-copilot'" src/runtime/local-cli-descriptors.mjs
+          grep -Fq "'mistral-vibe'" src/runtime/local-cli-descriptors.mjs
+          grep -Fq "kiro-cli" src/runtime/local-cli-descriptors.mjs
+          grep -Fq "headless-plan" src/runtime/local-cli-descriptors.mjs
+          grep -Fq "Google Antigravity" src/main/provider-presets.mjs
+          grep -Fq "GitHub Copilot" src/main/provider-presets.mjs
+          grep -Fq "Mistral Vibe" src/main/provider-presets.mjs
+          grep -Fq "label: 'Kiro'" src/main/provider-presets.mjs
+
+      - name: Commit integration
+        shell: bash
+        run: |
+          rm scripts/tmp-add-free-cli-providers.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src test scripts/tmp-add-free-cli-providers.py
+          git commit -m "feat: add Antigravity Copilot Vibe and Kiro providers"
+          git push origin HEAD:ui/cuppet-branding
