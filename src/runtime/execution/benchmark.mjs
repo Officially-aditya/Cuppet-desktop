@@ -26,7 +26,7 @@ export async function captureBenchmarkTask({
   providerID,
   modelID,
   mode = null,
-  verify = async () => ({ passed: true }),
+  verify = null,
   now = () => Date.now(),
 } = {}) {
   if (!runtime || typeof runtime.run !== 'function' || typeof runtime.executionSnapshot !== 'function') {
@@ -47,12 +47,14 @@ export async function captureBenchmarkTask({
   const execution = diffExecutionSnapshots(before, after);
   let verification;
   if (runError) {
-    verification = { passed: false, details: cleanError(runError) };
+    verification = { verified: true, passed: false, score: 0, details: cleanError(runError) };
+  } else if (typeof verify !== 'function') {
+    verification = { verified: false, passed: false, score: 0, details: 'No correctness verifier was supplied for this benchmark task.' };
   } else {
     try {
-      verification = normalizeCorrectness(await verify({ result, execution, sessionId }));
+      verification = normalizeCorrectness(await verify({ result, execution, sessionId }), { defaultVerified: true });
     } catch (error) {
-      verification = { passed: false, details: `Verification failed: ${cleanError(error)}` };
+      verification = { verified: true, passed: false, score: 0, details: `Verification failed: ${cleanError(error)}` };
     }
   }
   return createBenchmarkRecord({
@@ -95,7 +97,7 @@ export function createBenchmarkRecord({
   execution = {},
   usage = null,
   elapsedMs = 0,
-  correctness = { passed: true },
+  correctness = { verified: false, passed: false },
   metrics: persistedMetrics = null,
   error = null,
 } = {}) {
@@ -157,6 +159,7 @@ export function compareBenchmarkSuites({ baseline = [], optimized = [], minImpro
   const taskIds = [...new Set([...baselineByTask.keys(), ...optimizedByTask.keys()])].sort();
   const missingBaseline = taskIds.filter((id) => !baselineByTask.has(id));
   const missingOptimized = taskIds.filter((id) => !optimizedByTask.has(id));
+  const unverifiedTasks = [];
   const correctnessRegressions = [];
   const taskComparisons = [];
 
@@ -164,6 +167,10 @@ export function compareBenchmarkSuites({ baseline = [], optimized = [], minImpro
     const base = baselineByTask.get(taskId);
     const next = optimizedByTask.get(taskId);
     if (!base || !next) continue;
+    if (!base.correctness.verified || !next.correctness.verified) {
+      unverifiedTasks.push(taskId);
+      continue;
+    }
     const baseScore = correctnessScore(base.correctness);
     const nextScore = correctnessScore(next.correctness);
     if (base.correctness.passed && !next.correctness.passed) correctnessRegressions.push(`${taskId}: optimized task failed while baseline passed`);
@@ -187,6 +194,7 @@ export function compareBenchmarkSuites({ baseline = [], optimized = [], minImpro
   const reasons = [];
   if (missingBaseline.length) reasons.push(`Missing baseline tasks: ${missingBaseline.join(', ')}`);
   if (missingOptimized.length) reasons.push(`Missing optimized tasks: ${missingOptimized.join(', ')}`);
+  if (unverifiedTasks.length) reasons.push(`Unverified correctness: ${unverifiedTasks.join(', ')}`);
   reasons.push(...correctnessRegressions);
   if (!optimizedPathImproved) reasons.push('Optimized execution did not increase optimized-path share.');
   if (improvements.length < Math.max(1, Number(minImprovements) || 2)) {
@@ -199,6 +207,7 @@ export function compareBenchmarkSuites({ baseline = [], optimized = [], minImpro
     tasksCompared: taskComparisons.length,
     missingBaseline: Object.freeze(missingBaseline),
     missingOptimized: Object.freeze(missingOptimized),
+    unverifiedTasks: Object.freeze(unverifiedTasks),
     correctnessRegressions: Object.freeze(correctnessRegressions),
     optimizedPathImproved,
     improvements: Object.freeze(improvements.map((item) => Object.freeze(item))),
@@ -212,6 +221,7 @@ export function compareBenchmarkSuites({ baseline = [], optimized = [], minImpro
 function aggregateMetrics(records) {
   const totals = {
     tasks: records.length,
+    correctnessVerified: 0,
     correctnessPassed: 0,
     correctnessScore: 0,
     toolCalls: 0,
@@ -238,18 +248,19 @@ function aggregateMetrics(records) {
     cachedInputTokens: 0,
     reasoningTokens: 0,
   };
-  for (const record of records) {
-    totals.correctnessPassed += record.correctness.passed ? 1 : 0;
-    totals.correctnessScore += correctnessScore(record.correctness);
+  for (const item of records) {
+    totals.correctnessVerified += item.correctness.verified ? 1 : 0;
+    totals.correctnessPassed += item.correctness.verified && item.correctness.passed ? 1 : 0;
+    totals.correctnessScore += item.correctness.verified ? correctnessScore(item.correctness) : 0;
     for (const key of Object.keys(totals)) {
-      if (['tasks', 'correctnessPassed', 'correctnessScore'].includes(key)) continue;
-      totals[key] += number(record.metrics?.[key]);
+      if (['tasks', 'correctnessVerified', 'correctnessPassed', 'correctnessScore'].includes(key)) continue;
+      totals[key] += number(item.metrics?.[key]);
     }
   }
   totals.optimizedPathShare = totals.toolCalls > 0 ? totals.optimizedCalls / totals.toolCalls : 0;
   totals.validationPassRate = totals.validationAttempts > 0 ? totals.validationSuccesses / totals.validationAttempts : null;
-  totals.correctnessRate = totals.tasks > 0 ? totals.correctnessPassed / totals.tasks : 0;
-  totals.averageCorrectnessScore = totals.tasks > 0 ? totals.correctnessScore / totals.tasks : 0;
+  totals.correctnessRate = totals.correctnessVerified > 0 ? totals.correctnessPassed / totals.correctnessVerified : null;
+  totals.averageCorrectnessScore = totals.correctnessVerified > 0 ? totals.correctnessScore / totals.correctnessVerified : null;
   return totals;
 }
 
@@ -291,21 +302,23 @@ function normalizeUsage(value) {
   };
 }
 
-function normalizeCorrectness(value) {
-  if (typeof value === 'boolean') return { passed: value, score: value ? 1 : 0 };
+function normalizeCorrectness(value, { defaultVerified = false } = {}) {
+  if (typeof value === 'boolean') return { verified: true, passed: value, score: value ? 1 : 0 };
   const source = record(value);
-  const passed = source.passed !== false;
+  const verified = source.verified === true || (source.verified !== false && defaultVerified);
+  const passed = verified && source.passed === true;
   const explicitScore = Number(source.score);
   return {
+    verified,
     passed,
-    score: Number.isFinite(explicitScore) ? Math.max(0, Math.min(1, explicitScore)) : passed ? 1 : 0,
+    score: verified && Number.isFinite(explicitScore) ? Math.max(0, Math.min(1, explicitScore)) : passed ? 1 : 0,
     ...(text(source.details) ? { details: text(source.details).slice(0, 2000) } : {}),
   };
 }
 
 function correctnessScore(value) {
-  const source = normalizeCorrectness(value);
-  return source.passed ? source.score : Math.min(source.score, 0);
+  const source = normalizeCorrectness(value, { defaultVerified: true });
+  return source.verified && source.passed ? source.score : 0;
 }
 function number(value) { const result = Number(value); return Number.isFinite(result) ? result : 0; }
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
