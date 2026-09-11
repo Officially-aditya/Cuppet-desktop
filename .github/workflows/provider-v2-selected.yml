@@ -32,6 +32,7 @@ jobs:
           test/provider-runtime-manager.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/acp-cuppet-tools.test.mjs
+          test/execution-kernel.test.mjs
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs

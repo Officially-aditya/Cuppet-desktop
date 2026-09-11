@@ -36,7 +36,9 @@ async function handle(message) {
     if (!initialized?.capabilities?.tools) throw new Error('Cuppet MCP server did not advertise tools');
     mcp.notify('notifications/initialized', {});
     const listed = await mcp.request('tools/list', {});
-    if (!listed?.tools?.some((tool) => tool.name === 'cuppet_plan')) throw new Error('cuppet_plan was not advertised through MCP');
+    for (const name of ['cuppet_plan', 'tst_explore', 'tst_read', 'tst_edit_batch', 'tst_validate']) {
+      if (!listed?.tools?.some((tool) => tool.name === name)) throw new Error(`${name} was not advertised through Cuppet MCP`);
+    }
     const called = await mcp.request('tools/call', { name: 'cuppet_plan', arguments: { action: 'overview' } });
     if (called?.isError) throw new Error(called?.content?.[0]?.text || 'cuppet_plan failed');
     toolResult = called?.content?.map((item) => item?.text || '').join('') || '';

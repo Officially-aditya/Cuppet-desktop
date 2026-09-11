@@ -1,19 +1,24 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
+import { ExecutionKernel } from './execution/execution-kernel.mjs';
 
 export class JournaledToolRuntime {
-  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes;
+  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel;
 
-  constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, ...options }) {
+  constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, executionKernel = null, ...options }) {
     this.#journal = journal;
     this.#emit = emit;
     this.#db = db;
     this.#providerRuntimes = providerRuntimeManager ?? new ProviderRuntimeManager();
+    this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: this.#emit });
     this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
   definitions(options) { return this.#inner.definitions(options); }
-  forgetSession(sessionId) { return this.#providerRuntimes.forget?.(sessionId) ?? Promise.resolve(false); }
+  async forgetSession(sessionId) {
+    this.#executionKernel.forget?.(sessionId);
+    return this.#providerRuntimes.forget?.(sessionId) ?? false;
+  }
   close() { return this.#providerRuntimes.close?.() ?? Promise.resolve(); }
 
   async run(options) {
@@ -29,6 +34,7 @@ export class JournaledToolRuntime {
       messageId,
       projectRoot: options.projectRoot,
       adapter,
+      executionKernel: this.#executionKernel,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
         this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
@@ -74,9 +80,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onProviderEvent;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, onReasoning = () => {}, onPreview = () => {}, onProviderEvent = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onProviderEvent = onProviderEvent;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onProviderEvent;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, executionKernel, onReasoning = () => {}, onPreview = () => {}, onProviderEvent = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onProviderEvent = onProviderEvent;
   }
 
   async stream(messages, options) {
@@ -100,7 +106,11 @@ class ToolMutationCapture {
           await flushReasoning();
           this.#rememberCall(call);
           await this.#prepareCall(call);
-          return options.executeTool(call);
+          return this.#executionKernel.execute(call, {
+            sessionId: this.#sessionId,
+            projectRoot: this.#projectRoot,
+            execute: options.executeTool,
+          });
         }
       : undefined;
     let response;
