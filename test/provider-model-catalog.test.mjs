@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { fetchProviderModelCatalog, parseApiCatalog, discoverAntigravityModels } from '../src/main/provider-model-catalog.mjs';
+import { catalogFromCodexModels, fetchProviderModelCatalog, parseApiCatalog, discoverAntigravityModels } from '../src/main/provider-model-catalog.mjs';
 import { acpModelCatalogFromSession } from '../src/runtime/acp-cli-provider.mjs';
 import { catalogFromAcpCapabilities, discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
 
@@ -41,6 +41,42 @@ test('Gemini catalog keeps only entries the API advertises for generateContent',
     { name: 'models/text-embedding', displayName: 'Embedding', supportedGenerationMethods: ['embedContent'] },
   ] });
   assert.deepEqual(catalog.models.map((item) => item.id), ['gemini-live']);
+});
+
+test('Codex catalog preserves provider models while resolving Cuppet default sentinel through advertised default', () => {
+  const catalog = catalogFromCodexModels({
+    available: true,
+    defaultModel: 'codex/model-b',
+    models: [
+      { id: 'codex/model-a', label: 'Model A', efforts: ['low', 'high'], defaultEffort: 'high' },
+      { id: 'codex/model-b', label: 'Model B', isDefault: true, efforts: ['medium', 'xhigh'], defaultEffort: 'xhigh' },
+    ],
+  }, 'codex-default');
+  assert.equal(catalog.source, 'codex');
+  assert.deepEqual(catalog.models.map((item) => item.id), ['codex/model-a', 'codex/model-b']);
+  assert.equal(catalog.models.some((item) => item.id === 'codex-default'), false);
+  assert.equal(catalog.defaultModel, 'codex/model-b');
+  assert.equal(catalog.configuredModel, 'codex-default');
+  assert.equal(catalog.reasoning.currentValue, 'xhigh');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'xhigh']);
+});
+
+test('Codex candidate refresh uses the same generic catalog and model-dependent effort contract', async () => {
+  const catalog = await fetchProviderModelCatalog({ providerID: 'codex', model: 'codex-default' }, {
+    model: 'codex/model-a',
+    codexDiscover: async () => ({
+      available: true,
+      defaultModel: 'codex/model-b',
+      models: [
+        { id: 'codex/model-a', label: 'Model A', efforts: ['low', 'high'], defaultEffort: 'high' },
+        { id: 'codex/model-b', label: 'Model B', isDefault: true, efforts: ['medium'], defaultEffort: 'medium' },
+      ],
+    }),
+  });
+  assert.equal(catalog.defaultModel, 'codex/model-b');
+  assert.equal(catalog.configuredModel, 'codex/model-a');
+  assert.equal(catalog.reasoning.currentValue, 'high');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'high']);
 });
 
 test('legacy ACP parser preserves exact current Auto value during compatibility period', () => {
