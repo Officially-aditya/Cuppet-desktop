@@ -31,7 +31,6 @@ jobs:
           npm install
           npm run renderer:verify
           grep -Fq "cuppet:cli-agent:connect" src/main/main.mjs
-          grep -Fq "Connect ${selected?.label || 'provider'}" src/renderer/react/SettingsModal.tsx || true
           ! grep -Fq "cliStatus?.loginHint" src/renderer/react/SettingsModal.tsx
           ! grep -Fq "onRefreshCli" src/renderer/react/SettingsModal.tsx
 
