@@ -1,5 +1,5 @@
 const OPTIMIZED_TOOLS = new Set(['tst_explore', 'tst_read', 'tst_edit_batch', 'tst_validate']);
-const SEMANTIC_TOOLS = new Set(['cuppet_plan', 'cuppet_memory_search', 'question']);
+const SEMANTIC_TOOLS = new Set(['cuppet_plan', 'cuppet_memory_search', 'question', 'cuppet_execute']);
 const RAW_TOOLS = new Set(['workspace_read', 'workspace_edit', 'workspace_write', 'bash']);
 const RAW_MUTATION_TOOLS = new Set(['workspace_edit', 'workspace_write']);
 const RAW_READ_TOOLS = new Set(['workspace_read']);
@@ -23,12 +23,12 @@ export class ExecutionKernel {
 
   toolsForProvider(definitions, { sessionId = '' } = {}) {
     const state = this.#sessionState(sessionId);
-    const source = Array.isArray(definitions) ? definitions : [];
+    const source = (Array.isArray(definitions) ? definitions : []).map(providerFacingDefinition);
     const filtered = source.filter((definition) => {
       const name = toolName(definition);
       if (!state.rawMutationFallback && RAW_MUTATION_TOOLS.has(name)) return false;
       if (!state.rawReadFallback && RAW_READ_TOOLS.has(name)) return false;
-      return true;
+      return name !== 'bash';
     });
     return [...filtered].sort((a, b) => toolPriority(toolName(a)) - toolPriority(toolName(b)));
   }
@@ -41,6 +41,20 @@ export class ExecutionKernel {
     const state = this.#sessionState(sessionId);
     state.total += 1;
     state[path] = (state[path] ?? 0) + 1;
+
+    // Managed ACP must use Cuppet's semantic command operation rather than the
+    // protocol's native terminal path. This keeps command policy, telemetry,
+    // permissions and mutation observation transport-neutral.
+    if (call?.source === 'acp-host' && tool === 'bash') {
+      state.blockedNativeShell += 1;
+      return this.#blockedResult({
+        sessionId,
+        tool,
+        path,
+        reason: 'cuppet-execute-required',
+        output: 'Cuppet command mediation required. Use the cuppet-runtime MCP tool cuppet_execute instead of the native ACP terminal.',
+      });
+    }
 
     // ACP v1 can request host filesystem operations directly. Do not let those
     // native calls silently bypass Cuppet's structured/bounded read and batch-edit
@@ -66,6 +80,33 @@ export class ExecutionKernel {
       });
     }
 
+    let executionCall = call;
+    if (tool === 'cuppet_execute') {
+      const command = commandFromCall(call);
+      const bypass = shellWorkspaceBypass(command);
+      if (bypass === 'mutation' && !state.rawMutationFallback) {
+        state.blockedShellMutations += 1;
+        return this.#blockedResult({
+          sessionId,
+          tool,
+          path,
+          reason: 'optimized-mutation-required',
+          output: 'Direct source mutation through shell is blocked while Cuppet batched editing is available. Use tst_edit_batch first; shell mutation becomes eligible only after the optimized mutation path fails.',
+        });
+      }
+      if (bypass === 'read' && !state.rawReadFallback) {
+        state.blockedShellReads += 1;
+        return this.#blockedResult({
+          sessionId,
+          tool,
+          path,
+          reason: 'optimized-read-required',
+          output: 'Direct source inspection through shell is blocked while Cuppet structured retrieval is available. Use tst_explore/tst_read first; shell file inspection becomes eligible only after the structured read path fails.',
+        });
+      }
+      executionCall = { ...call, name: 'bash', source: 'cuppet-execute' };
+    }
+
     state.executed += 1;
     state[executedPathKey(path)] += 1;
     this.#safeEmit({
@@ -79,7 +120,7 @@ export class ExecutionKernel {
     });
 
     try {
-      const result = await execute(call);
+      const result = await execute(executionCall);
       const durationMs = Math.max(0, this.#now() - startedAt);
       const success = result?.success === true;
       if (tool === 'tst_edit_batch' && !success) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
@@ -188,6 +229,51 @@ export function executionPathForTool(value) {
   return 'provider-extension';
 }
 
+function providerFacingDefinition(definition) {
+  if (toolName(definition) !== 'bash') return definition;
+  const fn = record(definition?.function);
+  return {
+    ...definition,
+    function: {
+      ...fn,
+      name: 'cuppet_execute',
+      description: 'Run a project command through Cuppet for builds, tests, package/tooling operations, generators, or other command execution. Do not use it to inspect source files or directly edit source while tst_explore/tst_read/tst_edit_batch are available.',
+    },
+  };
+}
+
+function shellWorkspaceBypass(command) {
+  const source = String(command ?? '').trim();
+  if (!source) return null;
+  if (looksLikeShellMutation(source)) return 'mutation';
+  if (looksLikeShellRead(source)) return 'read';
+  return null;
+}
+
+function looksLikeShellMutation(source) {
+  if (/(^|[^<])>{1,2}(?!>)/.test(source)) return true;
+  if (/\b(?:rm|rmdir|unlink|mv|cp|touch|truncate|tee|patch)\b/i.test(source)) return true;
+  if (/\bsed\b[^\n;&|]*\s-i(?:\s|$)/i.test(source) || /\bperl\b[^\n;&|]*\s-(?:p?i|i?p)\b/i.test(source)) return true;
+  if (/\bgit\s+(?:add|checkout|switch|restore|reset|clean|apply|am|commit|merge|rebase|cherry-pick|rm|mv)\b/i.test(source)) return true;
+  if (/\b(?:python\d*|node|ruby|perl)\b[^\n;&|]*(?:-c|-e)\b[^\n;&|]*(?:write|append|unlink|rename|mkdir|rmdir|remove|open\s*\()/i.test(source)) return true;
+  return false;
+}
+
+function looksLikeShellRead(source) {
+  if (/\b(?:cat|head|tail|less|more|grep|rg|ripgrep|find|fd|tree|awk)\b/i.test(source)) return true;
+  if (/\bsed\b(?![^\n;&|]*\s-i(?:\s|$))/i.test(source)) return true;
+  if (/\bgit\s+(?:grep|show|diff|blame)\b/i.test(source)) return true;
+  if (/\b(?:python\d*|node|ruby|perl)\b[^\n;&|]*(?:-c|-e)\b[^\n;&|]*(?:readFile|read_to_string|File\.read|open\s*\()/i.test(source)) return true;
+  return false;
+}
+
+function commandFromCall(call) {
+  try {
+    const parsed = JSON.parse(typeof call?.arguments === 'string' ? call.arguments : '{}');
+    return typeof parsed?.command === 'string' ? parsed.command : '';
+  } catch { return ''; }
+}
+
 function toolPriority(name) {
   const path = executionPathForTool(name);
   if (path === 'optimized') return 0;
@@ -246,9 +332,13 @@ function emptyState() {
     fallbackUnlocks: 0,
     blockedRawMutations: 0,
     blockedRawReads: 0,
+    blockedNativeShell: 0,
+    blockedShellMutations: 0,
+    blockedShellReads: 0,
     rawMutationFallback: false,
     rawReadFallback: false,
   };
 }
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error ?? '')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
