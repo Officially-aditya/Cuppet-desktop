@@ -64,16 +64,19 @@ export class RuntimeService {
     this.#ready = this.#cognitive.ready();
   }
 
-  close() {
-    if (this.#closed) return Promise.resolve();
+  async close() {
+    if (this.#closed) return;
     this.#closed = true;
     for (const run of this.#runs.values()) run.controller.abort();
     this.#runs.clear();
+    await Promise.all([
+      ...[...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined)),
+      Promise.resolve(this.#tools.close?.()).catch(() => undefined),
+    ]);
     this.#permissions.close?.();
     this.#questions.close?.();
     this.#tst.close?.();
     this.#db.close();
-    return Promise.all([...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined))).then(() => undefined);
   }
 
   async handle(method, params = {}) {
@@ -277,6 +280,7 @@ export class RuntimeService {
   async #cleanupSession(sessionId) {
     const session = this.requireSession(sessionId);
     if (this.#runs.has(session.id)) throw new Error('cannot purge a chat while it is generating');
+    await this.#tools.forgetSession?.(session.id);
     this.#permissions.forgetSession?.(session.id);
     this.#questions.forgetSession?.(session.id);
     this.#compiler.clearSession?.(session.id);
@@ -292,7 +296,7 @@ export class RuntimeService {
       sessionId: session.id,
       projectId: session.projectId ?? null,
       preserved: ['tst-memory', 'project-files'],
-      purged: ['permissions', 'questions', 'context-cache', 'lossless-plan', 'mutation-journal', 'cognitive-session-state', 'background-session-state', 'pe3-live-router'],
+      purged: ['permissions', 'questions', 'context-cache', 'lossless-plan', 'mutation-journal', 'cognitive-session-state', 'background-session-state', 'pe3-live-router', 'provider-runtime', 'execution-kernel-state'],
     };
   }
 
