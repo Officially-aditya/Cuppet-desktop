@@ -342,7 +342,6 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
         {selected && !isLocalCli && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
       <div className="settings-form-footer">
-        <div className="settings-note">{note || (current?.encryptionAvailable ? 'Changes apply immediately. API keys are encrypted with the operating system credential store.' : current?.encryptionUnavailableReason || 'Changes apply immediately. Secure credential storage is unavailable.')}</div>
         <div className="dialog-actions"><button type="button" className="ghost-button settings-action-button" disabled={busy || !selected} onClick={() => void onReset()}>{busy ? 'Applying…' : 'Reset'}</button></div>
       </div>
     </div>
