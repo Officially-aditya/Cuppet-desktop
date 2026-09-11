@@ -55,7 +55,7 @@ test('legacy ACP parser preserves exact current Auto value during compatibility 
   assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
 });
 
-test('shared ACP capability conversion preserves exact provider model and reasoning values', () => {
+test('shared ACP capability conversion preserves exact provider model and reasoning values without inferring a default', () => {
   const catalog = catalogFromAcpCapabilities('opencode', {
     models: [{ id: 'auto', label: 'Auto' }, { id: 'provider/model-x', label: 'Model X' }],
     settings: [
@@ -65,11 +65,12 @@ test('shared ACP capability conversion preserves exact provider model and reason
   });
   assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
   assert.equal(catalog.currentModel, 'auto');
+  assert.equal(catalog.defaultModel, null);
   assert.equal(catalog.reasoning.currentValue, 'xhigh');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['minimal', 'xhigh']);
 });
 
-test('main ACP model catalog path uses the shared runtime capability parser', async () => {
+test('main ACP model catalog separates clean provider default from configured model and effort override', async () => {
   const catalog = await fetchProviderModelCatalog({
     providerID: 'opencode',
     cliCommand: process.execPath,
@@ -79,12 +80,13 @@ test('main ACP model catalog path uses the shared runtime capability parser', as
   });
   assert.equal(catalog.source, 'acp');
   assert.deepEqual(catalog.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
-  assert.equal(catalog.defaultModel, 'provider/model-b');
-  assert.equal(catalog.reasoning.currentValue, 'max');
+  assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.equal(catalog.configuredModel, 'provider/model-b');
+  assert.equal(catalog.reasoning.currentValue, 'medium');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
 });
 
-test('shared ACP discovery can be consumed directly by backend capability callers', async () => {
+test('shared ACP discovery refreshes model-dependent settings without applying user effort', async () => {
   const catalog = await discoverAcpRuntimeCatalog('opencode', {
     configuration: {
       cliCommand: process.execPath,
@@ -93,8 +95,10 @@ test('shared ACP discovery can be consumed directly by backend capability caller
       primaryEffort: 'max',
     },
   });
+  assert.equal(catalog.defaultModel, 'provider/model-a');
   assert.equal(catalog.currentModel, 'provider/model-b');
-  assert.equal(catalog.reasoning.currentValue, 'max');
+  assert.equal(catalog.reasoning.currentValue, 'medium');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
 });
 
 test('Antigravity model command parser uses advertised slugs without choosing a default', async () => {
