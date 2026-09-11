@@ -10,6 +10,7 @@ import './usage.css';
 import './composer-refinements.css';
 import './message-controls.css';
 import './sidebar-icons.css';
+import './sidebar-row-hover.css';
 import './controls.css';
 import './provider-model-settings.css';
 import './general-settings.css';
