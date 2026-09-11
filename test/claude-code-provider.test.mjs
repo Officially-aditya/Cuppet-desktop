@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { installSpec, loginSpec } from '../src/main/cli-agent-status.mjs';
+import { fetchProviderModelCatalog } from '../src/main/provider-model-catalog.mjs';
 import { providerPreset } from '../src/main/provider-presets.mjs';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
@@ -11,6 +12,7 @@ import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-s
 
 const sessionMetaFixture = fileURLToPath(new URL('./fixtures/fake-acp-session-meta-agent.mjs', import.meta.url));
 const mcpFixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
+const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 
 test('Claude Code is a managed ACP backend with Cuppet-only execution policy', () => {
   const descriptor = localCliDescriptor('claude-code');
@@ -78,6 +80,21 @@ test('Claude Code receives the same Cuppet MCP tools and ExecutionKernel path as
   } finally {
     await runtime.close();
   }
+});
+
+test('Claude Code model and effort discovery uses the shared ACP capability parser', async () => {
+  const catalog = await fetchProviderModelCatalog({
+    providerID: 'claude-code',
+    cliCommand: process.execPath,
+    cliArgs: [configFixture],
+    primary: { modelID: 'provider/model-b' },
+    primaryEffort: 'max',
+  });
+  assert.equal(catalog.source, 'acp');
+  assert.deepEqual(catalog.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
+  assert.equal(catalog.defaultModel, 'provider/model-b');
+  assert.equal(catalog.reasoning.currentValue, 'max');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
 });
 
 test('Claude Code provider preset and connection flow preserve Claude-owned auth', () => {
