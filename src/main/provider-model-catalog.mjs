@@ -22,8 +22,12 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
 
   if (providerID === 'codex') {
     try {
-      const discover = typeof options.codexDiscover === 'function' ? options.codexDiscover : null;
-      if (!discover) return unavailable(providerID, 'codex', 'Codex model discovery is unavailable in this host.');
+      let discover = typeof options.codexDiscover === 'function' ? options.codexDiscover : null;
+      if (!discover) {
+        const host = await import('./codex-auth.mjs');
+        discover = host.listCodexModels;
+      }
+      if (typeof discover !== 'function') return unavailable(providerID, 'codex', 'Codex model discovery is unavailable in this host.');
       return catalogFromCodexModels(await discover(), configuredModel);
     } catch (error) {
       return unavailable(providerID, 'codex', cleanError(error));
