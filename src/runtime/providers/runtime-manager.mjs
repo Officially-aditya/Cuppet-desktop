@@ -160,6 +160,7 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
     projectRoot: resolve(projectRoot || tmpdir()),
     command: text(source.cliCommand || descriptor?.command),
     cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : Array.isArray(descriptor?.args) ? descriptor.args.map(String) : [],
+    sessionMeta: stableValue(descriptor?.sessionMeta),
     model: text(primary.modelID || source.model || source.modelID),
     effort: text(source.primaryEffort || primary.variant),
     runtimeSettings: stableValue(source.runtimeSettings),
