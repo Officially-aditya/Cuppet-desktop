@@ -7,6 +7,8 @@ import { AntigravityHeadlessProvider } from './antigravity-provider.mjs';
 import { AcpProviderAdapter } from './providers/backends/acp.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
+const MANAGED_ACP_BACKENDS = new Set(['opencode', 'claude-code']);
+
 export function createChatProvider(configuration = {}) {
   return trackUsage(createUntrackedChatProvider(configuration), providerIdentity(configuration));
 }
@@ -14,9 +16,9 @@ export function createChatProvider(configuration = {}) {
 export function createUntrackedChatProvider(configuration = {}) {
   const providerID = String(configuration?.providerID ?? '').toLowerCase();
   if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
-  // OpenCode is the first production backend on the universal ACP adapter. Other ACP
-  // backends remain on the compatibility provider until parity fixtures are added.
-  if (providerID === 'opencode') return new AcpProviderAdapter(configuration);
+  // Backends move onto the universal ACP adapter only after parity coverage is in place.
+  // OpenCode proved the path; Claude Code is the second backend sharing the same runtime.
+  if (MANAGED_ACP_BACKENDS.has(providerID)) return new AcpProviderAdapter(configuration);
   if (providerID === 'antigravity') return new AntigravityHeadlessProvider(configuration);
   if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
   const kind = resolvedNativeKind(configuration);
