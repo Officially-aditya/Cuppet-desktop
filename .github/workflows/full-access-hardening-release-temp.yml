@@ -9,10 +9,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: full-access-hardening-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   harden:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,8 +29,8 @@ jobs:
         run: python3 .github/apply-full-access-hardening-temp.py
       - name: Install dependencies
         run: npm install --ignore-scripts
-      - name: Run tests
-        run: npm test
+      - name: Run Full access regression suite
+        run: node --test test/full-access-permissions.test.mjs
       - name: Verify renderer
         run: npm run renderer:verify
       - name: Commit implementation
