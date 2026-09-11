@@ -33,6 +33,7 @@ function trackUsage(provider, identity) {
   const stream = provider.stream.bind(provider);
   provider.stream = async (...args) => {
     const result = await stream(...args);
+    // Usage bookkeeping must never turn a successful provider response into a failed generation.
     await recordProviderUsage({ ...identity, usage: result?.usage }).catch(() => undefined);
     return result;
   };

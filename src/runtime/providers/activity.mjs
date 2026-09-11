@@ -23,7 +23,7 @@ export function providerActivity(type, fields = {}) {
   const activity = { type, ...source };
 
   if (type === 'activity.text.delta' || type === 'activity.reasoning.delta') {
-    activity.text = requiredText(source.text, 'activity text');
+    activity.text = requiredDelta(source.text, 'activity text');
   }
 
   if (type.startsWith('activity.tool.')) {
@@ -48,7 +48,7 @@ export function activityFromLegacyProviderEvent(event) {
   const type = text(source.type);
 
   if (type === 'reasoning') {
-    const value = text(source.text);
+    const value = typeof source.text === 'string' ? source.text : '';
     return value ? providerActivity('activity.reasoning.delta', { text: value }) : null;
   }
 
@@ -74,6 +74,11 @@ export function activityFromLegacyProviderEvent(event) {
   }
 
   return null;
+}
+
+function requiredDelta(value, label) {
+  if (typeof value !== 'string' || value.length === 0) throw new TypeError(`${label} is required.`);
+  return value;
 }
 
 function requiredText(value, label) {
