@@ -31,7 +31,8 @@ await mkdir(join(target, 'dist', 'local'), { recursive: true });
 // electron-builder deliberately filters nested node_modules from extraResources.
 // Bundle browserControl and its production dependencies into the local runtime
 // so the packaged app is self-contained instead of depending on a module tree
-// that will not survive packaging.
+// that will not survive packaging. Some bundled dependencies (notably ws) are
+// CommonJS internally, so provide a real Node require inside the ESM bundle.
 const esbuild = join(source, 'node_modules', 'esbuild', 'bin', 'esbuild');
 const sourceRuntime = join(source, 'dist', 'local', 'runtime.js');
 const targetRuntime = join(target, 'dist', 'local', 'runtime.js');
@@ -41,6 +42,7 @@ const bundled = spawnSync(esbuild, [
   '--platform=node',
   '--format=esm',
   '--target=node22',
+  '--banner:js=import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
   '--log-level=warning',
   `--outfile=${targetRuntime}`,
 ], { cwd: source, encoding: 'utf8' });
