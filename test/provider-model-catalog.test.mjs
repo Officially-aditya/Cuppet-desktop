@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { fetchProviderModelCatalog, parseApiCatalog, discoverAntigravityModels } from '../src/main/provider-model-catalog.mjs';
 import { acpModelCatalogFromSession } from '../src/runtime/acp-cli-provider.mjs';
+import { catalogFromAcpCapabilities, discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
+
+const acpConfigFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 
 test('OpenAI-compatible catalog preserves provider ids including exact auto ids', async () => {
   const requests = [];
@@ -39,7 +43,7 @@ test('Gemini catalog keeps only entries the API advertises for generateContent',
   assert.deepEqual(catalog.models.map((item) => item.id), ['gemini-live']);
 });
 
-test('ACP session config model selector preserves exact current Auto value', () => {
+test('legacy ACP parser preserves exact current Auto value during compatibility period', () => {
   const catalog = acpModelCatalogFromSession({
     configOptions: [{
       id: 'model', category: 'model', type: 'select', currentValue: 'auto',
@@ -51,6 +55,48 @@ test('ACP session config model selector preserves exact current Auto value', () 
   assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
 });
 
+test('shared ACP capability conversion preserves exact provider model and reasoning values', () => {
+  const catalog = catalogFromAcpCapabilities('opencode', {
+    models: [{ id: 'auto', label: 'Auto' }, { id: 'provider/model-x', label: 'Model X' }],
+    settings: [
+      { id: 'model', kind: 'select', category: 'model', label: 'Model', value: 'auto', options: [{ id: 'auto', label: 'Auto' }, { id: 'provider/model-x', label: 'Model X' }] },
+      { id: 'effort', kind: 'select', category: 'thought_level', label: 'Effort', value: 'xhigh', options: [{ id: 'minimal', label: 'Minimal' }, { id: 'xhigh', label: 'Extra High' }] },
+    ],
+  });
+  assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
+  assert.equal(catalog.currentModel, 'auto');
+  assert.equal(catalog.reasoning.currentValue, 'xhigh');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['minimal', 'xhigh']);
+});
+
+test('main ACP model catalog path uses the shared runtime capability parser', async () => {
+  const catalog = await fetchProviderModelCatalog({
+    providerID: 'opencode',
+    cliCommand: process.execPath,
+    cliArgs: [acpConfigFixture],
+    primary: { modelID: 'provider/model-b' },
+    primaryEffort: 'max',
+  });
+  assert.equal(catalog.source, 'acp');
+  assert.deepEqual(catalog.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
+  assert.equal(catalog.defaultModel, 'provider/model-b');
+  assert.equal(catalog.reasoning.currentValue, 'max');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
+});
+
+test('shared ACP discovery can be consumed directly by backend capability callers', async () => {
+  const catalog = await discoverAcpRuntimeCatalog('opencode', {
+    configuration: {
+      cliCommand: process.execPath,
+      cliArgs: [acpConfigFixture],
+      primary: { modelID: 'provider/model-b' },
+      primaryEffort: 'max',
+    },
+  });
+  assert.equal(catalog.currentModel, 'provider/model-b');
+  assert.equal(catalog.reasoning.currentValue, 'max');
+});
+
 test('Antigravity model command parser uses advertised slugs without choosing a default', async () => {
   const catalog = await discoverAntigravityModels({ command: 'agy', envOverride: 'CUPPET_ANTIGRAVITY_BIN' }, {
     runImpl: async () => ({ stdout: 'gemini-3.8-flash-high     Gemini 3.8 Flash (High)\nclaude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)\n' }),
@@ -59,8 +105,7 @@ test('Antigravity model command parser uses advertised slugs without choosing a 
   assert.equal(catalog.defaultModel, null);
 });
 
-
-test('ACP catalog exposes provider-advertised reasoning levels without guessing', () => {
+test('legacy ACP compatibility parser exposes provider reasoning levels without guessing', () => {
   const catalog = acpModelCatalogFromSession({
     configOptions: [
       { id: 'model', category: 'model', type: 'select', currentValue: 'provider/model-x', options: [{ value: 'provider/model-x', name: 'Model X' }] },
@@ -74,7 +119,7 @@ test('ACP catalog exposes provider-advertised reasoning levels without guessing'
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['minimal', 'medium', 'xhigh']);
 });
 
-test('provider model catalog preserves ACP reasoning metadata', async () => {
+test('provider model catalog preserves injected ACP reasoning metadata', async () => {
   const catalog = await fetchProviderModelCatalog({ providerID: 'opencode', model: 'provider/model-x' }, {
     acpDiscover: async (_providerID, options) => {
       assert.equal(options.configuration.model, 'provider/model-x');
