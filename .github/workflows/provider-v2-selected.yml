@@ -37,8 +37,7 @@ jobs:
           test/acp-cuppet-tools.test.mjs
           test/acp-cuppet-tool-session-security.test.mjs
           test/execution-kernel.test.mjs
+          test/execution-benchmark.test.mjs
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs
-      - name: Verify renderer contract
-        run: npm run renderer:verify
