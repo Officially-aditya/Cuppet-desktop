@@ -50,7 +50,7 @@ assert.match(runtimeManager, /#closing/);
 assert.match(runtimeMain, /new RuntimeTstManager/);
 assert.match(runtimeMain, /tst\.runWithProject/);
 assert.match(runtimeMain, /tst\.unregisterProject/);
-assert.match(runtimeMain, /Promise\.all\(\[runtimeService\.close\(\), tst\.close\(\)\]\)/);
+assert.match(runtimeMain, /Promise\.all\(\[runtimeService\.close\(\), tst\.close\(\), browserControl\.close\(\)\]\)/);
 assert.match(runtimeClient, /CUPPET_RESOURCES_PATH: process\.resourcesPath/);
 
 assert.match(stage, /kind !== 'cuppet-tst-runtime'/);
