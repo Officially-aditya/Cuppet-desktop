@@ -38,6 +38,7 @@ jobs:
           test/runtime-service-provider-lifecycle.test.mjs
           test/provider-activity-renderer.test.mjs
           test/provider-model-renderer-sync.test.mjs
+          test/execution-capabilities.test.mjs
           test/acp-cuppet-tools.test.mjs
           test/acp-cuppet-tool-session-security.test.mjs
           test/execution-kernel.test.mjs
