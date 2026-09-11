@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createBenchmarkRecord, compareBenchmarkSuites, diffExecutionSnapshots } from '../src/runtime/execution/benchmark.mjs';
 import { ExecutionKernel } from '../src/runtime/execution/execution-kernel.mjs';
+import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 
 const definition = (name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
 const TOOLSET = ['cuppet_plan', 'tst_explore', 'tst_read', 'tst_edit_batch', 'tst_validate', 'workspace_read', 'workspace_edit', 'workspace_write', 'bash'].map(definition);
@@ -72,13 +73,57 @@ test('execution snapshot deltas isolate one benchmark task from session totals',
   assert.equal(delta.maxBatchReadTargets, 5);
 });
 
+test('JournaledToolRuntime emits a real per-turn benchmark sample through the ordinary tool stack', async () => {
+  const emitted = [];
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    benchmark: { policy: 'raw-baseline' },
+    emit: (event) => emitted.push(event),
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'benchmark-plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  const adapter = {
+    async stream(_messages, options) {
+      const result = await options.executeTool({ id: 'plan-1', name: 'cuppet_plan', arguments: '{"action":"overview"}' });
+      assert.equal(result.success, true);
+      options.onDelta('Done.');
+      return { text: 'Done.', usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 }, toolCalls: [] };
+    },
+  };
+  try {
+    await runtime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'Benchmark' }],
+      sessionId: 'benchmark-session',
+      projectRoot: null,
+      onDelta: async () => {},
+    });
+    const sampleEvent = emitted.find((event) => event.type === 'runtime.benchmark.sample');
+    assert.ok(sampleEvent);
+    assert.equal(sampleEvent.policy, 'raw-baseline');
+    assert.equal(sampleEvent.sample.policy, 'raw-baseline');
+    assert.equal(sampleEvent.sample.execution.semanticExecuted, 1);
+    assert.equal(sampleEvent.sample.execution.toolCallsByName.cuppet_plan, 1);
+    assert.equal(sampleEvent.sample.usage.totalTokens, 10);
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('benchmark gate requires efficiency improvement without correctness regression', () => {
   const baseline = [createBenchmarkRecord({
     taskId: 'multi-file-change',
     providerID: 'opencode',
     modelID: 'model-a',
     mode: 'raw-baseline',
-    correctness: { passed: true, score: 1 },
+    correctness: { verified: true, passed: true, score: 1 },
     metrics: {
       toolCalls: 12, optimizedCalls: 0, semanticCalls: 1, rawFallbackCalls: 11, optimizedPathShare: 0,
       rawReads: 5, shellCalls: 3, mutationExecutions: 4, fallbackUnlocks: 0, blockedBypassAttempts: 0,
@@ -92,7 +137,7 @@ test('benchmark gate requires efficiency improvement without correctness regress
     providerID: 'opencode',
     modelID: 'model-a',
     mode: 'optimized',
-    correctness: { passed: true, score: 1 },
+    correctness: { verified: true, passed: true, score: 1 },
     metrics: {
       toolCalls: 6, optimizedCalls: 4, semanticCalls: 2, rawFallbackCalls: 0, optimizedPathShare: 4 / 6,
       rawReads: 0, shellCalls: 1, mutationExecutions: 1, fallbackUnlocks: 0, blockedBypassAttempts: 0,
@@ -106,13 +151,30 @@ test('benchmark gate requires efficiency improvement without correctness regress
   assert.equal(comparison.passed, true);
   assert.equal(comparison.tasksCompared, 1);
   assert.equal(comparison.correctnessRegressions.length, 0);
+  assert.equal(comparison.unverifiedTasks.length, 0);
   assert.equal(comparison.optimizedPathImproved, true);
   assert.ok(comparison.improvements.length >= 2);
 
   const regression = compareBenchmarkSuites({
     baseline,
-    optimized: [{ ...optimized[0], correctness: { passed: false, score: 0, details: 'wrong output' } }],
+    optimized: [{ ...optimized[0], correctness: { verified: true, passed: false, score: 0, details: 'wrong output' } }],
   });
   assert.equal(regression.passed, false);
   assert.match(regression.reasons.join('\n'), /optimized task failed while baseline passed/);
+});
+
+test('unverified benchmark records can be stored but can never pass the comparison gate', () => {
+  const metrics = {
+    toolCalls: 1, optimizedCalls: 1, semanticCalls: 0, rawFallbackCalls: 0, optimizedPathShare: 1,
+    rawReads: 0, shellCalls: 0, mutationExecutions: 0, fallbackUnlocks: 0, blockedBypassAttempts: 0,
+    batchReadTargets: 1, batchEditOperations: 0, contextBytesReturned: 10, pathsTouched: 1,
+    executionMs: 1, elapsedMs: 1, validationAttempts: 0, validationSuccesses: 0, validationFailures: 0,
+    inputTokens: 1, outputTokens: 1, totalTokens: 2, cachedInputTokens: 0, reasoningTokens: 0,
+  };
+  const baseline = createBenchmarkRecord({ taskId: 'unverified-task', mode: 'raw-baseline', correctness: { verified: true, passed: true, score: 1 }, metrics: { ...metrics, optimizedCalls: 0, optimizedPathShare: 0, rawReads: 2, toolCalls: 3, totalTokens: 5 } });
+  const optimized = createBenchmarkRecord({ taskId: 'unverified-task', mode: 'optimized', correctness: { verified: false, passed: false, details: 'no verifier' }, metrics });
+  const comparison = compareBenchmarkSuites({ baseline: [baseline], optimized: [optimized] });
+  assert.equal(comparison.passed, false);
+  assert.deepEqual(comparison.unverifiedTasks, ['unverified-task']);
+  assert.match(comparison.reasons.join('\n'), /Unverified correctness/);
 });
