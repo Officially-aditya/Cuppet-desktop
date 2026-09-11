@@ -41,3 +41,7 @@ jobs:
           test/acp-cli-provider.test.mjs
           test/reasoning-segmentation.test.mjs
           test/provider-model-catalog.test.mjs
+      - name: Verify benchmark command syntax
+        run: >-
+          node --check scripts/run-provider-benchmark.mjs &&
+          node --check scripts/compare-provider-benchmarks.mjs
