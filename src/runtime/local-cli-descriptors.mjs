@@ -3,6 +3,10 @@ const DESCRIPTORS = Object.freeze({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use.',
   }),
+  'claude-code': descriptor({
+    id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
+    loginHint: 'Run `claude-agent-acp --cli` in Terminal and complete Claude sign-in, then retry.',
+  }),
   'grok-build': descriptor({
     id: 'grok-build', label: 'Grok Build', transport: 'acp', command: 'grok', args: ['--no-auto-update', 'agent', 'stdio'], versionArgs: ['version'], envOverride: 'CUPPET_GROK_BIN',
     loginHint: 'Run `grok login` in Terminal once, then retry.',
