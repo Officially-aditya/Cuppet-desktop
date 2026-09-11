@@ -47,3 +47,17 @@ test('local ACP provider descriptors use official stdio entrypoints', () => {
   assert.deepEqual(acpCliDescriptor('kiro')?.args, ['acp']);
   assert.equal(acpCliDescriptor('antigravity'), null);
 });
+
+
+test('Kiro ACP compatibility accepts content prompts and session/notification updates', async () => {
+  const kiroFixture = fileURLToPath(new URL('./fixtures/fake-kiro-acp-agent.mjs', import.meta.url));
+  const provider = new AcpCliAgentProvider({ providerID: 'kiro', cliCommand: process.execPath, cliArgs: [kiroFixture] });
+  let streamed = '';
+  const result = await provider.stream([{ role: 'user', content: 'Hello Kiro' }], {
+    projectRoot: tmpdir(),
+    onDelta: async (delta) => { streamed += delta; },
+    executeTool: async () => ({ success: false, output: 'unexpected tool call', paths: [], mutation: false }),
+  });
+  assert.equal(result.text, 'Kiro ready.');
+  assert.equal(streamed, 'Kiro ready.');
+});

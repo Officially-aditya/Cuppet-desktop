@@ -83,10 +83,7 @@ export class AcpCliAgentProvider {
       signal?.addEventListener('abort', abortListener, { once: true });
 
       const promptStarted = Date.now();
-      const prompt = await rpc.request('session/prompt', {
-        sessionId,
-        prompt: [{ type: 'text', text: serializeConversation(messages) }],
-      }, PROMPT_TIMEOUT_MS);
+      const prompt = await rpc.request('session/prompt', sessionPromptParams(this.#descriptor, sessionId, serializeConversation(messages)), PROMPT_TIMEOUT_MS);
       await rpc.settleTail(promptStarted);
       if (signal?.aborted) throw abortError();
       const output = rpc.text();
@@ -196,8 +193,8 @@ class AcpRpcClient {
       else pending.resolve(message.result ?? {});
       return;
     }
-    if (message?.method === 'session/update') {
-      void this.#handleUpdate(message.params?.update);
+    if (message?.method === 'session/update' || message?.method === 'session/notification') {
+      void this.#handleUpdate(message.params?.update ?? message.params);
       return;
     }
     if (message?.method && Object.prototype.hasOwnProperty.call(message, 'id')) {
@@ -211,8 +208,8 @@ class AcpRpcClient {
   async #handleUpdate(update) {
     const source = record(update);
     this.#lastUpdateAt = Date.now();
-    if (source.sessionUpdate === 'agent_message_chunk') {
-      const delta = typeof source.content?.text === 'string' ? source.content.text : '';
+    if (normalizeUpdateKind(source.sessionUpdate ?? source.type ?? source.kind) === 'agent_message_chunk') {
+      const delta = contentText(source.content);
       if (!delta) return;
       this.#text += delta;
       await this.#onDelta(delta);
@@ -303,6 +300,19 @@ class AcpRpcClient {
     for (const pending of this.#pending.values()) pending.reject(error instanceof Error ? error : new Error(String(error)));
     this.#pending.clear();
   }
+}
+
+function sessionPromptParams(descriptor, sessionId, textValue) {
+  const content = [{ type: 'text', text: textValue }];
+  return descriptor?.id === 'kiro' ? { sessionId, content } : { sessionId, prompt: content };
+}
+function normalizeUpdateKind(value) {
+  return String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[ -]+/g, '_').toLowerCase();
+}
+function contentText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(contentText).join('');
+  return typeof value?.text === 'string' ? value.text : '';
 }
 
 async function authenticateIfNeeded(rpc, descriptor, initialized) {
