@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PermissionBroker, PermissionDeniedError, inspectFullAccessDeletion } from '../src/runtime/permissions.mjs';
+import { agentPermissionAction, agentPermissionResources } from '../src/runtime/tool-runtime.mjs';
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-full-access-'));
@@ -92,6 +93,71 @@ test('plan mode remains read-only even when full access is selected', async () =
     await assert.rejects(
       broker.authorize({ sessionId: 's1', action: 'delete', resources: ['src/tmp'], projectRoot: root, planMode: true }),
       (error) => error instanceof PermissionDeniedError && error.code === 'plan_mode_read_only',
+    );
+  } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test('ACP native terminal/delete permission requests feed the Full access delete boundary', () => {
+  assert.equal(agentPermissionAction('delete'), 'delete');
+  assert.equal(agentPermissionAction('execute'), 'bash');
+  assert.equal(agentPermissionAction('fetch'), 'web-fetch');
+  assert.equal(agentPermissionAction('search', 'Search the web'), 'web-fetch');
+  assert.deepEqual(
+    agentPermissionResources({ kind: 'execute', title: 'Run command', rawInput: { command: 'rm', args: ['-rf', '../outside'] } }),
+    ['rm -rf ../outside'],
+  );
+  assert.deepEqual(
+    agentPermissionResources({ kind: 'terminal', rawInput: { toolInput: { shellCommand: 'find ../outside -delete' } } }),
+    ['find ../outside -delete'],
+  );
+  assert.deepEqual(agentPermissionResources({ kind: 'delete', title: 'Delete something', locations: [] }), []);
+});
+
+test('auto mode approves web fetches and project-scoped actions but not obvious escapes', async () => {
+  const { dir, root } = await fixture();
+  const broker = new PermissionBroker({ interactive: false });
+  broker.setAuto('s1', true);
+  try {
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'web-fetch', resources: ['https://example.com/data'], projectRoot: root }),
+      { allowed: true, source: 'session-auto-web' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'read', resources: ['.env'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),
+      { allowed: true, source: 'session-auto' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'delete', resources: ['src/tmp'], projectRoot: root }),
+      { allowed: true, source: 'session-auto-project' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'agent-tool', resources: ['src'], projectRoot: root }),
+      { allowed: true, source: 'session-auto-project' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'bash', resources: ['npm test'], projectRoot: root }),
+      { allowed: true, source: 'session-auto-project' },
+    );
+    assert.deepEqual(
+      await broker.authorize({ sessionId: 's1', action: 'bash', resources: ['curl https://example.com/data'], projectRoot: root }),
+      { allowed: true, source: 'session-auto-project' },
+    );
+    await assert.rejects(
+      broker.authorize({ sessionId: 's1', action: 'edit', resources: ['../outside/secret.txt'], projectRoot: root }),
+      (error) => error instanceof PermissionDeniedError && error.code === 'interaction_required',
+    );
+    await assert.rejects(
+      broker.authorize({ sessionId: 's1', action: 'bash', resources: ['rm -rf ../outside'], projectRoot: root }),
+      (error) => error instanceof PermissionDeniedError && error.code === 'interaction_required',
+    );
+    await assert.rejects(
+      broker.authorize({ sessionId: 's1', action: 'read', resources: ['.cuppet/credentials.json'], projectRoot: root }),
+      (error) => error instanceof PermissionDeniedError && error.code === 'protected_resource',
     );
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });

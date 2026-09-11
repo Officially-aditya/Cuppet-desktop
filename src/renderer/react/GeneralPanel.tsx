@@ -70,7 +70,7 @@ export function GeneralPanel() {
         <div><h3>General behaviour</h3><p>Choose how Cuppet handles permissions and messages while it is working.</p></div>
       </div>
       <div className="settings-row general-settings-row">
-        <div><strong>Permissions</strong><span>Default asks before protected actions. Auto approves eligible project actions. Full access removes permission prompts in project chats, while destructive deletion outside the active project stays blocked.</span></div>
+        <div><strong>Permissions</strong><span>Default asks before protected actions. Auto approves web fetches and actions scoped to the active project. Full access removes permission prompts in project chats, while destructive deletion outside the active project stays blocked.</span></div>
         <div className="general-settings-control">
           <SelectControl
             ariaLabel="Permissions"

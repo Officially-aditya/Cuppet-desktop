@@ -14,6 +14,7 @@ const VERSION_COMMANDS = new Set([
   'python --version', 'python3 --version', 'cargo --version', 'rustc --version', 'go version',
 ]);
 const WORKSPACE_ACTIONS = new Set(['read', 'edit', 'write']);
+const AUTO_PROJECT_ACTIONS = new Set(['delete', 'agent-tool']);
 const UNSAFE_RESOURCE_CHARACTERS = /[\\*?\[\]{}]/;
 
 export class PermissionDeniedError extends Error {
@@ -138,6 +139,7 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
   if (action === 'browser-read') return { effect: 'allow', source: 'explicit-browser-read' };
   if (action === 'bash' && resources.length === 1 && isSafeAutoBashCommand(resources[0] ?? '')) return { effect: 'allow', source: 'safe-bash' };
   if (planMode && ['edit', 'write', 'delete', 'bash'].includes(action)) return { effect: 'deny', code: 'plan_mode_read_only', reason: 'Plan mode is read-only; mutating tools and arbitrary shell commands are blocked.' };
+  if (auto && action === 'web-fetch') return { effect: 'allow', source: 'session-auto-web' };
 
   if (fullAccess) {
     if (!projectRoot && (WORKSPACE_ACTIONS.has(action) || action === 'delete' || action === 'bash')) {
@@ -164,15 +166,27 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
 
     const envExample = resources.length > 0 && resources.every(isEnvExampleResource);
     const safe = resources.length > 0 && (await Promise.all(resources.map((resource) => isSafeWorkspaceResource(resource, projectRoot)))).every(Boolean);
+    const projectScoped = resources.length > 0 && (await Promise.all(resources.map((resource) => isProjectScopedResource(resource, projectRoot)))).every(Boolean);
 
     if (action === 'read' && process.env.CUPPET_GRAPH_FIRST_GATE !== '1' && (safe || envExample)) {
       return { effect: 'allow', source: 'workspace-read' };
     }
-    if (auto && safe) return { effect: 'allow', source: 'session-auto' };
-    return { effect: 'ask', autoEligible: safe };
+    if (auto && projectScoped) return { effect: 'allow', source: 'session-auto' };
+    return { effect: 'ask', autoEligible: auto ? projectScoped : safe };
   }
 
-  if (action === 'bash') return { effect: 'ask', autoEligible: false };
+  if (auto && AUTO_PROJECT_ACTIONS.has(action)) {
+    if (!projectRoot || !resources.length) return { effect: 'ask', autoEligible: false };
+    if (resources.some((resource) => isProtectedResource(resource))) return { effect: 'deny', code: 'protected_resource', reason: 'Cuppet protected runtime/credential files cannot be accessed by the coding model.' };
+    const projectScoped = (await Promise.all(resources.map((resource) => isProjectScopedResource(resource, projectRoot)))).every(Boolean);
+    if (projectScoped) return { effect: 'allow', source: 'session-auto-project' };
+    return { effect: 'ask', autoEligible: false };
+  }
+
+  if (action === 'bash') {
+    if (auto && projectRoot && resources.length === 1 && await isAutoProjectBashCommand(resources[0], projectRoot)) return { effect: 'allow', source: 'session-auto-project' };
+    return { effect: 'ask', autoEligible: false };
+  }
   return { effect: 'ask', autoEligible: false };
 }
 
@@ -366,6 +380,31 @@ export function isSafeAutoBashCommand(command) {
     case 'rev-parse': return args.length === 1 && new Set(['--show-toplevel', '--is-inside-work-tree', '--git-dir']).has(args[0]);
     default: return false;
   }
+}
+
+export async function isProjectScopedResource(resource, workspaceRoot) {
+  if (!resource || resource.trim() !== resource || resource.includes('\0') || resource.startsWith('~') || resource.startsWith('file:') || UNSAFE_RESOURCE_CHARACTERS.test(resource)) return false;
+  const root = await realpath(workspaceRoot).catch(() => resolve(workspaceRoot));
+  const candidate = isAbsolute(resource) ? resolve(resource) : resolve(root, resource);
+  if (!isAtOrInside(root, candidate)) return false;
+  return nearestExistingAncestorIsInside(candidate, root);
+}
+
+export async function isAutoProjectBashCommand(command, projectRoot) {
+  const source = String(command ?? '').trim();
+  if (!source || !projectRoot || source.length > 8000) return false;
+  const deletion = await inspectFullAccessDeletion(source, projectRoot);
+  if (!deletion.allowed) return false;
+  if (/(^|[\s"'=])(?:~(?:[\/]|$)|\.\.(?:[\/]|$)|file:)/i.test(source)) return false;
+  if (/`|\$\(/.test(source)) return false;
+  if (/\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})(?:[\/]|$)|%USERPROFILE%/i.test(source)) return false;
+
+  const withoutUrls = source.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`]+/gi, '');
+  const candidates = [];
+  for (const match of withoutUrls.matchAll(/(^|[\s"'=])(\/[^\s"'`;|&<>]*)/g)) if (match[2]) candidates.push(match[2]);
+  for (const match of withoutUrls.matchAll(/(^|[\s"'=])([A-Za-z]:[\\/][^\s"'`;|&<>]*)/g)) if (match[2]) candidates.push(match[2]);
+  for (const candidate of candidates) if (!(await isProjectScopedResource(candidate, projectRoot))) return false;
+  return true;
 }
 
 export async function isSafeWorkspaceResource(resource, workspaceRoot) {

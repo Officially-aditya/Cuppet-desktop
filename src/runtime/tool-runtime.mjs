@@ -67,7 +67,7 @@ export class ToolRuntime {
             projectRoot,
             planMode: mode === 'plan',
             signal,
-            action: agentPermissionAction(request?.kind),
+            action: agentPermissionAction(request?.kind, request?.title),
             resources,
             description: String(request?.title || 'Allow local coding agent action').slice(0, 500),
             fingerprintKey: stableJson(request?.rawInput ?? {}),
@@ -436,19 +436,55 @@ function injectToolPolicy(messages, projectBound, mode) {
   return [{ role: 'system', content: policy }, ...messages.map((message) => ({ ...message }))];
 }
 function parseArguments(value) { try { const parsed = JSON.parse(value || '{}'); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { throw new Error('Tool arguments were not valid JSON'); } }
-function agentPermissionAction(kind) {
-  const value = String(kind ?? '').toLowerCase();
-  if (['read', 'search'].includes(value)) return 'read';
+export function agentPermissionAction(kind, title = '') {
+  const value = String(kind ?? '').trim().toLowerCase().replace(/[ _]+/g, '-');
+  const hint = `${value} ${String(title ?? '').toLowerCase()}`;
+  if (value === 'read') return 'read';
+  if (value === 'search') return /\b(web|browser|url|https?)\b/.test(hint) ? 'web-fetch' : 'read';
+  if (['fetch', 'web-fetch', 'web-search', 'browse', 'browser-fetch', 'url-fetch', 'http-fetch'].includes(value)) return 'web-fetch';
+  if (/\b(web|browser|url|https?)\b/.test(hint) && /\b(fetch|search|browse|open|get|read)\b/.test(hint)) return 'web-fetch';
   if (value === 'delete') return 'delete';
   if (['edit', 'move', 'write'].includes(value)) return 'edit';
   if (['execute', 'terminal'].includes(value)) return 'bash';
   return 'agent-tool';
 }
-function agentPermissionResources(request) {
+export function agentPermissionResources(request) {
+  const kind = String(request?.kind ?? '').toLowerCase();
+  if (['execute', 'terminal'].includes(kind)) {
+    const command = agentPermissionCommand(request?.rawInput);
+    if (command) return [command.slice(0, 1024)];
+  }
   const locations = Array.isArray(request?.locations) ? request.locations : [];
   const paths = locations.flatMap((item) => typeof item?.path === 'string' && item.path.trim() ? [item.path.trim().slice(0, 1024)] : []);
   if (paths.length) return paths.slice(0, 16);
-  return String(request?.kind ?? '').toLowerCase() === 'delete' ? [] : [String(request?.title || request?.kind || 'agent-tool').slice(0, 1024)];
+  return kind === 'delete' ? [] : [String(request?.title || request?.kind || 'agent-tool').slice(0, 1024)];
+}
+function agentPermissionCommand(rawInput, depth = 0) {
+  if (depth > 3 || rawInput == null) return '';
+  if (typeof rawInput === 'string') return rawInput.trim();
+  if (Array.isArray(rawInput)) {
+    if (rawInput.every((item) => ['string', 'number', 'boolean'].includes(typeof item))) return rawInput.map(String).join(' ').trim();
+    for (const item of rawInput) {
+      const nested = agentPermissionCommand(item, depth + 1);
+      if (nested) return nested;
+    }
+    return '';
+  }
+  if (typeof rawInput !== 'object') return '';
+  for (const key of ['command', 'cmd', 'shellCommand', 'script']) {
+    const value = rawInput[key];
+    if (typeof value === 'string' && value.trim()) {
+      const args = Array.isArray(rawInput.args) ? rawInput.args.map(String) : [];
+      return [value.trim(), ...args].join(' ').trim();
+    }
+    const nested = agentPermissionCommand(value, depth + 1);
+    if (nested) return nested;
+  }
+  for (const key of ['input', 'arguments', 'params', 'toolInput']) {
+    const nested = agentPermissionCommand(rawInput[key], depth + 1);
+    if (nested) return nested;
+  }
+  return '';
 }
 function cleanPrefix(value) { const text = typeof value === 'string' ? value.trim().slice(0, 512) : ''; return text || undefined; }
 function clamp(value, min, max) { const number = Number.isFinite(value) ? Math.floor(value) : min; return Math.min(Math.max(number, min), max); }
