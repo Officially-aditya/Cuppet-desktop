@@ -1,0 +1,34 @@
+name: Temporary macOS Icon Verification
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/verify-macos-icon-temp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-icon:
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Prepare macOS icon
+        run: npm run mac:prepare-icon
+      - name: Verify packaging points to prepared icon
+        run: |
+          test -f build/icon-macos.png
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          if (pkg.build?.mac?.icon !== 'build/icon-macos.png') {
+            throw new Error(`Unexpected macOS icon path: ${pkg.build?.mac?.icon}`);
+          }
+          NODE
+          sips -g pixelWidth -g pixelHeight -g hasAlpha build/icon-macos.png
