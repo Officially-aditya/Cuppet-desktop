@@ -24,7 +24,7 @@ test('ModelPicker refreshes model-dependent capabilities before deciding effort 
   assert.ok(refresh < effort, 'candidate capabilities must be known before effort is resolved');
   assert.ok(effort < save, 'effort validity must be resolved before settings are persisted');
   assert.match(picker, /if \(exactLiveSnapshot\)/);
-  assert.match(picker, /advertised\.source === 'acp' \|\| advertised\.source === 'codex'/);
+  assert.match(picker, /advertised\.modelDependentSettings === true/);
   assert.match(picker, /advertised\.reasoning\?\.options/);
 });
 
@@ -36,6 +36,7 @@ test('candidate model refresh crosses preload and main IPC without persisting se
   assert.match(main, /ipcMain\.handle\('cuppet:settings:models',[\s\S]*fetchProviderModelCatalog\(settings\.runtimeValue\(\), \{/);
   assert.match(main, /model: value && typeof value === 'object'/);
   assert.match(types, /models: \(options\?: \{ model\?: string \}\) => Promise<ProviderModelCatalog>/);
+  assert.match(types, /modelDependentSettings\?: boolean/);
 });
 
 test('ModelPicker reads provider-advertised reasoning through the generic catalog', async () => {
@@ -44,4 +45,13 @@ test('ModelPicker reads provider-advertised reasoning through the generic catalo
   assert.match(source, /settings\?\.primaryEffort/);
   assert.match(source, /advertised\.defaultModel/);
   assert.doesNotMatch(source, /CodexModelCatalog/);
+});
+
+test('ModelPicker does not branch on provider transport or Codex identity', async () => {
+  const source = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /advertised\.source\s*===/);
+  assert.doesNotMatch(source, /providerID\s*===\s*['"]codex['"]/);
+  assert.doesNotMatch(source, /configuredModel\s*===\s*['"]codex-default['"]/);
+  assert.match(source, /providerPreset\?\.model/);
+  assert.match(source, /advertised\.modelDependentSettings === true/);
 });
