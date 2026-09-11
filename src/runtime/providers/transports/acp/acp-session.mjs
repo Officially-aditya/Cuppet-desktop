@@ -62,16 +62,24 @@ export class AcpSessionRuntime {
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, REQUEST_TIMEOUT_MS);
       await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized);
-      this.#session = await this.#rpc.request('session/new', { cwd: this.#projectRoot, mcpServers: [] }, REQUEST_TIMEOUT_MS);
-      if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
-      this.#refreshCapabilities();
-      await this.#applyConfiguredSettings();
+      await this.#openSession();
       this.#state = 'ready';
       return this.snapshot();
     } catch (error) {
       this.#state = 'error';
       throw enrichProviderError(this.#descriptor, error, this.#rpc.stderr());
     }
+  }
+
+  async newSession() {
+    if (this.#state === 'idle') return this.start();
+    if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
+    await this.#openSession();
+    return this.snapshot();
+  }
+
+  setHostHandlers(handlers = {}) {
+    this.#hostBridge.setHandlers(handlers);
   }
 
   async capabilities() {
@@ -87,6 +95,7 @@ export class AcpSessionRuntime {
     if (this.#state === 'idle') await this.start();
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime is not ready.`);
     if (this.#activeTurn) throw new Error(`${this.#descriptor.label} runtime already has an active turn.`);
+    this.setHostHandlers({ executeTool: hooks.executeTool, requestAgentPermission: hooks.requestAgentPermission });
     const sessionId = text(this.#session?.sessionId);
     const signal = hooks.signal;
     if (signal?.aborted) throw abortError();
@@ -140,6 +149,7 @@ export class AcpSessionRuntime {
       signal?.removeEventListener?.('abort', onAbort);
       clearTimeout(turn.activityTimer);
       clearTimeout(turn.terminateTimer);
+      this.setHostHandlers();
       this.#activeTurn = null;
       if (this.#state !== 'closed') this.#state = 'ready';
     }
@@ -158,6 +168,7 @@ export class AcpSessionRuntime {
     if (this.#state === 'closed') return;
     this.#state = 'closed';
     if (this.#activeTurn) await this.cancel().catch(() => undefined);
+    this.setHostHandlers();
     this.#rpc.close();
   }
 
@@ -186,6 +197,13 @@ export class AcpSessionRuntime {
     turn.terminateTimer = setTimeout(() => {
       if (this.#activeTurn === turn) this.#rpc.terminate();
     }, this.#cancelGraceMs);
+  }
+
+  async #openSession() {
+    this.#session = await this.#rpc.request('session/new', { cwd: this.#projectRoot, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+    if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
+    this.#refreshCapabilities();
+    await this.#applyConfiguredSettings();
   }
 
   async #applyConfiguredSettings() {

@@ -11,8 +11,12 @@ export class AcpHostBridge {
   constructor({ providerId, projectRoot = null, executeTool, requestAgentPermission }) {
     this.#providerId = providerId;
     this.#projectRoot = projectRoot ? resolve(projectRoot) : null;
-    this.#executeTool = executeTool;
-    this.#requestAgentPermission = requestAgentPermission;
+    this.setHandlers({ executeTool, requestAgentPermission });
+  }
+
+  setHandlers({ executeTool, requestAgentPermission } = {}) {
+    this.#executeTool = typeof executeTool === 'function' ? executeTool : undefined;
+    this.#requestAgentPermission = typeof requestAgentPermission === 'function' ? requestAgentPermission : undefined;
   }
 
   async handle(message) {

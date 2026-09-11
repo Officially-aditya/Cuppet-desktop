@@ -1,12 +1,14 @@
 import { ToolRuntime } from './tool-runtime.mjs';
+import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 
 export class JournaledToolRuntime {
-  #inner; #journal; #captures = new Map(); #emit; #db;
+  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes;
 
-  constructor({ journal, emit = () => {}, db = null, ...options }) {
+  constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, ...options }) {
     this.#journal = journal;
     this.#emit = emit;
     this.#db = db;
+    this.#providerRuntimes = providerRuntimeManager ?? new ProviderRuntimeManager();
     this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
@@ -14,12 +16,17 @@ export class JournaledToolRuntime {
 
   async run(options) {
     const messageId = latestAssistantMessageID(this.#db, options.sessionId);
+    const adapter = this.#providerRuntimes.adapterFor({
+      sessionId: options.sessionId,
+      projectRoot: options.projectRoot,
+      adapter: options.adapter,
+    });
     const capture = new ToolMutationCapture({
       journal: this.#journal,
       sessionId: options.sessionId,
       messageId,
       projectRoot: options.projectRoot,
-      adapter: options.adapter,
+      adapter,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
         this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
