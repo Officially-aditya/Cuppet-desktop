@@ -1,0 +1,27 @@
+{
+  "$schema": "./provider-v2.schema.json",
+  "schemaVersion": 1,
+  "provider": {
+    "id": "opencode",
+    "model": "",
+    "effort": ""
+  },
+  "prepareCommand": "node benchmarks/reset-fixture.mjs",
+  "turnTimeoutMs": 1800000,
+  "verifyTimeoutMs": 600000,
+  "gate": {
+    "minImprovements": 2
+  },
+  "tasks": [
+    {
+      "id": "multi-file-change",
+      "prompt": "Implement the benchmark fixture change across the affected files, preserve existing behavior, and validate the result.",
+      "verifyCommand": "node benchmarks/verify-fixture.mjs multi-file-change"
+    },
+    {
+      "id": "targeted-bug-fix",
+      "prompt": "Find the cause of the benchmark fixture failure, make the smallest correct fix, and validate it.",
+      "verifyCommand": "node benchmarks/verify-fixture.mjs targeted-bug-fix"
+    }
+  ]
+}
