@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
+import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 import { OpenCodeAcpProviderV2 } from '../src/runtime/providers/backends/opencode.mjs';
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
@@ -24,8 +25,8 @@ test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', as
   } finally { await runtime.close(); }
 });
 
-test('OpenCode compatibility provider preserves current stream callbacks', async () => {
-  const provider = new OpenCodeAcpProviderV2({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' });
+test('generic ACP adapter preserves current stream callbacks', async () => {
+  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' });
   const events = [];
   let text = '';
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
@@ -38,11 +39,18 @@ test('OpenCode compatibility provider preserves current stream callbacks', async
   assert.deepEqual(events.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
 });
 
-test('OpenCode v2 delegates ACP host operations through Cuppet', async () => {
+test('OpenCode compatibility export is only a thin ACP adapter alias', () => {
+  const provider = new OpenCodeAcpProviderV2({ cliCommand: process.execPath, cliArgs: [configFixture] });
+  const managed = provider.cuppetManagedRuntime();
+  assert.equal(managed.protocol, 'acp');
+  assert.equal(managed.backendId, 'opencode');
+});
+
+test('generic ACP adapter delegates ACP host operations through Cuppet', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
   const calls = [];
   const permissions = [];
-  const provider = new OpenCodeAcpProviderV2({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
   const result = await provider.stream([{ role: 'user', content: 'Update' }], {
     projectRoot: tmpdir(),
     requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
@@ -60,8 +68,8 @@ test('OpenCode v2 delegates ACP host operations through Cuppet', async () => {
   assert.equal(result.usage.totalTokens, 12);
 });
 
-test('provider factory routes OpenCode to ACP v2 without moving other ACP providers yet', () => {
-  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof OpenCodeAcpProviderV2);
+test('provider factory routes OpenCode through the universal ACP adapter without moving other ACP providers yet', () => {
+  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof AcpProviderAdapter);
   assert.equal(createUntrackedChatProvider({ providerID: 'grok-build' }).constructor.name, 'AcpCliAgentProvider');
 });
 

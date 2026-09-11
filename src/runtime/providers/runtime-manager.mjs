@@ -9,15 +9,17 @@ import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
 const DEFAULT_IDLE_MS = 5 * 60_000;
 
 export class ProviderRuntimeManager {
-  #openCodeRuntimeFactory;
+  #acpRuntimeFactory;
   #usageRecorder;
   #idleMs;
   #entries = new Map();
   #closed = false;
 
-  constructor({ openCodeRuntimeFactory, usageRecorder = recordProviderUsage, idleMs = DEFAULT_IDLE_MS } = {}) {
-    this.#openCodeRuntimeFactory = openCodeRuntimeFactory ?? (({ configuration, projectRoot }) => new AcpSessionRuntime({
-      descriptor: localCliDescriptor('opencode'),
+  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, usageRecorder = recordProviderUsage, idleMs = DEFAULT_IDLE_MS } = {}) {
+    // openCodeRuntimeFactory remains accepted temporarily so existing tests/extensions do not
+    // break while the implementation moves from provider-specific to protocol-specific naming.
+    this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new AcpSessionRuntime({
+      descriptor,
       configuration,
       projectRoot,
     }));
@@ -28,12 +30,17 @@ export class ProviderRuntimeManager {
   adapterFor({ sessionId, projectRoot = null, adapter }) {
     if (this.#closed) throw new Error('Provider runtime manager is closed.');
     const managed = typeof adapter?.cuppetManagedRuntime === 'function' ? adapter.cuppetManagedRuntime() : null;
-    if (!managed || managed.backendId !== 'opencode') return adapter;
+    if (!managed || managed.protocol !== 'acp') return adapter;
     const id = requiredText(sessionId, 'sessionId');
+    const backendId = requiredText(managed.backendId, 'backendId').toLowerCase();
+    const descriptor = managed.descriptor ?? localCliDescriptor(backendId);
+    if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Managed ACP backend '${backendId}' has no ACP descriptor.`);
     const providerConfig = record(managed.configuration);
     return {
-      stream: (messages, options = {}) => this.#runOpenCode({
+      stream: (messages, options = {}) => this.#runAcp({
         sessionId: id,
+        backendId,
+        descriptor,
         providerConfig,
         projectRoot,
         messages,
@@ -68,8 +75,8 @@ export class ProviderRuntimeManager {
 
   get size() { return this.#entries.size; }
 
-  async #runOpenCode({ sessionId, providerConfig, projectRoot, messages, options }) {
-    const fingerprint = openCodeRuntimeFingerprint(providerConfig, projectRoot);
+  async #runAcp({ sessionId, backendId, descriptor, providerConfig, projectRoot, messages, options }) {
+    const fingerprint = acpRuntimeFingerprint({ backendId, descriptor, configuration: providerConfig, projectRoot });
     let entry = this.#entries.get(sessionId);
     if (entry && entry.fingerprint !== fingerprint) {
       this.#entries.delete(sessionId);
@@ -78,8 +85,8 @@ export class ProviderRuntimeManager {
       entry = null;
     }
     if (!entry) {
-      const runtime = this.#openCodeRuntimeFactory({ configuration: providerConfig, projectRoot });
-      entry = { runtime, fingerprint, started: false, turns: 0, idleTimer: null, busy: false };
+      const runtime = this.#acpRuntimeFactory({ backendId, descriptor, configuration: providerConfig, projectRoot });
+      entry = { runtime, backendId, fingerprint, started: false, turns: 0, idleTimer: null, busy: false };
       this.#entries.set(sessionId, entry);
     }
     if (entry.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
@@ -92,7 +99,7 @@ export class ProviderRuntimeManager {
         await entry.runtime.start();
         entry.started = true;
       } else {
-        // Reuse the provider process, but open a new ACP logical session for each turn until
+        // Reuse the ACP process, but open a new ACP logical session for each turn until
         // Conversation Bridge can prove exactly which compiled context the provider already owns.
         await entry.runtime.newSession();
       }
@@ -108,7 +115,7 @@ export class ProviderRuntimeManager {
       });
       entry.turns += 1;
       await this.#usageRecorder?.({
-        providerID: 'opencode',
+        providerID: backendId,
         modelID: configuredModel(providerConfig) || 'unknown',
         usage: result?.usage,
       }).catch?.(() => undefined);
@@ -135,19 +142,25 @@ export class ProviderRuntimeManager {
   }
 }
 
-export function openCodeRuntimeFingerprint(configuration = {}, projectRoot = null) {
+export function acpRuntimeFingerprint({ backendId, descriptor = null, configuration = {}, projectRoot = null } = {}) {
   const source = record(configuration);
   const primary = record(source.primary);
   const payload = {
-    providerID: providerId(source),
+    protocol: 'acp',
+    backendId: text(backendId || descriptor?.id || providerId(source)).toLowerCase(),
     projectRoot: resolve(projectRoot || tmpdir()),
-    cliCommand: text(source.cliCommand),
-    cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : [],
+    command: text(source.cliCommand || descriptor?.command),
+    cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : Array.isArray(descriptor?.args) ? descriptor.args.map(String) : [],
     model: text(primary.modelID || source.model || source.modelID),
     effort: text(source.primaryEffort || primary.variant),
     runtimeSettings: stableValue(source.runtimeSettings),
   };
   return createHash('sha256').update(stableStringify(payload)).digest('hex');
+}
+
+// Temporary compatibility alias for downstream callers while the ACP naming migration lands.
+export function openCodeRuntimeFingerprint(configuration = {}, projectRoot = null) {
+  return acpRuntimeFingerprint({ backendId: 'opencode', descriptor: localCliDescriptor('opencode'), configuration, projectRoot });
 }
 
 function configuredModel(configuration) {

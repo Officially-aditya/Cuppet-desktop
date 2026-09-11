@@ -4,7 +4,7 @@ import { createNativeProvider, nativeProviderKind } from './native-provider.mjs'
 import { CodexSubscriptionProvider } from './codex-provider.mjs';
 import { AcpCliAgentProvider, isAcpCliProvider } from './acp-cli-provider.mjs';
 import { AntigravityHeadlessProvider } from './antigravity-provider.mjs';
-import { OpenCodeAcpProviderV2 } from './providers/backends/opencode.mjs';
+import { AcpProviderAdapter } from './providers/backends/acp.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
 export function createChatProvider(configuration = {}) {
@@ -14,7 +14,9 @@ export function createChatProvider(configuration = {}) {
 export function createUntrackedChatProvider(configuration = {}) {
   const providerID = String(configuration?.providerID ?? '').toLowerCase();
   if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
-  if (providerID === 'opencode') return new OpenCodeAcpProviderV2(configuration);
+  // OpenCode is the first production backend on the universal ACP adapter. Other ACP
+  // backends remain on the compatibility provider until parity fixtures are added.
+  if (providerID === 'opencode') return new AcpProviderAdapter(configuration);
   if (providerID === 'antigravity') return new AntigravityHeadlessProvider(configuration);
   if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
   const kind = resolvedNativeKind(configuration);
