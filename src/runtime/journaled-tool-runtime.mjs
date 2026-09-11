@@ -1,6 +1,7 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
+import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity } from './providers/activity.mjs';
 
 export class JournaledToolRuntime {
   #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel;
@@ -38,14 +39,22 @@ export class JournaledToolRuntime {
       executionKernel: this.#executionKernel,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
+        // Temporary compatibility event. React consumes runtime.activity instead.
         this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
       },
       onPreview: (content) => {
         if (!messageId) return;
         this.#emit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
+      onActivity: (activity) => {
+        if (!messageId || !isProviderActivity(activity)) return;
+        this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+      },
       onProviderEvent: (event) => {
         if (!messageId || !event || typeof event !== 'object') return;
+        const activity = activityFromLegacyProviderEvent(event);
+        if (activity) this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+        // Keep legacy runtime events for remote/older consumers during migration.
         if (event.type === 'reasoning') {
           const segment = typeof event.text === 'string' ? event.text.trim() : '';
           if (segment) this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
@@ -76,14 +85,26 @@ export class JournaledToolRuntime {
   #onToolEvent(event) {
     const capture = this.#captures.get(event?.sessionId);
     capture?.onToolEvent(event);
-    this.#emit(capture ? capture.decorateToolEvent(event) : event);
+    const decorated = capture ? capture.decorateToolEvent(event) : event;
+    this.#emit(decorated);
+    const activity = activityFromToolRuntimeEvent(decorated);
+    const messageId = String(decorated?.messageId ?? '');
+    if (activity && messageId) {
+      this.#emit({
+        type: 'runtime.activity',
+        source: 'execution',
+        sessionId: decorated.sessionId,
+        messageId,
+        activity,
+      });
+    }
   }
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onProviderEvent;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, executionKernel, onReasoning = () => {}, onPreview = () => {}, onProviderEvent = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onProviderEvent = onProviderEvent;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #onProviderEvent;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, onProviderEvent = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity; this.#onProviderEvent = onProviderEvent;
   }
 
   async stream(messages, options) {
@@ -117,7 +138,14 @@ class ToolMutationCapture {
     const providerTools = this.#executionKernel.toolsForProvider?.(options?.tools, { sessionId: this.#sessionId, projectRoot: this.#projectRoot }) ?? options?.tools;
     let response;
     try {
-      response = await this.#adapter.stream(messages, { ...options, tools: providerTools, onDelta: previewDelta, onProviderEvent: async (event) => this.#onProviderEvent(event), ...(executeTool ? { executeTool } : {}) });
+      response = await this.#adapter.stream(messages, {
+        ...options,
+        tools: providerTools,
+        onDelta: previewDelta,
+        onActivity: async (activity) => this.#onActivity(activity),
+        onProviderEvent: async (event) => this.#onProviderEvent(event),
+        ...(executeTool ? { executeTool } : {}),
+      });
     } catch (error) {
       this.#onPreview('');
       throw error;
@@ -165,8 +193,8 @@ class ToolMutationCapture {
       if (!path) return;
       const token = await this.#journal.beginFile({ sessionId: this.#sessionId, executionId: callId, tool: call.name, projectRoot: this.#projectRoot, path });
       this.#pending.set(callId, { kind: 'file', token });
-    } else if (call?.name === 'bash' || call?.name === 'cuppet_execute') {
-      this.#pending.set(callId, { kind: 'barrier', tool: call.name });
+    } else if (call?.name === 'bash') {
+      this.#pending.set(callId, { kind: 'barrier', tool: 'bash' });
     }
   }
 
@@ -189,7 +217,7 @@ class ToolMutationCapture {
         finished.pending.token.executionId = String(finished.event.executionId || finished.pending.token.executionId || finished.callId);
         await this.#journal.commitFile(finished.pending.token);
       } else if (finished.pending.kind === 'barrier' && mutation) {
-        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: finished.pending.tool || 'cuppet_execute', paths, reason: 'Command mutation has no byte-exact preimage; undo will not cross this boundary.' });
+        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: 'bash', paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
       }
     } catch (error) { this.#failure = error instanceof Error ? error : new Error(String(error)); throw this.#failure; }
   }
