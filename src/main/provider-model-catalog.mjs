@@ -9,10 +9,15 @@ const CLI_TIMEOUT_MS = 10_000;
 /**
  * Ask the active provider for the models it actually advertises to this account.
  * No model is invented here: ordering and ids come from the provider/CLI response.
+ *
+ * options.model is a read-only candidate selection. It lets callers refresh
+ * model-dependent provider settings before persisting that model in Cuppet.
  */
 export async function fetchProviderModelCatalog(configuration = {}, options = {}) {
   const providerID = text(configuration.providerID || configuration.primary?.providerID).toLowerCase();
-  const configuredModel = text(configuration.primary?.modelID || configuration.model);
+  const requestedModel = text(options.model);
+  const configuredModel = requestedModel || text(configuration.primary?.modelID || configuration.model);
+  const discoveryConfiguration = requestedModel ? configurationForCandidateModel(configuration, requestedModel) : configuration;
   if (!providerID) return unavailable('', 'none', 'No active provider is configured.');
   if (providerID === 'codex') return unavailable(providerID, 'codex', 'Codex model discovery is handled by the Codex app-server catalog.');
 
@@ -21,7 +26,7 @@ export async function fetchProviderModelCatalog(configuration = {}, options = {}
     if (descriptor.transport === 'acp') {
       try {
         const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpRuntimeCatalog;
-        const catalog = await discover(providerID, { configuration });
+        const catalog = await discover(providerID, { configuration: discoveryConfiguration });
         return normalizeCatalog(providerID, 'acp', catalog, configuredModel);
       } catch (error) {
         return unavailable(providerID, 'acp', cleanError(error));
@@ -201,6 +206,15 @@ function normalizeCatalog(providerID, source, catalog, configuredModel) {
 
 function unavailable(providerID, source, error) {
   return { providerID, available: false, source, models: [], defaultModel: null, configuredModel: null, fetchedAt: Date.now(), ...(error ? { error } : {}) };
+}
+
+function configurationForCandidateModel(configuration, modelID) {
+  const source = { ...record(configuration), model: modelID, primaryEffort: '' };
+  delete source.effort;
+  const primary = { ...record(source.primary), modelID };
+  delete primary.variant;
+  source.primary = primary;
+  return source;
 }
 
 function runCommand(command, args, timeoutMs) {
