@@ -9,7 +9,6 @@ const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 286;
 const COLLAPSED_WIDTH = 42;
 const MAX_VISIBLE_CHATS = 5;
-const GENERAL_CHAT_GROUP = '__general__';
 
 type Props = {
   projects: Project[];
@@ -119,9 +118,9 @@ export function Sidebar(props: Props) {
   useEffect(() => {
     if (!props.activeSessionId) return;
     const projectSession = props.sessions.find((session) => session.id === props.activeSessionId);
-    const groupKey = projectSession?.projectId ?? (props.generalSessions.some((session) => session.id === props.activeSessionId) ? GENERAL_CHAT_GROUP : null);
+    const groupKey = projectSession?.projectId ?? null;
     if (!groupKey) return;
-    const groupSessions = groupKey === GENERAL_CHAT_GROUP ? props.generalSessions : (sessionsByProject.get(groupKey) ?? []);
+    const groupSessions = sessionsByProject.get(groupKey) ?? [];
     if (groupSessions.findIndex((session) => session.id === props.activeSessionId) < MAX_VISIBLE_CHATS) return;
     setExpandedChatGroups((current) => {
       if (current.has(groupKey)) return current;
@@ -278,17 +277,9 @@ export function Sidebar(props: Props) {
           {props.generalSessions.length > 0 && (
             <section className="project-group general-group">
               <div className="general-label">General</div>
-              {(expandedChatGroups.has(GENERAL_CHAT_GROUP) ? props.generalSessions : props.generalSessions.slice(0, MAX_VISIBLE_CHATS)).map((session) => (
+              {props.generalSessions.map((session) => (
                 <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
               ))}
-              {props.generalSessions.length > MAX_VISIBLE_CHATS && (
-                <button
-                  type="button"
-                  className="session-show-more"
-                  aria-expanded={expandedChatGroups.has(GENERAL_CHAT_GROUP)}
-                  onClick={() => toggleChatGroup(GENERAL_CHAT_GROUP)}
-                >{expandedChatGroups.has(GENERAL_CHAT_GROUP) ? 'Show less' : 'Show more'}</button>
-              )}
             </section>
           )}
 
