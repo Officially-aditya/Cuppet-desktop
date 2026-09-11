@@ -9,7 +9,6 @@ let lastMessage = '';
 
 export function installCodexAuthIpc() {
   ipcMain.handle('cuppet:codex-auth:status', () => codexAuthStatus());
-  ipcMain.handle('cuppet:codex-auth:models', () => listCodexModels());
   ipcMain.handle('cuppet:codex-auth:login', () => startCodexLogin());
   ipcMain.handle('cuppet:codex-auth:logout', () => logoutCodex());
 }
