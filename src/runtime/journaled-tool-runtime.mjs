@@ -13,7 +13,7 @@ export class JournaledToolRuntime {
     this.#db = db;
     this.#benchmark = benchmark === undefined ? benchmarkFromEnvironment() : normalizeBenchmark(benchmark);
     this.#providerRuntimes = providerRuntimeManager ?? new ProviderRuntimeManager();
-    this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: this.#emit, benchmarkPolicy: this.#benchmark?.policy ?? 'optimized' });
+    this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: (event) => this.#safeEmit(event), benchmarkPolicy: this.#benchmark?.policy ?? 'optimized' });
     this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
@@ -38,7 +38,7 @@ export class JournaledToolRuntime {
     });
     const emitProviderActivity = (activity) => {
       if (!messageId || !isProviderActivity(activity)) return;
-      this.#emit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+      this.#safeEmit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
     };
     const capture = new ToolMutationCapture({
       journal: this.#journal,
@@ -50,26 +50,33 @@ export class JournaledToolRuntime {
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment }));
-        // Temporary compatibility event. The renderer bridge consumes Activity.
-        this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
+        // Temporary compatibility event for remote/older non-renderer consumers.
+        this.#safeEmit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
       },
       onPreview: (content) => {
         if (!messageId) return;
-        this.#emit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
+        this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
       onActivity: emitProviderActivity,
       onProviderEvent: (event) => {
         if (!messageId || !event || typeof event !== 'object') return;
-        const activity = activityFromLegacyProviderEvent(event);
-        if (activity) emitProviderActivity(activity);
+        try {
+          const activity = activityFromLegacyProviderEvent(event);
+          if (activity) emitProviderActivity(activity);
+        } catch {
+          emitProviderActivity(providerActivity('activity.warning', {
+            code: 'malformed_provider_event',
+            message: 'Provider telemetry was ignored because it did not match the Cuppet Activity contract.',
+          }));
+        }
         // Keep legacy runtime events for remote/older consumers during migration.
         if (event.type === 'reasoning') {
           const segment = typeof event.text === 'string' ? event.text.trim() : '';
-          if (segment) this.#emit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
+          if (segment) this.#safeEmit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
           return;
         }
         if (event.type === 'tool.started' || event.type === 'tool.finished') {
-          this.#emit({ ...event, sessionId: options.sessionId, messageId });
+          this.#safeEmit({ ...event, sessionId: options.sessionId, messageId });
         }
       },
     });
@@ -91,7 +98,7 @@ export class JournaledToolRuntime {
     } finally {
       if (this.#benchmark) {
         const after = this.executionSnapshot(options.sessionId) ?? {};
-        this.#emit({
+        this.#safeEmit({
           type: 'runtime.benchmark.sample',
           sessionId: options.sessionId,
           messageId: messageId || null,
@@ -114,11 +121,12 @@ export class JournaledToolRuntime {
     const capture = this.#captures.get(event?.sessionId);
     capture?.onToolEvent(event);
     const decorated = capture ? capture.decorateToolEvent(event) : event;
-    this.#emit(decorated);
-    const activity = activityFromToolRuntimeEvent(decorated);
+    this.#safeEmit(decorated);
+    let activity = null;
+    try { activity = activityFromToolRuntimeEvent(decorated); } catch {}
     const messageId = String(decorated?.messageId ?? '');
     if (activity && messageId) {
-      this.#emit({
+      this.#safeEmit({
         type: 'runtime.activity',
         source: 'execution',
         sessionId: decorated.sessionId,
@@ -126,6 +134,10 @@ export class JournaledToolRuntime {
         activity,
       });
     }
+  }
+
+  #safeEmit(event) {
+    try { this.#emit(event); } catch {}
   }
 }
 
