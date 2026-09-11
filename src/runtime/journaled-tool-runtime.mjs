@@ -1,11 +1,12 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
+import { executionCapabilities } from './execution/execution-capabilities.mjs';
 import { diffExecutionSnapshots } from './execution/benchmark.mjs';
 import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity, providerActivity } from './providers/activity.mjs';
 
 export class JournaledToolRuntime {
-  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel; #benchmark;
+  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel; #benchmark; #executionCapabilitySource;
 
   constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, executionKernel = null, benchmark = undefined, ...options }) {
     this.#journal = journal;
@@ -14,10 +15,33 @@ export class JournaledToolRuntime {
     this.#benchmark = benchmark === undefined ? benchmarkFromEnvironment() : normalizeBenchmark(benchmark);
     this.#providerRuntimes = providerRuntimeManager ?? new ProviderRuntimeManager();
     this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: (event) => this.#safeEmit(event), benchmarkPolicy: this.#benchmark?.policy ?? 'optimized' });
+    this.#executionCapabilitySource = {
+      tst: options.tst,
+      batchEdits: options.batchEdits,
+      planStore: options.planStore,
+      externalTools: options.externalTools,
+    };
     this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
   definitions(options) { return this.#inner.definitions(options); }
+  executionCapabilities({ projectRoot = null, integrations = [] } = {}) {
+    const browserEnabled = Array.isArray(integrations) && integrations.includes('browserControl');
+    let browserAvailable = false;
+    if (browserEnabled) {
+      try {
+        const definitions = this.#executionCapabilitySource.externalTools?.definitions?.();
+        browserAvailable = Array.isArray(definitions) && definitions.length > 0;
+      } catch {}
+    }
+    return executionCapabilities({
+      projectBound: Boolean(projectRoot),
+      tstConfigured: this.#executionCapabilitySource.tst?.configured === true,
+      batchEditAvailable: Boolean(this.#executionCapabilitySource.batchEdits),
+      planAvailable: typeof this.#executionCapabilitySource.planStore?.toolResult === 'function',
+      browserAvailable,
+    });
+  }
   executionSnapshot(sessionId) { return this.#executionKernel.snapshot?.(sessionId) ?? null; }
   async forgetSession(sessionId) {
     this.#executionKernel.forget?.(sessionId);
