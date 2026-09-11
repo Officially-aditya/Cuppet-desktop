@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 50
     env:
       TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v6
@@ -30,6 +31,13 @@ jobs:
           repository: Officially-aditya/Cuppet-code
           ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
           path: .e2/cuppet-code
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/browserControl
+          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          path: .e2/browsercontrol
           persist-credentials: false
 
       - uses: actions/setup-node@v6
@@ -73,6 +81,17 @@ jobs:
           lipo -archs "$CODEX_DIR/codex-app-server" | grep -qw arm64
           lipo -archs "$CODEX_DIR/codex-code-mode-host" | grep -qw arm64
 
+      - name: Build pinned browserControl runtime
+        working-directory: .e2/browsercontrol
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage and verify browserControl runtime
+        run: |
+          npm run browsercontrol:stage -- --source=.e2/browsercontrol
+          npm run browsercontrol:verify
+
       - name: Install desktop dependencies
         run: npm install
 
@@ -82,6 +101,7 @@ jobs:
           npm run renderer:verify
           npm run f1:verify
           npm run e2:verify
+          npm run browsercontrol:verify
 
       - name: Build Apple Silicon app bundle
         run: npm run build:renderer && npx electron-builder --mac dir --arm64 --publish never
@@ -99,6 +119,7 @@ jobs:
           TST_BIN="$APP/Contents/Resources/tst/darwin-arm64/tst-daemon"
           CODEX_BIN="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-app-server"
           CODEX_CODE_MODE_HOST="$APP/Contents/Resources/codex/darwin-arm64/bin/codex-code-mode-host"
+          BROWSERCONTROL_ENTRY="$APP/Contents/Resources/browsercontrol/dist/local/runtime.js"
           if [[ -z "$APP_EXEC" ]]; then
             echo "No executable found inside $APP/Contents/MacOS" >&2
             exit 1
@@ -108,6 +129,8 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$CODEX_CODE_MODE_HOST"
           test -f "$APP/Contents/Resources/codex/darwin-arm64/codex-package.json"
+          test -f "$BROWSERCONTROL_ENTRY"
+          test -f "$APP/Contents/Resources/browsercontrol/browsercontrol-package.json"
           lipo -archs "$APP_EXEC" | grep -qw arm64
           lipo -archs "$TST_BIN" | grep -qw arm64
           lipo -archs "$CODEX_BIN" | grep -qw arm64
@@ -123,6 +146,7 @@ jobs:
           node scripts/smoke-packaged-runtime.mjs "$APP_EXEC"
           node scripts/smoke-packaged-tst.mjs "$APP_EXEC"
           node scripts/smoke-packaged-codex.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-browsercontrol.mjs "$APP_EXEC"
 
       - name: Ad-hoc sign test app
         run: |
@@ -149,6 +173,9 @@ jobs:
           - type /status, /doctor, /plan, /models and verify slash commands execute without starting a model generation
           - Settings > Platform > Codex: API-key field is replaced by the ChatGPT account flow
           - complete ChatGPT sign-in in the browser and confirm Settings reports Connected
+          - Settings > General > Integrations > Connect Chrome discovers the browserControl extension
+          - mention @browserControl in a chat and confirm browser_* tools are exposed only for that turn
+          - browser observations are read-first; interactive control still goes through Cuppet permissions
           - send a general Codex-backed chat and restart the app
           - open a project and ask Codex to read a file through Cuppet tools; workspace tools should start without codex-code-mode-host errors
           - approve a small edit, run validation, then verify /undo restores it
@@ -186,5 +213,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package, including codex-code-mode-host." \
+            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
             --prerelease
