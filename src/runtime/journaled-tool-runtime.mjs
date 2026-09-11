@@ -1,17 +1,19 @@
 import { ToolRuntime } from './tool-runtime.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
+import { diffExecutionSnapshots } from './execution/benchmark.mjs';
 import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity, providerActivity } from './providers/activity.mjs';
 
 export class JournaledToolRuntime {
-  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel;
+  #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel; #benchmark;
 
-  constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, executionKernel = null, ...options }) {
+  constructor({ journal, emit = () => {}, db = null, providerRuntimeManager = null, executionKernel = null, benchmark = undefined, ...options }) {
     this.#journal = journal;
     this.#emit = emit;
     this.#db = db;
+    this.#benchmark = benchmark === undefined ? benchmarkFromEnvironment() : normalizeBenchmark(benchmark);
     this.#providerRuntimes = providerRuntimeManager ?? new ProviderRuntimeManager();
-    this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: this.#emit });
+    this.#executionKernel = executionKernel ?? new ExecutionKernel({ emit: this.#emit, benchmarkPolicy: this.#benchmark?.policy ?? 'optimized' });
     this.#inner = new ToolRuntime({ ...options, db, emit: (event) => this.#onToolEvent(event) });
   }
 
@@ -25,6 +27,10 @@ export class JournaledToolRuntime {
 
   async run(options) {
     const messageId = latestAssistantMessageID(this.#db, options.sessionId);
+    const benchmarkBefore = this.#benchmark ? this.executionSnapshot(options.sessionId) ?? {} : null;
+    const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
+    let benchmarkResult = null;
+    let benchmarkError = null;
     const adapter = this.#providerRuntimes.adapterFor({
       sessionId: options.sessionId,
       projectRoot: options.projectRoot,
@@ -69,7 +75,7 @@ export class JournaledToolRuntime {
     });
     this.#captures.set(options.sessionId, capture);
     try {
-      const result = await this.#inner.run({
+      benchmarkResult = await this.#inner.run({
         ...options,
         adapter: capture,
         onPaths: async (paths, mutation, details = null) => {
@@ -78,8 +84,28 @@ export class JournaledToolRuntime {
         },
       });
       capture.assertHealthy();
-      return result;
+      return benchmarkResult;
+    } catch (error) {
+      benchmarkError = error;
+      throw error;
     } finally {
+      if (this.#benchmark) {
+        const after = this.executionSnapshot(options.sessionId) ?? {};
+        this.#emit({
+          type: 'runtime.benchmark.sample',
+          sessionId: options.sessionId,
+          messageId: messageId || null,
+          policy: this.#benchmark.policy,
+          sample: {
+            schemaVersion: 1,
+            policy: this.#benchmark.policy,
+            execution: diffExecutionSnapshots(benchmarkBefore ?? {}, after),
+            usage: benchmarkResult?.usage ?? null,
+            elapsedMs: Math.max(0, Date.now() - benchmarkStartedAt),
+            ...(benchmarkError ? { error: cleanError(benchmarkError) } : {}),
+          },
+        });
+      }
       if (this.#captures.get(options.sessionId) === capture) this.#captures.delete(options.sessionId);
     }
   }
@@ -227,6 +253,15 @@ class ToolMutationCapture {
   assertHealthy() { if (this.#failure) throw this.#failure; }
 }
 
+function benchmarkFromEnvironment() {
+  if (process.env.CUPPET_PROVIDER_BENCHMARK !== '1') return null;
+  return normalizeBenchmark({ policy: process.env.CUPPET_EXECUTION_BENCHMARK_POLICY });
+}
+function normalizeBenchmark(value) {
+  if (!value) return null;
+  const source = value && typeof value === 'object' ? value : {};
+  return { policy: source.policy === 'raw-baseline' ? 'raw-baseline' : 'optimized' };
+}
 function latestAssistantMessageID(db, sessionId) {
   try {
     const messages = db?.getSession?.(sessionId)?.messages;
@@ -239,3 +274,4 @@ function parseArguments(value) {
   try { const decoded = JSON.parse(typeof value === 'string' ? value : '{}'); return decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}; }
   catch { return {}; }
 }
+function cleanError(error) { return (error instanceof Error ? error.message : String(error ?? 'Unknown error')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 1000); }
