@@ -1,0 +1,386 @@
+name: Temporary browserControl integration
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/tmp-browsercontrol-integration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ui/cuppet-branding
+          fetch-depth: 0
+
+      - name: Wire browserControl through runtime and UI
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"anchor missing in {path}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, count))
+
+          # Keep BrowserControl MCP tool names intact. They are already namespaced as browser_*.
+          replace(
+              'src/runtime/browser-control-manager.mjs',
+              "  return `browsercontrol_${base}`.slice(0, 64);",
+              "  return base.slice(0, 64);",
+          )
+
+          # Runtime owns the managed browserControl process and exposes bounded integration methods.
+          replace(
+              'src/runtime/main.mjs',
+              "import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';",
+              "import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';\nimport { BrowserControlManager } from './browser-control-manager.mjs';",
+          )
+          replace(
+              'src/runtime/main.mjs',
+              "const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });\nconst runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst });",
+              "const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });\nconst browserControl = new BrowserControlManager({ emit });\nconst runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst, browserControl });",
+          )
+          replace(
+              'src/runtime/main.mjs',
+              "  async close() { await Promise.all([runtimeService.close(), tst.close()]); },",
+              "  async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close()]); },",
+          )
+          replace(
+              'src/runtime/main.mjs',
+              "    case 'usage.summary': return providerUsageSummary();",
+              "    case 'usage.summary': return providerUsageSummary();\n    case 'integration.browser.status': return browserControl.status();\n    case 'integration.browser.connect': return browserControl.connect();\n    case 'integration.browser.disconnect': return browserControl.disconnect();",
+          )
+
+          # Feed the external MCP surface into the normal Cuppet tool runtime.
+          replace(
+              'src/runtime/service.mjs',
+              "    pe3Factory,\n  }) {",
+              "    pe3Factory,\n    browserControl = null,\n  }) {",
+          )
+          replace(
+              'src/runtime/service.mjs',
+              "    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, emit: this.#emit });",
+              "    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, externalTools: browserControl, emit: this.#emit });",
+          )
+
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #graphCache = new Map();",
+              "  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #graphCache = new Map();",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, emit = () => {} }) {",
+              "  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, emit = () => {} }) {",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "    this.#writer = writer;\n    this.#emit = emit;",
+              "    this.#writer = writer;\n    this.#externalTools = externalTools;\n    this.#emit = emit;",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "    if (projectRoot) tools.push(EXPLORE_TOOL, READ_TOOL, BATCH_EDIT_TOOL, VALIDATE_TOOL, EDIT_TOOL, WRITE_TOOL, BASH_TOOL);\n    return tools;",
+              "    if (projectRoot) tools.push(EXPLORE_TOOL, READ_TOOL, BATCH_EDIT_TOOL, VALIDATE_TOOL, EDIT_TOOL, WRITE_TOOL, BASH_TOOL);\n    const external = this.#externalTools?.definitions?.() ?? [];\n    if (Array.isArray(external)) tools.push(...external.slice(0, 128));\n    return tools;",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "      return { output, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };",
+              "      return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "      return { output, success: false, paths: [], mutation: false, validation: null };",
+              "      return { output, contentItems: [], success: false, paths: [], mutation: false, validation: null };",
+          )
+          replace(
+              'src/runtime/tool-runtime.mjs',
+              "  async #dispatch({ name, args, executionId, sessionId, projectRoot, mode, signal, authorize }) {\n    switch (name) {",
+              "  async #dispatch({ name, args, executionId, sessionId, projectRoot, mode, signal, authorize }) {\n    if (this.#externalTools?.has?.(name)) {\n      await authorize({\n        action: 'browser',\n        resources: [name],\n        description: `Control Chrome through browserControl using ${name}.`,\n        fingerprintKey: stableJson(args),\n      });\n      const result = await this.#externalTools.call(name, args, { signal });\n      return {\n        output: String(result?.output ?? ''),\n        contentItems: Array.isArray(result?.contentItems) ? result.contentItems : [],\n        paths: [],\n        mutation: false,\n      };\n    }\n    switch (name) {",
+          )
+
+          # Pass multimodal MCP results back through Codex dynamic-tool responses.
+          replace(
+              'src/runtime/codex-provider.mjs',
+              "      contentItems: [{ type: 'inputText', text: String(result?.output ?? '') }],",
+              "      contentItems: dynamicToolContentItems(result),",
+          )
+          replace(
+              'src/runtime/codex-provider.mjs',
+              "function toDynamicTools(definitions) {",
+              "function dynamicToolContentItems(result) {\n  const items = Array.isArray(result?.contentItems) ? result.contentItems : [];\n  const output = [];\n  for (const item of items.slice(0, 8)) {\n    if (item?.type === 'inputText' && typeof item.text === 'string') {\n      output.push({ type: 'inputText', text: item.text.slice(0, 128 * 1024) });\n      continue;\n    }\n    if (item?.type === 'inputImage' && typeof item.imageUrl === 'string' && item.imageUrl.length <= 32 * 1024 * 1024 && /^data:image\\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(item.imageUrl)) {\n      output.push({ type: 'inputImage', imageUrl: item.imageUrl });\n    }\n  }\n  if (!output.length) output.push({ type: 'inputText', text: String(result?.output ?? '').slice(0, 128 * 1024) });\n  return output;\n}\n\nfunction toDynamicTools(definitions) {",
+          )
+
+          # Browser status is idempotent and safe to retry after runtime recovery.
+          replace(
+              'src/main/runtime-client.mjs',
+              "  'usage.summary',\n  'cognitive.status',",
+              "  'usage.summary',\n  'integration.browser.status',\n  'cognitive.status',",
+          )
+
+          # Main/preload bounded IPC.
+          replace(
+              'src/main/main.mjs',
+              "  ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));",
+              "  ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));\n  ipcMain.handle('cuppet:browser-control:status', () => request('integration.browser.status'));\n  ipcMain.handle('cuppet:browser-control:connect', () => request('integration.browser.connect'));\n  ipcMain.handle('cuppet:browser-control:disconnect', () => request('integration.browser.disconnect'));",
+          )
+          replace(
+              'src/preload/preload.cjs',
+              "  usage: {\n    summary: () => ipcRenderer.invoke('cuppet:usage:summary'),\n  },",
+              "  usage: {\n    summary: () => ipcRenderer.invoke('cuppet:usage:summary'),\n  },\n  integrations: {\n    browserControl: {\n      status: () => ipcRenderer.invoke('cuppet:browser-control:status'),\n      connect: () => ipcRenderer.invoke('cuppet:browser-control:connect'),\n      disconnect: () => ipcRenderer.invoke('cuppet:browser-control:disconnect'),\n    },\n  },",
+          )
+
+          # Renderer API typing.
+          replace(
+              'src/renderer/types.ts',
+              "export type CognitiveStatus = {",
+              "export type BrowserControlStatus = {\n  id?: string;\n  available?: boolean;\n  running?: boolean;\n  connected?: boolean;\n  extensionConnected?: boolean;\n  toolCount?: number;\n  port?: number;\n  message?: string;\n};\n\nexport type CognitiveStatus = {",
+          )
+          replace(
+              'src/renderer/types.ts',
+              "  usage: {\n    summary: () => Promise<TokenUsageSummary>;\n  };",
+              "  usage: {\n    summary: () => Promise<TokenUsageSummary>;\n  };\n  integrations: {\n    browserControl: {\n      status: () => Promise<BrowserControlStatus>;\n      connect: () => Promise<BrowserControlStatus>;\n      disconnect: () => Promise<BrowserControlStatus>;\n    };\n  };",
+          )
+
+          # General settings: behavior plus the new Integrations subsection.
+          Path('src/renderer/react/GeneralPanel.tsx').write_text('''import { useCallback, useEffect, useState } from 'react';
+import type { BrowserControlStatus } from '../types';
+import { SelectControl } from './SelectControl';
+import {
+  readPermissionMode,
+  readSendBehavior,
+  writePermissionMode,
+  writeSendBehavior,
+  type PermissionMode,
+  type SendBehavior,
+} from './behavior-preferences';
+
+export function GeneralPanel() {
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => readPermissionMode());
+  const [sendBehavior, setSendBehavior] = useState<SendBehavior>(() => readSendBehavior());
+  const [browserControl, setBrowserControl] = useState<BrowserControlStatus | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
+
+  const changePermissionMode = (value: string) => {
+    const next: PermissionMode = value === 'auto' ? 'auto' : 'default';
+    setPermissionMode(next);
+    writePermissionMode(next);
+  };
+
+  const changeSendBehavior = (value: string) => {
+    const next: SendBehavior = value === 'steer' ? 'steer' : 'queue';
+    setSendBehavior(next);
+    writeSendBehavior(next);
+  };
+
+  const refreshBrowserControl = useCallback(async () => {
+    try { setBrowserControl(await window.cuppet.integrations.browserControl.status()); }
+    catch (error) {
+      setBrowserControl({ available: false, running: false, connected: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshBrowserControl();
+    const unsubscribe = window.cuppet.onEvent((event) => {
+      if (event?.type === 'integration.browser-control.updated' && event.status) setBrowserControl(event.status);
+    });
+    return unsubscribe;
+  }, [refreshBrowserControl]);
+
+  useEffect(() => {
+    if (!browserControl?.running || browserControl.connected) return;
+    const timer = window.setInterval(() => void refreshBrowserControl(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [browserControl?.connected, browserControl?.running, refreshBrowserControl]);
+
+  const toggleBrowserControl = async () => {
+    setBrowserBusy(true);
+    try {
+      const next = browserControl?.running
+        ? await window.cuppet.integrations.browserControl.disconnect()
+        : await window.cuppet.integrations.browserControl.connect();
+      setBrowserControl(next);
+    } catch (error) {
+      setBrowserControl((current) => ({ ...current, message: error instanceof Error ? error.message : String(error) }));
+    } finally { setBrowserBusy(false); }
+  };
+
+  const browserState = browserControl?.connected ? 'Connected' : browserControl?.running ? 'Waiting for Chrome' : browserControl?.available === false ? 'Unavailable' : browserControl ? 'Ready' : 'Checking…';
+  const browserDescription = browserControl?.message || 'Connect the browserControl Chrome extension to give Cuppet a local browser MCP.';
+
+  return <div className="general-settings-stack">
+    <div className="settings-card general-settings-card">
+      <div className="settings-card-heading">
+        <div><h3>General behaviour</h3><p>Choose how Cuppet handles permissions and messages while it is working.</p></div>
+      </div>
+      <div className="settings-row general-settings-row">
+        <div><strong>Permissions</strong><span>Default asks before protected actions. Auto enables guarded automatic approval for eligible actions in project chats.</span></div>
+        <div className="general-settings-control">
+          <SelectControl
+            ariaLabel="Permissions"
+            value={permissionMode}
+            onChange={changePermissionMode}
+            options={[{ value: 'default', label: 'Default' }, { value: 'auto', label: 'Auto' }]}
+          />
+        </div>
+      </div>
+      <div className="settings-row general-settings-row">
+        <div><strong>Send message behaviour</strong><span>Choose what happens when you send another message while Cuppet is already working.</span></div>
+        <div className="general-settings-control">
+          <SelectControl
+            ariaLabel="Send message behaviour"
+            value={sendBehavior}
+            onChange={changeSendBehavior}
+            options={[{ value: 'queue', label: 'Queue' }, { value: 'steer', label: 'Steer' }]}
+          />
+        </div>
+      </div>
+    </div>
+
+    <div className="settings-card general-settings-card integrations-card">
+      <div className="settings-card-heading">
+        <div><h3>Integrations</h3><p>Connect local tools that Cuppet can use while it works. Browser actions remain behind Cuppet permissions.</p></div>
+      </div>
+      <div className="settings-row general-settings-row integration-row">
+        <div>
+          <div className="integration-title-row"><strong>Chrome</strong><span className={`settings-status-pill compact${browserControl?.connected ? '' : ' muted'}`}>{browserState}</span></div>
+          <span>browserControl · {browserDescription}</span>
+        </div>
+        <div className="integration-actions">
+          <button
+            type="button"
+            className={browserControl?.running ? 'ghost-button settings-action-button' : 'primary-button settings-action-button'}
+            disabled={browserBusy || browserControl === null || (!browserControl.running && browserControl.available === false)}
+            onClick={() => void toggleBrowserControl()}
+          >{browserBusy ? 'Working…' : browserControl?.running ? 'Disconnect' : 'Connect Chrome'}</button>
+        </div>
+      </div>
+      {browserControl?.running && !browserControl.connected && <p className="general-settings-note">If Chrome does not connect automatically, open the browserControl extension once. It will discover Cuppet on localhost and reconnect locally.</p>}
+    </div>
+  </div>;
+}
+''')
+
+          css = Path('src/renderer/general-settings.css')
+          css.write_text(css.read_text() + '''\n.general-settings-stack{display:grid;gap:14px}\n.integrations-card .settings-card-heading{margin-bottom:2px}\n.integration-row{gap:18px}\n.integration-title-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}\n.integration-title-row .settings-status-pill{flex:0 0 auto}\n.integration-actions{flex:0 0 auto!important;display:flex!important;align-items:center;justify-content:flex-end}\n@media(max-width:760px){.integration-row{display:grid;gap:10px}.integration-actions{justify-content:flex-start}}\n''')
+
+          # Package and staged-resource contract.
+          pkg_path = Path('package.json')
+          pkg = json.loads(pkg_path.read_text())
+          pkg['scripts']['browsercontrol:stage'] = 'node scripts/stage-browsercontrol-runtime.mjs'
+          pkg['scripts']['browsercontrol:verify'] = 'node scripts/verify-staged-browsercontrol.mjs'
+          pkg['scripts']['browsercontrol:package-smoke'] = 'node scripts/smoke-packaged-browsercontrol.mjs'
+          old_pack = pkg['scripts']['pack:dir']
+          if 'browsercontrol:verify' not in old_pack:
+              pkg['scripts']['pack:dir'] = old_pack.replace('node scripts/verify-staged-codex.mjs && ', 'node scripts/verify-staged-codex.mjs && npm run browsercontrol:verify && ')
+          extra = pkg['build'].setdefault('extraResources', [])
+          if not any(item.get('to') == 'browsercontrol' for item in extra):
+              extra.append({'from': 'vendor/browsercontrol', 'to': 'browsercontrol', 'filter': ['**/*']})
+          pkg_path.write_text(json.dumps(pkg, indent=2) + '\n')
+
+          gitignore = Path('.gitignore')
+          gi = gitignore.read_text()
+          if 'vendor/browsercontrol/*' not in gi:
+              gi += 'vendor/browsercontrol/*\n!vendor/browsercontrol/.gitkeep\n'
+          gitignore.write_text(gi)
+
+          # Renderer verifier locks down the integration boundary.
+          verify = Path('scripts/verify-renderer.mjs')
+          text = verify.read_text()
+          old = "const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question] = await Promise.all(["
+          new = "const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all(["
+          if old not in text: raise SystemExit('renderer verifier destructuring anchor missing')
+          text = text.replace(old, new, 1)
+          old = "  read('src/renderer/react/QuestionModal.tsx'),\n]);"
+          new = "  read('src/renderer/react/QuestionModal.tsx'),\n  read('src/renderer/react/GeneralPanel.tsx'),\n  read('src/renderer/general-settings.css'),\n]);"
+          if old not in text: raise SystemExit('renderer verifier file list anchor missing')
+          text = text.replace(old, new, 1)
+          anchor = "assert.match(preload, /cuppet:usage:summary/, 'bounded preload does not expose token usage summary');"
+          additions = anchor + "\nassert.match(main, /cuppet:browser-control:status/, 'Electron main does not expose browserControl status');\nassert.match(main, /integration\\.browser\\.connect/, 'Electron main does not route browserControl connect');\nassert.match(preload, /browserControl:\\s*\\{/, 'bounded preload does not expose browserControl integration');\nassert.match(preload, /cuppet:browser-control:connect/, 'bounded preload does not expose Connect Chrome');\nassert.match(generalPanel, /<h3>Integrations<\\/h3>/, 'General settings integrations section missing');\nassert.match(generalPanel, /Connect Chrome/, 'General settings Connect Chrome action missing');\nassert.match(generalPanel, /window\\.cuppet\\.integrations\\.browserControl\\.connect/, 'Connect Chrome does not use bounded browserControl API');\nassert.match(generalPanel, /integration\\.browser-control\\.updated/, 'General settings does not follow browserControl connection events');\nassert.match(generalSettingsCss, /\\.integration-row/, 'browserControl integration row is not styled');"
+          if anchor not in text: raise SystemExit('renderer verifier preload anchor missing')
+          verify.write_text(text.replace(anchor, additions, 1))
+
+          # Apple Silicon release workflow pins and bundles browserControl.
+          wf = Path('.github/workflows/apple-silicon-test.yml')
+          text = wf.read_text()
+          text = text.replace("      TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630\n", "      TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630\n      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8\n", 1)
+          anchor = "      - uses: actions/setup-node@v6\n"
+          checkout = "      - uses: actions/checkout@v6\n        with:\n          repository: Officially-aditya/browserControl\n          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8\n          path: .e2/browsercontrol\n          persist-credentials: false\n\n"
+          if checkout not in text:
+              if anchor not in text: raise SystemExit('apple workflow setup-node anchor missing')
+              text = text.replace(anchor, checkout + anchor, 1)
+          anchor = "      - name: Install desktop dependencies\n        run: npm install\n"
+          stages = "      - name: Build pinned browserControl MCP runtime\n        working-directory: .e2/browsercontrol\n        run: |\n          npm ci\n          npm run build\n          npm prune --omit=dev\n\n      - name: Stage and verify browserControl runtime\n        run: |\n          npm run browsercontrol:stage -- --source=.e2/browsercontrol\n          npm run browsercontrol:verify\n\n"
+          if stages not in text:
+              if anchor not in text: raise SystemExit('apple workflow desktop dependencies anchor missing')
+              text = text.replace(anchor, stages + anchor, 1)
+          text = text.replace("          CODEX_CODE_MODE_HOST=\"$APP/Contents/Resources/codex/darwin-arm64/bin/codex-code-mode-host\"\n", "          CODEX_CODE_MODE_HOST=\"$APP/Contents/Resources/codex/darwin-arm64/bin/codex-code-mode-host\"\n          BROWSERCONTROL_RUNTIME=\"$APP/Contents/Resources/browsercontrol/dist/local/runtime.js\"\n", 1)
+          text = text.replace("          test -x \"$CODEX_CODE_MODE_HOST\"\n", "          test -x \"$CODEX_CODE_MODE_HOST\"\n          test -f \"$BROWSERCONTROL_RUNTIME\"\n          test -f \"$APP/Contents/Resources/browsercontrol/browsercontrol-package.json\"\n", 1)
+          text = text.replace("          node scripts/smoke-packaged-codex.mjs \"$APP_EXEC\"\n", "          node scripts/smoke-packaged-codex.mjs \"$APP_EXEC\"\n          node scripts/smoke-packaged-browsercontrol.mjs \"$APP_EXEC\"\n", 1)
+          testing_anchor = "          - memory persistence after restart\n"
+          if "Settings > General > Integrations > Connect Chrome" not in text:
+              text = text.replace(testing_anchor, testing_anchor + "          - Settings > General > Integrations > Connect Chrome: with the browserControl Chrome extension installed, confirm it changes from Waiting for Chrome to Connected and browser tools become available\n", 1)
+          wf.write_text(text)
+
+          # CI packaged smoke also stages the pinned BrowserControl runtime.
+          wf = Path('.github/workflows/ci.yml')
+          text = wf.read_text()
+          packaged_marker = "  packaged-runtime-smoke:\n"
+          idx = text.find(packaged_marker)
+          if idx < 0: raise SystemExit('CI packaged runtime job missing')
+          prefix, packaged = text[:idx], text[idx:]
+          setup_anchor = "      - uses: actions/setup-node@v6\n"
+          checkout = "      - uses: actions/checkout@v6\n        with:\n          repository: Officially-aditya/browserControl\n          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8\n          path: .f1/browsercontrol\n          persist-credentials: false\n"
+          if checkout not in packaged:
+              if setup_anchor not in packaged: raise SystemExit('CI setup-node anchor missing')
+              packaged = packaged.replace(setup_anchor, checkout + setup_anchor, 1)
+          install_anchor = "      - run: npm install\n"
+          stages = "      - name: Build pinned browserControl MCP runtime\n        working-directory: .f1/browsercontrol\n        run: |\n          npm ci\n          npm run build\n          npm prune --omit=dev\n      - name: Stage and verify browserControl runtime\n        env:\n          BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8\n        run: |\n          npm run browsercontrol:stage -- --source=.f1/browsercontrol\n          npm run browsercontrol:verify\n"
+          if stages not in packaged:
+              if install_anchor not in packaged: raise SystemExit('CI npm install anchor missing')
+              packaged = packaged.replace(install_anchor, stages + install_anchor, 1)
+          smoke_anchor = "      - run: npm run e2:package-smoke\n"
+          if "browsercontrol:package-smoke" not in packaged:
+              if smoke_anchor not in packaged: raise SystemExit('CI smoke anchor missing')
+              packaged = packaged.replace(smoke_anchor, smoke_anchor + "      - run: npm run browsercontrol:package-smoke\n", 1)
+          wf.write_text(prefix + packaged)
+          PY
+
+      - name: Verify integration contracts
+        run: |
+          node --check src/runtime/browser-control-manager.mjs
+          node --check src/runtime/main.mjs
+          node --check src/runtime/service.mjs
+          node --check src/runtime/tool-runtime.mjs
+          node --check src/runtime/codex-provider.mjs
+          node --check src/main/main.mjs
+          node --check src/main/runtime-client.mjs
+          node --check scripts/stage-browsercontrol-runtime.mjs
+          node --check scripts/verify-staged-browsercontrol.mjs
+          node --check scripts/smoke-packaged-browsercontrol.mjs
+          npm install
+          npm run renderer:verify
+          npm test
+
+      - name: Commit integration and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-browsercontrol-integration.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .gitignore package.json scripts src vendor/browsercontrol/.gitkeep .github/workflows/apple-silicon-test.yml .github/workflows/ci.yml .github/workflows/tmp-browsercontrol-integration.yml
+          git commit -m "feat: integrate browserControl with Chrome"
+          git push origin HEAD:ui/cuppet-branding
