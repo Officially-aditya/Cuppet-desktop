@@ -115,29 +115,34 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (!session?.id || String(event?.sessionId ?? '') !== session.id) return;
     const messageId = String(event?.messageId ?? '');
 
-    if (event.type === 'message.reasoning') {
-      const segment = typeof event.segment === 'string' ? event.segment.trim() : '';
-      if (!messageId || !segment) return;
-      setTraceByMessage((current) => {
-        const existing = current[messageId] ?? readStoredTrace(messageId, true);
-        const last = existing.at(-1);
-        const next = last?.type === 'reasoning' && last.text === segment
-          ? existing
-          : boundTrace([...existing, { id: `reason-${Date.now()}-${existing.length}`, type: 'reasoning', text: segment }]);
-        if (next !== existing) storeTrace(messageId, next);
-        return next === existing ? current : { ...current, [messageId]: next };
-      });
-      return;
-    }
+    if (event.type === 'runtime.activity') {
+      const activity = event?.activity && typeof event.activity === 'object' && !Array.isArray(event.activity) ? event.activity : null;
+      const activityType = String(activity?.type ?? '');
+      if (!messageId || !activity) return;
 
-    if (event.type === 'tool.started' || event.type === 'tool.finished') {
-      if (!messageId) return;
-      setTraceByMessage((current) => {
-        const existing = current[messageId] ?? readStoredTrace(messageId, true);
-        const next = updateToolTrace(existing, event);
-        storeTrace(messageId, next);
-        return { ...current, [messageId]: next };
-      });
+      if (event.source === 'provider' && activityType === 'activity.reasoning.delta') {
+        const segment = typeof activity.text === 'string' ? activity.text.trim() : '';
+        if (!segment) return;
+        setTraceByMessage((current) => {
+          const existing = current[messageId] ?? readStoredTrace(messageId, true);
+          const last = existing.at(-1);
+          const next = last?.type === 'reasoning' && last.text === segment
+            ? existing
+            : boundTrace([...existing, { id: `reason-${Date.now()}-${existing.length}`, type: 'reasoning', text: segment }]);
+          if (next !== existing) storeTrace(messageId, next);
+          return next === existing ? current : { ...current, [messageId]: next };
+        });
+        return;
+      }
+
+      if (event.source === 'execution' && activityType.startsWith('activity.tool.')) {
+        setTraceByMessage((current) => {
+          const existing = current[messageId] ?? readStoredTrace(messageId, true);
+          const next = updateToolTraceFromActivity(existing, activity);
+          storeTrace(messageId, next);
+          return { ...current, [messageId]: next };
+        });
+      }
       return;
     }
 
@@ -621,13 +626,14 @@ async function applyPermissionPreference(session: Session | null) {
   await window.cuppet.permissions.autoSet(session.id, effective).catch(() => undefined);
 }
 
-function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {
-  const id = String(event?.executionId ?? event?.callId ?? `tool-${Date.now()}`);
+function updateToolTraceFromActivity(trace: TraceItem[], activity: any): TraceItem[] {
+  const id = String(activity?.executionId ?? activity?.callId ?? `tool-${Date.now()}`);
   const existingIndex = trace.findIndex((item) => item.type === 'tool' && item.id === id);
   const existing = existingIndex >= 0 ? trace[existingIndex] as TraceTool : null;
-  const tool = String(event?.tool ?? existing?.tool ?? '');
-  const argumentsJson = typeof event?.argumentsJson === 'string' ? event.argumentsJson : existing?.argumentsJson ?? '{}';
-  const status: TraceTool['status'] = event?.type === 'tool.finished' ? (event?.success === false ? 'error' : 'complete') : 'running';
+  const tool = String(activity?.tool ?? existing?.tool ?? '');
+  const argumentsJson = typeof activity?.argumentsJson === 'string' ? activity.argumentsJson : existing?.argumentsJson ?? '{}';
+  const closed = activity?.type === 'activity.tool.closed';
+  const status: TraceTool['status'] = closed ? (activity?.status === 'success' ? 'complete' : 'error') : 'running';
   const patch: TraceTool = {
     id,
     type: 'tool',
@@ -635,7 +641,7 @@ function updateToolTrace(trace: TraceItem[], event: any): TraceItem[] {
     tool,
     argumentsJson,
     label: toolActivityLabel(tool, argumentsJson, status),
-    ...(typeof event?.message === 'string' && event.message ? { details: event.message } : existing?.details ? { details: existing.details } : {}),
+    ...(typeof activity?.details === 'string' && activity.details ? { details: activity.details } : existing?.details ? { details: existing.details } : {}),
   };
   const next = [...trace];
   if (existingIndex >= 0) next[existingIndex] = patch;
