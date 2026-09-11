@@ -176,9 +176,22 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       const currentProvider = current.primary?.providerID || current.providerID || '';
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
-      const nextEffortState = modelEffortState(currentProvider, id, current, codex, advertised);
+      let candidateAdvertised = advertised;
+      const refreshAcpCandidate = currentProvider !== 'codex'
+        && advertised.providerID === currentProvider
+        && advertised.source === 'acp'
+        && advertised.configuredModel !== id;
+      if (refreshAcpCandidate) {
+        const refreshed = await window.cuppet.settings.models({ model: id });
+        if (refreshed.providerID !== currentProvider) throw new Error('Provider changed while refreshing model capabilities.');
+        if (refreshed.error && !refreshed.models.length) throw new Error(refreshed.error);
+        candidateAdvertised = refreshed;
+        setAdvertised(refreshed);
+      }
+
+      const nextEffortState = modelEffortState(currentProvider, id, current, codex, candidateAdvertised);
       if (id !== configuredModel || secondaryAuto) {
-        const nextEffort = effortForModel(slot, currentProvider, id, current, codex, advertised);
+        const nextEffort = effortForModel(slot, currentProvider, id, current, codex, candidateAdvertised);
         const primaryModel = slot === 'primary' ? id : current.primary?.modelID || id;
         const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
         const next = await window.cuppet.settings.save({
@@ -362,15 +375,13 @@ function modelEffortState(providerID: string, modelID: string, settings: Provide
       defaultEffort: String(model?.defaultEffort ?? '').trim(),
     };
   }
-  const advertisedReasoning = advertised.providerID === providerID
+  const exactAcpSnapshot = advertised.providerID === providerID
     && advertised.source === 'acp'
-    && advertised.configuredModel === modelID
-    ? advertised.reasoning
-    : null;
-  if (advertisedReasoning?.options?.length) {
+    && advertised.configuredModel === modelID;
+  if (exactAcpSnapshot) {
     return {
-      options: advertisedReasoning.options.map((item) => item.id),
-      defaultEffort: advertisedReasoning.currentValue || '',
+      options: advertised.reasoning?.options?.map((item) => item.id) ?? [],
+      defaultEffort: advertised.reasoning?.currentValue || '',
     };
   }
   const model = settings?.models?.find((item) => item.providerID === providerID && item.modelID === modelID);
