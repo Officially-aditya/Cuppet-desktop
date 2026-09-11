@@ -80,10 +80,15 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     };
 
     const liveModels = advertised.providerID === providerID ? advertised.models : [];
-    if (providerID === 'codex') {
-      const defaultModel = advertised.defaultModel || '';
-      const defaultEntry = defaultModel ? liveModels.find((item) => item.id === defaultModel) : null;
-      add('codex-default', defaultEntry ? `${defaultEntry.label || defaultEntry.id} · Default` : 'Codex default', 'Follow the default model selected by your Codex account.');
+    const presetDefaultID = String(providerPreset?.model ?? '').trim();
+    const presetDefaultEntry = providerPreset?.models?.find((item) => item.id === presetDefaultID);
+    if (presetDefaultID && advertised.defaultModel && !liveModels.some((item) => item.id === presetDefaultID) && !presetDefaultEntry) {
+      const resolvedDefault = liveModels.find((item) => item.id === advertised.defaultModel);
+      add(
+        presetDefaultID,
+        resolvedDefault ? `${resolvedDefault.label || resolvedDefault.id} · Default` : `${providerLabel} default`,
+        `Follow the default model selected by your ${providerLabel} account or configuration.`,
+      );
     }
     const fallbackModels = liveModels.length ? [] : providerPreset?.models ?? [];
     for (const model of liveModels) add(model.id, model.label, model.description);
@@ -95,17 +100,18 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     }
     add(configuredModel, configuredModel);
     return output;
-  }, [advertised, configuredModel, providerID, providerPreset?.models, settings?.customModels, settings?.models]);
+  }, [advertised, configuredModel, providerID, providerLabel, providerPreset?.model, providerPreset?.models, settings?.customModels, settings?.models]);
 
   const effortState = modelEffortState(providerID, configuredModel, settings, advertised);
   const effortOptions = effortState.options;
   const explicitEffort = selectedEffort(slot, providerID, settings);
   const resolvedModelLabel = useMemo(() => {
-    if (providerID === 'codex' && configuredModel === 'codex-default' && advertised.defaultModel) {
+    const presetDefaultID = String(providerPreset?.model ?? '').trim();
+    if (presetDefaultID && configuredModel === presetDefaultID && advertised.defaultModel) {
       return advertised.models.find((item) => item.id === advertised.defaultModel)?.label || advertised.defaultModel;
     }
     return options.find((item) => item.id === configuredModel)?.label || configuredModel || 'Select model';
-  }, [advertised.defaultModel, advertised.models, configuredModel, options, providerID]);
+  }, [advertised.defaultModel, advertised.models, configuredModel, options, providerPreset?.model]);
   const displayModel = secondaryAuto ? 'Auto' : resolvedModelLabel;
 
   const chooseAuto = async () => {
@@ -154,7 +160,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
 
       let candidateAdvertised = advertised;
       const refreshCandidate = advertised.providerID === currentProvider
-        && (advertised.source === 'acp' || advertised.source === 'codex')
+        && advertised.modelDependentSettings === true
         && advertised.configuredModel !== id;
       if (refreshCandidate) {
         const refreshed = await window.cuppet.settings.models({ model: id });
@@ -343,7 +349,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
 
 function modelEffortState(providerID: string, modelID: string, settings: ProviderSettings | null, advertised: ProviderModelCatalog) {
   const exactLiveSnapshot = advertised.providerID === providerID
-    && (advertised.source === 'acp' || advertised.source === 'codex')
+    && advertised.modelDependentSettings === true
     && advertised.configuredModel === modelID;
   if (exactLiveSnapshot) {
     return {
