@@ -73,6 +73,11 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 
   useEffect(() => setSelected(0), [value]);
 
+  // Re-measure after React commits any programmatic composer value change, including send/queue clears.
+  useEffect(() => {
+    resize(textarea.current);
+  }, [value]);
+
   useEffect(() => {
     setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
@@ -194,7 +199,8 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     setValue('');
     setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
-    resize(textarea.current);
+    // Collapse immediately; the value effect above re-measures after the empty value is committed.
+    if (textarea.current) textarea.current.style.height = '54px';
     textarea.current?.focus();
   };
 
