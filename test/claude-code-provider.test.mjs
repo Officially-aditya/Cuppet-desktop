@@ -4,11 +4,13 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { installSpec, loginSpec } from '../src/main/cli-agent-status.mjs';
 import { providerPreset } from '../src/main/provider-presets.mjs';
+import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 
 const sessionMetaFixture = fileURLToPath(new URL('./fixtures/fake-acp-session-meta-agent.mjs', import.meta.url));
+const mcpFixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
 
 test('Claude Code is a managed ACP backend with Cuppet-only execution policy', () => {
   const descriptor = localCliDescriptor('claude-code');
@@ -34,6 +36,45 @@ test('Claude Code ACP session forwards descriptor metadata that disables native 
     await runtime.start();
     const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Use Cuppet tools.' }] });
     assert.equal(result.text, 'Done.');
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('Claude Code receives the same Cuppet MCP tools and ExecutionKernel path as OpenCode', async () => {
+  const provider = createUntrackedChatProvider({
+    providerID: 'claude-code',
+    model: 'cli-default',
+    cliCommand: process.execPath,
+    cliArgs: [mcpFixture],
+  });
+  const events = [];
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: (value) => { events.push(['tool-created', value.toolName]); return value; },
+      finishToolExecution: (_id, value) => { events.push(['tool-finished', value.status]); return value; },
+    },
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'claude-plan-through-cuppet' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  const final = [];
+  try {
+    await runtime.run({
+      adapter: provider,
+      messages: [{ role: 'user', content: 'Use Cuppet tools.' }],
+      sessionId: 'claude-mcp-session',
+      projectRoot: tmpdir(),
+      onDelta: async (value) => final.push(value),
+    });
+    assert.deepEqual(final, ['MCP:claude-plan-through-cuppet']);
+    assert.ok(events.some(([kind, value]) => kind === 'tool-created' && value === 'cuppet_plan'));
+    const metrics = runtime.executionSnapshot('claude-mcp-session');
+    assert.equal(metrics.semanticExecuted, 1);
+    assert.equal(metrics.rawFallbackExecuted, 0);
   } finally {
     await runtime.close();
   }
