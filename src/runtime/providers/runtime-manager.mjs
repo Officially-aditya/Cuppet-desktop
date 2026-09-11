@@ -134,6 +134,11 @@ export class ProviderRuntimeManager {
         requestAgentPermission: options.requestAgentPermission,
         onText: options.onDelta,
         onActivity: async (activity) => {
+          if (typeof options.onActivity === 'function') {
+            await options.onActivity(activity);
+            return;
+          }
+          // Compatibility for callers that have not moved to Cuppet Activity yet.
           const legacy = activityToLegacyEvent(activity, legacyState);
           if (legacy) await options.onProviderEvent?.(legacy);
         },
