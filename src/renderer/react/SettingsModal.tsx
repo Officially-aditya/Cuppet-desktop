@@ -179,7 +179,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     setBusy(true);
     setApiKey('');
     try {
-      const resetModel = selected.model || '';
+      const resetModel = isLocalCli ? '' : selected.model || '';
       const saved = await window.cuppet.settings.save({
         providerID: selected.id,
         apiKey: '',
@@ -381,7 +381,7 @@ function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex,
   };
 
   const blockedReason = activeProviderID !== providerID
-    ? `Save ${providerLabel} first, then add a custom model.`
+    ? `Select ${providerLabel} first, then add a custom model.`
     : apiKey.trim()
       ? 'Finish the API key field first so validation uses the updated credential.'
       : !credentialReady

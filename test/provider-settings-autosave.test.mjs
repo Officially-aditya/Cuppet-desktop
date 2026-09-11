@@ -9,6 +9,8 @@ test('provider settings apply changes immediately and expose Reset instead of Sa
   assert.match(source, />\{busy \? 'Applying…' : 'Reset'\}<\/button>/);
   assert.doesNotMatch(source, />Cancel<\/button><button type="submit"[^>]*>Save<\/button>/);
   assert.doesNotMatch(source, /const save = async \(event: React\.FormEvent\)/);
+  assert.match(source, /const resetModel = isLocalCli \? '' : selected\.model \|\| ''/);
+  assert.doesNotMatch(source, /Save \${providerLabel} first/);
 });
 
 test('local CLI default resolution is explicit, so unrelated saves cannot overwrite model selection', async () => {
