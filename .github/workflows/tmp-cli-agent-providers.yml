@@ -21,7 +21,19 @@ jobs:
           fetch-depth: 0
 
       - name: Apply OpenCode and Grok Build integration
-        run: python3 scripts/tmp-cli-agent-providers-patch.py
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/tmp-cli-agent-providers-patch.py')
+          text = path.read_text()
+          old = "      const delta = text(source.content?.text);"
+          new = "      const delta = typeof source.content?.text === 'string' ? source.content.text : '';"
+          if old not in text:
+              raise SystemExit('ACP streaming delta anchor missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python3 scripts/tmp-cli-agent-providers-patch.py
 
       - name: Verify runtime and renderer contracts
         run: |
@@ -34,7 +46,8 @@ jobs:
           node --test test/acp-cli-provider.test.mjs
           npm install
           npm run renderer:verify
-          grep -Fq "opencode acp" <(printf '%s' "opencode acp")
+          grep -Fq "args: ['acp']" src/runtime/acp-cli-provider.mjs
+          grep -Fq "'agent', 'stdio'" src/runtime/acp-cli-provider.mjs
           grep -Fq "grok-build" src/main/provider-presets.mjs
           grep -Fq "local-cli" src/main/provider-settings.mjs
           grep -Fq "cuppet:cli-agent:status" src/preload/preload.cjs
