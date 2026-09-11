@@ -4,25 +4,26 @@ import { tmpdir } from 'node:os';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { recordProviderUsage } from '../usage-ledger.mjs';
 import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
+import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
 import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
 
 const DEFAULT_IDLE_MS = 5 * 60_000;
 
 export class ProviderRuntimeManager {
   #acpRuntimeFactory;
+  #toolSessionFactory;
   #usageRecorder;
   #idleMs;
   #entries = new Map();
   #closed = false;
 
-  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, usageRecorder = recordProviderUsage, idleMs = DEFAULT_IDLE_MS } = {}) {
-    // openCodeRuntimeFactory remains accepted temporarily so existing tests/extensions do not
-    // break while the implementation moves from provider-specific to protocol-specific naming.
+  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, idleMs = DEFAULT_IDLE_MS } = {}) {
     this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new AcpSessionRuntime({
       descriptor,
       configuration,
       projectRoot,
     }));
+    this.#toolSessionFactory = toolSessionFactory ?? (({ sessionId, backendId }) => new CuppetMcpToolSession({ sessionId, backendId }));
     this.#usageRecorder = usageRecorder;
     this.#idleMs = positiveMs(idleMs, DEFAULT_IDLE_MS);
   }
@@ -93,15 +94,22 @@ export class ProviderRuntimeManager {
     entry.busy = true;
     clearTimeout(entry.idleTimer);
 
+    let toolSession = null;
     const legacyState = new Map();
     try {
+      if (Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
+        toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
+        await toolSession.start();
+        toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
+      }
+      const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [] };
       if (!entry.started) {
-        await entry.runtime.start();
+        await entry.runtime.start(sessionOptions);
         entry.started = true;
       } else {
-        // Reuse the ACP process, but open a new ACP logical session for each turn until
-        // Conversation Bridge can prove exactly which compiled context the provider already owns.
-        await entry.runtime.newSession();
+        // Reuse the ACP process, but isolate each Cuppet turn in a fresh ACP logical
+        // session and a fresh authenticated Cuppet MCP tool session.
+        await entry.runtime.newSession(sessionOptions);
       }
       const result = await entry.runtime.runTurn({ messages }, {
         signal: options.signal,
@@ -126,6 +134,7 @@ export class ProviderRuntimeManager {
       await entry.runtime.close().catch(() => undefined);
       throw error;
     } finally {
+      await toolSession?.close().catch(() => undefined);
       entry.busy = false;
       if (this.#entries.get(sessionId) === entry) this.#armIdle(sessionId, entry);
     }
@@ -158,7 +167,6 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
   return createHash('sha256').update(stableStringify(payload)).digest('hex');
 }
 
-// Temporary compatibility alias for downstream callers while the ACP naming migration lands.
 export function openCodeRuntimeFingerprint(configuration = {}, projectRoot = null) {
   return acpRuntimeFingerprint({ backendId: 'opencode', descriptor: localCliDescriptor('opencode'), configuration, projectRoot });
 }

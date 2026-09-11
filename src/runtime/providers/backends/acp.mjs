@@ -1,5 +1,6 @@
 import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
 import { AcpSessionRuntime } from '../transports/acp/acp-session.mjs';
+import { CuppetMcpToolSession } from '../transports/acp/cuppet-mcp-tool-session.mjs';
 import { activityToLegacyEvent } from '../runtime-manager-legacy.mjs';
 
 export class AcpProviderAdapter {
@@ -30,9 +31,10 @@ export class AcpProviderAdapter {
       configuration: this.#configuration,
       projectRoot: options.projectRoot ?? null,
     });
+    const toolSession = await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options });
     const activityState = new Map();
     try {
-      await runtime.start();
+      await runtime.start({ mcpServers: toolSession ? [toolSession.descriptor()] : [] });
       return await runtime.runTurn({ messages }, {
         signal: options.signal,
         executeTool: options.executeTool,
@@ -45,8 +47,16 @@ export class AcpProviderAdapter {
       });
     } finally {
       await runtime.close();
+      await toolSession?.close().catch(() => undefined);
     }
   }
 }
 
+async function maybeToolSession({ backendId, sessionId, options }) {
+  if (!Array.isArray(options?.tools) || !options.tools.length || typeof options?.executeTool !== 'function') return null;
+  const session = new CuppetMcpToolSession({ backendId, sessionId });
+  await session.start();
+  session.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
+  return session;
+}
 function text(value) { return typeof value === 'string' ? value.trim().toLowerCase() : ''; }

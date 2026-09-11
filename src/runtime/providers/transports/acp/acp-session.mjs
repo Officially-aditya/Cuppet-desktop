@@ -49,7 +49,7 @@ export class AcpSessionRuntime {
     });
   }
 
-  async start() {
+  async start({ mcpServers = [] } = {}) {
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
     if (this.#state === 'starting') throw new Error(`${this.#descriptor.label} runtime is already starting.`);
@@ -62,7 +62,7 @@ export class AcpSessionRuntime {
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, REQUEST_TIMEOUT_MS);
       await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized);
-      await this.#openSession();
+      await this.#openSession(mcpServers);
       this.#state = 'ready';
       return this.snapshot();
     } catch (error) {
@@ -71,10 +71,10 @@ export class AcpSessionRuntime {
     }
   }
 
-  async newSession() {
-    if (this.#state === 'idle') return this.start();
+  async newSession({ mcpServers = [] } = {}) {
+    if (this.#state === 'idle') return this.start({ mcpServers });
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
-    await this.#openSession();
+    await this.#openSession(mcpServers);
     return this.snapshot();
   }
 
@@ -199,8 +199,8 @@ export class AcpSessionRuntime {
     }, this.#cancelGraceMs);
   }
 
-  async #openSession() {
-    this.#session = await this.#rpc.request('session/new', { cwd: this.#projectRoot, mcpServers: [] }, REQUEST_TIMEOUT_MS);
+  async #openSession(mcpServers = []) {
+    this.#session = await this.#rpc.request('session/new', { cwd: this.#projectRoot, mcpServers: normalizeMcpServers(mcpServers) }, REQUEST_TIMEOUT_MS);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
     await this.#applyConfiguredSettings();
@@ -246,6 +246,21 @@ async function authenticateIfNeeded(rpc, descriptor, initialized) {
   await rpc.request('authenticate', { methodId, _meta: { headless: true } }, REQUEST_TIMEOUT_MS);
 }
 
+function normalizeMcpServers(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 16).flatMap((raw) => {
+    const server = record(raw);
+    const name = text(server.name);
+    const command = text(server.command);
+    if (!name || !command) return [];
+    const args = Array.isArray(server.args) ? server.args.slice(0, 64).map((item) => String(item)) : [];
+    const env = (Array.isArray(server.env) ? server.env : []).slice(0, 64).flatMap((item) => {
+      const variable = record(item);
+      const variableName = text(variable.name);
+      return variableName ? [{ name: variableName, value: String(variable.value ?? '') }] : [];
+    });
+    return [{ name, command, args, env }];
+  });
+}
 function providerEnvironment(providerId) {
   if (providerId !== 'opencode') return { ...process.env };
   let inherited = {};
