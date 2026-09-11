@@ -21,6 +21,7 @@ test('OpenAI-compatible catalog preserves provider ids including exact auto ids'
   assert.equal(catalog.source, 'api');
   assert.deepEqual(catalog.models.map((item) => item.id), ['openrouter/auto', 'vendor/model-a']);
   assert.equal(catalog.defaultModel, null);
+  assert.notEqual(catalog.modelDependentSettings, true);
   assert.match(requests[0].url, /supported_parameters=tools/);
   assert.equal(requests[0].init.headers.authorization, 'Bearer secret');
 });
@@ -53,6 +54,7 @@ test('Codex catalog preserves provider models while resolving Cuppet default sen
     ],
   }, 'codex-default');
   assert.equal(catalog.source, 'codex');
+  assert.equal(catalog.modelDependentSettings, true);
   assert.deepEqual(catalog.models.map((item) => item.id), ['codex/model-a', 'codex/model-b']);
   assert.equal(catalog.models.some((item) => item.id === 'codex-default'), false);
   assert.equal(catalog.defaultModel, 'codex/model-b');
@@ -75,6 +77,7 @@ test('Codex candidate refresh uses the same generic catalog and model-dependent 
   });
   assert.equal(catalog.defaultModel, 'codex/model-b');
   assert.equal(catalog.configuredModel, 'codex/model-a');
+  assert.equal(catalog.modelDependentSettings, true);
   assert.equal(catalog.reasoning.currentValue, 'high');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'high']);
 });
@@ -115,6 +118,7 @@ test('main ACP model catalog separates clean provider default from configured mo
     primaryEffort: 'max',
   });
   assert.equal(catalog.source, 'acp');
+  assert.equal(catalog.modelDependentSettings, true);
   assert.deepEqual(catalog.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
   assert.equal(catalog.defaultModel, 'provider/model-a');
   assert.equal(catalog.configuredModel, 'provider/model-b');
@@ -167,6 +171,7 @@ test('candidate model refresh is read-only and drops the old explicit effort bef
   assert.equal(Object.prototype.hasOwnProperty.call(discoveryConfiguration.primary, 'variant'), false);
   assert.equal(catalog.configuredModel, 'provider/model-b');
   assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.equal(catalog.modelDependentSettings, true);
   assert.equal(catalog.reasoning.currentValue, 'medium');
 });
 
@@ -203,6 +208,7 @@ test('provider model catalog preserves injected ACP reasoning metadata', async (
       };
     },
   });
+  assert.equal(catalog.modelDependentSettings, true);
   assert.equal(catalog.reasoning.configId, 'effort');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'high']);
 });
