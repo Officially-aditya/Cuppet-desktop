@@ -77,9 +77,11 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
     clientFactory: () => client,
   });
   const deltas = [];
+  const activities = [];
   const toolCalls = [];
   const result = await provider.stream([{ role: 'user', content: 'Use the tool.' }], {
     onDelta: (delta) => deltas.push(delta),
+    onActivity: (activity) => activities.push(activity),
     tools: [{ type: 'function', function: { name: 'echo_tool', description: 'Echo', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } } }],
     executeTool: async (call) => { toolCalls.push(call); return { output: 'tool-ok', success: true, paths: [], mutation: false }; },
   });
@@ -91,6 +93,17 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(result.usage.outputTokens, 7);
   assert.equal(result.usage.cachedInputTokens, 10);
   assert.equal(result.usage.reasoningTokens, 2);
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    'activity.status',
+    'activity.text.delta',
+    'activity.usage',
+    'activity.status',
+  ]);
+  assert.equal(activities[0].status, 'running');
+  assert.equal(activities[1].text, 'done');
+  assert.equal(activities[2].usage.totalTokens, 31);
+  assert.equal(activities[3].status, 'completed');
+  assert.ok(!activities.some((activity) => activity.type.startsWith('activity.tool.')), 'provider transport must not duplicate ToolRuntime execution cards');
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].name, 'echo_tool');
   assert.deepEqual(JSON.parse(toolCalls[0].arguments), { value: 'hello' });
@@ -103,6 +116,18 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(client.threadParams.dynamicTools[0].type, 'function');
   assert.equal(client.threadParams.dynamicTools[0].inputSchema.type, 'object');
   assert.match(client.threadParams.cwd, /cuppet-codex-runtime/);
+  assert.equal(client.closed, true);
+});
+
+test('Codex Activity and text observers cannot fail a successful turn', async () => {
+  const client = new FakeCodexClient({ toolCall: false });
+  const provider = new CodexSubscriptionProvider({ codexLaunch: { command: 'fake', args: [], source: 'test' }, clientFactory: () => client });
+  const result = await provider.stream([{ role: 'user', content: 'hello' }], {
+    onDelta: async () => { throw new Error('renderer text observer failed'); },
+    onActivity: async () => { throw new Error('renderer activity observer failed'); },
+  });
+  assert.equal(result.text, 'done');
+  assert.equal(result.usage.totalTokens, 31);
   assert.equal(client.closed, true);
 });
 
