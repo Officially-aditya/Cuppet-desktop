@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from './codex-app-server.mjs';
 import { parseCodexAccount } from './codex-account.mjs';
+import { providerActivity } from './providers/activity.mjs';
 
 const SAFE_CODEX_CWD = join(tmpdir(), 'cuppet-codex-runtime');
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -12,7 +13,7 @@ export class CodexSubscriptionProvider {
 
   constructor(configuration = {}) { this.#configuration = { ...configuration }; }
 
-  async stream(messages, { signal, onDelta = () => {}, tools = [], executeTool } = {}) {
+  async stream(messages, { signal, onDelta = () => {}, onActivity = () => {}, tools = [], executeTool } = {}) {
     const launch = this.#configuration.codexLaunch ?? await resolveCodexAppServerCommand();
     if (!launch) throw new Error('Official Codex app-server is unavailable. Reinstall Cuppet or configure CUPPET_CODEX_APP_SERVER_BIN for development.');
     await mkdir(SAFE_CODEX_CWD, { recursive: true, mode: 0o700 });
@@ -44,7 +45,11 @@ export class CodexSubscriptionProvider {
         const params = record(message.params);
         if (message.method === 'item/agentMessage/delta') {
           const delta = typeof params.delta === 'string' ? params.delta : '';
-          if (delta) { text += delta; onDelta(delta); }
+          if (delta) {
+            text += delta;
+            void notifyObserver(onDelta, delta);
+            void notifyObserver(onActivity, providerActivity('activity.text.delta', { text: delta }));
+          }
           return;
         }
         if (message.method === 'thread/tokenUsage/updated') {
@@ -54,7 +59,10 @@ export class CodexSubscriptionProvider {
           if (turnId && eventTurnId && eventTurnId !== turnId) return;
           const tokenUsage = record(params.tokenUsage);
           const nextUsage = normalizeUsage(tokenUsage.total) ?? normalizeUsage(tokenUsage.last);
-          if (nextUsage) usage = nextUsage;
+          if (nextUsage) {
+            usage = nextUsage;
+            void notifyObserver(onActivity, providerActivity('activity.usage', { usage: nextUsage }));
+          }
           return;
         }
         if (message.method === 'turn/completed') {
@@ -63,8 +71,14 @@ export class CodexSubscriptionProvider {
           const completedThreadId = String(params.threadId ?? '');
           if (threadId && completedThreadId && completedThreadId !== threadId) return;
           if (turnId && completedTurnId && completedTurnId !== turnId) return;
+          const status = String(turn.status ?? params.status ?? 'completed');
           const legacyUsage = normalizeUsage(turn.usage ?? params.usage);
-          completed.resolve({ status: String(turn.status ?? params.status ?? 'completed'), usage: usage ?? legacyUsage });
+          void notifyObserver(onActivity, providerActivity('activity.status', {
+            phase: 'turn',
+            status,
+            transport: 'codex-app-server',
+          }));
+          completed.resolve({ status, usage: usage ?? legacyUsage });
         }
       });
       client.on('exit', ({ code, signal: exitSignal }) => completed.reject(new Error(`Codex app-server exited during turn (${code ?? 'null'}${exitSignal ? `, ${exitSignal}` : ''})`)));
@@ -97,6 +111,11 @@ export class CodexSubscriptionProvider {
       });
       turnId = String(record(turn).turn?.id ?? '');
       if (!turnId) throw new Error('Codex app-server did not return a turn ID.');
+      await notifyObserver(onActivity, providerActivity('activity.status', {
+        phase: 'turn',
+        status: 'running',
+        transport: 'codex-app-server',
+      }));
 
       abortListener = () => {
         if (threadId && turnId) client.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
@@ -193,6 +212,7 @@ function normalizeUsage(value) {
     reasoningTokens: number(usage.reasoningOutputTokens ?? usage.reasoning_output_tokens ?? usage.reasoningTokens ?? usage.reasoning_tokens),
   };
 }
+async function notifyObserver(callback, ...args) { if (typeof callback !== 'function') return; try { await callback(...args); } catch {} }
 function reasoningEffort(value) {
   const effort = typeof value === 'string' ? value.trim().slice(0, 80) : '';
   return /^[A-Za-z0-9._-]+$/.test(effort) ? effort : '';
