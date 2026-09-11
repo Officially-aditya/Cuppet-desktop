@@ -102,11 +102,18 @@ test('JournaledToolRuntime emits separate provider and execution Activity envelo
   }
 });
 
-test('preload renderer bridge makes Activity authoritative and suppresses duplicate legacy activity', async () => {
-  const source = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8');
-  assert.match(source, /payload\?\.type === 'runtime\.activity'/);
-  assert.match(source, /LEGACY_ACTIVITY_EVENTS/);
-  assert.match(source, /payload\.source === 'provider'.*activity\.reasoning\.delta/s);
-  assert.match(source, /payload\.source !== 'execution'/);
-  assert.match(source, /activity\.tool\.closed/);
+test('renderer consumes canonical Activity directly and preload suppresses duplicate legacy activity', async () => {
+  const [preload, chat] = await Promise.all([
+    readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(preload, /LEGACY_ACTIVITY_EVENTS/);
+  assert.match(preload, /callback\(payload\)/);
+  assert.doesNotMatch(preload, /projectActivityForLegacyUi/);
+  assert.match(chat, /event\.type === 'runtime\.activity'/);
+  assert.match(chat, /event\.source === 'provider'.*activity\.reasoning\.delta/s);
+  assert.match(chat, /event\.source === 'execution'.*activity\.tool\./s);
+  assert.match(chat, /updateToolTraceFromActivity/);
+  assert.doesNotMatch(chat, /event\.type === 'message\.reasoning'/);
+  assert.doesNotMatch(chat, /event\.type === 'tool\.started'.*event\.type === 'tool\.finished'/s);
 });
