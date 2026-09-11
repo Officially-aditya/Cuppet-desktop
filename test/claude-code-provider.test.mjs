@@ -101,8 +101,9 @@ test('Claude Code model and effort discovery uses the shared ACP capability pars
   });
   assert.equal(catalog.source, 'acp');
   assert.deepEqual(catalog.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
-  assert.equal(catalog.defaultModel, 'provider/model-b');
-  assert.equal(catalog.reasoning.currentValue, 'max');
+  assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.equal(catalog.configuredModel, 'provider/model-b');
+  assert.equal(catalog.reasoning.currentValue, 'medium');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
 });
 
