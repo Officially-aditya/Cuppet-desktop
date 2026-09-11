@@ -3,6 +3,7 @@ const SEMANTIC_TOOLS = new Set(['cuppet_plan', 'cuppet_memory_search', 'question
 const RAW_TOOLS = new Set(['workspace_read', 'workspace_edit', 'workspace_write', 'bash']);
 const RAW_MUTATION_TOOLS = new Set(['workspace_edit', 'workspace_write']);
 const RAW_READ_TOOLS = new Set(['workspace_read']);
+const EXECUTION_POLICIES = new Set(['optimized', 'raw-baseline']);
 
 /**
  * Transport-neutral execution policy boundary.
@@ -10,22 +11,31 @@ const RAW_READ_TOOLS = new Set(['workspace_read']);
  * Providers request Cuppet operations; this kernel controls which execution
  * surface is advertised and records/guards the path before delegating to
  * ToolRuntime. ACP, Codex and future transports all cross this same boundary.
+ *
+ * `raw-baseline` exists only for controlled benchmark harnesses. Product
+ * sessions construct the default `optimized` policy and must never surface a
+ * user preference that weakens optimized-first execution.
  */
 export class ExecutionKernel {
   #emit;
   #now;
+  #policy;
   #states = new Map();
 
-  constructor({ emit = () => {}, now = () => Date.now() } = {}) {
+  constructor({ emit = () => {}, now = () => Date.now(), benchmarkPolicy = 'optimized' } = {}) {
+    if (!EXECUTION_POLICIES.has(benchmarkPolicy)) throw new TypeError(`Unknown execution benchmark policy: ${String(benchmarkPolicy)}`);
     this.#emit = typeof emit === 'function' ? emit : () => {};
     this.#now = typeof now === 'function' ? now : () => Date.now();
+    this.#policy = benchmarkPolicy;
   }
 
   toolsForProvider(definitions, { sessionId = '' } = {}) {
     const state = this.#sessionState(sessionId);
-    const source = (Array.isArray(definitions) ? definitions : []).map(providerFacingDefinition);
+    const rawBaseline = this.#policy === 'raw-baseline';
+    const source = (Array.isArray(definitions) ? definitions : []).map(rawBaseline ? cloneDefinition : providerFacingDefinition);
     const filtered = source.filter((definition) => {
       const name = toolName(definition);
+      if (rawBaseline) return !OPTIMIZED_TOOLS.has(name) && name !== 'cuppet_execute';
       if (!state.rawMutationFallback && RAW_MUTATION_TOOLS.has(name)) return false;
       if (!state.rawReadFallback && RAW_READ_TOOLS.has(name)) return false;
       return name !== 'bash';
@@ -39,13 +49,15 @@ export class ExecutionKernel {
     const path = executionPathForTool(tool);
     const startedAt = this.#now();
     const state = this.#sessionState(sessionId);
+    const rawBaseline = this.#policy === 'raw-baseline';
     state.total += 1;
     state[path] = (state[path] ?? 0) + 1;
+    this.#recordRequest(state, tool, call);
 
     // Managed ACP must use Cuppet's semantic command operation rather than the
-    // protocol's native terminal path. This keeps command policy, telemetry,
-    // permissions and mutation observation transport-neutral.
-    if (call?.source === 'acp-host' && tool === 'bash') {
+    // protocol's native terminal path. The benchmark-only raw baseline keeps
+    // the old mediated host path so we can measure the optimization delta.
+    if (!rawBaseline && call?.source === 'acp-host' && tool === 'bash') {
       state.blockedNativeShell += 1;
       return this.#blockedResult({
         sessionId,
@@ -59,7 +71,7 @@ export class ExecutionKernel {
     // ACP v1 can request host filesystem operations directly. Do not let those
     // native calls silently bypass Cuppet's structured/bounded read and batch-edit
     // paths. Raw fallback unlocks only after the corresponding optimized tool fails.
-    if (call?.source === 'acp-host' && RAW_MUTATION_TOOLS.has(tool) && !state.rawMutationFallback) {
+    if (!rawBaseline && call?.source === 'acp-host' && RAW_MUTATION_TOOLS.has(tool) && !state.rawMutationFallback) {
       state.blockedRawMutations += 1;
       return this.#blockedResult({
         sessionId,
@@ -69,7 +81,7 @@ export class ExecutionKernel {
         output: 'Cuppet optimized mutation path required. Use the cuppet-runtime MCP tool tst_edit_batch first; raw workspace mutation is enabled only if the optimized batch path fails.',
       });
     }
-    if (call?.source === 'acp-host' && RAW_READ_TOOLS.has(tool) && !state.rawReadFallback) {
+    if (!rawBaseline && call?.source === 'acp-host' && RAW_READ_TOOLS.has(tool) && !state.rawReadFallback) {
       state.blockedRawReads += 1;
       return this.#blockedResult({
         sessionId,
@@ -84,7 +96,7 @@ export class ExecutionKernel {
     if (tool === 'cuppet_execute') {
       const command = commandFromCall(call);
       const bypass = shellWorkspaceBypass(command);
-      if (bypass === 'mutation' && !state.rawMutationFallback) {
+      if (!rawBaseline && bypass === 'mutation' && !state.rawMutationFallback) {
         state.blockedShellMutations += 1;
         return this.#blockedResult({
           sessionId,
@@ -94,7 +106,7 @@ export class ExecutionKernel {
           output: 'Direct source mutation through shell is blocked while Cuppet batched editing is available. Use tst_edit_batch first; shell mutation becomes eligible only after the optimized mutation path fails.',
         });
       }
-      if (bypass === 'read' && !state.rawReadFallback) {
+      if (!rawBaseline && bypass === 'read' && !state.rawReadFallback) {
         state.blockedShellReads += 1;
         return this.#blockedResult({
           sessionId,
@@ -114,6 +126,7 @@ export class ExecutionKernel {
       sessionId: String(sessionId || ''),
       tool,
       path,
+      policy: this.#policy,
       projectBound: Boolean(projectRoot),
       startedAt,
       sequence: state.total,
@@ -123,14 +136,15 @@ export class ExecutionKernel {
       const result = await execute(executionCall);
       const durationMs = Math.max(0, this.#now() - startedAt);
       const success = result?.success === true;
-      if (tool === 'tst_edit_batch' && !success) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
-      if (tool === 'tst_read' && !success) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
+      if (!rawBaseline && tool === 'tst_edit_batch' && !success) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
+      if (!rawBaseline && tool === 'tst_read' && !success) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
       this.#recordOutcome(state, { path, result, success, durationMs });
       this.#safeEmit({
         type: 'execution.kernel.completed',
         sessionId: String(sessionId || ''),
         tool,
         path,
+        policy: this.#policy,
         success,
         durationMs,
         outputBytes: outputBytes(result),
@@ -140,14 +154,15 @@ export class ExecutionKernel {
       return result;
     } catch (error) {
       const durationMs = Math.max(0, this.#now() - startedAt);
-      if (tool === 'tst_edit_batch') this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-error');
-      if (tool === 'tst_read') this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-error');
+      if (!rawBaseline && tool === 'tst_edit_batch') this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-error');
+      if (!rawBaseline && tool === 'tst_read') this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-error');
       this.#recordOutcome(state, { path, result: null, success: false, durationMs });
       this.#safeEmit({
         type: 'execution.kernel.completed',
         sessionId: String(sessionId || ''),
         tool,
         path,
+        policy: this.#policy,
         success: false,
         durationMs,
         outputBytes: 0,
@@ -161,7 +176,8 @@ export class ExecutionKernel {
 
   snapshot(sessionId) {
     const state = this.#states.get(String(sessionId || ''));
-    return Object.freeze(state ? { ...state } : emptyState());
+    const value = state ? { ...state, toolCallsByName: { ...state.toolCallsByName } } : emptyState(this.#policy);
+    return Object.freeze({ ...value, toolCallsByName: Object.freeze({ ...value.toolCallsByName }) });
   }
 
   forget(sessionId) {
@@ -172,10 +188,25 @@ export class ExecutionKernel {
     const id = String(sessionId || '');
     let state = this.#states.get(id);
     if (!state) {
-      state = emptyState();
+      state = emptyState(this.#policy);
       this.#states.set(id, state);
     }
     return state;
+  }
+
+  #recordRequest(state, tool, call) {
+    state.toolCallsByName[tool] = (state.toolCallsByName[tool] ?? 0) + 1;
+    const args = callArguments(call);
+    if (tool === 'tst_read') {
+      const targets = (text(args.path) ? 1 : 0) + array(args.reads).length + array(args.targets).length;
+      state.batchReadTargets += targets;
+      state.maxBatchReadTargets = Math.max(state.maxBatchReadTargets, targets);
+    }
+    if (tool === 'tst_edit_batch') {
+      const operations = array(args.operations).length;
+      state.batchEditOperations += operations;
+      state.maxBatchEditOperations = Math.max(state.maxBatchEditOperations, operations);
+    }
   }
 
   #recordOutcome(state, { path, result, success, durationMs }) {
@@ -184,6 +215,12 @@ export class ExecutionKernel {
     state.outputBytes += outputBytes(result);
     state.pathsTouched += resultPaths(result).length;
     if (result?.mutation === true) state.mutations += 1;
+    const validation = record(result?.validation);
+    if (Object.keys(validation).length) {
+      state.validationAttempts += 1;
+      if (validation.success === true) state.validationSuccesses += 1;
+      else if (validation.success === false) state.validationFailures += 1;
+    }
     if (success) {
       state.successes += 1;
       state[successPathKey(path)] += 1;
@@ -199,6 +236,7 @@ export class ExecutionKernel {
       sessionId: String(sessionId || ''),
       tool,
       path,
+      policy: this.#policy,
       reason,
     });
     return { success: false, output, contentItems: [], paths: [], mutation: false, validation: null };
@@ -230,7 +268,7 @@ export function executionPathForTool(value) {
 }
 
 function providerFacingDefinition(definition) {
-  if (toolName(definition) !== 'bash') return definition;
+  if (toolName(definition) !== 'bash') return cloneDefinition(definition);
   const fn = record(definition?.function);
   return {
     ...definition,
@@ -240,6 +278,11 @@ function providerFacingDefinition(definition) {
       description: 'Run a project command through Cuppet for builds, tests, package/tooling operations, generators, or other command execution. Do not use it to inspect source files or directly edit source while tst_explore/tst_read/tst_edit_batch are available.',
     },
   };
+}
+
+function cloneDefinition(definition) {
+  const source = record(definition);
+  return { ...source, ...(source.function && typeof source.function === 'object' ? { function: { ...source.function } } : {}) };
 }
 
 function shellWorkspaceBypass(command) {
@@ -268,10 +311,14 @@ function looksLikeShellRead(source) {
 }
 
 function commandFromCall(call) {
+  return text(callArguments(call).command);
+}
+
+function callArguments(call) {
   try {
     const parsed = JSON.parse(typeof call?.arguments === 'string' ? call.arguments : '{}');
-    return typeof parsed?.command === 'string' ? parsed.command : '';
-  } catch { return ''; }
+    return record(parsed);
+  } catch { return {}; }
 }
 
 function toolPriority(name) {
@@ -302,8 +349,9 @@ function failurePathKey(path) {
 }
 function resultPaths(result) { return Array.isArray(result?.paths) ? result.paths : []; }
 function outputBytes(result) { return Buffer.byteLength(typeof result?.output === 'string' ? result.output : '', 'utf8'); }
-function emptyState() {
+function emptyState(policy = 'optimized') {
   return {
+    policy,
     total: 0,
     optimized: 0,
     semantic: 0,
@@ -337,8 +385,17 @@ function emptyState() {
     blockedShellReads: 0,
     rawMutationFallback: false,
     rawReadFallback: false,
+    toolCallsByName: {},
+    batchReadTargets: 0,
+    maxBatchReadTargets: 0,
+    batchEditOperations: 0,
+    maxBatchEditOperations: 0,
+    validationAttempts: 0,
+    validationSuccesses: 0,
+    validationFailures: 0,
   };
 }
+function array(value) { return Array.isArray(value) ? value : []; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error ?? '')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
