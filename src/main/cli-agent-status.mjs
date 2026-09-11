@@ -108,7 +108,7 @@ export function installSpec(providerID, platform = process.platform) {
       'github-copilot': 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" bash',
       'mistral-vibe': 'curl -LsSf https://mistral.ai/vibe/install.sh | bash',
       kiro: 'curl -fsSL https://cli.kiro.dev/install | bash',
-      antigravity: 'curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --skip-path --skip-aliases',
+      antigravity: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     };
     return scripts[id] ? { command: '/bin/bash', args: ['-lc', scripts[id]] } : null;
   }

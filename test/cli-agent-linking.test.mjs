@@ -13,6 +13,15 @@ test('all local providers have automatic macOS installers', () => {
   }
 });
 
+test('Antigravity uses the canonical installer without stale installer flags', () => {
+  const spec = installSpec('antigravity', 'darwin');
+  assert.equal(spec.command, '/bin/bash');
+  assert.equal(spec.args[0], '-lc');
+  assert.equal(spec.args[1], 'curl -fsSL https://antigravity.google/cli/install.sh | bash');
+  assert.ok(!spec.args[1].includes('--skip-path'));
+  assert.ok(!spec.args[1].includes('--skip-aliases'));
+});
+
 test('provider-owned login flows need no copied Terminal command', () => {
   assert.equal(loginSpec('opencode', 'opencode'), null);
   assert.deepEqual(loginSpec('grok-build', 'grok').args, ['login']);
