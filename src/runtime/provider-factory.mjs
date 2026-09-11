@@ -3,6 +3,7 @@ import { providerRequest } from './provider-policy.mjs';
 import { createNativeProvider, nativeProviderKind } from './native-provider.mjs';
 import { CodexSubscriptionProvider } from './codex-provider.mjs';
 import { AcpCliAgentProvider, isAcpCliProvider } from './acp-cli-provider.mjs';
+import { AntigravityHeadlessProvider } from './antigravity-provider.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
 
 export function createChatProvider(configuration = {}) {
@@ -12,6 +13,7 @@ export function createChatProvider(configuration = {}) {
 export function createUntrackedChatProvider(configuration = {}) {
   const providerID = String(configuration?.providerID ?? '').toLowerCase();
   if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
+  if (providerID === 'antigravity') return new AntigravityHeadlessProvider(configuration);
   if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
   const kind = resolvedNativeKind(configuration);
   if (kind) {

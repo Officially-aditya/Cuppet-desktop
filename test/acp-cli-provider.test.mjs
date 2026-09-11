@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { AcpCliAgentProvider } from '../src/runtime/acp-cli-provider.mjs';
+import { AcpCliAgentProvider, acpCliDescriptor } from '../src/runtime/acp-cli-provider.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
 
@@ -38,4 +38,12 @@ test('ACP CLI provider delegates filesystem and terminal operations through Cupp
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test('local ACP provider descriptors use official stdio entrypoints', () => {
+  assert.deepEqual(acpCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
+  assert.equal(acpCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
+  assert.deepEqual(acpCliDescriptor('kiro')?.args, ['acp']);
+  assert.equal(acpCliDescriptor('antigravity'), null);
 });

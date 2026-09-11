@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { acpCliDescriptor } from '../runtime/acp-cli-provider.mjs';
+import { localCliDescriptor } from '../runtime/local-cli-descriptors.mjs';
 
 // Finder-launched macOS apps do not inherit the user's interactive shell PATH.
 // Add the common user/package-manager locations without changing the priority of
@@ -9,10 +9,10 @@ import { acpCliDescriptor } from '../runtime/acp-cli-provider.mjs';
 extendCliSearchPath();
 
 export async function cliAgentStatus(providerID) {
-  const descriptor = acpCliDescriptor(providerID);
+  const descriptor = localCliDescriptor(providerID);
   if (!descriptor) throw new Error('Unsupported local CLI provider.');
   const command = String(process.env[descriptor.envOverride] || descriptor.command);
-  const versionArgs = descriptor.id === 'grok-build' ? ['version'] : ['--version'];
+  const versionArgs = descriptor.versionArgs;
   try {
     const result = await run(command, versionArgs, 4_000);
     const version = firstLine(result.stdout || result.stderr);
@@ -50,6 +50,9 @@ function extendCliSearchPath() {
     home ? join(home, '.local', 'bin') : '',
     home ? join(home, '.opencode', 'bin') : '',
     home ? join(home, '.grok', 'bin') : '',
+    home ? join(home, '.kiro', 'bin') : '',
+    home ? join(home, '.vibe', 'bin') : '',
+    home ? join(home, '.copilot', 'bin') : '',
     home ? join(home, '.bun', 'bin') : '',
     home ? join(home, '.npm-global', 'bin') : '',
     '/opt/homebrew/bin',

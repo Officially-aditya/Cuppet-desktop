@@ -193,7 +193,7 @@ function desktopProviderAuthority(request) {
 
 function validateCliProviderID(value) {
   const id = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (!['opencode', 'grok-build'].includes(id)) throw new Error('Unsupported local CLI provider.');
+  if (!['opencode', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'].includes(id)) throw new Error('Unsupported local CLI provider.');
   return id;
 }
 

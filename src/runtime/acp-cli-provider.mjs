@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
+import { localCliDescriptor } from './local-cli-descriptors.mjs';
 
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -9,32 +10,13 @@ const PROMPT_TIMEOUT_MS = 30 * 60_000;
 const TAIL_SETTLE_MS = 220;
 const TAIL_SETTLE_MAX_MS = 1_200;
 
-const DESCRIPTORS = Object.freeze({
-  opencode: Object.freeze({
-    id: 'opencode',
-    label: 'OpenCode',
-    command: 'opencode',
-    args: ['acp'],
-    envOverride: 'CUPPET_OPENCODE_BIN',
-    loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use.',
-  }),
-  'grok-build': Object.freeze({
-    id: 'grok-build',
-    label: 'Grok Build',
-    command: 'grok',
-    args: ['--no-auto-update', 'agent', 'stdio'],
-    envOverride: 'CUPPET_GROK_BIN',
-    loginHint: 'Run `grok login` in Terminal once, then retry.',
-  }),
-});
-
 export function isAcpCliProvider(value) {
-  return Boolean(DESCRIPTORS[String(value ?? '').trim().toLowerCase()]);
+  return localCliDescriptor(value)?.transport === 'acp';
 }
 
 export function acpCliDescriptor(value) {
-  const descriptor = DESCRIPTORS[String(value ?? '').trim().toLowerCase()];
-  return descriptor ? { ...descriptor, args: [...descriptor.args] } : null;
+  const descriptor = localCliDescriptor(value);
+  return descriptor?.transport === 'acp' ? descriptor : null;
 }
 
 export class AcpCliAgentProvider {
