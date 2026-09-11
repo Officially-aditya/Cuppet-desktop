@@ -101,6 +101,39 @@ test('shared ACP discovery refreshes model-dependent settings without applying u
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['medium', 'max']);
 });
 
+test('candidate model refresh is read-only and drops the old explicit effort before ACP discovery', async () => {
+  let discoveryConfiguration;
+  const catalog = await fetchProviderModelCatalog({
+    providerID: 'opencode',
+    model: 'provider/model-a',
+    primary: { modelID: 'provider/model-a', variant: 'high' },
+    primaryEffort: 'high',
+  }, {
+    model: 'provider/model-b',
+    acpDiscover: async (_providerID, options) => {
+      discoveryConfiguration = options.configuration;
+      return {
+        models: [{ id: 'provider/model-a', label: 'Model A' }, { id: 'provider/model-b', label: 'Model B' }],
+        defaultModel: 'provider/model-a',
+        currentModel: 'provider/model-b',
+        reasoning: {
+          configId: 'effort',
+          currentValue: 'medium',
+          options: [{ id: 'medium', label: 'Medium' }, { id: 'max', label: 'Max' }],
+        },
+      };
+    },
+  });
+
+  assert.equal(discoveryConfiguration.model, 'provider/model-b');
+  assert.equal(discoveryConfiguration.primary.modelID, 'provider/model-b');
+  assert.equal(discoveryConfiguration.primaryEffort, '');
+  assert.equal(Object.prototype.hasOwnProperty.call(discoveryConfiguration.primary, 'variant'), false);
+  assert.equal(catalog.configuredModel, 'provider/model-b');
+  assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.equal(catalog.reasoning.currentValue, 'medium');
+});
+
 test('Antigravity model command parser uses advertised slugs without choosing a default', async () => {
   const catalog = await discoverAntigravityModels({ command: 'agy', envOverride: 'CUPPET_ANTIGRAVITY_BIN' }, {
     runImpl: async () => ({ stdout: 'gemini-3.8-flash-high     Gemini 3.8 Flash (High)\nclaude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)\n' }),
