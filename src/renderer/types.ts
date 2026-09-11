@@ -184,21 +184,6 @@ export type ProviderModelCatalog = {
   }>;
 };
 
-export type CodexModelCatalog = {
-  available: boolean;
-  loggedIn?: boolean;
-  defaultModel?: string | null;
-  error?: string;
-  models: Array<{
-    id: string;
-    label?: string;
-    description?: string;
-    isDefault?: boolean;
-    efforts?: string[];
-    defaultEffort?: string | null;
-  }>;
-};
-
 export type CliAgentStatus = {
   providerID: string;
   label?: string;
@@ -326,7 +311,6 @@ export type CuppetApi = {
   };
   codexAuth: {
     status: () => Promise<any>;
-    models: () => Promise<CodexModelCatalog>;
     login: () => Promise<any>;
     logout: () => Promise<any>;
   };
