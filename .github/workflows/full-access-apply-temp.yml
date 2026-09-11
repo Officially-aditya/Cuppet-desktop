@@ -23,7 +23,26 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - name: Apply permission patch
-        run: python3 scripts/harden-full-access-temp.py
+        run: |
+          python3 scripts/harden-full-access-temp.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/runtime/permissions.mjs')
+          text = p.read_text()
+          old = "    if (auto && projectScoped) return { effect: 'allow', source: 'session-auto-project' };\n    return { effect: 'ask', autoEligible: auto ? projectScoped : safe };"
+          new = "    if (auto && projectScoped) return { effect: 'allow', source: 'session-auto' };\n    return { effect: 'ask', autoEligible: auto ? projectScoped : safe };"
+          if text.count(old) != 1:
+              raise SystemExit(f'workspace auto compatibility marker mismatch: {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+
+          p = Path('test/full-access-permissions.test.mjs')
+          text = p.read_text()
+          old = "      { allowed: true, source: 'session-auto-project' },\n    );\n    assert.deepEqual(\n      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),"
+          new = "      { allowed: true, source: 'session-auto' },\n    );\n    assert.deepEqual(\n      await broker.authorize({ sessionId: 's1', action: 'edit', resources: ['.'], projectRoot: root }),"
+          if text.count(old) != 1:
+              raise SystemExit(f'auto test compatibility marker mismatch: {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - name: Install desktop dependencies
         run: npm install --ignore-scripts
       - name: Verify permission policies
