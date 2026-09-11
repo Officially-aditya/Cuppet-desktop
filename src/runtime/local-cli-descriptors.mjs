@@ -5,7 +5,11 @@ const DESCRIPTORS = Object.freeze({
   }),
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
-    loginHint: 'Run `claude-agent-acp --cli` in Terminal and complete Claude sign-in, then retry.',
+    loginHint: 'Run `claude-agent-acp --cli auth login` in Terminal and complete Claude sign-in, then retry.',
+    // claude-agent-acp forwards this ACP session extension into the Claude Agent SDK.
+    // It removes Claude Code's built-in Read/Write/Bash tools so normal execution
+    // must use the Cuppet MCP tool surface and therefore the shared ExecutionKernel.
+    sessionMeta: Object.freeze({ disableBuiltInTools: true }),
   }),
   'grok-build': descriptor({
     id: 'grok-build', label: 'Grok Build', transport: 'acp', command: 'grok', args: ['--no-auto-update', 'agent', 'stdio'], versionArgs: ['version'], envOverride: 'CUPPET_GROK_BIN',
@@ -31,10 +35,22 @@ const DESCRIPTORS = Object.freeze({
 
 export function localCliDescriptor(value) {
   const item = DESCRIPTORS[String(value ?? '').trim().toLowerCase()];
-  return item ? { ...item, args: [...item.args], versionArgs: [...item.versionArgs] } : null;
+  return item ? {
+    ...item,
+    args: [...item.args],
+    versionArgs: [...item.versionArgs],
+    ...(item.sessionMeta ? { sessionMeta: { ...item.sessionMeta } } : {}),
+  } : null;
 }
 
 export function isLocalCliProvider(value) { return Boolean(localCliDescriptor(value)); }
 export function localCliProviderIDs() { return Object.keys(DESCRIPTORS); }
 
-function descriptor(value) { return Object.freeze({ ...value, args: Object.freeze([...value.args]), versionArgs: Object.freeze([...value.versionArgs]) }); }
+function descriptor(value) {
+  return Object.freeze({
+    ...value,
+    args: Object.freeze([...value.args]),
+    versionArgs: Object.freeze([...value.versionArgs]),
+    ...(value.sessionMeta ? { sessionMeta: Object.freeze({ ...value.sessionMeta }) } : {}),
+  });
+}
