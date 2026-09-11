@@ -102,6 +102,41 @@ test('JournaledToolRuntime emits separate provider and execution Activity envelo
   }
 });
 
+test('malformed provider telemetry and host emit failures cannot fail a successful turn', async () => {
+  const adapter = {
+    async stream(_messages, options) {
+      await options.onProviderEvent?.({ type: 'tool.started', tool: 'broken-without-call-id' });
+      options.onDelta('Done.');
+      return { text: 'Done.', toolCalls: [] };
+    },
+  };
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    emit: () => { throw new Error('renderer event observer failed'); },
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  try {
+    const result = await runtime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'work' }],
+      sessionId: 'chat-observer-failure',
+      projectRoot: null,
+      onDelta: async () => {},
+    });
+    assert.equal(result.usage, null);
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('renderer consumes canonical Activity directly and preload suppresses duplicate legacy activity', async () => {
   const [preload, chat] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
