@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConversationBridge, fingerprintConversationMessages } from '../src/runtime/providers/conversation-bridge.mjs';
+import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
 
 test('Conversation Bridge makes Cuppet full replay the explicit context authority', () => {
   const bridge = new ConversationBridge();
@@ -70,3 +71,80 @@ test('forgotten or evicted bridge state can never request logical-session reuse'
   const afterEviction = bridge.beginTurn({ conversationId: 'chat-evict', runtimeFingerprint: 'runtime-a', messages: [] });
   assert.equal(afterEviction.providerSessionAction, 'start');
 });
+
+test('runtime manager follows bridge plans while replaying full Cuppet context each turn', async () => {
+  const calls = [];
+  const runtime = {
+    async start() { calls.push('start'); },
+    async newSession() { calls.push('newSession'); },
+    async runTurn({ messages }) { calls.push(['messages', messages.map((item) => item.content)]); return { text: 'ok', usage: null }; },
+    async cancel() {},
+    async close() { calls.push('close'); },
+  };
+  const manager = new ProviderRuntimeManager({ usageRecorder: async () => {}, acpRuntimeFactory: () => runtime });
+  const adapter = managedAdapter();
+  try {
+    await manager.adapterFor({ sessionId: 'chat-context', adapter }).stream([{ role: 'user', content: 'one' }]);
+    await manager.adapterFor({ sessionId: 'chat-context', adapter }).stream([
+      { role: 'user', content: 'one' },
+      { role: 'assistant', content: 'answer' },
+      { role: 'user', content: 'two' },
+    ]);
+    assert.deepEqual(calls.slice(0, 4), [
+      'start',
+      ['messages', ['one']],
+      'newSession',
+      ['messages', ['one', 'answer', 'two']],
+    ]);
+    const snapshot = manager.conversationSnapshot('chat-context');
+    assert.equal(snapshot.completedTurns, 2);
+    assert.equal(snapshot.contextOwner, 'cuppet');
+    assert.equal(snapshot.delivery, 'full-replay');
+    assert.equal(snapshot.providerHistory, 'turn-isolated');
+  } finally {
+    await manager.close();
+  }
+});
+
+test('runtime failure and idle eviction reset Conversation Bridge state', async () => {
+  let fail = true;
+  const runtimes = [];
+  const manager = new ProviderRuntimeManager({
+    idleMs: 15,
+    usageRecorder: async () => {},
+    acpRuntimeFactory: () => {
+      const runtime = {
+        async start() {},
+        async newSession() {},
+        async runTurn() { if (fail) throw new Error('provider failed'); return { text: 'ok', usage: null }; },
+        async cancel() {},
+        async close() {},
+      };
+      runtimes.push(runtime);
+      return runtime;
+    },
+  });
+  const adapter = managedAdapter();
+  await assert.rejects(() => manager.adapterFor({ sessionId: 'chat-reset', adapter }).stream([]), /provider failed/);
+  assert.equal(manager.conversationSnapshot('chat-reset').completedTurns, 0);
+
+  fail = false;
+  await manager.adapterFor({ sessionId: 'chat-reset', adapter }).stream([]);
+  assert.equal(manager.conversationSnapshot('chat-reset').completedTurns, 1);
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(manager.size, 0);
+  assert.equal(manager.conversationSnapshot('chat-reset').completedTurns, 0);
+  assert.ok(runtimes.length >= 2);
+  await manager.close();
+});
+
+function managedAdapter() {
+  return {
+    cuppetManagedRuntime: () => ({
+      protocol: 'acp',
+      backendId: 'opencode',
+      descriptor: { id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: [], envOverride: '', loginHint: '' },
+      configuration: { providerID: 'opencode' },
+    }),
+  };
+}
