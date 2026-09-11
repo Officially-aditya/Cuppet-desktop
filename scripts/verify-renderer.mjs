@@ -70,6 +70,9 @@ assert.match(app, /sessions\.send\(session\.id, value, attachments\)/, 'composer
 assert.match(app, /onNewProjectChat=\{\(projectId\) => startDraft\(projectId\)\}/, 'project hover new-chat action does not create a project-bound draft');
 assert.match(app, /result\?\.sessionId/, 'React send path does not follow PE3-selected target sessions');
 assert.match(app, /event\.type === 'pe3\.routed'/, 'React event path does not follow PE3 routing');
+const runtimeService = await read('src/runtime/service.mjs');
+assert.match(runtimeService, /generateChatTitle/, 'first-turn secondary-model title generation missing');
+assert.match(runtimeService, /current\.title !== provisionalTitle/, 'async title generation can overwrite manual chat renames');
 assert.match(chat, /currentSlashQuery/, 'typed slash palette activation missing');
 assert.match(chat, /ArrowDown|ArrowUp/, 'slash palette keyboard navigation missing');
 assert.match(chat, /aria-label=.*Send/s, 'arrow send action missing');

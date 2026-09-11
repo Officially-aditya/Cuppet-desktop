@@ -17,6 +17,7 @@ import { TstBatchEditManager } from './tst-edit-batches.mjs';
 import { ProjectWriter } from './project-writer.mjs';
 import { parseSlashCommand } from './commands.mjs';
 import { classifyProviderError } from './provider-error.mjs';
+import { generateChatTitle } from './title-generator.mjs';
 
 export class RuntimeService {
   #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
@@ -355,6 +356,10 @@ export class RuntimeService {
     this.#emit({ type: 'message.created', message: delivery.user });
     this.#emit({ type: 'message.created', message: delivery.assistant });
 
+    if (delivery.provisionalTitle) {
+      void this.#generateFirstTurnTitle({ sessionId: targetSessionId, userText: text, provider: params.provider ?? {}, provisionalTitle: delivery.provisionalTitle });
+    }
+
     const controller = new AbortController();
     this.#runs.set(targetSessionId, { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route });
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
@@ -364,7 +369,8 @@ export class RuntimeService {
 
   #writeRoutedTurn({ tx, ids, text, projectId }) {
     let createdSession = null;
-    if (tx.action === 'create') createdSession = this.#db.createSession({ id: tx.targetSessionId, projectId, title: titleFromMessage(text) });
+    const provisionalTitle = titleFromMessage(text);
+    if (tx.action === 'create') createdSession = this.#db.createSession({ id: tx.targetSessionId, projectId, title: provisionalTitle });
     let sourceSession = null;
     if (tx.targetSessionId !== tx.sourceSessionId) {
       this.#db.appendMessage({ id: ids.marker, sessionId: tx.sourceSessionId, role: 'system', content: routingMarker(tx), status: 'complete' });
@@ -372,16 +378,31 @@ export class RuntimeService {
     }
     const targetBefore = this.#db.getSessionSummary(tx.targetSessionId);
     const user = this.#db.appendMessage({ id: ids.user, sessionId: tx.targetSessionId, role: 'user', content: text, status: 'complete' });
-    if (!createdSession && targetBefore?.title === 'New chat') this.#db.renameSession(tx.targetSessionId, titleFromMessage(text));
+    const needsGeneratedTitle = Boolean(createdSession || targetBefore?.title === 'New chat');
+    if (!createdSession && targetBefore?.title === 'New chat') this.#db.renameSession(tx.targetSessionId, provisionalTitle);
     const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId: tx.targetSessionId, role: 'assistant', content: '', status: 'streaming' });
-    return { user, assistant, createdSession, sourceSession, targetSession: this.#db.getSessionSummary(tx.targetSessionId) };
+    return { user, assistant, createdSession, sourceSession, targetSession: this.#db.getSessionSummary(tx.targetSessionId), provisionalTitle: needsGeneratedTitle ? provisionalTitle : null };
   }
   #writeDirectTurn({ sessionId, ids, text }) {
     const before = this.#db.getSessionSummary(sessionId);
     const user = this.#db.appendMessage({ id: ids.user, sessionId, role: 'user', content: text, status: 'complete' });
-    if (before?.title === 'New chat') this.#db.renameSession(sessionId, titleFromMessage(text));
+    const provisionalTitle = before?.title === 'New chat' ? titleFromMessage(text) : null;
+    if (provisionalTitle) this.#db.renameSession(sessionId, provisionalTitle);
     const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId, role: 'assistant', content: '', status: 'streaming' });
-    return { user, assistant, createdSession: null, sourceSession: null, targetSession: this.#db.getSessionSummary(sessionId) };
+    return { user, assistant, createdSession: null, sourceSession: null, targetSession: this.#db.getSessionSummary(sessionId), provisionalTitle };
+  }
+
+  async #generateFirstTurnTitle({ sessionId, userText, provider, provisionalTitle }) {
+    try {
+      const title = await generateChatTitle({ providerFactory: this.#providerFactory, providerConfig: provider, userText });
+      if (!title || title === provisionalTitle || this.#closed) return;
+      const current = this.#db.getSessionSummary(sessionId);
+      if (!current || current.title !== provisionalTitle) return;
+      const session = this.#db.renameSession(sessionId, title);
+      this.#emit({ type: 'session.updated', session });
+    } catch {
+      // Chat titles are best-effort metadata; never disturb the foreground response.
+    }
   }
 
   stop(sessionId) {
