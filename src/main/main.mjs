@@ -122,7 +122,8 @@ function registerIpc() {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     let result = await settings.save(source);
     const explicitModel = typeof source.model === 'string' && source.model.trim();
-    if (!explicitModel && result.authType === 'local-cli') {
+    const resolveDefault = source.resolveDefault === true;
+    if (resolveDefault && !explicitModel && result.authType === 'local-cli') {
       const advertised = await fetchProviderModelCatalog(settings.runtimeValue()).catch(() => null);
       const exactDefault = typeof advertised?.defaultModel === 'string' ? advertised.defaultModel.trim() : '';
       if (exactDefault && exactDefault !== 'cli-default' && exactDefault !== result.primary?.modelID) {

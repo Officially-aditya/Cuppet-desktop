@@ -120,7 +120,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       const linked = await window.cuppet.cliAgents.connect(providerID);
       setCliStatus(linked);
       if (!(linked.connected ?? linked.available)) throw new Error(linked.message || `${selected.label || selected.id} did not finish connecting.`);
-      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '' });
+      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '', resolveDefault: true });
       setCurrent(saved);
       setApiKey('');
       const projected = { ...saved, credentialConfigured: true, configured: Boolean(saved.primary?.modelID) };
@@ -136,19 +136,63 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     }
   };
 
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!selected) { setNote('Choose a provider.'); return; }
-    if (isCodex && !codex.loggedIn) { setSection('account'); setNote('Connect ChatGPT before selecting Codex as the active provider.'); return; }
-    if (isLocalCli && !(cliStatus?.connected ?? cliStatus?.available)) { setNote(`Connect ${selected.label || selected.id} first.`); return; }
+  const activateProvider = async (nextProviderID: string) => {
+    setProviderID(nextProviderID);
+    setApiKey('');
+    setNote('');
+    if (!nextProviderID) return;
     setBusy(true);
     try {
-      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: (isCodex || isLocalCli) ? '' : apiKey });
+      const saved = await window.cuppet.settings.save({ providerID: nextProviderID, apiKey: '', resolveDefault: true });
+      setCurrent(saved);
+      onSaved(saved);
+      notifyProviderSettingsChanged();
+      setNote(`${saved.presets?.find((item) => item.id === nextProviderID)?.label || nextProviderID} selected.`);
+    } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
+    finally { setBusy(false); }
+  };
+
+  const persistApiKey = async () => {
+    const value = apiKey.trim();
+    if (!selected || isCodex || isLocalCli || !value || busy) return;
+    setBusy(true);
+    try {
+      const activeModel = current?.providerID === selected.id || current?.primary?.providerID === selected.id
+        ? current?.primary?.modelID || ''
+        : '';
+      const saved = await window.cuppet.settings.save({
+        providerID: selected.id,
+        apiKey: value,
+        ...(activeModel ? { model: activeModel, backgroundModel: current?.secondary?.modelID || activeModel } : {}),
+      });
       setCurrent(saved);
       setApiKey('');
-      onSaved({ ...saved, ...(isCodex ? { credentialConfigured: codex.loggedIn, configured: codex.loggedIn && Boolean(saved.primary?.modelID) } : {}), ...(isLocalCli ? { credentialConfigured: true, configured: Boolean(cliStatus?.available && saved.primary?.modelID) } : {}) });
+      onSaved(saved);
       notifyProviderSettingsChanged();
-      setNote(isCodex ? 'Codex subscription provider saved.' : isLocalCli ? `${selected.label || selected.id} local CLI provider saved.` : `${selected.label || selected.id} saved.`);
+      setNote(`${selected.label || selected.id} credential updated.`);
+    } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
+    finally { setBusy(false); }
+  };
+
+  const resetProvider = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setApiKey('');
+    try {
+      const resetModel = selected.model || '';
+      const saved = await window.cuppet.settings.save({
+        providerID: selected.id,
+        apiKey: '',
+        ...(resetModel ? { model: resetModel, backgroundModel: resetModel } : {}),
+        primaryEffort: '',
+        secondaryEffort: '',
+        secondaryAuto: true,
+        resolveDefault: true,
+      });
+      setCurrent(saved);
+      onSaved(saved);
+      notifyProviderSettingsChanged();
+      setNote(`${selected.label || selected.id} model settings reset.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }
   };
@@ -176,7 +220,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <div className="settings-hub-content">
               {section === 'general' && <GeneralPanel />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
-              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={setProviderID} onApiKey={setApiKey} onSave={save} onModelSaved={modelSaved} onClose={onClose} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
+              {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={activateProvider} onApiKey={setApiKey} onApiKeyCommit={persistApiKey} onReset={resetProvider} onModelSaved={modelSaved} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
@@ -243,24 +287,24 @@ function AccountPanel({ codex, busy, onConnect, onDisconnect, onError }: { codex
   </>;
 }
 
-function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, isLocalCli, cliStatus, codex, note, busy, onProvider, onApiKey, onSave, onModelSaved, onClose, onConnect, onDisconnect, onConnectCli }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; isLocalCli: boolean; cliStatus: CliAgentStatus | null; codex: any; note: string; busy: boolean; onProvider: (id: string) => void; onApiKey: (value: string) => void; onSave: (event: React.FormEvent) => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onClose: () => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onConnectCli: () => void | Promise<void> }) {
+function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, isLocalCli, cliStatus, codex, note, busy, onProvider, onApiKey, onApiKeyCommit, onReset, onModelSaved, onConnect, onDisconnect, onConnectCli }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; isLocalCli: boolean; cliStatus: CliAgentStatus | null; codex: any; note: string; busy: boolean; onProvider: (id: string) => void | Promise<void>; onApiKey: (value: string) => void; onApiKeyCommit: () => void | Promise<void>; onReset: () => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onConnectCli: () => void | Promise<void> }) {
   const activeProviderID = current?.providerID || current?.primary?.providerID || '';
   const cliConnected = Boolean(cliStatus?.connected ?? cliStatus?.available);
   const credentialReady = isCodex ? Boolean(codex.loggedIn) : isLocalCli ? cliConnected : Boolean(current?.apiKeyConfigured);
   const modelsReady = Boolean(selected && activeProviderID === providerID && credentialReady && !apiKey.trim());
   const modelHint = activeProviderID !== providerID
-    ? `Save ${selected?.label || providerID} first to choose its models.`
+    ? `Selecting ${selected?.label || providerID}…`
     : apiKey.trim()
-      ? 'Save the API key change first so model selection uses the saved credential.'
+      ? 'Finish the API key field to apply the credential before choosing models.'
       : !credentialReady
-        ? (isCodex ? 'Connect ChatGPT first to choose Codex models.' : isLocalCli ? `Connect ${selected?.label || 'the provider'} first. Cuppet handles installation automatically.` : 'Save an API key first to choose models.')
+        ? (isCodex ? 'Connect ChatGPT first to choose Codex models.' : isLocalCli ? `Connect ${selected?.label || 'the provider'} first. Cuppet handles installation automatically.` : 'Enter an API key first to choose models.')
         : '';
 
-  return <form className="platform-settings-form" onSubmit={(event) => void onSave(event)}>
+  return <div className="platform-settings-form">
     <div className="settings-card platform-provider-card">
       <div className="settings-card-heading"><div><h3>AI provider</h3><p>Select the backend Cuppet uses. API providers use local secure keys; agent providers use their own installed CLI authentication.</p></div></div>
       <div className="provider-simple-form">
-        <label>Provider<SelectControl ariaLabel="Provider" value={providerID} onChange={onProvider} options={[{ value: '', label: 'Choose provider' }, ...presets.map((preset) => ({ value: preset.id, label: preset.label || preset.id }))]} /></label>
+        <label>Provider<SelectControl ariaLabel="Provider" value={providerID} onChange={(id) => void onProvider(id)} options={[{ value: '', label: 'Choose provider' }, ...presets.map((preset) => ({ value: preset.id, label: preset.label || preset.id }))]} /></label>
         {selected && <div className="provider-preset-note"><strong>{selected.label || selected.id}</strong><span>{selected.note || (isCodex ? 'Uses your existing ChatGPT Codex subscription through the official OpenAI Codex app-server. Cuppet never reads or stores Codex OAuth credentials.' : 'Official endpoint and default coding model are configured automatically.')}</span></div>}
         {isCodex ? (
           <div className="provider-auth-card">
@@ -281,7 +325,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             </div>
             <div className="provider-auth-actions">{cliConnected ? <span className="settings-status-pill compact">Ready</span> : <button type="button" className="primary-button settings-action-button" disabled={busy || cliStatus === null} onClick={() => void onConnectCli()}>{busy ? 'Connecting…' : `Connect ${selected?.label || 'provider'}`}</button>}</div>
           </div>
-        ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
+        ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} onBlur={() => void onApiKeyCommit()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void onApiKeyCommit(); } }} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
         {selected && <div className="platform-model-section">
           <div className="platform-model-grid">
             <div className="platform-model-field">
@@ -298,11 +342,11 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
         {selected && !isLocalCli && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
       <div className="settings-form-footer">
-        <div className="settings-note">{note || (current?.encryptionAvailable ? 'API keys are encrypted with the operating system credential store. Primary drives foreground work; secondary drives Context Memory.' : current?.encryptionUnavailableReason || 'Secure credential storage is unavailable.')}</div>
-        <div className="dialog-actions"><button type="button" className="ghost-button settings-action-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button settings-action-button" disabled={busy || !selected}>Save</button></div>
+        <div className="settings-note">{note || (current?.encryptionAvailable ? 'Changes apply immediately. API keys are encrypted with the operating system credential store.' : current?.encryptionUnavailableReason || 'Changes apply immediately. Secure credential storage is unavailable.')}</div>
+        <div className="dialog-actions"><button type="button" className="ghost-button settings-action-button" disabled={busy || !selected} onClick={() => void onReset()}>{busy ? 'Applying…' : 'Reset'}</button></div>
       </div>
     </div>
-  </form>;
+  </div>;
 }
 
 function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex, codex }: { current: ProviderSettings | null; providerID: string; providerLabel: string; apiKey: string; isCodex: boolean; codex: any }) {
@@ -339,9 +383,9 @@ function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex,
   const blockedReason = activeProviderID !== providerID
     ? `Save ${providerLabel} first, then add a custom model.`
     : apiKey.trim()
-      ? 'Save the API key change first so the validation uses the saved provider credential.'
+      ? 'Finish the API key field first so validation uses the updated credential.'
       : !credentialReady
-        ? (isCodex ? 'Connect ChatGPT first so Cuppet can validate this Codex model.' : 'Save an API key first so Cuppet can validate this model.')
+        ? (isCodex ? 'Connect ChatGPT first so Cuppet can validate this Codex model.' : 'Enter an API key first so Cuppet can validate this model.')
         : 'Cuppet sends one tiny tool-free request before saving the model ID.';
 
   return <div className="provider-auth-card custom-model-card">
