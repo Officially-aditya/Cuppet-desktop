@@ -3,6 +3,8 @@ import test from 'node:test';
 import { ExecutionKernel, executionPathForTool } from '../src/runtime/execution/execution-kernel.mjs';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 
+const definition = (name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
+
 test('ExecutionKernel classifies optimized and fallback Cuppet execution paths', async () => {
   assert.equal(executionPathForTool('tst_edit_batch'), 'optimized');
   assert.equal(executionPathForTool('tst_read'), 'optimized');
@@ -25,9 +27,33 @@ test('ExecutionKernel classifies optimized and fallback Cuppet execution paths',
   ]);
 });
 
+test('provider tool surface requires batch edits before raw mutation fallback', async () => {
+  const kernel = new ExecutionKernel();
+  const tools = [definition('workspace_write'), definition('bash'), definition('tst_edit_batch'), definition('workspace_edit'), definition('tst_read')];
+  const initial = kernel.toolsForProvider(tools, { sessionId: 'chat-1' }).map((item) => item.function.name);
+  assert.deepEqual(initial, ['tst_edit_batch', 'tst_read', 'bash']);
+
+  let called = false;
+  const blocked = await kernel.execute({ id: 'raw-1', source: 'acp-host', name: 'workspace_write', arguments: '{}' }, {
+    sessionId: 'chat-1', projectRoot: '/tmp/project', execute: async () => { called = true; return { success: true }; },
+  });
+  assert.equal(called, false);
+  assert.equal(blocked.success, false);
+  assert.match(blocked.output, /tst_edit_batch/);
+  assert.equal(kernel.snapshot('chat-1').blockedRawMutations, 1);
+
+  await kernel.execute({ id: 'batch-1', name: 'tst_edit_batch', arguments: '{}' }, {
+    sessionId: 'chat-1', projectRoot: '/tmp/project', execute: async () => ({ success: false, output: 'unsupported structure' }),
+  });
+  const fallback = kernel.toolsForProvider(tools, { sessionId: 'chat-1' }).map((item) => item.function.name);
+  assert.deepEqual(fallback, ['tst_edit_batch', 'tst_read', 'workspace_write', 'bash', 'workspace_edit']);
+  assert.equal(kernel.snapshot('chat-1').rawMutationFallback, true);
+});
+
 test('JournaledToolRuntime routes provider tool calls through the shared ExecutionKernel', async () => {
   const calls = [];
   const executionKernel = {
+    toolsForProvider(tools) { return tools; },
     async execute(call, context) {
       calls.push({ call, sessionId: context.sessionId, projectRoot: context.projectRoot });
       return context.execute(call);

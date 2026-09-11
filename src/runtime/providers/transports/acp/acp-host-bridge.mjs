@@ -66,6 +66,7 @@ export class AcpHostBridge {
     if (typeof this.#executeTool !== 'function') throw new Error('Cuppet tool bridge is unavailable for this ACP request.');
     const result = await this.#executeTool({
       id: `acp_${this.#providerId}_${String(requestId).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80)}`,
+      source: 'acp-host',
       name,
       arguments: JSON.stringify(args),
     });

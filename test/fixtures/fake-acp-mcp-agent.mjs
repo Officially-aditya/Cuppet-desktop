@@ -39,6 +39,9 @@ async function handle(message) {
     for (const name of ['cuppet_plan', 'tst_explore', 'tst_read', 'tst_edit_batch', 'tst_validate']) {
       if (!listed?.tools?.some((tool) => tool.name === name)) throw new Error(`${name} was not advertised through Cuppet MCP`);
     }
+    for (const name of ['workspace_edit', 'workspace_write']) {
+      if (listed?.tools?.some((tool) => tool.name === name)) throw new Error(`${name} should not be advertised before optimized mutation fallback`);
+    }
     const called = await mcp.request('tools/call', { name: 'cuppet_plan', arguments: { action: 'overview' } });
     if (called?.isError) throw new Error(called?.content?.[0]?.text || 'cuppet_plan failed');
     toolResult = called?.content?.map((item) => item?.text || '').join('') || '';

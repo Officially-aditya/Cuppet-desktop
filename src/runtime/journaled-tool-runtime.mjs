@@ -113,9 +113,10 @@ class ToolMutationCapture {
           });
         }
       : undefined;
+    const providerTools = this.#executionKernel.toolsForProvider?.(options?.tools, { sessionId: this.#sessionId, projectRoot: this.#projectRoot }) ?? options?.tools;
     let response;
     try {
-      response = await this.#adapter.stream(messages, { ...options, onDelta: previewDelta, onProviderEvent: async (event) => this.#onProviderEvent(event), ...(executeTool ? { executeTool } : {}) });
+      response = await this.#adapter.stream(messages, { ...options, tools: providerTools, onDelta: previewDelta, onProviderEvent: async (event) => this.#onProviderEvent(event), ...(executeTool ? { executeTool } : {}) });
     } catch (error) {
       this.#onPreview('');
       throw error;
