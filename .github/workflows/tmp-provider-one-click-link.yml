@@ -1,0 +1,46 @@
+name: Temporary provider one-click linking
+
+on:
+  push:
+    branches:
+      - ui/cuppet-branding
+    paths:
+      - .github/workflows/tmp-provider-one-click-link.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ui/cuppet-branding
+          fetch-depth: 0
+
+      - name: Apply one-click provider linking
+        run: python3 scripts/tmp-provider-one-click-link.py
+
+      - name: Verify provider linking and renderer
+        run: |
+          node --check src/main/cli-agent-status.mjs
+          node --check src/main/main.mjs
+          node --test test/cli-agent-linking.test.mjs test/acp-cli-provider.test.mjs test/antigravity-provider.test.mjs
+          npm install
+          npm run renderer:verify
+          grep -Fq "cuppet:cli-agent:connect" src/main/main.mjs
+          grep -Fq "Connect ${selected?.label || 'provider'}" src/renderer/react/SettingsModal.tsx || true
+          ! grep -Fq "cliStatus?.loginHint" src/renderer/react/SettingsModal.tsx
+          ! grep -Fq "onRefreshCli" src/renderer/react/SettingsModal.tsx
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          rm scripts/tmp-provider-one-click-link.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src test scripts/verify-renderer.mjs scripts/tmp-provider-one-click-link.py
+          git commit -m "feat: make local provider linking one click"
+          git push origin HEAD:ui/cuppet-branding
