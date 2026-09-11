@@ -4,3 +4,11 @@
 .general-settings-control .cuppet-select{width:100%}
 .general-settings-note{margin-top:12px;color:#727d89;font-size:10px;line-height:1.5}
 @media(max-width:760px){.general-settings-row{align-items:flex-start}.general-settings-control{flex:0 0 150px!important;width:150px}}
+
+.general-settings-stack{display:grid;gap:14px}
+.integrations-card .settings-card-heading{margin-bottom:2px}
+.integration-row{gap:18px}
+.integration-title-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.integration-title-row .settings-status-pill{flex:0 0 auto}
+.integration-actions{flex:0 0 auto!important;display:flex!important;align-items:center;justify-content:flex-end}
+@media(max-width:760px){.integration-row{display:grid;gap:10px}.integration-actions{justify-content:flex-start}}

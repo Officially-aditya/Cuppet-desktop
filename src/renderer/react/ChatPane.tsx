@@ -31,6 +31,7 @@ type TraceTool = {
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 type QueuedMessage = { text: string; attachments: Attachment[] };
+const BROWSERCONTROL_MENTION = '@browserControl';
 
 type Props = {
   session: Session | null;
@@ -67,6 +68,8 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
       return !query || [item.slash, item.title, item.description, ...(item.aliases ?? [])].filter(Boolean).join(' ').toLowerCase().includes(query);
     }).slice(0, 16);
   }, [commands, value]);
+  const integrationMentionQuery = currentIntegrationMentionQuery(value);
+  const browserControlMentioned = hasBrowserControlMention(value);
 
   useEffect(() => setSelected(0), [value]);
 
@@ -261,7 +264,30 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
     });
   };
 
+  const chooseBrowserControl = () => {
+    setValue((current) => insertBrowserControlMention(current));
+    requestAnimationFrame(() => {
+      const node = textarea.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(node.value.length, node.value.length);
+      resize(node);
+    });
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery)) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setValue((current) => current.replace(/@[^\s]*$/, ''));
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !hasBrowserControlMention(value)) {
+        event.preventDefault();
+        chooseBrowserControl();
+        return;
+      }
+    }
     if (palette.length) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -321,6 +347,7 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
 
       <footer className="composer-wrap react-composer-wrap">
         {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
+        {integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery) && !hasBrowserControlMention(value) && <IntegrationMentionPalette onChoose={chooseBrowserControl} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={addFiles} />
@@ -333,6 +360,13 @@ export function ChatPane({ session, draft, project, mode, running, commands, act
             onChange={(event) => { setValue(event.target.value); resize(event.target); }}
             onKeyDown={onKeyDown}
           />
+          {browserControlMentioned && (
+            <div className="composer-integration-chips" aria-label="Active integrations">
+              <button type="button" className="composer-integration-chip" title="Remove browserControl" onClick={() => setValue((current) => removeBrowserControlMention(current))}>
+                <span>{BROWSERCONTROL_MENTION}</span><span aria-hidden="true">×</span>
+              </button>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="composer-attachments" aria-label="Attached files">
               {attachments.map((attachment, index) => (
@@ -452,6 +486,18 @@ function TraceView({ trace }: { trace: TraceItem[] }) {
   );
 }
 
+function IntegrationMentionPalette({ onChoose }: { onChoose: () => void }) {
+  return (
+    <div className="command-palette react-command-palette integration-mention-palette" role="listbox" aria-label="Cuppet integrations">
+      <button type="button" className="command-option selected" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={onChoose}>
+        <div className="command-name">{BROWSERCONTROL_MENTION}</div>
+        <div className="command-description">Use your connected Chrome through browserControl for this turn.</div>
+        <div className="command-meta">integration · explicit per-turn access</div>
+      </button>
+    </div>
+  );
+}
+
 function CommandPalette({ items, selected, sessionAvailable, onChoose }: { items: CommandDefinition[]; selected: number; sessionAvailable: boolean; onChoose: (item: CommandDefinition) => void | Promise<void> }) {
   return (
     <div className="command-palette react-command-palette" role="listbox" aria-label="Cuppet commands">
@@ -514,6 +560,28 @@ async function executePaletteAction(item: CommandDefinition, sessionId: string |
     input = { mode: next };
   }
   return window.cuppet.commands.execute(sessionId, { id: item.id, input });
+}
+
+function currentIntegrationMentionQuery(value: string) {
+  const match = value.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/);
+  return match ? match[1].toLowerCase() : null;
+}
+function browserControlMentionMatches(query: string) {
+  return !query || 'browsercontrol'.startsWith(query) || 'chrome'.startsWith(query);
+}
+function hasBrowserControlMention(value: string) {
+  return /(^|\s)@browsercontrol(?=$|\s|[.,!?;:])/i.test(value);
+}
+function insertBrowserControlMention(value: string) {
+  if (hasBrowserControlMention(value)) return value;
+  const match = value.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/);
+  if (!match || match.index === undefined) return `${value}${value && !/\s$/.test(value) ? ' ' : ''}${BROWSERCONTROL_MENTION} `;
+  const prefix = value.slice(0, match.index);
+  const spacer = match[0].startsWith(' ') || match[0].startsWith('\n') || !prefix ? match[0].slice(0, 1) : ' ';
+  return `${prefix}${spacer}${BROWSERCONTROL_MENTION} `;
+}
+function removeBrowserControlMention(value: string) {
+  return value.replace(/(^|\s)@browsercontrol(?=$|\s|[.,!?;:])/ig, '$1').replace(/[ \t]{2,}/g, ' ').trimStart();
 }
 
 function currentSlashQuery(value: string) {

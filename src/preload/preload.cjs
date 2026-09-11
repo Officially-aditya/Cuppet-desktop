@@ -4,6 +4,13 @@ contextBridge.exposeInMainWorld('cuppet', {
   usage: {
     summary: () => ipcRenderer.invoke('cuppet:usage:summary'),
   },
+  integrations: {
+    browserControl: {
+      status: () => ipcRenderer.invoke('cuppet:browser-control:status'),
+      connect: () => ipcRenderer.invoke('cuppet:browser-control:connect'),
+      disconnect: () => ipcRenderer.invoke('cuppet:browser-control:disconnect'),
+    },
+  },
   cognitive: {
     status: () => ipcRenderer.invoke('cuppet:cognitive:status'),
     modeGet: (sessionId) => ipcRenderer.invoke('cuppet:session:mode:get', sessionId),

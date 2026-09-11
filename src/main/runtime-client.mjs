@@ -16,6 +16,7 @@ const SAFE_RETRY_METHODS = new Set([
   'status',
   'doctor',
   'usage.summary',
+  'integration.browser.status',
   'cognitive.status',
   'session.mode.get',
   'session.auto.get',

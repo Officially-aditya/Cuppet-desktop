@@ -7,3 +7,5 @@ dist/
 .DS_Store
 vendor/tst/*
 !vendor/tst/.gitkeep
+vendor/browsercontrol/*
+!vendor/browsercontrol/.gitkeep

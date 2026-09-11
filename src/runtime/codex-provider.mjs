@@ -128,7 +128,7 @@ async function handleServerRequest({ client, message, executeTool, signal }) {
       arguments: JSON.stringify(record(params.arguments)),
     });
     client.respond(message.id, {
-      contentItems: [{ type: 'inputText', text: String(result?.output ?? '') }],
+      contentItems: dynamicToolContentItems(result),
       success: result?.success === true,
     });
     return;
@@ -139,6 +139,22 @@ async function handleServerRequest({ client, message, executeTool, signal }) {
     return;
   }
   client.respondError(message.id, `Unsupported Codex server request: ${message.method}`, -32601);
+}
+
+function dynamicToolContentItems(result) {
+  const items = Array.isArray(result?.contentItems) ? result.contentItems : [];
+  const output = [];
+  for (const item of items.slice(0, 8)) {
+    if (item?.type === 'inputText' && typeof item.text === 'string') {
+      output.push({ type: 'inputText', text: item.text.slice(0, 128 * 1024) });
+      continue;
+    }
+    if (item?.type === 'inputImage' && typeof item.imageUrl === 'string' && item.imageUrl.length <= 32 * 1024 * 1024 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(item.imageUrl)) {
+      output.push({ type: 'inputImage', imageUrl: item.imageUrl });
+    }
+  }
+  if (!output.length) output.push({ type: 'inputText', text: String(result?.output ?? '').slice(0, 128 * 1024) });
+  return output;
 }
 
 function toDynamicTools(definitions) {

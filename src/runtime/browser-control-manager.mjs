@@ -296,7 +296,7 @@ async function probeHealth() {
 
 function browserToolName(value) {
   const base = String(value).trim().replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'tool';
-  return `browsercontrol_${base}`.slice(0, 64);
+  return base.slice(0, 64);
 }
 function schema(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { type: 'object', properties: {} };

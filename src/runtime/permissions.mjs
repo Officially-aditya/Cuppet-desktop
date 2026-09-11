@@ -121,6 +121,7 @@ export class PermissionBroker {
 
 async function immediateDecision({ action, resources, projectRoot, planMode, auto }) {
   if (['tst_explore', 'cuppet_plan', 'cuppet_memory_search'].includes(action)) return { effect: 'allow', source: 'read-only-tool' };
+  if (action === 'browser-read') return { effect: 'allow', source: 'explicit-browser-read' };
   if (action === 'bash' && resources.length === 1 && isSafeAutoBashCommand(resources[0] ?? '')) return { effect: 'allow', source: 'safe-bash' };
   if (planMode && ['edit', 'write', 'bash'].includes(action)) return { effect: 'deny', code: 'plan_mode_read_only', reason: 'Plan mode is read-only; mutating tools and arbitrary shell commands are blocked.' };
 

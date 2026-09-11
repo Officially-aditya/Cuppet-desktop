@@ -173,6 +173,17 @@ export type CodexModelCatalog = {
   }>;
 };
 
+export type BrowserControlStatus = {
+  id?: string;
+  available?: boolean;
+  running?: boolean;
+  connected?: boolean;
+  extensionConnected?: boolean;
+  toolCount?: number;
+  port?: number;
+  message?: string;
+};
+
 export type CognitiveStatus = {
   orchestratorEnabled?: boolean;
   backgroundPaused?: boolean;
@@ -227,6 +238,13 @@ export type CuppetApi = {
   health: () => Promise<any>;
   usage: {
     summary: () => Promise<TokenUsageSummary>;
+  };
+  integrations: {
+    browserControl: {
+      status: () => Promise<BrowserControlStatus>;
+      connect: () => Promise<BrowserControlStatus>;
+      disconnect: () => Promise<BrowserControlStatus>;
+    };
   };
   cognitive: {
     status: () => Promise<CognitiveStatus>;

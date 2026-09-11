@@ -282,6 +282,10 @@ export function App() {
       if (target !== session.id) await openSession(target);
       return { clear: true };
     } catch (error) {
+      if (String(error instanceof Error ? error.message : error).includes('Settings > General > Integrations')) {
+        setSettingsSection('general');
+        setModal('settings');
+      }
       showToast(error);
       return { clear: false };
     }

@@ -13,9 +13,9 @@ const MAX_BATCH_READS = 12;
 const MAX_VALIDATION_COMMANDS = 8;
 
 export class ToolRuntime {
-  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #graphCache = new Map();
+  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #graphCache = new Map();
 
-  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, emit = () => {} }) {
+  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, emit = () => {} }) {
     this.#tst = tst;
     this.#plans = planStore;
     this.#permissions = permissions;
@@ -23,17 +23,22 @@ export class ToolRuntime {
     this.#db = db;
     this.#batchEdits = batchEdits;
     this.#writer = writer;
+    this.#externalTools = externalTools;
     this.#emit = emit;
   }
 
-  definitions({ projectRoot = null } = {}) {
+  definitions({ projectRoot = null, integrations = [] } = {}) {
     const tools = [PLAN_TOOL, MEMORY_TOOL, QUESTION_TOOL];
     if (projectRoot) tools.push(EXPLORE_TOOL, READ_TOOL, BATCH_EDIT_TOOL, VALIDATE_TOOL, EDIT_TOOL, WRITE_TOOL, BASH_TOOL);
+    if (Array.isArray(integrations) && integrations.includes('browserControl')) {
+      const external = this.#externalTools?.definitions?.() ?? [];
+      if (Array.isArray(external)) tools.push(...external.slice(0, 128));
+    }
     return tools;
   }
 
-  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {} }) {
-    const definitions = this.definitions({ projectRoot });
+  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {} }) {
+    const definitions = this.definitions({ projectRoot, integrations });
     const conversation = injectToolPolicy(messages, Boolean(projectRoot), mode);
     let toolSteps = 0;
     let usage = null;
@@ -41,7 +46,7 @@ export class ToolRuntime {
     const executeTool = async (call) => {
       toolSteps += 1;
       if (toolSteps > MAX_TOOL_STEPS) throw new Error(`Tool step limit exceeded (${MAX_TOOL_STEPS}).`);
-      const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, mode, signal });
+      const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal });
       if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
       if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
       return result;
@@ -67,7 +72,7 @@ export class ToolRuntime {
     }
   }
 
-  async #executeCall({ call, sessionId, projectId, projectRoot, mode, signal }) {
+  async #executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal }) {
     const executionId = `tool_${randomUUID()}`;
     const rawArguments = typeof call.arguments === 'string' ? call.arguments : '{}';
     this.#db.createToolExecution({ id: executionId, sessionId, callId: call.id, toolName: call.name, argumentsJson: rawArguments });
@@ -76,7 +81,7 @@ export class ToolRuntime {
     let permissionSource = 'none';
     try {
       const args = parseArguments(rawArguments);
-      const result = await this.#dispatch({ name: call.name, args, executionId, sessionId, projectId, projectRoot, mode, signal, authorize: async (request) => {
+      const result = await this.#dispatch({ name: call.name, args, executionId, sessionId, projectId, projectRoot, integrations, mode, signal, authorize: async (request) => {
         const permission = await this.#permissions.authorize({ sessionId, projectRoot, planMode: mode === 'plan', signal, ...request });
         permissionSource = permission.source;
         return permission;
@@ -85,18 +90,34 @@ export class ToolRuntime {
       this.#db.finishToolExecution(executionId, { status: 'complete', output, permissionSource });
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation) });
       if (result.details?.prepared !== true) await this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? '').catch(() => undefined);
-      return { output, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
+      return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;
       const rejected = error?.name === 'PermissionDeniedError';
       const output = capText(`${rejected ? 'Permission denied' : 'Tool failed'}: ${cleanError(error)}`, MAX_TOOL_OUTPUT);
       this.#db.finishToolExecution(executionId, { status: rejected ? 'rejected' : 'error', output, permissionSource });
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: false, rejected, message: cleanError(error) });
-      return { output, success: false, paths: [], mutation: false, validation: null };
+      return { output, contentItems: [], success: false, paths: [], mutation: false, validation: null };
     }
   }
 
-  async #dispatch({ name, args, executionId, sessionId, projectRoot, mode, signal, authorize }) {
+  async #dispatch({ name, args, executionId, sessionId, projectRoot, integrations, mode, signal, authorize }) {
+    if (Array.isArray(integrations) && integrations.includes('browserControl') && this.#externalTools?.has?.(name)) {
+      const readOnly = ['browser_status', 'browser_observe', 'browser_inspect', 'browser_tabs'].includes(name);
+      await authorize({
+        action: readOnly ? 'browser-read' : 'browser-control',
+        resources: [name],
+        description: `Control Chrome through browserControl using ${name}.`,
+        fingerprintKey: stableJson(args),
+      });
+      const result = await this.#externalTools.call(name, args, { signal });
+      return {
+        output: String(result?.output ?? ''),
+        contentItems: Array.isArray(result?.contentItems) ? result.contentItems : [],
+        paths: [],
+        mutation: false,
+      };
+    }
     switch (name) {
       case 'cuppet_plan': return this.#plan(sessionId, args);
       case 'cuppet_memory_search': return this.#memory(sessionId, args);

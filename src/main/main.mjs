@@ -33,6 +33,9 @@ function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   ipcMain.handle('cuppet:health', () => request('health'));
   ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));
+  ipcMain.handle('cuppet:browser-control:status', () => request('integration.browser.status'));
+  ipcMain.handle('cuppet:browser-control:connect', () => request('integration.browser.connect'));
+  ipcMain.handle('cuppet:browser-control:disconnect', () => request('integration.browser.disconnect'));
   ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
