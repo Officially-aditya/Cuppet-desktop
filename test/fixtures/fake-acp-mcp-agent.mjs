@@ -5,6 +5,7 @@ const acp = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let mcpChild = null;
 let mcp = null;
+let mcpStderr = '';
 let toolResult = '';
 
 acp.on('line', (line) => {
@@ -29,7 +30,8 @@ async function handle(message) {
       windowsHide: true,
       shell: false,
     });
-    mcp = new JsonLineClient(mcpChild);
+    mcpChild.stderr.on('data', (chunk) => { mcpStderr = `${mcpStderr}${String(chunk)}`.slice(-4_000); });
+    mcp = new JsonLineClient(mcpChild, () => mcpStderr);
     const initialized = await mcp.request('initialize', { protocolVersion: '2026-07-28', capabilities: {}, clientInfo: { name: 'fake-acp-agent', version: '1.0.0' } });
     if (!initialized?.capabilities?.tools) throw new Error('Cuppet MCP server did not advertise tools');
     mcp.notify('notifications/initialized', {});
@@ -53,8 +55,10 @@ class JsonLineClient {
   #child;
   #pending = new Map();
   #nextId = 1;
-  constructor(child) {
+  #stderr;
+  constructor(child, stderr) {
     this.#child = child;
+    this.#stderr = stderr;
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on('line', (line) => {
       if (!line.trim()) return;
@@ -66,7 +70,7 @@ class JsonLineClient {
       else pending.resolve(message.result ?? {});
     });
     child.once('error', (error) => this.#fail(error));
-    child.once('exit', (code) => this.#fail(new Error(`MCP child exited ${code}`)));
+    child.once('exit', (code) => this.#fail(new Error(`MCP child exited ${code}${this.#stderr() ? `: ${this.#stderr().trim()}` : ''}`)));
   }
   request(method, params) {
     const id = this.#nextId++;

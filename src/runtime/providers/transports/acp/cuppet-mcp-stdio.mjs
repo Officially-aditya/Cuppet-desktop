@@ -1,6 +1,61 @@
 import { createConnection } from 'node:net';
 import { createInterface } from 'node:readline';
 
+class BridgeClient {
+  #socket;
+  #pending = new Map();
+  #nextId = 1;
+  #ready;
+
+  constructor(path, authToken) {
+    this.#socket = createConnection(path);
+    this.#socket.setEncoding('utf8');
+    let buffer = '';
+    this.#socket.on('data', (chunk) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf('\n');
+        if (newline < 0) break;
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+        const pending = this.#pending.get(message?.id);
+        if (!pending) continue;
+        this.#pending.delete(message.id);
+        if (message.error) pending.reject(new Error(message.error.message ?? 'Cuppet MCP bridge error'));
+        else pending.resolve(message.result ?? {});
+      }
+    });
+    this.#socket.on('error', (error) => this.#failAll(error));
+    this.#socket.on('close', () => this.#failAll(new Error('Cuppet MCP bridge closed.')));
+    this.#ready = new Promise((resolveReady, rejectReady) => {
+      this.#socket.once('connect', () => {
+        this.request('hello', {}, { token: authToken }).then(resolveReady, rejectReady);
+      });
+      this.#socket.once('error', rejectReady);
+    });
+  }
+
+  ready() { return this.#ready; }
+
+  request(method, params = {}, extra = {}) {
+    const id = this.#nextId++;
+    return new Promise((resolveRequest, rejectRequest) => {
+      this.#pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
+      this.#socket.write(`${JSON.stringify({ id, method, params, ...extra })}\n`);
+    });
+  }
+
+  close() { try { this.#socket.end(); } catch {} }
+
+  #failAll(error) {
+    for (const pending of this.#pending.values()) pending.reject(error instanceof Error ? error : new Error(String(error)));
+    this.#pending.clear();
+  }
+}
+
 const endpoint = String(process.env.CUPPET_MCP_BRIDGE_ENDPOINT ?? '');
 const token = String(process.env.CUPPET_MCP_BRIDGE_TOKEN ?? '');
 if (!endpoint || !token) {
@@ -62,61 +117,6 @@ async function handleMcpMessage(message) {
     return;
   }
   write({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: `Unsupported MCP method: ${method}` } });
-}
-
-class BridgeClient {
-  #socket;
-  #pending = new Map();
-  #nextId = 1;
-  #ready;
-
-  constructor(path, authToken) {
-    this.#socket = createConnection(path);
-    this.#socket.setEncoding('utf8');
-    let buffer = '';
-    this.#socket.on('data', (chunk) => {
-      buffer += chunk;
-      for (;;) {
-        const newline = buffer.indexOf('\n');
-        if (newline < 0) break;
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        let message;
-        try { message = JSON.parse(line); } catch { continue; }
-        const pending = this.#pending.get(message?.id);
-        if (!pending) continue;
-        this.#pending.delete(message.id);
-        if (message.error) pending.reject(new Error(message.error.message ?? 'Cuppet MCP bridge error'));
-        else pending.resolve(message.result ?? {});
-      }
-    });
-    this.#socket.on('error', (error) => this.#failAll(error));
-    this.#socket.on('close', () => this.#failAll(new Error('Cuppet MCP bridge closed.')));
-    this.#ready = new Promise((resolveReady, rejectReady) => {
-      this.#socket.once('connect', () => {
-        this.request('hello', {}, { token: authToken }).then(resolveReady, rejectReady);
-      });
-      this.#socket.once('error', rejectReady);
-    });
-  }
-
-  ready() { return this.#ready; }
-
-  request(method, params = {}, extra = {}) {
-    const id = this.#nextId++;
-    return new Promise((resolveRequest, rejectRequest) => {
-      this.#pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-      this.#socket.write(`${JSON.stringify({ id, method, params, ...extra })}\n`);
-    });
-  }
-
-  close() { try { this.#socket.end(); } catch {} }
-
-  #failAll(error) {
-    for (const pending of this.#pending.values()) pending.reject(error instanceof Error ? error : new Error(String(error)));
-    this.#pending.clear();
-  }
 }
 
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }

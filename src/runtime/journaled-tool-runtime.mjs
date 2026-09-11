@@ -13,6 +13,8 @@ export class JournaledToolRuntime {
   }
 
   definitions(options) { return this.#inner.definitions(options); }
+  forgetSession(sessionId) { return this.#providerRuntimes.forget?.(sessionId) ?? Promise.resolve(false); }
+  close() { return this.#providerRuntimes.close?.() ?? Promise.resolve(); }
 
   async run(options) {
     const messageId = latestAssistantMessageID(this.#db, options.sessionId);
