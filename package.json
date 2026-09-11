@@ -10,6 +10,7 @@
     "cuppet": "src/cli/main.mjs"
   },
   "scripts": {
+    "prebuild:renderer": "npm run mac:prepare-icon",
     "build:renderer": "vite build",
     "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
     "start": "npm run build:renderer && electron .",
