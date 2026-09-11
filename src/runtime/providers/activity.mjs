@@ -43,6 +43,28 @@ export function providerActivity(type, fields = {}) {
   return Object.freeze(activity);
 }
 
+export function activityFromToolRuntimeEvent(event) {
+  const source = record(event);
+  const type = text(source.type);
+  if (type !== 'tool.started' && type !== 'tool.finished') return null;
+  const callId = text(source.callId || source.executionId);
+  if (!callId) return null;
+  const base = {
+    callId,
+    tool: text(source.tool) || 'agent-tool',
+    ...(text(source.executionId) ? { executionId: text(source.executionId) } : {}),
+    ...(text(source.argumentsJson) ? { argumentsJson: text(source.argumentsJson) } : {}),
+    ...(text(source.message) ? { details: text(source.message) } : {}),
+    ...(Array.isArray(source.paths) ? { paths: source.paths.slice(0, 64).map(String) } : {}),
+    ...(source.mutation !== undefined ? { mutation: Boolean(source.mutation) } : {}),
+  };
+  if (type === 'tool.started') return providerActivity('activity.tool.opened', base);
+  return providerActivity('activity.tool.closed', {
+    ...base,
+    status: source.success === false ? (source.rejected ? 'cancelled' : 'error') : 'success',
+  });
+}
+
 export function activityFromLegacyProviderEvent(event) {
   const source = record(event);
   const type = text(source.type);
