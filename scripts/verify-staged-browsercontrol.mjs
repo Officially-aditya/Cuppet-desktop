@@ -3,6 +3,7 @@ import { access, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { BrowserControlManager } from '../src/runtime/browser-control-manager.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const staged = join(root, 'vendor', 'browsercontrol');
@@ -31,4 +32,15 @@ await new Promise((resolvePromise, reject) => {
   child.once('error', reject);
   child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`browserControl runtime syntax check failed: ${stderr.trim()}`)));
 });
-console.log(`browserControl bundled runtime verified: ${runtime}`);
+
+const manager = new BrowserControlManager({ entry: runtime });
+try {
+  const running = await manager.connect();
+  assert.equal(running.available, true, running.message || 'staged browserControl runtime was not discovered');
+  assert.equal(running.running, true, running.message || 'staged browserControl runtime did not start');
+  assert.ok(running.toolCount > 0, 'staged browserControl MCP tool list is empty');
+} finally {
+  await manager.close().catch(() => undefined);
+}
+
+console.log(`browserControl bundled runtime verified and started: ${runtime}`);
