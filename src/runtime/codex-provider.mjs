@@ -105,17 +105,20 @@ export class CodexSubscriptionProvider {
       threadId = String(record(startedThread).thread?.id ?? '');
       if (!threadId) throw new Error('Codex app-server did not return a thread ID.');
 
+      // Emit Cuppet's turn state before issuing turn/start. Some app-server
+      // implementations can deliver notifications immediately after accepting
+      // the request, so emitting afterward can invert the Activity ordering.
+      await notifyObserver(onActivity, providerActivity('activity.status', {
+        phase: 'turn',
+        status: 'running',
+        transport: 'codex-app-server',
+      }));
       const turn = await client.request('turn/start', {
         threadId,
         input: [{ type: 'text', text: serializeConversation(messages) }],
       });
       turnId = String(record(turn).turn?.id ?? '');
       if (!turnId) throw new Error('Codex app-server did not return a turn ID.');
-      await notifyObserver(onActivity, providerActivity('activity.status', {
-        phase: 'turn',
-        status: 'running',
-        transport: 'codex-app-server',
-      }));
 
       abortListener = () => {
         if (threadId && turnId) client.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
