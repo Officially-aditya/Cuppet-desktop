@@ -1,0 +1,35 @@
+name: Provider V2 Selected
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/provider-architecture-v2
+    paths:
+      - .github/provider-v2-test-trigger
+
+concurrency:
+  group: provider-v2-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  provider-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm install --ignore-scripts
+      - name: Run provider architecture and ACP regressions
+        run: >-
+          node --test
+          test/provider-architecture-v2.test.mjs
+          test/provider-acp-runtime-v2.test.mjs
+          test/acp-cli-provider.test.mjs
+          test/reasoning-segmentation.test.mjs
+          test/provider-model-catalog.test.mjs
