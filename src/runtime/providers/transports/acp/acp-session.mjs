@@ -115,9 +115,9 @@ export class AcpSessionRuntime {
       this.#touchActiveTurn();
       if (activity.type === 'activity.text.delta') {
         output += activity.text;
-        await hooks.onText?.(activity.text);
+        await notifyObserver(hooks.onText, activity.text);
       }
-      await hooks.onActivity?.(activity);
+      await notifyObserver(hooks.onActivity, activity);
     };
     this.#rpc.setNotificationHandler(async (message) => {
       if (message.method !== 'session/update' && message.method !== 'session/notification') return;
@@ -183,10 +183,10 @@ export class AcpSessionRuntime {
     turn.activityTimer = setTimeout(() => {
       if (this.#activeTurn !== turn || turn.cancelled || turn.stalled) return;
       turn.stalled = true;
-      void Promise.resolve(turn.hooks.onActivity?.(providerActivity('activity.warning', {
+      void notifyObserver(turn.hooks.onActivity, providerActivity('activity.warning', {
         code: 'provider_stalled',
         message: `${this.#descriptor.label} stopped producing ACP activity.`,
-      }))).catch(() => undefined);
+      }));
       this.#rpc.notify('session/cancel', { sessionId: turn.sessionId });
       this.#armTermination(turn);
     }, this.#inactivityTimeoutMs);
@@ -275,6 +275,7 @@ function providerEnvironment(providerId) {
 }
 function serializeConversation(messages) { const value=(Array.isArray(messages)?messages:[]).map((m)=>`[${String(m?.role??'user').toUpperCase()}]\n${typeof m?.content==='string'?m.content:JSON.stringify(m?.content??'')}`).join('\n\n'); const bytes=Buffer.from(value,'utf8'); return bytes.length<=MAX_PROMPT_BYTES?value:`${bytes.subarray(bytes.length-MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before ACP transport.]`; }
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
+async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
 function enrichProviderError(descriptor,error,stderr){const message=cleanError(error); const detail=cleanError(stderr).trim(); if(/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`); return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);}
 function cleanError(error){return error instanceof Error?error.message:String(error??'');}
 function stalledError(descriptor){const error=new Error(`${descriptor.label} stopped responding via ACP. The provider/model may be unavailable, rate-limited, out of quota, or the agent process may have stalled.`); error.code='ACP_STALLED'; return error;}
