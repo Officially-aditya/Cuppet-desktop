@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 
-const [provider, auth, factory, toolRuntime, journaled, settings, providerSettingsHost, presets, pkg, stageCodex, appServer] = await Promise.all([
+const [provider, auth, factory, defaultRegistry, codexBackend, toolRuntime, journaled, settings, providerSettingsHost, presets, pkg, stageCodex, appServer] = await Promise.all([
   read('src/runtime/codex-provider.mjs'),
   read('src/main/codex-auth.mjs'),
   read('src/runtime/provider-factory.mjs'),
+  read('src/runtime/providers/default-registry.mjs'),
+  read('src/runtime/providers/backends/codex.mjs'),
   read('src/runtime/tool-runtime.mjs'),
   read('src/runtime/journaled-tool-runtime.mjs'),
   read('src/renderer/react/SettingsModal.tsx'),
@@ -28,7 +30,11 @@ assert.match(auth, /type: 'chatgpt'/);
 assert.match(auth, /account\/login\/completed/);
 assert.match(auth, /shell\.openExternal/);
 assert.doesNotMatch(auth, /auth\.json|access[_-]?token|refresh[_-]?token/i);
-assert.match(factory, /CodexSubscriptionProvider/);
+assert.match(factory, /createProviderRuntime\(configuration\)/, 'provider factory does not delegate runtime construction to the backend registry');
+assert.doesNotMatch(factory, /CodexSubscriptionProvider|providerID\s*===\s*['"]codex['"]/, 'provider factory regained Codex-specific construction logic');
+assert.match(defaultRegistry, /codexBackendDefinition/, 'backend registry does not register the Codex driver');
+assert.match(codexBackend, /new CodexSubscriptionProvider\(configuration\)/, 'Codex backend driver does not own Codex runtime construction');
+assert.match(codexBackend, /client\.request\('model\/list'/, 'Codex backend driver does not own official app-server model discovery');
 assert.match(toolRuntime, /executeTool/);
 assert.match(journaled, /executeTool/);
 assert.match(settings, /Continue with ChatGPT/);
@@ -54,6 +60,6 @@ assert.ok(packageJson.build.extraResources.some((item) => item.from === 'vendor/
 
 const tested = spawnSync(process.execPath, ['--test', 'test/codex-app-server.test.mjs', 'test/codex-provider.test.mjs'], { stdio: 'inherit' });
 if (tested.status !== 0) process.exit(tested.status ?? 1);
-console.log('E2 Codex subscription provider verification passed with complete app-server package guards and host-owned credential boundaries.');
+console.log('E2 Codex subscription provider verification passed with backend-registry runtime authority, complete app-server package guards, and host-owned credential boundaries.');
 
 function read(path) { return readFile(path, 'utf8'); }
