@@ -1,9 +1,9 @@
 import { ipcMain, shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 import { parseCodexAccount } from '../runtime/codex-account.mjs';
+import { listCodexModels as listCodexModelsFromDriver } from '../runtime/providers/backends/codex.mjs';
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_CODEX_MODELS = 256;
 let activeLogin = null;
 let lastMessage = '';
 
@@ -40,58 +40,10 @@ async function codexAuthStatus() {
   }
 }
 
-export async function listCodexModels() {
-  const launch = await resolveCodexAppServerCommand({ resourcesPath: process.resourcesPath });
-  if (!launch) return { available: false, loggedIn: false, models: [], defaultModel: null };
-  try {
-    return await withClient(launch, async (client) => {
-      const account = parseCodexAccount(await client.request('account/read', {}));
-      if (!account.loggedIn) return { available: true, loggedIn: false, models: [], defaultModel: null };
-
-      const models = [];
-      let cursor = null;
-      do {
-        const response = record(await client.request('model/list', {
-          cursor,
-          limit: 100,
-          includeHidden: false,
-        }));
-        for (const entry of Array.isArray(response.data) ? response.data : []) {
-          const item = record(entry);
-          if (item.hidden === true) continue;
-          const id = safeText(item.model ?? item.id, 240);
-          if (!id) continue;
-          const efforts = Array.isArray(item.supportedReasoningEfforts)
-            ? item.supportedReasoningEfforts.flatMap((value) => {
-                const effort = safeText(record(value).reasoningEffort, 80);
-                return effort ? [effort] : [];
-              })
-            : [];
-          const defaultEffort = safeText(item.defaultReasoningEffort, 80) || null;
-          models.push({
-            id,
-            label: safeText(item.displayName ?? item.id ?? id, 160) || id,
-            description: safeText(item.description, 600),
-            isDefault: item.isDefault === true,
-            efforts,
-            defaultEffort,
-          });
-          if (models.length >= MAX_CODEX_MODELS) break;
-        }
-        cursor = models.length < MAX_CODEX_MODELS ? safeText(response.nextCursor, 512) || null : null;
-      } while (cursor);
-
-      const deduped = [...new Map(models.map((model) => [model.id, model])).values()];
-      return {
-        available: true,
-        loggedIn: true,
-        models: deduped,
-        defaultModel: deduped.find((model) => model.isDefault)?.id ?? null,
-      };
-    });
-  } catch (error) {
-    return { available: true, loggedIn: true, models: [], defaultModel: null, error: cleanError(error) };
-  }
+// Compatibility export for callers that still ask the auth host for models.
+// The provider driver is the single model-discovery implementation.
+export function listCodexModels() {
+  return listCodexModelsFromDriver({ resourcesPath: process.resourcesPath });
 }
 
 async function startCodexLogin() {
