@@ -10,6 +10,7 @@ import {
 } from './behavior-preferences';
 import {
   hydrateTranscript,
+  mergeTranscriptState,
   orderedTranscriptItems,
   reduceTranscriptEvent,
   type TranscriptState,
@@ -63,6 +64,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const [queuedBySession, setQueuedBySession] = useState<Record<string, QueuedMessage[]>>({});
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const [transcript, setTranscript] = useState<TranscriptState>({});
+  const transcriptSession = useRef<string | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -90,10 +92,19 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (fileInput.current) fileInput.current.value = '';
   }, [session?.id, draft?.projectId]);
 
-  // Canonical transcript state is hydrated from the runtime DB. Live events use
-  // the same reducer, so reload and streaming are two views of one state model.
+  // Canonical transcript state is hydrated from the runtime DB. Refreshes for
+  // the active session merge with newer live events so an IPC race cannot
+  // erase a tool/reasoning update that arrived just before session.get().
   useEffect(() => {
-    setTranscript(hydrateTranscript(session?.activities ?? []));
+    const sessionId = session?.id ?? null;
+    const durable = hydrateTranscript(session?.activities ?? []);
+    setTranscript((current) => {
+      if (transcriptSession.current !== sessionId) {
+        transcriptSession.current = sessionId;
+        return durable;
+      }
+      return mergeTranscriptState(current, durable);
+    });
   }, [session?.id, session?.activities]);
 
   useEffect(() => {
