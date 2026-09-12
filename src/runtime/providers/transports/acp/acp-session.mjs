@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
+import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
 import { AcpProcess } from './acp-process.mjs';
 import { AcpRpcChannel } from './acp-rpc.mjs';
@@ -9,7 +9,7 @@ import { capabilitiesFromAcpSession, withAcpConfigOptions } from './acp-capabili
 import { AcpActivityNormalizer } from './acp-activity.mjs';
 import { AcpTurnCompletionGate } from './acp-turn-completion.mjs';
 
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 120_000;
@@ -229,7 +229,25 @@ export class AcpSessionRuntime {
     this.#session = await this.#rpc.request('session/new', params, REQUEST_TIMEOUT_MS);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
+    await this.#applyRequiredSessionSettings();
     await this.#applyConfiguredSettings(selection);
+  }
+
+  async #applyRequiredSessionSettings() {
+    for (const raw of Array.isArray(this.#descriptor?.requiredSessionSettings) ? this.#descriptor.requiredSessionSettings : []) {
+      const requirement = record(raw);
+      const envName = text(requirement.valueFromEnv);
+      const requested = envName ? text(this.#environment?.[envName]) : text(requirement.value);
+      const selector = { id: text(requirement.id), category: text(requirement.category) };
+      const label = text(requirement.label) || selector.category || selector.id || 'required session setting';
+      if (!requested) throw new Error(`${this.#descriptor.label} is missing the required ${label} value.`);
+      const setting = findRuntimeSetting(this.#capabilities, selector);
+      await this.#applySelectSetting(setting, requested, label);
+      const applied = findRuntimeSetting(this.#capabilities, { id: setting?.id, category: selector.category });
+      if (applied?.value !== requested) {
+        throw new Error(`${this.#descriptor.label} did not confirm required ${label} '${requested}'. Refusing to run without the provider isolation setting.`);
+      }
+    }
   }
 
   async #applyConfiguredSettings(selection) {
