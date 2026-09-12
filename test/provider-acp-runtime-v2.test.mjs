@@ -10,6 +10,7 @@ import { OpenCodeServerProvider } from '../src/runtime/providers/backends/openco
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
+const lateContinuationFixture = fileURLToPath(new URL('./fixtures/fake-acp-late-continuation-agent.mjs', import.meta.url));
 const acpDescriptor = () => localCliDescriptor('claude-code');
 
 test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', async () => {
@@ -43,6 +44,33 @@ test('ACP session startup retries one transient internal error without dropping 
     await runtime.start();
     const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Inspect after retry.' }] });
     assert.equal(result.text, 'Done.');
+    assert.equal(runtime.snapshot().state, 'ready');
+  } finally { await runtime.close(); }
+});
+
+test('Copilot descriptor keeps legitimate ACP continuation after premature end_turn', async () => {
+  const descriptor = {
+    ...localCliDescriptor('github-copilot'),
+    turnCompletion: {
+      afterEndTurn: {
+        toolInputModes: ['async'],
+        firstActivityWaitMs: 150,
+        toolActivityWaitMs: 150,
+        quietPeriodMs: 15,
+        maxWaitMs: 500,
+      },
+    },
+  };
+  const runtime = new AcpSessionRuntime({
+    descriptor,
+    configuration: { cliCommand: process.execPath, cliArgs: [lateContinuationFixture] },
+    projectRoot: tmpdir(),
+  });
+  try {
+    await runtime.start();
+    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Wait for attached work.' }] });
+    assert.equal(result.stopReason, 'end_turn');
+    assert.equal(result.text, 'WAITING FINAL_DONE');
     assert.equal(runtime.snapshot().state, 'ready');
   } finally { await runtime.close(); }
 });
