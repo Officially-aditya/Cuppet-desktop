@@ -16,8 +16,9 @@ rl.on('line', (line) => {
     return;
   }
   if (message.method === 'session/prompt') {
-    if (!Array.isArray(message.params?.content) || message.params.prompt) {
-      write({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'expected Kiro content field' } });
+    if (!Array.isArray(message.params?.prompt) || message.params.content) {
+      // Mirror the live Kiro failure mode closely: a legacy `content` request does
+      // not produce a useful completion and would eventually hit Cuppet liveness.
       return;
     }
     write({ jsonrpc: '2.0', method: 'session/notification', params: { sessionId: 'kiro-session', update: { sessionUpdate: 'AgentMessageChunk', content: { type: 'text', text: 'Kiro ready.' } } } });
