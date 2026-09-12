@@ -6,7 +6,6 @@ import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
-import { OpenCodeServerProvider } from '../src/runtime/providers/backends/opencode.mjs';
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
@@ -128,8 +127,8 @@ test('generic ACP adapter delegates ACP host operations through Cuppet', async (
   assert.equal(result.usage.totalTokens, 12);
 });
 
-test('provider factory uses shared ACP only for providers whose transport is ACP', () => {
-  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof OpenCodeServerProvider);
+test('provider factory uses the shared ACP adapter for every ACP descriptor', () => {
+  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'grok-build' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'github-copilot' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'mistral-vibe' }) instanceof AcpProviderAdapter);
