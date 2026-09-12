@@ -55,6 +55,7 @@ export class JournaledToolRuntime {
     const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
     let benchmarkResult = null;
     let benchmarkError = null;
+    const previewPolicy = providerPreviewPolicy(options.adapter);
     const adapter = this.#providerRuntimes.adapterFor({
       sessionId: options.sessionId,
       projectRoot: options.projectRoot,
@@ -70,6 +71,7 @@ export class JournaledToolRuntime {
       messageId,
       projectRoot: options.projectRoot,
       adapter,
+      previewPolicy,
       executionKernel: this.#executionKernel,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
@@ -166,9 +168,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #onProviderEvent;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, onProviderEvent = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity; this.#onProviderEvent = onProviderEvent;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #onProviderEvent;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, onProviderEvent = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity; this.#onProviderEvent = onProviderEvent;
   }
 
   async stream(messages, options) {
@@ -179,7 +181,7 @@ class ToolMutationCapture {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
       if (!text) return;
       pendingText += text;
-      this.#onPreview(pendingText);
+      if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
     };
     const flushReasoning = async () => {
       const segment = pendingText.trim();
@@ -297,6 +299,15 @@ function normalizeBenchmark(value) {
   if (!value) return null;
   const source = value && typeof value === 'object' ? value : {};
   return { policy: source.policy === 'raw-baseline' ? 'raw-baseline' : 'optimized' };
+}
+function providerPreviewPolicy(adapter) {
+  try {
+    const managed = typeof adapter?.cuppetManagedRuntime === 'function' ? adapter.cuppetManagedRuntime() : null;
+    const preview = managed?.descriptor?.textStream?.preview;
+    return typeof preview === 'string' && preview.trim() ? preview.trim().toLowerCase() : 'live';
+  } catch {
+    return 'live';
+  }
 }
 function latestAssistantMessageID(db, sessionId) {
   try {
