@@ -39,6 +39,38 @@ export function hydrateTranscript(rows: MessageActivity[] = []): TranscriptState
   return state;
 }
 
+export function mergeTranscriptState(live: TranscriptState, durable: TranscriptState): TranscriptState {
+  const next: TranscriptState = { ...live };
+  for (const [messageId, persisted] of Object.entries(durable)) {
+    const current = live[messageId];
+    if (!current) {
+      next[messageId] = persisted;
+      continue;
+    }
+    const byId = new Map<string, TranscriptItem>();
+    for (const item of persisted.items) byId.set(item.id, item);
+    for (const item of current.items) {
+      const durableItem = byId.get(item.id);
+      if (!durableItem) {
+        byId.set(item.id, item);
+        continue;
+      }
+      if (item.type === 'reasoning' && durableItem.type === 'reasoning') {
+        const liveEnd = item.endSequence ?? item.sequence;
+        const durableEnd = durableItem.endSequence ?? durableItem.sequence;
+        if (liveEnd > durableEnd || item.text.length > durableItem.text.length) byId.set(item.id, item);
+      } else if (item.type === 'tool' && durableItem.type === 'tool') {
+        if (item.status !== 'running' && durableItem.status === 'running') byId.set(item.id, item);
+      }
+    }
+    next[messageId] = {
+      items: boundItems(orderedTranscriptItems([...byId.values()])),
+      preview: current.preview,
+    };
+  }
+  return next;
+}
+
 export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEvent): TranscriptState {
   if (!event || typeof event !== 'object') return state;
   const messageId = text(event.messageId);
