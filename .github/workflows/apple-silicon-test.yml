@@ -41,6 +41,7 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       CUPPET_AUTHENTICATED_OPENCODE_COMMIT: ${{ inputs.authenticated_opencode_commit }}
       CUPPET_AUTHENTICATED_OPENCODE_PASSED: ${{ inputs.authenticated_opencode_passed }}
+      CUPPET_PROVIDER_V2_RELEASE_MODE: ${{ github.event_name == 'push' && github.ref_name == 'feat/provider-architecture-v2' && 'unauthenticated-rc' || 'authenticated' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -65,6 +66,11 @@ jobs:
           ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
           path: .e2/browsercontrol
           persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
 
       - name: Verify Apple Silicon runner
         run: |
@@ -212,11 +218,18 @@ jobs:
           test -s "$DMG"
           hdiutil imageinfo "$DMG" >/dev/null
           shasum -a 256 "$ZIP" "$DMG" > dist/SHA256SUMS.txt
+
+          if [[ "$CUPPET_PROVIDER_V2_RELEASE_MODE" == "unauthenticated-rc" ]]; then
+            AUTH_NOTE="Authenticated OpenCode smoke: NOT YET RUN for this commit. This is an explicit prerelease candidate and must not be treated as fully accepted."
+          else
+            AUTH_NOTE="Provider V2 authenticated OpenCode smoke attested for this exact commit before packaging."
+          fi
+
           cat > dist/TESTING.txt <<EOF
           Cuppet Apple Silicon test build
 
           Source commit: ${GITHUB_SHA}
-          Provider V2 authenticated OpenCode smoke attested for this exact commit before packaging.
+          ${AUTH_NOTE}
 
           This build is ARM64 and ad-hoc signed for testing, but it is NOT Developer ID signed or notarized yet.
           If macOS blocks the first launch, right-click the app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
@@ -256,13 +269,18 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub prerelease assets
-        if: ${{ github.ref_name != 'feat/provider-architecture-v2' || (github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true) }}
+        if: ${{ github.ref_name != 'feat/provider-architecture-v2' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true) }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           TAG="apple-silicon-test-${GITHUB_SHA:0:12}"
           TITLE="Cuppet Apple Silicon Test ${GITHUB_SHA:0:12}"
+          if [[ "$CUPPET_PROVIDER_V2_RELEASE_MODE" == "unauthenticated-rc" ]]; then
+            NOTES="Provider V2 prerelease candidate. WARNING: the authenticated OpenCode provider-turn smoke has NOT yet been run for this commit. Built on native arm64 macOS and passed renderer plus packaged runtime acceptance; use this build for testing, not as a fully accepted provider release."
+          else
+            NOTES="Ad-hoc-signed, non-notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS after an authenticated OpenCode provider-turn smoke was attested for this exact commit, and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime."
+          fi
           gh release create "$TAG" \
             dist/*-apple-silicon-test.dmg \
             dist/*-apple-silicon-test.zip \
@@ -271,5 +289,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Ad-hoc-signed, non-notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS after an authenticated OpenCode provider-turn smoke was attested for this exact commit, and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
+            --notes "$NOTES" \
             --prerelease
