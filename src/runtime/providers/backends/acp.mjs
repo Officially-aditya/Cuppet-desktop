@@ -1,6 +1,7 @@
 import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
 import { AcpSessionRuntime } from '../transports/acp/acp-session.mjs';
 import { CuppetMcpToolSession } from '../transports/acp/cuppet-mcp-tool-session.mjs';
+import { AcpTextStreamAssembler } from '../transports/acp/acp-text-stream.mjs';
 import { activityToLegacyEvent } from '../runtime-manager-legacy.mjs';
 
 export class AcpProviderAdapter {
@@ -35,18 +36,24 @@ export class AcpProviderAdapter {
       ? await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options })
       : null;
     const activityState = new Map();
+    const textStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
     try {
       await runtime.start({ mcpServers: toolSession ? [toolSession.descriptor()] : [] });
-      return await runtime.runTurn({ messages }, {
+      const result = await runtime.runTurn({ messages }, {
         signal: options.signal,
         executeTool: options.executeTool,
         requestAgentPermission: options.requestAgentPermission,
-        onText: options.onDelta,
+        onText: async (rawDelta) => {
+          const delta = textStream.push(rawDelta);
+          if (delta) await options.onDelta?.(delta);
+        },
         onActivity: async (activity) => {
           const legacy = activityToLegacyEvent(activity, activityState);
           if (legacy) await options.onProviderEvent?.(legacy);
         },
       });
+      textStream.flush();
+      return { ...result, text: textStream.text || result.text };
     } finally {
       await runtime.close();
       await toolSession?.close().catch(() => undefined);
