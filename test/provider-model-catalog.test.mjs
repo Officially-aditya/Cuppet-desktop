@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { catalogFromCodexModels, fetchProviderModelCatalog, parseApiCatalog, discoverAntigravityModels } from '../src/main/provider-model-catalog.mjs';
-import { acpModelCatalogFromSession } from '../src/runtime/acp-cli-provider.mjs';
+import { capabilitiesFromAcpSession } from '../src/runtime/providers/transports/acp/acp-capabilities.mjs';
 import { catalogFromAcpCapabilities, discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
 
 const acpConfigFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
@@ -82,15 +82,17 @@ test('Codex candidate refresh uses the same generic catalog and model-dependent 
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'high']);
 });
 
-test('legacy ACP parser preserves exact current Auto value during compatibility period', () => {
-  const catalog = acpModelCatalogFromSession({
+test('shared ACP session parser preserves exact current Auto without inventing a default', () => {
+  const capabilities = capabilitiesFromAcpSession({
     configOptions: [{
       id: 'model', category: 'model', type: 'select', currentValue: 'auto',
       options: [{ value: 'auto', name: 'Auto' }, { value: 'provider/model-x', name: 'Model X' }],
     }],
   });
+  const catalog = catalogFromAcpCapabilities('opencode', capabilities);
   assert.equal(catalog.configId, 'model');
-  assert.equal(catalog.defaultModel, 'auto');
+  assert.equal(catalog.currentModel, 'auto');
+  assert.equal(catalog.defaultModel, null);
   assert.deepEqual(catalog.models.map((item) => item.id), ['auto', 'provider/model-x']);
 });
 
@@ -183,8 +185,8 @@ test('Antigravity model command parser uses advertised slugs without choosing a 
   assert.equal(catalog.defaultModel, null);
 });
 
-test('legacy ACP compatibility parser exposes provider reasoning levels without guessing', () => {
-  const catalog = acpModelCatalogFromSession({
+test('shared ACP session parser exposes provider reasoning levels without guessing', () => {
+  const capabilities = capabilitiesFromAcpSession({
     configOptions: [
       { id: 'model', category: 'model', type: 'select', currentValue: 'provider/model-x', options: [{ value: 'provider/model-x', name: 'Model X' }] },
       { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'medium', options: [
@@ -192,6 +194,7 @@ test('legacy ACP compatibility parser exposes provider reasoning levels without 
       ] },
     ],
   });
+  const catalog = catalogFromAcpCapabilities('opencode', capabilities);
   assert.equal(catalog.reasoning.configId, 'effort');
   assert.equal(catalog.reasoning.currentValue, 'medium');
   assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['minimal', 'medium', 'xhigh']);
