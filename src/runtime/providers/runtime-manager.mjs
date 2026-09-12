@@ -117,7 +117,8 @@ export class ProviderRuntimeManager {
     let abortToolSession = null;
     const legacyState = new Map();
     try {
-      if (Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
+      const allowExternalMcp = descriptor?.mcpToolBridge === true;
+      if (allowExternalMcp && Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
         toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
         await toolSession.start();
         toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
@@ -209,6 +210,7 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
     command: text(source.cliCommand || descriptor?.command),
     cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : Array.isArray(descriptor?.args) ? descriptor.args.map(String) : [],
     sessionMeta: stableValue(descriptor?.sessionMeta),
+    mcpToolBridge: descriptor?.mcpToolBridge === true,
     model: text(primary.modelID || source.model || source.modelID),
     effort: text(source.primaryEffort || primary.variant),
     runtimeSettings: stableValue(source.runtimeSettings),
