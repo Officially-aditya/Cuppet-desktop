@@ -21,6 +21,7 @@ export class AcpSessionRuntime {
   #process;
   #rpc;
   #hostBridge;
+  #environment;
   #initialized = null;
   #session = null;
   #capabilities = null;
@@ -40,7 +41,8 @@ export class AcpSessionRuntime {
     const args = Array.isArray(configuration.cliArgs) && configuration.cliArgs.length
       ? configuration.cliArgs.map((value) => String(value))
       : [...descriptor.args];
-    this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: providerEnvironment(descriptor.id), label: descriptor.label });
+    this.#environment = providerEnvironment(descriptor, configuration);
+    this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: this.#environment, label: descriptor.label });
     this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label });
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     this.#rpc.setRequestHandler((message) => {
@@ -61,7 +63,7 @@ export class AcpSessionRuntime {
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, REQUEST_TIMEOUT_MS);
-      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized);
+      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment);
       await this.#openSession(mcpServers);
       this.#state = 'ready';
       return this.snapshot();
@@ -243,13 +245,22 @@ export class AcpSessionRuntime {
   }
 }
 
-async function authenticateIfNeeded(rpc, descriptor, initialized) {
-  if (descriptor.id !== 'grok-build') return;
-  const methods = new Set((Array.isArray(initialized?.authMethods) ? initialized.authMethods : []).map((item) => String(item?.id ?? '')));
-  if (!methods.size) return;
-  const methodId = process.env.XAI_API_KEY && methods.has('xai.api_key') ? 'xai.api_key' : methods.has('cached_token') ? 'cached_token' : null;
+async function authenticateIfNeeded(rpc, descriptor, initialized, environment) {
+  const policy = record(descriptor?.authentication);
+  const preferred = Array.isArray(policy.methods) ? policy.methods : [];
+  if (!preferred.length) return;
+  const advertised = new Set((Array.isArray(initialized?.authMethods) ? initialized.authMethods : []).map((item) => text(item?.id)).filter(Boolean));
+  if (!advertised.size) return;
+  const selected = preferred.find((raw) => {
+    const item = record(raw);
+    const id = text(item.id);
+    const requiredEnv = text(item.requiresEnv);
+    return id && advertised.has(id) && (!requiredEnv || text(environment?.[requiredEnv]));
+  });
+  const methodId = text(record(selected).id);
   if (!methodId) throw new Error(descriptor.loginHint);
-  await rpc.request('authenticate', { methodId, _meta: { headless: true } }, REQUEST_TIMEOUT_MS);
+  const meta = record(policy.meta);
+  await rpc.request('authenticate', { methodId, ...(Object.keys(meta).length ? { _meta: meta } : {}) }, REQUEST_TIMEOUT_MS);
 }
 
 function normalizeMcpServers(value) {
@@ -267,11 +278,19 @@ function normalizeMcpServers(value) {
     return [{ name, command, args, env }];
   });
 }
-function providerEnvironment(providerId) {
-  if (providerId !== 'opencode') return { ...process.env };
-  let inherited = {};
-  try { const parsed = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) inherited = parsed; } catch {}
-  return { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...inherited, permission: { '*': 'ask' } }) };
+function providerEnvironment(descriptor, configuration) {
+  let environment = { ...process.env };
+  if (typeof descriptor?.environment === 'function') {
+    const transformed = descriptor.environment(environment, configuration);
+    if (transformed && typeof transformed === 'object' && !Array.isArray(transformed)) environment = { ...transformed };
+  }
+  const overrides = record(configuration?.cliEnv);
+  for (const [key, value] of Object.entries(overrides).slice(0, 128)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (value === undefined || value === null) delete environment[key];
+    else environment[key] = String(value).slice(0, 32_768);
+  }
+  return environment;
 }
 function serializeConversation(messages) { const value=(Array.isArray(messages)?messages:[]).map((m)=>`[${String(m?.role??'user').toUpperCase()}]\n${typeof m?.content==='string'?m.content:JSON.stringify(m?.content??'')}`).join('\n\n'); const bytes=Buffer.from(value,'utf8'); return bytes.length<=MAX_PROMPT_BYTES?value:`${bytes.subarray(bytes.length-MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before ACP transport.]`; }
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
