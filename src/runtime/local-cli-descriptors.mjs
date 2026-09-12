@@ -70,6 +70,19 @@ const DESCRIPTORS = Object.freeze({
   kiro: descriptor({
     id: 'kiro', label: 'Kiro', transport: 'acp', command: 'kiro-cli', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_KIRO_BIN',
     loginHint: 'Run `kiro-cli` in Terminal once and complete sign-in, then retry.',
+    // Kiro currently exposes model selection through the legacy ACP session/set_model
+    // surface and model-dependent reasoning through its command extension. Keep those
+    // extension method names descriptor-owned so shared ACP transport stays identity-free.
+    sessionCommandSettings: [
+      {
+        id: 'effort',
+        label: 'Effort',
+        category: 'thought_level',
+        command: 'effort',
+        optionsMethod: '_kiro.dev/commands/options',
+        executeMethod: '_kiro.dev/commands/execute',
+      },
+    ],
     // Kiro follows the standard ACP PromptRequest `prompt` field. Do not override
     // the shared protocol shape here; older documentation used `content`, but the
     // live agent rejects/hangs on that legacy field.
@@ -99,6 +112,7 @@ function descriptor(value) {
     ...(value.textStream ? { textStream: freezeValue(cloneValue(value.textStream)) } : {}),
     ...(value.turnCompletion ? { turnCompletion: freezeValue(cloneValue(value.turnCompletion)) } : {}),
     ...(value.requiredSessionSettings ? { requiredSessionSettings: freezeValue(cloneValue(value.requiredSessionSettings)) } : {}),
+    ...(value.sessionCommandSettings ? { sessionCommandSettings: freezeValue(cloneValue(value.sessionCommandSettings)) } : {}),
   };
   return Object.freeze(copy);
 }
@@ -113,6 +127,7 @@ function cloneDescriptor(item) {
     ...(item.textStream ? { textStream: cloneValue(item.textStream) } : {}),
     ...(item.turnCompletion ? { turnCompletion: cloneValue(item.turnCompletion) } : {}),
     ...(item.requiredSessionSettings ? { requiredSessionSettings: cloneValue(item.requiredSessionSettings) } : {}),
+    ...(item.sessionCommandSettings ? { sessionCommandSettings: cloneValue(item.sessionCommandSettings) } : {}),
   };
 }
 function cloneValue(value) {
