@@ -42,10 +42,11 @@ export function classifyProviderError(error, context = {}) {
 
   if (status === 401 || status === 403 || matches(lower, [
     'providerautherror', 'missing provider credentials', 'missing provider credential', 'missing api key',
-    'unauthorized', 'unauthenticated', 'authentication failed', 'authentication error', 'invalid api key',
-    'invalid_api_key', 'invalid token', 'token expired', 'expired token', 'session expired', 'login expired',
-    'not logged in', 'not authenticated', 'sign in required', 'signin required', 'login required',
-    'credentials expired', 'oauth expired', 'access denied', 'forbidden',
+    'unauthorized', 'unauthenticated', 'authentication failed', 'authentication error', 'authentication required',
+    'provider authentication required', 'invalid api key', 'invalid_api_key', 'invalid token', 'token expired',
+    'expired token', 'session expired', 'login expired', 'not logged in', 'not authenticated',
+    'sign in required', 'signin required', 'login required', 'credentials expired', 'oauth expired',
+    'access denied', 'forbidden',
   ])) {
     const accountProvider = ACCOUNT_PROVIDERS.has(providerID);
     return failure(
@@ -61,7 +62,8 @@ export function classifyProviderError(error, context = {}) {
   if (matches(lower, [
     'model not found', 'model_not_found', 'unknown model', 'invalid model', 'unsupported model',
     'model is not available', 'model unavailable', 'does not have access to model', 'model access',
-  ])) return failure('model_unavailable', 'Model unavailable', `${provider} cannot use the selected model for this account. Choose another model in Settings → Platform and retry.`, 'change_model', raw, providerID, provider);
+    'no provider available',
+  ])) return failure('model_unavailable', 'Model unavailable', `${provider} cannot use the selected model/provider for this account. Choose another model in Settings → Platform and retry.`, 'change_model', raw, providerID, provider);
 
   if (matches(lower, [
     'enoent', 'cli was not found', 'command not found', 'could not find the cli', 'executable not found',
