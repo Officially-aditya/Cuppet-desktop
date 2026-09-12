@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,11 +12,15 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const executable = resolve(process.argv[2] || defaultExecutable(root));
 const resources = resourcesDirectory(executable);
 const runtimeEntry = join(resources, 'app.asar', 'src', 'runtime', 'main.mjs');
+const unpackedMcpEntry = join(resources, 'app.asar.unpacked', 'src', 'runtime', 'providers', 'transports', 'acp', 'cuppet-mcp-stdio.mjs');
 const dataDir = await mkdtemp(join(tmpdir(), 'cuppet-e1-packaged-'));
 
 try {
   await access(executable);
   await access(join(resources, 'app.asar'));
+  await access(unpackedMcpEntry);
+
+  await smokePackagedMcpHelper(executable, unpackedMcpEntry);
 
   const first = await startRuntime(executable, runtimeEntry, dataDir);
   assert.equal(first.ready.type, 'runtime.ready');
@@ -31,7 +36,7 @@ try {
   assert.ok(sessions.some((session) => session.id === created.id), 'packaged runtime must restore durable conversations from the same data directory');
   await second.stop();
 
-  console.log(`E1 packaged runtime smoke passed: ${executable}`);
+  console.log(`E1 packaged runtime + MCP bridge smoke passed: ${executable}`);
 } finally {
   await rm(dataDir, { recursive: true, force: true });
 }
@@ -45,6 +50,117 @@ function defaultExecutable(projectRoot) {
 function resourcesDirectory(executablePath) {
   if (process.platform === 'darwin') return resolve(dirname(executablePath), '..', 'Resources');
   return join(dirname(executablePath), 'resources');
+}
+
+async function smokePackagedMcpHelper(execPath, mcpEntry) {
+  const endpoint = process.platform === 'win32'
+    ? `\\\\.\\pipe\\cuppet-packaged-mcp-${process.pid}-${randomUUID()}`
+    : join(tmpdir(), `cuppet-packaged-mcp-${process.pid}-${randomUUID()}.sock`);
+  const token = randomUUID().replaceAll('-', '');
+  if (process.platform !== 'win32') await rm(endpoint, { force: true }).catch(() => undefined);
+
+  const bridgeServer = createServer((socket) => {
+    socket.setEncoding('utf8');
+    let buffer = '';
+    let authenticated = false;
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf('\n');
+        if (newline < 0) break;
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        let message;
+        try { message = JSON.parse(line); } catch { socket.destroy(new Error('invalid bridge JSON')); return; }
+        if (!authenticated) {
+          assert.equal(message.method, 'hello');
+          assert.equal(message.token, token);
+          authenticated = true;
+          socket.write(`${JSON.stringify({ id: message.id, result: { ok: true } })}\n`);
+          continue;
+        }
+        if (message.method === 'tools/list') {
+          socket.write(`${JSON.stringify({ id: message.id, result: { tools: [{ name: 'cuppet_packaged_smoke', description: 'Packaged MCP smoke tool', inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } }] } })}\n`);
+          continue;
+        }
+        if (message.method === 'tools/call') {
+          assert.equal(message.params?.name, 'cuppet_packaged_smoke');
+          assert.equal(message.params?.arguments?.value, 'ping');
+          socket.write(`${JSON.stringify({ id: message.id, result: { content: [{ type: 'text', text: 'packaged-bridge-ok' }], isError: false } })}\n`);
+          continue;
+        }
+        socket.write(`${JSON.stringify({ id: message.id, error: { message: `unexpected bridge method ${String(message.method ?? '')}` } })}\n`);
+      }
+    });
+  });
+  await new Promise((resolveListen, rejectListen) => {
+    bridgeServer.once('error', rejectListen);
+    bridgeServer.listen(endpoint, () => {
+      bridgeServer.off('error', rejectListen);
+      resolveListen();
+    });
+  });
+
+  const child = spawn(execPath, [mcpEntry], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      CUPPET_MCP_BRIDGE_ENDPOINT: endpoint,
+      CUPPET_MCP_BRIDGE_TOKEN: token,
+      CUPPET_MCP_SESSION_ID: 'packaged-smoke',
+      CUPPET_MCP_BACKEND_ID: 'opencode',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  child.stderr.setEncoding('utf8');
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-8_000); });
+
+  const pending = new Map();
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.on('line', (line) => {
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    if (message.error) request.reject(new Error(message.error.message || 'MCP request failed'));
+    else request.resolve(message.result);
+  });
+  const exitPromise = new Promise((resolveExit, rejectExit) => {
+    child.once('error', rejectExit);
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`packaged MCP helper exited (${code ?? 'null'}${signal ? `, ${signal}` : ''})${stderr ? `: ${stderr}` : ''}`));
+    });
+  });
+  let nextId = 1;
+  const request = (method, params = {}) => {
+    const id = nextId++;
+    return withTimeout(new Promise((resolveRequest, rejectRequest) => {
+      pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+    }), 10_000, () => new Error(`packaged MCP helper timed out: ${method}${stderr ? `: ${stderr}` : ''}`));
+  };
+
+  try {
+    const initialized = await request('initialize', { protocolVersion: '2026-07-28', capabilities: {}, clientInfo: { name: 'cuppet-packaged-smoke', version: '1' } });
+    assert.equal(initialized?.serverInfo?.name, 'cuppet-runtime');
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+    const listed = await request('tools/list');
+    assert.equal(listed?.tools?.[0]?.name, 'cuppet_packaged_smoke');
+    const called = await request('tools/call', { name: 'cuppet_packaged_smoke', arguments: { value: 'ping' } });
+    assert.equal(called?.isError, false);
+    assert.equal(called?.content?.[0]?.text, 'packaged-bridge-ok');
+    child.stdin.end();
+    await withTimeout(exitPromise, 8_000, () => new Error(`packaged MCP helper did not exit cleanly${stderr ? `: ${stderr}` : ''}`));
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM');
+    await new Promise((resolveClose) => bridgeServer.close(() => resolveClose())).catch(() => undefined);
+    if (process.platform !== 'win32') await rm(endpoint, { force: true }).catch(() => undefined);
+  }
 }
 
 async function startRuntime(execPath, entry, persistentDir) {
