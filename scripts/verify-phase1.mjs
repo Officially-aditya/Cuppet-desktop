@@ -32,7 +32,10 @@ const chat = await readFile(join(root, 'src/renderer/react/ChatPane.tsx'), 'utf8
 if (!/dist-renderer.*index\.html/s.test(host)) throw new Error('Electron does not load the Vite renderer');
 if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) throw new Error('React conversation send surface missing');
 
-await run(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000']);
+// Let the Node test reporter flush normally. --test-force-exit can terminate the
+// reporter while stdout is still draining and produce a false EPIPE failure even
+// after every test has passed. The parent timeout still bounds leaked handles.
+await run(process.execPath, ['--test', '--test-timeout=120000'], { timeoutMs: 180000 });
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
@@ -55,4 +58,27 @@ async function walk(dir) {
   }
   return output;
 }
-function run(command, args) { return new Promise((resolve, reject) => { const child = spawn(command, args, { cwd: root, stdio: 'inherit' }); child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`))); child.on('error', reject); }); }
+function run(command, args, { timeoutMs = 0 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
+    let settled = false;
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      reject(new Error(`${command} exceeded ${timeoutMs}ms`));
+    }, timeoutMs) : undefined;
+    timer?.unref?.();
+    const finish = (fn) => {
+      if (settled) return false;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+      return true;
+    };
+    child.on('exit', (code, signal) => finish(() => code === 0
+      ? resolve()
+      : reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`))));
+    child.on('error', (error) => finish(() => reject(error)));
+  });
+}
