@@ -103,7 +103,10 @@ assert.match(modelPicker, /providerPreset\?\.models/, 'provider-family model cho
 assert.match(modelPicker, /settings\?\.customModels/, 'validated provider custom models are not merged into the picker');
 assert.match(modelPicker, /Custom model · validated in Provider settings/, 'custom models are not identified in the picker');
 assert.match(modelPicker, /providerLabel\} · Models/, 'model picker no longer identifies its provider model list');
-assert.match(modelPicker, /codex-default/, 'Codex automatic default selection is not preserved');
+assert.match(modelPicker, /presetDefaultID/, 'provider-owned automatic default selection is not preserved');
+assert.match(modelPicker, /advertised\.defaultModel/, 'model picker does not resolve advertised provider defaults');
+assert.match(modelPicker, /modelDependentSettings === true/, 'model picker does not use generic model-dependent capability refresh');
+assert.doesNotMatch(modelPicker, /providerID === 'codex'|advertised\.source === 'codex'|advertised\.source === 'acp'/, 'model picker leaks provider or transport-specific capability checks');
 assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
 assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
 assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
@@ -197,5 +200,4 @@ const deadControllers = [
   'src/renderer/sidebar-resize.js','src/renderer/undo.js',
 ];
 for (const path of deadControllers) await assert.rejects(access(join(root, path)), { code: 'ENOENT' }, `legacy DOM controller still exists: ${path}`);
-
 console.log('Renderer gate passed: React/Vite/TypeScript owns the desktop surface, provider custom model IDs are tested with one tiny real request and persisted per provider before entering the picker, the model picker is a single staged model-to-effort menu, running tool activity pulses only in the transcript, the send action becomes pause while running, exact provider token usage is rendered in Settings, chat rename uses a custom React surface, the app-wide Cuppet control skin replaces native macOS form chrome, the macOS sidebar has a persisted collapse control with 14px item text, Remote is pairing-or-active-session only, D1 exact search navigation is preserved, and legacy DOM controllers are absent.');
