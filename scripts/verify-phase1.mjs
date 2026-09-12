@@ -32,7 +32,7 @@ const chat = await readFile(join(root, 'src/renderer/react/ChatPane.tsx'), 'utf8
 if (!/dist-renderer.*index\.html/s.test(host)) throw new Error('Electron does not load the Vite renderer');
 if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) throw new Error('React conversation send surface missing');
 
-await run(process.execPath, ['--test']);
+await run(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000']);
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
