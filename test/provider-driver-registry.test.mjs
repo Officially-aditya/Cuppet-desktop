@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { localCliDescriptor, localCliProviderIDs } from '../src/runtime/local-cli-descriptors.mjs';
 import { ProviderCapabilitySnapshotStore } from '../src/runtime/providers/capability-snapshot.mjs';
 import { buildProviderBackendRegistry } from '../src/runtime/providers/default-registry.mjs';
 
@@ -14,6 +15,16 @@ test('built-in provider registry owns transport resolution', () => {
   assert.equal(registry.requireResolved({ providerID: 'some-openai-compatible-provider' }).id, 'openai-compatible');
   assert.equal(registry.operationSupport('opencode').discoverCapabilities, true);
   assert.equal(registry.operationSupport('antigravity').discoverCapabilities, true);
+});
+
+test('every ACP descriptor creates the same shared ACP provider adapter', () => {
+  const registry = buildProviderBackendRegistry();
+  const acpProviderIDs = localCliProviderIDs().filter((id) => localCliDescriptor(id)?.transport === 'acp');
+  assert.ok(acpProviderIDs.length >= 2);
+  for (const providerID of acpProviderIDs) {
+    const runtime = registry.createConfiguredRuntime({ providerID });
+    assert.equal(runtime.constructor.name, 'AcpProviderAdapter', `${providerID} escaped the universal ACP runtime`);
+  }
 });
 
 test('capability snapshot retains last known good models on transient discovery failure', async () => {
