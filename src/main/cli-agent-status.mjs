@@ -4,6 +4,7 @@ import {
   loginSpec,
   updateSpec,
 } from './local-provider-operations.mjs';
+import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 
 /**
  * Compatibility facade for the current Electron settings IPC.
@@ -12,11 +13,13 @@ import {
  * only need detection/probing do not accidentally install or authenticate.
  */
 export async function cliAgentStatus(providerID, options = {}) {
-  return localProviderOperations(providerID, options).status();
+  const status = await localProviderOperations(providerID, options).status();
+  return reconcileOpenCodeStatus(providerID, status, options);
 }
 
 export async function cliAgentConnect(providerID, options = {}) {
-  return localProviderOperations(providerID, options).connect();
+  await localProviderOperations(providerID, options).connect();
+  return cliAgentStatus(providerID, options);
 }
 
 export async function cliAgentDetect(providerID, options = {}) {
@@ -24,7 +27,20 @@ export async function cliAgentDetect(providerID, options = {}) {
 }
 
 export async function cliAgentProbe(providerID, options = {}) {
-  return localProviderOperations(providerID, options).probe();
+  const state = await localProviderOperations(providerID, options).probe();
+  if (providerID !== 'opencode' || !state.installed) return state;
+  const status = await reconcileOpenCodeStatus(providerID, {
+    ...state,
+    action: state.connected ? 'ready' : 'connect',
+    message: '',
+  }, options);
+  return {
+    ...state,
+    connected: status.connected,
+    available: status.available,
+    probe: status.connected ? 'provider' : 'not-authenticated',
+    ...(status.probeError ? { probeError: status.probeError } : {}),
+  };
 }
 
 export async function cliAgentInstall(providerID, options = {}) {
@@ -36,7 +52,44 @@ export async function cliAgentUpdate(providerID, options = {}) {
 }
 
 export async function cliAgentAuthenticate(providerID, options = {}) {
-  return localProviderOperations(providerID, options).authenticate();
+  const state = await localProviderOperations(providerID, options).authenticate();
+  if (providerID !== 'opencode') return state;
+  return cliAgentProbe(providerID, options);
+}
+
+async function reconcileOpenCodeStatus(providerID, status, options) {
+  if (providerID !== 'opencode' || status?.installed !== true) return status;
+  const executable = status?.installation?.executable || 'opencode';
+  let auth;
+  let probeError = null;
+  try {
+    auth = await probeOpenCodeAuthentication(executable, { runImpl: options.runImpl });
+  } catch (error) {
+    auth = { connected: false, source: 'probe-error' };
+    probeError = cleanError(error);
+  }
+
+  const connected = auth.connected === true;
+  const version = status.version ?? null;
+  return {
+    ...status,
+    connected,
+    available: connected,
+    action: connected ? 'ready' : 'connect',
+    probe: connected ? 'provider' : 'not-authenticated',
+    ...(probeError ? { probeError } : {}),
+    message: connected
+      ? `OpenCode is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
+      : probeError
+        ? `OpenCode is installed, but Cuppet could not verify provider credentials: ${probeError}`
+        : 'OpenCode is installed, but no authenticated provider credentials were found. Run `opencode auth login` once, then reconnect.',
+  };
+}
+
+function cleanError(error) {
+  return String(error instanceof Error ? error.message : error ?? '')
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
+    .slice(0, 500);
 }
 
 export { installSpec, loginSpec, updateSpec };
