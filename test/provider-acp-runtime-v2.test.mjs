@@ -26,6 +26,26 @@ test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', as
   } finally { await runtime.close(); }
 });
 
+test('ACP session startup retries one transient internal error without dropping configuration', async () => {
+  const runtime = new AcpSessionRuntime({
+    descriptor: localCliDescriptor('opencode'),
+    configuration: {
+      cliCommand: process.execPath,
+      cliArgs: [configFixture],
+      cliEnv: { FAKE_ACP_SESSION_NEW_INTERNAL_ONCE: '1' },
+      primary: { modelID: 'provider/model-b' },
+      primaryEffort: 'max',
+    },
+    projectRoot: tmpdir(),
+  });
+  try {
+    await runtime.start();
+    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'Inspect after retry.' }] });
+    assert.equal(result.text, 'Done.');
+    assert.equal(runtime.snapshot().state, 'ready');
+  } finally { await runtime.close(); }
+});
+
 test('ACP v2 observer callbacks cannot fail an otherwise successful provider turn', async () => {
   const runtime = new AcpSessionRuntime({
     descriptor: localCliDescriptor('opencode'),
