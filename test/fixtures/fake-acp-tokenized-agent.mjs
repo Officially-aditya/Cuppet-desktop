@@ -3,7 +3,13 @@ import { createInterface } from 'node:readline';
 const rl = createInterface({ input: process.stdin });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
-const chunks = [
+const thoughtChunks = [
+  'how', '\n\n', 'to', '\n\n', 'pull', '\n\n', 'this', '\n\n', 'together', '\n\n', 'effectively', '\n\n', '!',
+  '\n\n', '**Clarifying tracker status**', '\n\n',
+  'I', '\n\n', 'need', '\n\n', 'to', '\n\n', 'check', '.',
+];
+
+const messageChunks = [
   'messy', '\n\n', ',', '\n\n', 'but', '\n\n', 'I', '\n\n', '’ll', '\n\n', 'figure', '\n\n', 'it', '\n\n', 'out', '\n\n', '!',
   '\n\n', '**Inspecting sitemap for clarity**', '\n\n',
   'I', '\n\n', 'feel', '\n\n', 'like', '\n\n', 'I', '\n\n', 'need', '\n\n', 'to', '\n\n', 'provide', '\n\n', 'a', '\n\n', 'direct', '\n\n', 'answer', '.',
@@ -20,7 +26,17 @@ rl.on('line', (line) => {
     return;
   }
   if (message.method === 'session/prompt') {
-    for (const text of chunks) {
+    for (const text of thoughtChunks) {
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'copilot-tokenized-session',
+          update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } },
+        },
+      });
+    }
+    for (const text of messageChunks) {
       write({
         jsonrpc: '2.0',
         method: 'session/update',

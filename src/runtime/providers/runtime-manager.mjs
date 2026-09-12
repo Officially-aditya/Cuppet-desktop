@@ -159,6 +159,26 @@ export class ProviderRuntimeManager {
 
       const legacyState = new Map();
       const textStream = new AcpTextStreamAssembler(descriptor.textStream);
+      const activityTextStream = new AcpTextStreamAssembler(descriptor.textStream);
+      let reasoningStream = usesTokenizedWhitespace(descriptor.textStream)
+        ? new AcpTextStreamAssembler(descriptor.textStream)
+        : null;
+      const forwardActivity = async (activity) => {
+        if (typeof options.onActivity === 'function') {
+          await options.onActivity(activity);
+          return;
+        }
+        // Compatibility for callers that have not moved to Cuppet Activity yet.
+        const legacy = activityToLegacyEvent(activity, legacyState);
+        if (legacy) await options.onProviderEvent?.(legacy);
+      };
+      const flushReasoning = async () => {
+        if (!reasoningStream) return;
+        reasoningStream.flush();
+        const reasoning = reasoningStream.text;
+        reasoningStream = new AcpTextStreamAssembler(descriptor.textStream);
+        if (reasoning) await forwardActivity({ type: 'activity.reasoning.delta', text: reasoning });
+      };
       const allowExternalMcp = descriptor?.mcpToolBridge === true;
       if (allowExternalMcp && Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
         toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
@@ -193,16 +213,23 @@ export class ProviderRuntimeManager {
           if (delta) await options.onDelta?.(delta);
         },
         onActivity: async (activity) => {
-          if (typeof options.onActivity === 'function') {
-            await options.onActivity(activity);
+          if (reasoningStream && activity?.type === 'activity.reasoning.delta') {
+            reasoningStream.push(activity.text);
             return;
           }
-          // Compatibility for callers that have not moved to Cuppet Activity yet.
-          const legacy = activityToLegacyEvent(activity, legacyState);
-          if (legacy) await options.onProviderEvent?.(legacy);
+          await flushReasoning();
+          if (activity?.type === 'activity.text.delta') {
+            const delta = activityTextStream.push(activity.text);
+            if (!delta) return;
+            await forwardActivity({ ...activity, text: delta });
+            return;
+          }
+          await forwardActivity(activity);
         },
       });
+      await flushReasoning();
       textStream.flush();
+      activityTextStream.flush();
       const normalizedResult = { ...result, text: textStream.text || result?.text || '' };
       this.#completeManagedTurn({ bridgePlan, entry });
       bridgePlan = null;
@@ -440,6 +467,7 @@ function selectionRequiresFreshProcess(previous, next) {
   const clearsEffort = Boolean(previousEffort && !nextEffort);
   return Boolean(clearsModel || clearsEffort);
 }
+function usesTokenizedWhitespace(value) { return text(record(value).framing).toLowerCase() === 'tokenized-whitespace'; }
 function resolvedProjectRoot(projectRoot) { return resolve(projectRoot || tmpdir()); }
 function providerId(configuration) {
   const source = record(configuration);

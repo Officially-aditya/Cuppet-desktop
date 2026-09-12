@@ -37,6 +37,21 @@ export class AcpProviderAdapter {
       : null;
     const activityState = new Map();
     const textStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
+    const activityTextStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
+    let reasoningStream = usesTokenizedWhitespace(this.#descriptor.textStream)
+      ? new AcpTextStreamAssembler(this.#descriptor.textStream)
+      : null;
+    const forwardActivity = async (activity) => {
+      const legacy = activityToLegacyEvent(activity, activityState);
+      if (legacy) await options.onProviderEvent?.(legacy);
+    };
+    const flushReasoning = async () => {
+      if (!reasoningStream) return;
+      reasoningStream.flush();
+      const reasoning = reasoningStream.text;
+      reasoningStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
+      if (reasoning) await forwardActivity({ type: 'activity.reasoning.delta', text: reasoning });
+    };
     try {
       await runtime.start({ mcpServers: toolSession ? [toolSession.descriptor()] : [] });
       const result = await runtime.runTurn({ messages }, {
@@ -48,11 +63,23 @@ export class AcpProviderAdapter {
           if (delta) await options.onDelta?.(delta);
         },
         onActivity: async (activity) => {
-          const legacy = activityToLegacyEvent(activity, activityState);
-          if (legacy) await options.onProviderEvent?.(legacy);
+          if (reasoningStream && activity?.type === 'activity.reasoning.delta') {
+            reasoningStream.push(activity.text);
+            return;
+          }
+          await flushReasoning();
+          if (activity?.type === 'activity.text.delta') {
+            const delta = activityTextStream.push(activity.text);
+            if (!delta) return;
+            await forwardActivity({ ...activity, text: delta });
+            return;
+          }
+          await forwardActivity(activity);
         },
       });
+      await flushReasoning();
       textStream.flush();
+      activityTextStream.flush();
       return { ...result, text: textStream.text || result.text };
     } finally {
       await runtime.close();
@@ -68,4 +95,5 @@ async function maybeToolSession({ backendId, sessionId, options }) {
   session.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
   return session;
 }
+function usesTokenizedWhitespace(value) { return String(value?.framing ?? '').trim().toLowerCase() === 'tokenized-whitespace'; }
 function text(value) { return typeof value === 'string' ? value.trim().toLowerCase() : ''; }
