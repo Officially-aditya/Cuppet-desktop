@@ -1,60 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverAntigravityModels, parseAntigravityModelOutput } from '../src/main/provider-model-catalog.mjs';
+import { fileURLToPath } from 'node:url';
+import { antigravityBackendDefinition } from '../src/runtime/providers/backends/antigravity.mjs';
+import { antigravityReleaseAsset } from '../src/runtime/providers/backends/antigravity-install.mjs';
 
-test('Antigravity parser accepts current tab-separated model rows', () => {
-  const models = parseAntigravityModelOutput([
-    'Fetching available models...',
-    'gemini-3.8-flash-high\tGemini 3.8 Flash (High)',
-    'gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)',
-    'claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)',
-  ].join('\n'));
+const fixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+const installation = Object.freeze({ command: process.execPath, harnessPath: fixture, args: [fixture], version: 'test', source: 'override' });
 
-  assert.deepEqual(models, [
-    { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
-    { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
-    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)' },
-  ]);
-});
-
-test('Antigravity parser keeps the older aligned-column output compatible', () => {
-  const models = parseAntigravityModelOutput([
-    'gemini-3.7-flash-high     Gemini 3.7 Flash (High)',
-    'claude-opus-4-6           Claude Opus 4.6 (Thinking)',
-  ].join('\n'));
-
-  assert.deepEqual(models, [
-    { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6 (Thinking)' },
-  ]);
-});
-
-test('Antigravity parser accepts legacy bare slugs without admitting progress text', () => {
-  const models = parseAntigravityModelOutput([
-    'Fetching available models...',
-    'gemini-3.6-flash-low',
-    'gpt-oss-120b-medium',
-  ].join('\n'));
-
-  assert.deepEqual(models, [
-    { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' },
-    { id: 'gpt-oss-120b-medium', label: 'gpt-oss-120b-medium' },
-  ]);
-});
-
-test('Antigravity discovery invokes the authoritative models subcommand', async () => {
-  const calls = [];
-  const catalog = await discoverAntigravityModels({ command: 'agy', envOverride: 'CUPPET_ANTIGRAVITY_BIN' }, {
-    runImpl: async (command, args, timeout) => {
-      calls.push({ command, args, timeout });
-      return { stdout: 'gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n', stderr: '' };
-    },
+test('Antigravity model discovery comes from the provider ACP session catalog', async () => {
+  const backend = antigravityBackendDefinition();
+  const catalog = await backend.operations.discoverCapabilities({
+    configuration: { providerID: 'antigravity' },
+    options: { resolveInstallation: async () => installation },
   });
-
+  assert.equal(catalog.source, 'acp');
   assert.equal(catalog.available, true);
-  assert.deepEqual(catalog.models, [{ id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' }]);
-  assert.equal(catalog.defaultModel, null);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, 'agy');
-  assert.deepEqual(calls[0].args, ['models']);
+  assert.deepEqual(catalog.models.map((model) => model.id), ['provider/model-a', 'provider/model-b']);
+  assert.equal(catalog.currentModel, 'provider/model-a');
+  assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.ok(catalog.settings.some((setting) => setting.id === 'model'));
+});
+
+test('managed Antigravity macOS release is pinned to Google ACP 1.1.1 with verified metadata', () => {
+  const release = antigravityReleaseAsset('darwin', 'arm64');
+  assert.ok(release);
+  assert.match(release.url, /^https:\/\/dl\.google\.com\/agy-extensions\/releases\/macos\//);
+  assert.equal(release.sha256, 'fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189');
+  assert.equal(release.archiveBytes, 316_014_828);
+  assert.equal(release.executable.name, 'agy_acp_server.par');
+  assert.equal(release.harness.name, 'localharness_external');
 });
