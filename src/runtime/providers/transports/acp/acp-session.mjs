@@ -136,10 +136,11 @@ export class AcpSessionRuntime {
     signal?.addEventListener?.('abort', onAbort, { once: true });
     this.#armActivityWatchdog(turn);
     try {
-      const prompt = await this.#rpc.request('session/prompt', {
-        sessionId,
-        prompt: [{ type: 'text', text: serializeConversation(input.messages ?? []) }],
-      }, PROMPT_TIMEOUT_MS);
+      const prompt = await this.#rpc.request(
+        'session/prompt',
+        sessionPromptParams(this.#descriptor, sessionId, serializeConversation(input.messages ?? [])),
+        PROMPT_TIMEOUT_MS,
+      );
       if (turn.stalled) throw stalledError(this.#descriptor);
       if (signal?.aborted || turn.cancelled) throw abortError();
       return { text: output, toolCalls: [], usage: normalizeUsage(prompt?.usage ?? prompt?._meta?.usage), stopReason: text(prompt?.stopReason) || null };
@@ -291,6 +292,11 @@ function providerEnvironment(descriptor, configuration) {
     else environment[key] = String(value).slice(0, 32_768);
   }
   return environment;
+}
+function sessionPromptParams(descriptor, sessionId, textValue) {
+  const content = [{ type: 'text', text: textValue }];
+  const parameter = descriptor?.promptParameter === 'content' ? 'content' : 'prompt';
+  return { sessionId, [parameter]: content };
 }
 function serializeConversation(messages) { const value=(Array.isArray(messages)?messages:[]).map((m)=>`[${String(m?.role??'user').toUpperCase()}]\n${typeof m?.content==='string'?m.content:JSON.stringify(m?.content??'')}`).join('\n\n'); const bytes=Buffer.from(value,'utf8'); return bytes.length<=MAX_PROMPT_BYTES?value:`${bytes.subarray(bytes.length-MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before ACP transport.]`; }
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
