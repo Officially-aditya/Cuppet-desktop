@@ -126,7 +126,7 @@ function appendReasoning(items: TranscriptItem[], segment: string, sequence: num
   if (last?.type === 'reasoning' && reasoningCanMerge(last, sequence)) {
     const textValue = mergeReasoningText(last.text, segment);
     if (textValue === last.text) return items;
-    return boundItems(items.map((item) => item.id === last.id ? {
+    return boundItems(items.map((item) => item.id === last.id && item.type === 'reasoning' ? {
       ...item,
       text: textValue,
       endSequence: sequence ?? item.endSequence ?? item.sequence,
