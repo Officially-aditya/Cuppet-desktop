@@ -7,6 +7,19 @@ export {
   reasoningRuntimeSetting,
   settingAdvertisesValue,
 } from './capabilities.mjs';
+export {
+  ProviderCapabilitySnapshotStore,
+  modelCatalogFromCapabilitySnapshot,
+  normalizeCapabilitySnapshot,
+} from './capability-snapshot.mjs';
+export {
+  buildProviderBackendRegistry,
+  createProviderRuntime,
+  discoverProviderCapabilitySnapshot,
+  providerBackendRegistry,
+  providerCapabilitySnapshots,
+  resolveProviderBackend,
+} from './default-registry.mjs';
 export { normalizeProviderConnection, patchProviderConnection } from './connection.mjs';
 export { activityFromLegacyProviderEvent, isProviderActivity, providerActivity } from './activity.mjs';
 export { ConversationBridge, fingerprintConversationMessages } from './conversation-bridge.mjs';
