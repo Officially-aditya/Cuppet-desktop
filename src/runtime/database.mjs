@@ -40,6 +40,16 @@ export class ConversationDatabase {
         updated_at INTEGER NOT NULL,
         UNIQUE(session_id, sequence)
       );
+      CREATE TABLE IF NOT EXISTS message_activities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        activity_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(message_id, sequence)
+      );
       CREATE TABLE IF NOT EXISTS tool_executions (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -55,6 +65,8 @@ export class ConversationDatabase {
       CREATE INDEX IF NOT EXISTS idx_projects_last_opened ON projects(last_opened_at DESC);
       CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_session_sequence ON messages(session_id, sequence ASC);
+      CREATE INDEX IF NOT EXISTS idx_message_activities_message_sequence ON message_activities(message_id, sequence ASC);
+      CREATE INDEX IF NOT EXISTS idx_message_activities_session_sequence ON message_activities(session_id, message_id, sequence ASC);
       CREATE INDEX IF NOT EXISTS idx_tool_executions_session_created ON tool_executions(session_id, created_at ASC);
     `);
     this.#ensureSessionProjectColumn();
@@ -149,11 +161,21 @@ export class ConversationDatabase {
     return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
   }
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
-  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages,toolExecutions:this.listToolExecutions(id)}; }
+  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
   getMessage(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; }
   updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
   appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
+  appendMessageActivity({sessionId,messageId,source='provider',activity,now=Date.now()}){
+    const message=this.getMessage(messageId); if(!message) throw new Error(`unknown message: ${messageId}`);
+    if(message.sessionId!==sessionId) throw new Error(`message ${messageId} does not belong to session ${sessionId}`);
+    const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM message_activities WHERE message_id=?').get(messageId)?.sequence ?? 1;
+    this.#db.prepare('INSERT INTO message_activities (session_id,message_id,sequence,source,activity_json,created_at) VALUES (?,?,?,?,?,?)').run(sessionId,messageId,next,String(source||'provider'),JSON.stringify(activity??{}),now);
+    return { sessionId, messageId, sequence: next, source: String(source||'provider'), activity: activity??{}, createdAt: now };
+  }
+  listMessageActivities(sessionId){
+    return this.#db.prepare('SELECT session_id AS sessionId,message_id AS messageId,sequence,source,activity_json AS activityJson,created_at AS createdAt FROM message_activities WHERE session_id=? ORDER BY (SELECT sequence FROM messages WHERE id=message_id) ASC,sequence ASC,id ASC').all(sessionId).map((row)=>({ ...row, activity: parseActivity(row.activityJson) })).map(({activityJson,...row})=>row);
+  }
   renameSession(id,title,now=Date.now()){ const value=String(title??'').trim().slice(0,160); if(!value) throw new Error('chat title is required'); this.#db.prepare('UPDATE sessions SET title=?,updated_at=? WHERE id=?').run(value,now,id); this.#upsertSearchSession(id); return this.getSessionSummary(id); }
   archiveSession(id,archived=true,now=Date.now()){
     const session=this.getSessionSummary(id); if(!session) throw new Error(`unknown session: ${id}`);
@@ -187,6 +209,11 @@ export class ConversationDatabase {
         messageMap[message.id] = messageId;
         this.appendMessage({ id: messageId, sessionId: id, role: message.role, content: message.content, status: message.status, now });
       }
+      for (const entry of source.activities ?? []) {
+        const targetMessageId = messageMap[entry.messageId];
+        if (!targetMessageId) continue;
+        this.appendMessageActivity({ sessionId: id, messageId: targetMessageId, source: entry.source, activity: entry.activity, now: entry.createdAt ?? now });
+      }
       return { session: this.getSessionSummary(session.id), sourceSessionId, messageMap };
     });
   }
@@ -205,6 +232,11 @@ export class ConversationDatabase {
   }
   getToolExecution(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE id=?`).get(id) ?? null; }
   listToolExecutions(sessionId){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=? ORDER BY created_at ASC,id ASC`).all(sessionId); }
+}
+
+function parseActivity(value){
+  try { const parsed=JSON.parse(String(value??'{}')); return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:{}; }
+  catch { return {}; }
 }
 
 function ftsQuery(value){
