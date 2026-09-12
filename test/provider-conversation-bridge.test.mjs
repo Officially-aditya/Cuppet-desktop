@@ -32,16 +32,18 @@ test('Conversation Bridge makes Cuppet full replay the explicit context authorit
 
   const snapshot = bridge.snapshot('chat-1');
   assert.equal(snapshot.completedTurns, 2);
+  assert.equal(snapshot.totalCompletedTurns, 2);
+  assert.equal(snapshot.warmRuntimeCount, 1);
   assert.equal(snapshot.contextOwner, 'cuppet');
   assert.equal(snapshot.providerHistory, 'turn-isolated');
   assert.equal(snapshot.lastReplayFingerprint, second.replayFingerprint);
 });
 
-test('Conversation Bridge rejects concurrent turns and resets on runtime authority change', () => {
+test('Conversation Bridge rejects concurrent turns while preserving state for warm runtime switching', () => {
   const bridge = new ConversationBridge();
   const first = bridge.beginTurn({ conversationId: 'chat-1', runtimeFingerprint: 'runtime-a', messages: [] });
   assert.throws(
-    () => bridge.beginTurn({ conversationId: 'chat-1', runtimeFingerprint: 'runtime-a', messages: [] }),
+    () => bridge.beginTurn({ conversationId: 'chat-1', runtimeFingerprint: 'runtime-b', messages: [] }),
     /already has an active provider bridge turn/,
   );
   bridge.completeTurn(first);
@@ -50,9 +52,18 @@ test('Conversation Bridge rejects concurrent turns and resets on runtime authori
   assert.equal(changed.providerSessionAction, 'start');
   bridge.completeTurn(changed);
   assert.equal(bridge.snapshot('chat-1').runtimeFingerprint, 'runtime-b');
+  assert.equal(bridge.snapshot('chat-1').warmRuntimeCount, 2);
+
+  const returned = bridge.beginTurn({ conversationId: 'chat-1', runtimeFingerprint: 'runtime-a', messages: [] });
+  assert.equal(returned.providerSessionAction, 'new-session');
+  bridge.completeTurn(returned);
+  const snapshot = bridge.snapshot('chat-1');
+  assert.equal(snapshot.runtimeFingerprint, 'runtime-a');
+  assert.equal(snapshot.completedTurns, 2);
+  assert.equal(snapshot.totalCompletedTurns, 3);
 });
 
-test('failed or cancelled bridge turns discard ambiguous provider-side history', () => {
+test('failed or cancelled bridge turns discard only ambiguous provider-side route state', () => {
   const bridge = new ConversationBridge();
   const first = bridge.beginTurn({ conversationId: 'chat-fail', runtimeFingerprint: 'runtime-a', messages: [{ role: 'user', content: 'work' }] });
   assert.equal(bridge.abortTurn(first), true);
@@ -60,16 +71,27 @@ test('failed or cancelled bridge turns discard ambiguous provider-side history',
 
   const retry = bridge.beginTurn({ conversationId: 'chat-fail', runtimeFingerprint: 'runtime-a', messages: [{ role: 'user', content: 'work' }] });
   assert.equal(retry.providerSessionAction, 'start');
+  bridge.completeTurn(retry);
+
+  const other = bridge.beginTurn({ conversationId: 'chat-fail', runtimeFingerprint: 'runtime-b', messages: [] });
+  bridge.completeTurn(other);
+  const failedOther = bridge.beginTurn({ conversationId: 'chat-fail', runtimeFingerprint: 'runtime-b', messages: [] });
+  assert.equal(bridge.abortTurn(failedOther), true);
+
+  const safeRoute = bridge.beginTurn({ conversationId: 'chat-fail', runtimeFingerprint: 'runtime-a', messages: [] });
+  assert.equal(safeRoute.providerSessionAction, 'new-session');
 });
 
-test('forgotten or evicted bridge state can never request logical-session reuse', () => {
+test('forgotten or evicted bridge runtime state can never request logical-session reuse', () => {
   const bridge = new ConversationBridge();
   const first = bridge.beginTurn({ conversationId: 'chat-evict', runtimeFingerprint: 'runtime-a', messages: [] });
   bridge.completeTurn(first);
-  assert.equal(bridge.forget('chat-evict'), true);
+  assert.equal(bridge.forgetRuntime('chat-evict', 'runtime-a'), true);
 
   const afterEviction = bridge.beginTurn({ conversationId: 'chat-evict', runtimeFingerprint: 'runtime-a', messages: [] });
   assert.equal(afterEviction.providerSessionAction, 'start');
+  bridge.completeTurn(afterEviction);
+  assert.equal(bridge.forget('chat-evict'), true);
 });
 
 test('runtime manager follows bridge plans while replaying full Cuppet context each turn', async () => {
@@ -98,6 +120,8 @@ test('runtime manager follows bridge plans while replaying full Cuppet context e
     ]);
     const snapshot = manager.conversationSnapshot('chat-context');
     assert.equal(snapshot.completedTurns, 2);
+    assert.equal(snapshot.totalCompletedTurns, 2);
+    assert.equal(snapshot.warmRuntimeCount, 1);
     assert.equal(snapshot.contextOwner, 'cuppet');
     assert.equal(snapshot.delivery, 'full-replay');
     assert.equal(snapshot.providerHistory, 'turn-isolated');
@@ -106,7 +130,7 @@ test('runtime manager follows bridge plans while replaying full Cuppet context e
   }
 });
 
-test('runtime failure and idle eviction reset Conversation Bridge state', async () => {
+test('runtime failure and idle eviction reset the affected Conversation Bridge route', async () => {
   let fail = true;
   const runtimes = [];
   const manager = new ProviderRuntimeManager({
