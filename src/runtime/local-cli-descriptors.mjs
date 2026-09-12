@@ -3,9 +3,11 @@ const DESCRIPTORS = Object.freeze({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
     mcpToolBridge: true,
-    // OpenCode owns model/provider credentials, but Cuppet owns execution. Keep
-    // the official ACP process isolated from OpenCode's built-in execution tools;
-    // session-scoped Cuppet tools arrive through ACP mcpServers instead.
+    // OpenCode owns provider credentials and configuration. Cuppet must not rewrite
+    // OPENCODE_CONFIG_CONTENT or strip OpenCode environment variables before ACP starts;
+    // otherwise the in-app process no longer matches the authenticated CLI the user
+    // configured in Terminal. Cuppet execution authority is scoped independently by the
+    // per-turn MCP bridge supplied through ACP session/new.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
@@ -115,48 +117,6 @@ function freezeValue(value) {
   return Object.freeze(value);
 }
 
-function openCodeAcpEnvironment(inherited) {
-  const environment = { ...inherited, OPENCODE_DISABLE_AUTOUPDATE: '1' };
-  // ACP is stdio-only. Do not inherit credentials that could expose an unrelated
-  // OpenCode HTTP server if the user also runs one locally.
-  delete environment.OPENCODE_SERVER_PASSWORD;
-  delete environment.OPENCODE_SERVER_USERNAME;
-
-  let existing = {};
-  try {
-    const parsed = JSON.parse(environment.OPENCODE_CONFIG_CONTENT || '{}');
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
-  } catch {}
-
-  const existingTools = record(existing.tools);
-  const existingPermission = record(existing.permission);
-  environment.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    ...existing,
-    tools: {
-      ...existingTools,
-      bash: false,
-      edit: false,
-      write: false,
-      patch: false,
-      read: false,
-      glob: false,
-      grep: false,
-      webfetch: false,
-      websearch: false,
-      task: false,
-      todowrite: false,
-      lsp: false,
-      skill: false,
-      question: false,
-    },
-    permission: {
-      ...existingPermission,
-      '*': 'deny',
-      'cuppet-runtime_*': 'allow',
-      'cuppet_runtime_*': 'allow',
-    },
-  });
-  return environment;
+function openCodeAcpEnvironment(inherited = process.env) {
+  return { ...inherited, OPENCODE_DISABLE_AUTOUPDATE: '1' };
 }
-
-function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
