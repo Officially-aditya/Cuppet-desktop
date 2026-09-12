@@ -9,6 +9,7 @@ import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 import { OpenCodeAcpProviderV2 } from '../src/runtime/providers/backends/opencode.mjs';
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
 
 test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', async () => {
   const runtime = new AcpSessionRuntime({ descriptor: localCliDescriptor('opencode'), configuration: { cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, projectRoot: tmpdir() });
@@ -91,6 +92,44 @@ test('provider factory routes every ACP descriptor through the universal ACP ada
   assert.ok(createUntrackedChatProvider({ providerID: 'github-copilot' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'mistral-vibe' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'kiro' }) instanceof AcpProviderAdapter);
+});
+
+test('ACP authentication policy is descriptor-owned rather than provider-ID owned', async () => {
+  const descriptor = {
+    ...localCliDescriptor('opencode'),
+    id: 'auth-fixture',
+    label: 'Auth Fixture',
+    environment: undefined,
+    authentication: {
+      methods: [
+        { id: 'test.api_key', requiresEnv: 'TEST_AUTH_KEY' },
+        { id: 'cached_token' },
+      ],
+      meta: { headless: true },
+    },
+  };
+
+  const withKey = new AcpSessionRuntime({
+    descriptor,
+    configuration: { cliCommand: process.execPath, cliArgs: [authFixture], cliEnv: { TEST_AUTH_KEY: 'present' } },
+    projectRoot: tmpdir(),
+  });
+  try {
+    await withKey.start();
+    const result = await withKey.runTurn({ messages: [{ role: 'user', content: 'Which auth?' }] });
+    assert.equal(result.text, 'test.api_key');
+  } finally { await withKey.close(); }
+
+  const cached = new AcpSessionRuntime({
+    descriptor,
+    configuration: { cliCommand: process.execPath, cliArgs: [authFixture], cliEnv: { TEST_AUTH_KEY: null } },
+    projectRoot: tmpdir(),
+  });
+  try {
+    await cached.start();
+    const result = await cached.runTurn({ messages: [{ role: 'user', content: 'Which auth?' }] });
+    assert.equal(result.text, 'cached_token');
+  } finally { await cached.close(); }
 });
 
 test('ACP v2 cancels and terminates a genuinely silent stalled turn', async () => {
