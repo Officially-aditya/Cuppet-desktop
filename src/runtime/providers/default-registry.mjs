@@ -1,7 +1,5 @@
 import { OpenAICompatibleChatProvider } from '../provider.mjs';
 import { createNativeProvider, nativeProviderKind } from '../native-provider.mjs';
-import { CodexSubscriptionProvider } from '../codex-provider.mjs';
-import { AcpCliAgentProvider } from '../acp-cli-provider.mjs';
 import { localCliDescriptor, localCliProviderIDs } from '../local-cli-descriptors.mjs';
 import { discoverAcpRuntimeCatalog } from './transports/acp/acp-discovery.mjs';
 import { AcpProviderAdapter } from './backends/acp.mjs';
@@ -10,8 +8,6 @@ import { codexBackendDefinition } from './backends/codex.mjs';
 import { discoverApiCapabilities } from './backends/api.mjs';
 import { ProviderBackendRegistry } from './backend-registry.mjs';
 import { ProviderCapabilitySnapshotStore } from './capability-snapshot.mjs';
-
-const UNIVERSAL_ACP_RUNTIME = new Set(['opencode', 'claude-code']);
 
 export const providerBackendRegistry = buildProviderBackendRegistry();
 export const providerCapabilitySnapshots = new ProviderCapabilitySnapshotStore();
@@ -51,9 +47,10 @@ export function buildProviderBackendRegistry() {
           };
         },
       },
-      createRuntime: ({ configuration = {} } = {}) => UNIVERSAL_ACP_RUNTIME.has(descriptor.id)
-        ? new AcpProviderAdapter(configuration, { descriptor })
-        : new AcpCliAgentProvider(configuration),
+      // Transport is the runtime contract: every ACP descriptor uses the same
+      // adapter. Provider-specific behavior belongs in the descriptor/support
+      // shim, never in a second ACP execution implementation.
+      createRuntime: ({ configuration = {} } = {}) => new AcpProviderAdapter(configuration, { descriptor }),
     });
   }
 
@@ -140,5 +137,4 @@ function nativeFetchGuard(kind, inner) {
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 
-// Compatibility export while provider-factory callers migrate onto the registry.
-export { nativeProviderKind, CodexSubscriptionProvider };
+export { nativeProviderKind };
