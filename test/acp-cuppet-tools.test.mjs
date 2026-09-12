@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
+import { resolveCuppetMcpServerScript } from '../src/runtime/providers/transports/acp/cuppet-mcp-tool-session.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
 
@@ -44,4 +46,20 @@ test('ACP session receives Cuppet tools through MCP only when the backend explic
   } finally {
     await runtime.close?.();
   }
+});
+
+test('packaged MCP bridge prefers the unpacked on-disk entry when resources are available', () => {
+  const resources = join(tmpdir(), 'Cuppet.app', 'Contents', 'Resources');
+  const expected = join(resources, 'app.asar.unpacked', 'src', 'runtime', 'providers', 'transports', 'acp', 'cuppet-mcp-stdio.mjs');
+  const result = resolveCuppetMcpServerScript({
+    resourcesPath: resources,
+    sourcePath: join(resources, 'app.asar', 'src', 'runtime', 'providers', 'transports', 'acp', 'cuppet-mcp-stdio.mjs'),
+    exists: (path) => path === expected,
+  });
+  assert.equal(result, expected);
+});
+
+test('source MCP bridge path remains unchanged outside a packaged app', () => {
+  const source = fileURLToPath(new URL('../src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs', import.meta.url));
+  assert.equal(resolveCuppetMcpServerScript({ resourcesPath: '', sourcePath: source, exists: () => false }), source);
 });
