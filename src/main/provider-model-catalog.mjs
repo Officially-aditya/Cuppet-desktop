@@ -171,22 +171,43 @@ export function parseApiCatalog(providerID, payload = {}) {
 export async function discoverAntigravityModels(descriptor, { commandOverride = '', runImpl = runCommand } = {}) {
   const command = text(commandOverride) || text(process.env[descriptor.envOverride]) || descriptor.command;
   const { stdout } = await runImpl(command, ['models'], CLI_TIMEOUT_MS);
+  const models = parseAntigravityModelOutput(stdout);
+  return { available: models.length > 0, models, defaultModel: null };
+}
+
+export function parseAntigravityModelOutput(output = '') {
   const models = [];
   const seen = new Set();
-  for (const rawLine of String(stdout ?? '').split(/\r?\n/)) {
+  for (const rawLine of String(output ?? '').split(/\r?\n/)) {
     const line = stripAnsi(rawLine).trim();
     if (!line) continue;
-    const match = line.match(/^([^\s]+)\s{2,}(.+)$/);
-    if (!match) continue;
-    const id = text(match[1]);
-    const label = text(match[2]);
-    if (!id || !label || seen.has(id) || /^(model|models|slug)$/i.test(id)) continue;
+
+    let id = '';
+    let label = '';
+    const tab = line.indexOf('\t');
+    if (tab > 0) {
+      id = text(line.slice(0, tab));
+      label = text(line.slice(tab + 1)) || id;
+    } else {
+      const columns = line.match(/^([^\s]+)\s{2,}(.+)$/);
+      if (columns) {
+        id = text(columns[1]);
+        label = text(columns[2]) || id;
+      } else if (/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$/.test(line)) {
+        id = text(line);
+        label = id;
+      } else {
+        continue;
+      }
+    }
+
+    if (!id || seen.has(id) || /^(model|models|slug)$/i.test(id)) continue;
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$/.test(id)) continue;
     seen.add(id);
     models.push({ id, label });
     if (models.length >= 512) break;
   }
-  return { available: models.length > 0, models, defaultModel: null };
+  return models;
 }
 
 function apiCatalogRequest(providerID, baseUrlValue, apiKey) {
