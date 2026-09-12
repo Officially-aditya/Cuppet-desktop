@@ -1,7 +1,12 @@
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
-    id: 'opencode', label: 'OpenCode', transport: 'opencode-http', command: 'opencode', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
-    loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use.',
+    id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
+    loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
+    mcpToolBridge: true,
+    // OpenCode owns model/provider credentials, but Cuppet owns execution. Keep
+    // the official ACP process isolated from OpenCode's built-in execution tools;
+    // session-scoped Cuppet tools arrive through ACP mcpServers instead.
+    environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
@@ -107,3 +112,49 @@ function freezeValue(value) {
   for (const item of Object.values(value)) freezeValue(item);
   return Object.freeze(value);
 }
+
+function openCodeAcpEnvironment(inherited) {
+  const environment = { ...inherited, OPENCODE_DISABLE_AUTOUPDATE: '1' };
+  // ACP is stdio-only. Do not inherit credentials that could expose an unrelated
+  // OpenCode HTTP server if the user also runs one locally.
+  delete environment.OPENCODE_SERVER_PASSWORD;
+  delete environment.OPENCODE_SERVER_USERNAME;
+
+  let existing = {};
+  try {
+    const parsed = JSON.parse(environment.OPENCODE_CONFIG_CONTENT || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+  } catch {}
+
+  const existingTools = record(existing.tools);
+  const existingPermission = record(existing.permission);
+  environment.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+    ...existing,
+    tools: {
+      ...existingTools,
+      bash: false,
+      edit: false,
+      write: false,
+      patch: false,
+      read: false,
+      glob: false,
+      grep: false,
+      webfetch: false,
+      websearch: false,
+      task: false,
+      todowrite: false,
+      lsp: false,
+      skill: false,
+      question: false,
+    },
+    permission: {
+      ...existingPermission,
+      '*': 'deny',
+      'cuppet-runtime_*': 'allow',
+      'cuppet_runtime_*': 'allow',
+    },
+  });
+  return environment;
+}
+
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
