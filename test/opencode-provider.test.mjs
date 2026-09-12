@@ -24,22 +24,25 @@ test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge', 
   assert.equal(descriptor.mcpToolBridge, true);
 });
 
-test('OpenCode descriptor isolates built-in execution while preserving unrelated inline config', () => {
+test('OpenCode ACP inherits the same user configuration and auth environment as the CLI', () => {
   const descriptor = localCliDescriptor('opencode');
-  const environment = descriptor.environment({
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({ theme: 'system', permission: { custom_tool: 'ask' } }),
-    OPENCODE_SERVER_PASSWORD: 'should-not-cross-stdio-boundary',
+  const configContent = JSON.stringify({
+    theme: 'system',
+    provider: { custom: { options: { endpoint: 'https://example.invalid' } } },
+    permission: { custom_tool: 'ask' },
   });
-  const config = JSON.parse(environment.OPENCODE_CONFIG_CONTENT);
+  const environment = descriptor.environment({
+    OPENCODE_CONFIG_CONTENT: configContent,
+    OPENCODE_SERVER_PASSWORD: 'terminal-owned-password',
+    OPENCODE_SERVER_USERNAME: 'terminal-owned-user',
+    CUSTOM_PROVIDER_TOKEN: 'terminal-owned-token',
+  });
+
   assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
-  assert.equal(environment.OPENCODE_SERVER_PASSWORD, undefined);
-  assert.equal(config.theme, 'system');
-  assert.equal(config.tools.bash, false);
-  assert.equal(config.tools.read, false);
-  assert.equal(config.permission.custom_tool, 'ask');
-  assert.equal(config.permission['*'], 'deny');
-  assert.equal(config.permission['cuppet-runtime_*'], 'allow');
-  assert.equal(config.permission['cuppet_runtime_*'], 'allow');
+  assert.equal(environment.OPENCODE_CONFIG_CONTENT, configContent);
+  assert.equal(environment.OPENCODE_SERVER_PASSWORD, 'terminal-owned-password');
+  assert.equal(environment.OPENCODE_SERVER_USERNAME, 'terminal-owned-user');
+  assert.equal(environment.CUSTOM_PROVIDER_TOKEN, 'terminal-owned-token');
 });
 
 test('OpenCode runs through the shared ACP adapter with model and effort selection', async () => {
