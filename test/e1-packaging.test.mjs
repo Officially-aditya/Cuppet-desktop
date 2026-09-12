@@ -46,7 +46,18 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
   assert.equal(pkg.build.productName, 'Cuppet');
   assert.equal(pkg.build.asar, true);
   assert.equal(pkg.build.allowMissingDependencies, undefined);
-  assert.ok(pkg.build.files.includes('src/**/*'));
+  const packagedFiles = new Set(pkg.build.files ?? []);
+  for (const required of [
+    'src/main/**/*',
+    'src/preload/**/*',
+    'src/runtime/**/*',
+    'src/cli/**/*',
+    'src/remote-app/**/*',
+    'dist-renderer/**/*',
+    'build/icon.png',
+    'package.json',
+  ]) assert.ok(packagedFiles.has(required), `missing packaged surface: ${required}`);
+  assert.equal(packagedFiles.has('src/**/*'), false, 'packaging should stay explicit instead of bundling every source file');
   assert.deepEqual(pkg.dependencies, {});
   assert.equal(pkg.build.asarUnpack, undefined);
   assert.equal(pkg.devDependencies.electron, '44.3.0');
