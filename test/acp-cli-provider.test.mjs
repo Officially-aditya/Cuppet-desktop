@@ -6,8 +6,10 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
+import { discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
+const kiroFixture = fileURLToPath(new URL('./fixtures/fake-kiro-acp-agent.mjs', import.meta.url));
 
 test('shared ACP provider delegates filesystem and terminal operations through Cuppet', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-acp-'));
@@ -45,13 +47,20 @@ test('provider descriptors use their current official transport entrypoints', ()
   assert.deepEqual(localCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
   assert.equal(localCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
   assert.deepEqual(localCliDescriptor('kiro')?.args, ['acp']);
+  assert.deepEqual(localCliDescriptor('kiro')?.sessionCommandSettings, [{
+    id: 'effort',
+    label: 'Effort',
+    category: 'thought_level',
+    command: 'effort',
+    optionsMethod: '_kiro.dev/commands/options',
+    executeMethod: '_kiro.dev/commands/execute',
+  }]);
   assert.equal(localCliDescriptor('opencode')?.transport, 'acp');
   assert.deepEqual(localCliDescriptor('opencode')?.args, ['acp']);
   assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
 });
 
-test('Kiro ACP compatibility accepts content prompts and session/notification updates', async () => {
-  const kiroFixture = fileURLToPath(new URL('./fixtures/fake-kiro-acp-agent.mjs', import.meta.url));
+test('Kiro ACP compatibility accepts standard prompt requests and session/notification updates', async () => {
   const provider = new AcpProviderAdapter({ providerID: 'kiro', cliCommand: process.execPath, cliArgs: [kiroFixture] }, { descriptor: localCliDescriptor('kiro') });
   let streamed = '';
   const result = await provider.stream([{ role: 'user', content: 'Hello Kiro' }], {
@@ -61,6 +70,39 @@ test('Kiro ACP compatibility accepts content prompts and session/notification up
   });
   assert.equal(result.text, 'Kiro ready.');
   assert.equal(streamed, 'Kiro ready.');
+});
+
+test('Kiro legacy ACP models and model-dependent effort normalize into the shared catalog', async () => {
+  const catalog = await discoverAcpRuntimeCatalog('kiro', {
+    descriptor: localCliDescriptor('kiro'),
+    configuration: {
+      providerID: 'kiro',
+      cliCommand: process.execPath,
+      cliArgs: [kiroFixture],
+      primary: { providerID: 'kiro', modelID: 'kiro/model-b' },
+    },
+    cwd: tmpdir(),
+  });
+
+  assert.deepEqual(catalog.models.map((item) => item.id), ['kiro/model-a', 'kiro/model-b']);
+  assert.equal(catalog.defaultModel, 'kiro/model-a');
+  assert.equal(catalog.currentModel, 'kiro/model-b');
+  assert.equal(catalog.reasoning?.configId, 'effort');
+  assert.equal(catalog.reasoning?.currentValue, 'medium');
+  assert.deepEqual(catalog.reasoning?.options.map((item) => item.id), ['medium', 'xhigh', 'max']);
+});
+
+test('Kiro applies legacy session/set_model before its command-backed reasoning effort', async () => {
+  const provider = new AcpProviderAdapter({
+    providerID: 'kiro',
+    cliCommand: process.execPath,
+    cliArgs: [kiroFixture],
+    primary: { providerID: 'kiro', modelID: 'kiro/model-b' },
+    primaryEffort: 'max',
+  }, { descriptor: localCliDescriptor('kiro') });
+
+  const result = await provider.stream([{ role: 'user', content: 'ASSERT_CONFIG' }], { projectRoot: tmpdir() });
+  assert.equal(result.text, 'Kiro ready.');
 });
 
 test('shared ACP provider applies advertised model and reasoning effort and surfaces native activity', async () => {
