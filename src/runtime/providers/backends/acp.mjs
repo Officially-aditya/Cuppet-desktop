@@ -31,7 +31,9 @@ export class AcpProviderAdapter {
       configuration: this.#configuration,
       projectRoot: options.projectRoot ?? null,
     });
-    const toolSession = await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options });
+    const toolSession = this.#descriptor.mcpToolBridge === true
+      ? await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options })
+      : null;
     const activityState = new Map();
     try {
       await runtime.start({ mcpServers: toolSession ? [toolSession.descriptor()] : [] });
