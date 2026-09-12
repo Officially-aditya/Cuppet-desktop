@@ -17,20 +17,25 @@ function configuration(extra = {}) {
   };
 }
 
-test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge', () => {
+test('OpenCode descriptor uses the official ACP command, Cuppet MCP bridge, and required guarded mode', () => {
   const descriptor = localCliDescriptor('opencode');
   assert.equal(descriptor.transport, 'acp');
   assert.deepEqual(descriptor.args, ['acp']);
   assert.equal(descriptor.mcpToolBridge, true);
+  assert.deepEqual(descriptor.requiredSessionSettings, [
+    { category: 'mode', valueFromEnv: 'CUPPET_OPENCODE_AGENT_ID', label: 'Cuppet execution mode' },
+  ]);
 });
 
-test('OpenCode ACP preserves CLI config/auth while isolating execution through OPENCODE_PERMISSION', () => {
+test('OpenCode ACP preserves user config/auth while adding an isolated Cuppet execution agent', () => {
   const descriptor = localCliDescriptor('opencode');
-  const configContent = JSON.stringify({
-    theme: 'system',
-    provider: { custom: { options: { endpoint: 'https://example.invalid' } } },
-    permission: { custom_tool: 'ask' },
-  });
+  const configContent = `{
+    // User-owned provider configuration must survive the Cuppet guard merge.
+    "theme": "system",
+    "provider": { "custom": { "options": { "endpoint": "https://example.invalid" } } },
+    "permission": { "custom_tool": "ask" },
+    "agent": { "build": { "permission": { "bash": "allow" } } },
+  }`;
   const environment = descriptor.environment({
     OPENCODE_CONFIG_CONTENT: configContent,
     OPENCODE_PERMISSION: JSON.stringify({ bash: 'allow', custom_tool: 'allow' }),
@@ -39,22 +44,42 @@ test('OpenCode ACP preserves CLI config/auth while isolating execution through O
     CUSTOM_PROVIDER_TOKEN: 'terminal-owned-token',
   });
   const permission = JSON.parse(environment.OPENCODE_PERMISSION);
+  const config = JSON.parse(environment.OPENCODE_CONFIG_CONTENT);
+  const guardAgentId = environment.CUPPET_OPENCODE_AGENT_ID;
+  const guardAgent = config.agent?.[guardAgentId];
 
   assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
-  assert.equal(environment.OPENCODE_CONFIG_CONTENT, configContent);
+  assert.match(guardAgentId, /^cuppet-runtime-[0-9a-f-]+$/i);
   assert.equal(environment.OPENCODE_SERVER_PASSWORD, 'terminal-owned-password');
   assert.equal(environment.OPENCODE_SERVER_USERNAME, 'terminal-owned-user');
   assert.equal(environment.CUSTOM_PROVIDER_TOKEN, 'terminal-owned-token');
+  assert.equal(config.theme, 'system');
+  assert.equal(config.provider.custom.options.endpoint, 'https://example.invalid');
+  assert.equal(config.permission.custom_tool, 'ask');
+  assert.equal(config.agent.build.permission.bash, 'allow');
+  assert.equal(guardAgent.mode, 'primary');
+  assert.equal(guardAgent.hidden, false);
 
   for (const native of ['*', 'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill', 'external_directory']) {
     assert.equal(permission[native], 'deny');
+    assert.equal(guardAgent.permission[native], 'deny');
   }
   assert.equal(permission['cuppet-runtime_*'], 'allow');
   assert.equal(permission['cuppet_runtime_*'], 'allow');
   assert.equal(permission.custom_tool, undefined);
+  assert.equal(guardAgent.permission['cuppet-runtime_*'], 'allow');
+  assert.equal(guardAgent.permission['cuppet_runtime_*'], 'allow');
 });
 
-test('OpenCode runs through the shared ACP adapter with model and effort selection', async () => {
+test('OpenCode guard fails closed when inherited inline config cannot be safely parsed', () => {
+  const descriptor = localCliDescriptor('opencode');
+  assert.throws(
+    () => descriptor.environment({ OPENCODE_CONFIG_CONTENT: '{ invalid jsonc' }),
+    /could not be safely merged/i,
+  );
+});
+
+test('OpenCode runs through the shared ACP adapter with guarded mode, model, and effort selection', async () => {
   const registry = buildProviderBackendRegistry();
   const runtime = registry.createConfiguredRuntime(configuration());
   assert.equal(runtime.constructor.name, 'AcpProviderAdapter');
