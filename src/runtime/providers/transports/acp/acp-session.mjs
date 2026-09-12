@@ -317,15 +317,18 @@ function normalizeMcpServers(value) {
 }
 function providerEnvironment(descriptor, configuration) {
   let environment = { ...process.env };
-  if (typeof descriptor?.environment === 'function') {
-    const transformed = descriptor.environment(environment, configuration);
-    if (transformed && typeof transformed === 'object' && !Array.isArray(transformed)) environment = { ...transformed };
-  }
   const overrides = record(configuration?.cliEnv);
   for (const [key, value] of Object.entries(overrides).slice(0, 128)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     if (value === undefined || value === null) delete environment[key];
     else environment[key] = String(value).slice(0, 32_768);
+  }
+  // Provider descriptors own mandatory process policy. Apply that policy last so
+  // generic launch overrides can supply credentials/test flags but cannot weaken a
+  // provider's execution-isolation environment.
+  if (typeof descriptor?.environment === 'function') {
+    const transformed = descriptor.environment(environment, configuration);
+    if (transformed && typeof transformed === 'object' && !Array.isArray(transformed)) environment = { ...transformed };
   }
   return environment;
 }
