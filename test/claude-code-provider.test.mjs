@@ -5,13 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { installSpec, loginSpec } from '../src/main/cli-agent-status.mjs';
 import { fetchProviderModelCatalog } from '../src/main/provider-model-catalog.mjs';
 import { providerPreset } from '../src/main/provider-presets.mjs';
-import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 
 const sessionMetaFixture = fileURLToPath(new URL('./fixtures/fake-acp-session-meta-agent.mjs', import.meta.url));
-const mcpFixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
+const hostBridgeFixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const CLAUDE_SESSION_META = {
   disableBuiltInTools: true,
@@ -23,6 +22,7 @@ test('Claude Code is a managed ACP backend with isolated Cuppet execution policy
   assert.equal(descriptor.transport, 'acp');
   assert.equal(descriptor.command, 'claude-agent-acp');
   assert.deepEqual(descriptor.sessionMeta, CLAUDE_SESSION_META);
+  assert.notEqual(descriptor.mcpToolBridge, true);
 
   // Callers receive a deep clone so provider/runtime code cannot mutate the
   // canonical descriptor and re-enable Claude project/user setting sources.
@@ -52,43 +52,33 @@ test('Claude Code ACP session forwards descriptor metadata that isolates native 
   }
 });
 
-test('Claude Code receives the same Cuppet MCP tools and ExecutionKernel path as OpenCode', async () => {
+test('Claude Code uses the ACP host bridge by default instead of requiring external MCP injection', async () => {
   const provider = createUntrackedChatProvider({
     providerID: 'claude-code',
     model: 'cli-default',
     cliCommand: process.execPath,
-    cliArgs: [mcpFixture],
+    cliArgs: [hostBridgeFixture],
   });
-  const events = [];
-  const runtime = new JournaledToolRuntime({
-    journal: null,
-    db: {
-      getSession: () => ({ messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', content: '' }] }),
-      createToolExecution: (value) => { events.push(['tool-created', value.toolName]); return value; },
-      finishToolExecution: (_id, value) => { events.push(['tool-finished', value.status]); return value; },
+  const calls = [];
+  const permissions = [];
+  let streamed = '';
+  const result = await provider.stream([{ role: 'user', content: 'Use Cuppet execution.' }], {
+    projectRoot: tmpdir(),
+    onDelta: async (delta) => { streamed += delta; },
+    requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
+    executeTool: async (call) => {
+      calls.push(call);
+      if (call.name === 'workspace_read') return { success: true, output: 'hello', paths: ['sample.txt'], mutation: false };
+      if (call.name === 'workspace_write') return { success: true, output: 'written', paths: ['sample.txt'], mutation: true };
+      if (call.name === 'bash') return { success: true, output: 'stdout:\nok\nexit code: 0', paths: [], mutation: false };
+      return { success: false, output: `unexpected ${call.name}`, paths: [], mutation: false };
     },
-    tst: { configured: false },
-    planStore: { toolResult: async () => 'claude-plan-through-cuppet' },
-    permissions: { authorize: async () => ({ source: 'test' }) },
-    questions: null,
   });
-  const final = [];
-  try {
-    await runtime.run({
-      adapter: provider,
-      messages: [{ role: 'user', content: 'Use Cuppet tools.' }],
-      sessionId: 'claude-mcp-session',
-      projectRoot: tmpdir(),
-      onDelta: async (value) => final.push(value),
-    });
-    assert.deepEqual(final, ['MCP:claude-plan-through-cuppet']);
-    assert.ok(events.some(([kind, value]) => kind === 'tool-created' && value === 'cuppet_plan'));
-    const metrics = runtime.executionSnapshot('claude-mcp-session');
-    assert.equal(metrics.semanticExecuted, 1);
-    assert.equal(metrics.rawFallbackExecuted, 0);
-  } finally {
-    await runtime.close();
-  }
+  assert.equal(result.text, 'Working. Done.');
+  assert.equal(streamed, 'Working. Done.');
+  assert.deepEqual(calls.map((call) => call.name), ['workspace_read', 'workspace_write', 'bash']);
+  assert.equal(permissions.length, 1);
+  assert.equal(permissions[0].kind, 'edit');
 });
 
 test('Claude Code model and effort discovery uses the shared ACP capability parser', async () => {
