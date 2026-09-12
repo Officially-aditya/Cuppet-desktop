@@ -9,12 +9,14 @@ test('provider settings apply changes immediately and expose Reset instead of Sa
   assert.match(source, />\{busy \? 'Applying…' : 'Reset'\}<\/button>/);
   assert.doesNotMatch(source, />Cancel<\/button><button type="submit"[^>]*>Save<\/button>/);
   assert.doesNotMatch(source, /const save = async \(event: React\.FormEvent\)/);
-  assert.match(source, /const resetModel = isLocalCli \? '' : selected\.model \|\| ''/);
+  assert.match(source, /resolveDefault: true/);
   assert.doesNotMatch(source, /Save \${providerLabel} first/);
 });
 
-test('local CLI default resolution is explicit, so unrelated saves cannot overwrite model selection', async () => {
+test('local CLI connect/reset preserves provider-owned default alias instead of silently pinning the discovered model', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
-  assert.match(source, /const resolveDefault = source\.resolveDefault === true/);
-  assert.match(source, /if \(resolveDefault && !explicitModel && result\.authType === 'local-cli'\)/);
+  assert.match(source, /const resetToProviderDefault = source\.resolveDefault === true && !explicitModel && preset\?\.authType === 'local-cli'/);
+  assert.match(source, /model: defaultModel, backgroundModel: defaultModel, secondaryAuto: true/);
+  assert.doesNotMatch(source, /const exactDefault/);
+  assert.doesNotMatch(source, /advertised\?\.defaultModel/);
 });
