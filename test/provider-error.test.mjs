@@ -17,6 +17,15 @@ test('provider errors produce specific user-facing categories',()=>{
   assert.equal(classify('streaming failed: unexpected end of stream').category,'streaming');
 });
 
+test('OpenCode ACP errors remain actionable instead of becoming unknown',()=>{
+  const auth=classify('OpenCode: provider authentication required ({"providerId":"anthropic"})','opencode');
+  assert.equal(auth.category,'authentication');
+  assert.equal(auth.action,'reauthenticate');
+  const unavailable=classify('OpenCode: No provider available ({"service":"session"})','opencode');
+  assert.equal(unavailable.category,'model_unavailable');
+  assert.equal(unavailable.action,'change_model');
+});
+
 test('account provider auth errors tell user to reconnect',()=>{
   const value=classify('login expired','github-copilot');
   assert.equal(value.title,'Sign-in required');
