@@ -41,6 +41,10 @@ export function opencodeBackendDefinition() {
           configuration,
           runImpl: typeof options.runImpl === 'function' ? options.runImpl : undefined,
         });
+        const configuredModel = text(configuration?.primary?.modelID || configuration?.model || configuration?.modelID);
+        const configuredVariant = text(configuration?.primary?.variant || configuration?.primaryEffort || configuration?.effort);
+        const active = catalog.models.find((model) => model.id === configuredModel) ?? null;
+        const variants = Array.isArray(active?.variants) ? active.variants : [];
         return {
           providerID: descriptor.id,
           source: 'opencode-http',
@@ -48,8 +52,17 @@ export function opencodeBackendDefinition() {
           models: Array.isArray(catalog.models) ? catalog.models : [],
           settings: [],
           defaultModel: text(catalog.defaultModel) || null,
-          currentModel: null,
-          modelDependentSettings: false,
+          currentModel: active?.id ?? null,
+          // OpenCode variants are model-specific. The renderer will refresh this
+          // read-only capability snapshot when the candidate model changes.
+          modelDependentSettings: true,
+          ...(variants.length ? {
+            reasoning: {
+              configId: 'variant',
+              currentValue: configuredVariant && variants.includes(configuredVariant) ? configuredVariant : null,
+              options: variants.map((id) => ({ id, label: formatVariant(id) })),
+            },
+          } : {}),
         };
       },
     },
@@ -136,23 +149,72 @@ export class OpenCodeAcpProviderV2 extends OpenCodeServerProvider {}
 export async function discoverOpenCodeModels(descriptor = localCliDescriptor('opencode'), { configuration = {}, runImpl = runCommand } = {}) {
   const command = text(configuration.cliCommand) || text(process.env[descriptor.envOverride]) || descriptor.command;
   const prefixArgs = Array.isArray(configuration.cliArgs) ? configuration.cliArgs.map(String) : [];
-  const { stdout } = await runImpl(command, [...prefixArgs, 'models'], DISCOVERY_TIMEOUT_MS, {
+  const { stdout } = await runImpl(command, [...prefixArgs, 'models', '--verbose'], DISCOVERY_TIMEOUT_MS, {
     cwd: text(configuration.projectRoot) || tmpdir(),
     env: openCodeEnvironment(process.env, null),
   });
-  const models = parseOpenCodeModelOutput(stdout);
+  const models = parseOpenCodeVerboseModelOutput(stdout);
   return { available: models.length > 0, models, defaultModel: null };
 }
 
+export function parseOpenCodeVerboseModelOutput(output = '') {
+  const models = [];
+  const seen = new Set();
+  let currentId = '';
+  let metadataLines = [];
+
+  const flush = () => {
+    if (!currentId || seen.has(currentId)) {
+      currentId = '';
+      metadataLines = [];
+      return;
+    }
+    let metadata = {};
+    const source = metadataLines.join('\n').trim();
+    if (source) {
+      try {
+        const parsed = JSON.parse(source);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed;
+      } catch {}
+    }
+    const variants = Object.keys(record(metadata.variants)).filter((id) => text(id)).slice(0, 64);
+    const context = positiveInt(record(metadata.limit).context);
+    const outputLimit = positiveInt(record(metadata.limit).output);
+    models.push({
+      id: currentId,
+      label: text(metadata.name) || currentId,
+      ...(text(metadata.family) ? { description: text(metadata.family) } : {}),
+      ...(context ? { context } : {}),
+      ...(outputLimit ? { outputLimit } : {}),
+      ...(variants.length ? { variants } : {}),
+    });
+    seen.add(currentId);
+    currentId = '';
+    metadataLines = [];
+  };
+
+  for (const rawLine of String(output ?? '').split(/\r?\n/)) {
+    const plain = stripAnsi(rawLine);
+    const line = plain.trim();
+    if (isOpenCodeModelId(line)) {
+      flush();
+      currentId = line;
+      continue;
+    }
+    if (currentId && (metadataLines.length || line.startsWith('{'))) metadataLines.push(plain);
+  }
+  flush();
+  return models;
+}
+
 export function parseOpenCodeModelOutput(output = '') {
+  const verbose = parseOpenCodeVerboseModelOutput(output);
+  if (verbose.length) return verbose;
   const models = [];
   const seen = new Set();
   for (const rawLine of String(output ?? '').split(/\r?\n/)) {
     const line = stripAnsi(rawLine).trim();
-    if (!line || /\s/.test(line) || !line.includes('/')) continue;
-    const slash = line.indexOf('/');
-    if (slash <= 0 || slash === line.length - 1 || seen.has(line)) continue;
-    if (!/^[A-Za-z0-9._:@+\/-]+$/.test(line)) continue;
+    if (!isOpenCodeModelId(line) || seen.has(line)) continue;
     seen.add(line);
     models.push({ id: line, label: line });
     if (models.length >= 1024) break;
@@ -355,6 +417,15 @@ function parseOpenCodeModel(value) {
   if (slash <= 0 || slash === id.length - 1 || id === 'cli-default') return null;
   return { providerID: id.slice(0, slash), modelID: id.slice(slash + 1) };
 }
+function isOpenCodeModelId(value) {
+  const line = text(value);
+  if (!line || /\s/u.test(line) || !line.includes('/')) return false;
+  const slash = line.indexOf('/');
+  return slash > 0 && slash < line.length - 1 && /^[A-Za-z0-9._:@+\/-]+$/u.test(line);
+}
+function formatVariant(value) {
+  return text(value).split(/[-_]/u).filter(Boolean).map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(' ');
+}
 function serializeConversation(messages) {
   const value = (Array.isArray(messages) ? messages : []).map((message) => {
     const role = String(message?.role ?? 'user').toUpperCase();
@@ -395,6 +466,7 @@ function normalizeUsage(info) {
 function launchError(command, error) { return error?.code === 'ENOENT' ? new Error(`OpenCode CLI was not found (${command}). Run OpenCode once and complete provider sign-in.`) : error instanceof Error ? error : new Error(String(error)); }
 function abortError() { const error = new Error('Provider request aborted.'); error.name = 'AbortError'; return error; }
 function delay(ms) { return new Promise((resolveDelay) => setTimeout(resolveDelay, ms)); }
+function positiveInt(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0; }
 function nonNegative(value) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : 0; }
 function safeJson(value) { try { return JSON.stringify(value).slice(0, MAX_ERROR_BYTES); } catch { return ''; } }
 function stripAnsi(value) { return String(value ?? '').replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, ''); }
