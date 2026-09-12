@@ -25,8 +25,10 @@ export class AntigravityHeadlessProvider {
       ? this.#configuration.cliArgs.map((value) => String(value))
       : [...this.#descriptor.args];
     const selectedModel = text(this.#configuration?.primary?.modelID || this.#configuration?.model);
+    const selectedEffort = text(this.#configuration?.primary?.variant || this.#configuration?.primaryEffort || this.#configuration?.effort);
     const modelArgs = selectedModel && selectedModel !== 'cli-default' ? ['--model', selectedModel] : [];
-    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', ...modelArgs, '-p', prompt];
+    const effortArgs = selectedEffort ? ['--effort', selectedEffort] : [];
+    const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', ...modelArgs, ...effortArgs, '-p', prompt];
     let child;
     try {
       child = spawn(command, args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
@@ -38,6 +40,8 @@ export class AntigravityHeadlessProvider {
     let finalResponse = '';
     let usage = null;
     let stderr = '';
+    let terminalStatus = '';
+    let terminalError = '';
     let settled = false;
     let abortListener;
     const lines = createInterface({ input: child.stdout });
@@ -56,7 +60,10 @@ export class AntigravityHeadlessProvider {
       child.once('exit', (code, exitSignal) => {
         if (signal?.aborted) { finish(rejectRun, abortError()); return; }
         if (code === 0) finish(resolveRun, undefined);
-        else finish(rejectRun, new Error(`Google Antigravity exited${code !== null ? ` with code ${code}` : ''}${exitSignal ? ` (${exitSignal})` : ''}.${stderr.trim() ? ` ${stderr.trim().slice(-1200)}` : ''}`));
+        else {
+          const detail = terminalError || stderr.trim();
+          finish(rejectRun, new Error(`Google Antigravity exited${code !== null ? ` with code ${code}` : ''}${exitSignal ? ` (${exitSignal})` : ''}.${detail ? ` ${detail.slice(-1200)}` : ''}`));
+        }
       });
     });
 
@@ -69,9 +76,10 @@ export class AntigravityHeadlessProvider {
         if (delta) { output += delta; void onDelta(delta); }
       }
       if (event?.event === 'result') {
+        terminalStatus = text(event.result?.status).toUpperCase();
+        terminalError = text(event.result?.error);
         finalResponse = typeof event.result?.response === 'string' ? event.result.response : finalResponse;
         usage = normalizeUsage(event.result?.usage);
-        if (event.result?.status && event.result.status !== 'SUCCESS') stderr = `${stderr}\nAntigravity status: ${event.result.status}`.trim();
       }
     });
 
@@ -80,8 +88,13 @@ export class AntigravityHeadlessProvider {
     try {
       await completion;
       if (signal?.aborted) throw abortError();
+      if (terminalStatus && terminalStatus !== 'SUCCESS') {
+        throw new Error(`Google Antigravity ${terminalStatus.toLowerCase()}.${terminalError ? ` ${terminalError}` : ''}`);
+      }
       const textOutput = output || finalResponse;
-      if (!textOutput.trim()) throw new Error(`Google Antigravity returned no response.${stderr.trim() ? ` ${stderr.trim().slice(-1200)}` : ''}`);
+      if (!textOutput.trim()) {
+        throw new Error(`Google Antigravity returned no response.${terminalError ? ` ${terminalError}` : stderr.trim() ? ` ${stderr.trim().slice(-1200)}` : ''}`);
+      }
       if (!output && finalResponse) await onDelta(finalResponse);
       return { text: textOutput, toolCalls: [], usage };
     } finally {
