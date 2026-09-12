@@ -1,111 +1,123 @@
-import { spawn } from 'node:child_process';
-import { AntigravityHeadlessProvider } from '../../antigravity-provider.mjs';
+import { tmpdir } from 'node:os';
 import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
-
-const CLI_TIMEOUT_MS = 10_000;
+import { discoverAcpRuntimeCatalog } from '../transports/acp/acp-discovery.mjs';
+import { AcpProviderAdapter } from './acp.mjs';
+import { resolveAntigravityAcpInstallation } from './antigravity-install.mjs';
 
 export function antigravityBackendDefinition() {
-  const descriptor = localCliDescriptor('antigravity');
+  const provider = localCliDescriptor('antigravity');
   return {
-    id: descriptor.id,
-    label: descriptor.label,
-    transport: descriptor.transport,
+    id: provider.id,
+    label: provider.label,
+    transport: provider.transport,
     operations: {
       discoverCapabilities: async ({ configuration = {}, options = {} } = {}) => {
-        const discover = typeof options.cliDiscover === 'function' ? options.cliDiscover : discoverAntigravityModels;
-        const catalog = await discover(descriptor, {
-          commandOverride: text(configuration.cliCommand),
-          runImpl: typeof options.runImpl === 'function' ? options.runImpl : undefined,
+        const install = typeof options.resolveInstallation === 'function'
+          ? options.resolveInstallation
+          : resolveAntigravityAcpInstallation;
+        const installation = await install(configuration, options.installOptions ?? {});
+        const descriptor = antigravityAcpDescriptor(installation);
+        const runtimeConfiguration = antigravityRuntimeConfiguration(configuration, installation);
+        const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpRuntimeCatalog;
+        const catalog = await discover(provider.id, {
+          configuration: runtimeConfiguration,
+          descriptor,
+          cwd: text(options.cwd) || tmpdir(),
         });
         return {
-          providerID: descriptor.id,
-          source: 'cli',
+          providerID: provider.id,
+          source: 'acp',
           available: catalog.available !== false && Array.isArray(catalog.models) && catalog.models.length > 0,
           models: Array.isArray(catalog.models) ? catalog.models : [],
-          settings: [],
+          settings: Array.isArray(catalog.configOptions) ? catalog.configOptions : [],
           defaultModel: text(catalog.defaultModel) || null,
-          currentModel: null,
-          modelDependentSettings: false,
+          currentModel: text(catalog.currentModel) || null,
+          modelDependentSettings: true,
+          ...(catalog.reasoning ? { reasoning: catalog.reasoning } : {}),
         };
       },
     },
-    createRuntime: ({ configuration = {} } = {}) => new AntigravityHeadlessProvider(configuration),
+    createRuntime: ({ configuration = {} } = {}) => new ManagedAntigravityProvider(configuration),
   };
 }
 
-export async function discoverAntigravityModels(descriptor = localCliDescriptor('antigravity'), { commandOverride = '', runImpl = runCommand } = {}) {
-  const command = text(commandOverride) || text(process.env[descriptor.envOverride]) || descriptor.command;
-  const { stdout } = await runImpl(command, ['models'], CLI_TIMEOUT_MS);
-  const models = parseAntigravityModelOutput(stdout);
-  return { available: models.length > 0, models, defaultModel: null };
-}
+export class ManagedAntigravityProvider {
+  #configuration;
+  #resolveInstallation;
 
-export function parseAntigravityModelOutput(output = '') {
-  const models = [];
-  const seen = new Set();
-  for (const rawLine of String(output ?? '').split(/\r?\n/)) {
-    const line = stripAnsi(rawLine).trim();
-    if (!line) continue;
-
-    let id = '';
-    let label = '';
-    const tab = line.indexOf('\t');
-    if (tab > 0) {
-      id = text(line.slice(0, tab));
-      label = text(line.slice(tab + 1)) || id;
-    } else {
-      const columns = line.match(/^([^\s]+)\s{2,}(.+)$/);
-      if (columns) {
-        id = text(columns[1]);
-        label = text(columns[2]) || id;
-      } else if (/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$/.test(line)) {
-        id = text(line);
-        label = id;
-      } else {
-        continue;
-      }
-    }
-
-    if (!id || seen.has(id) || /^(model|models|slug)$/i.test(id)) continue;
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$/.test(id)) continue;
-    seen.add(id);
-    models.push({ id, label });
-    if (models.length >= 512) break;
+  constructor(configuration = {}, { resolveInstallation = resolveAntigravityAcpInstallation } = {}) {
+    this.#configuration = { ...configuration };
+    this.#resolveInstallation = resolveInstallation;
   }
-  return models;
+
+  async stream(messages, options = {}) {
+    const installation = await this.#resolveInstallation(this.#configuration, this.#configuration.installOptions ?? {});
+    const descriptor = antigravityAcpDescriptor(installation);
+    const configuration = antigravityRuntimeConfiguration(this.#configuration, installation);
+    const provider = new AcpProviderAdapter(configuration, { descriptor });
+    return provider.stream(messages, options);
+  }
 }
 
-function runCommand(command, args, timeoutMs) {
-  return new Promise((resolveRun, rejectRun) => {
-    let stdout = '';
-    let stderr = '';
-    let child;
-    try {
-      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false, env: { ...process.env } });
-    } catch (error) {
-      rejectRun(error);
-      return;
-    }
-    let settled = false;
-    const finish = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn(value);
-    };
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
-      finish(rejectRun, new Error(`${command} timed out while advertising models.`));
-    }, timeoutMs);
-    child.stdout?.on('data', (chunk) => { stdout = `${stdout}${String(chunk)}`.slice(-512_000); });
-    child.stderr?.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-64_000); });
-    child.once('error', (error) => finish(rejectRun, error));
-    child.once('exit', (code) => {
-      if (code === 0) finish(resolveRun, { stdout, stderr });
-      else finish(rejectRun, new Error((stderr || stdout || `${command} exited with code ${code}`).trim().slice(-1200)));
-    });
-  });
+export function antigravityAcpDescriptor(installation) {
+  const command = requiredText(installation?.command, 'Antigravity ACP command');
+  const harnessPath = requiredText(installation?.harnessPath, 'Antigravity harness path');
+  const args = Array.isArray(installation?.args) ? installation.args.map(String) : [];
+  return {
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    transport: 'acp',
+    command,
+    args,
+    versionArgs: [],
+    envOverride: 'CUPPET_ANTIGRAVITY_ACP_BIN',
+    loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
+    authentication: { methods: [{ id: 'oauth-personal' }] },
+    environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
+  };
 }
 
-function stripAnsi(value) { return String(value ?? '').replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, ''); }
-function text(value) { return typeof value === 'string' ? value.trim().slice(0, 1000) : ''; }
+function antigravityRuntimeConfiguration(configuration, installation) {
+  const source = { ...record(configuration) };
+  source.cliCommand = requiredText(installation?.command, 'Antigravity ACP command');
+  source.cliArgs = Array.isArray(installation?.args) ? installation.args.map(String) : [];
+  delete source.antigravityAcpCommand;
+  delete source.antigravityAcpArgs;
+  delete source.antigravityHarnessPath;
+  delete source.installOptions;
+  return source;
+}
+
+function antigravityEnvironment(inherited, harnessPath) {
+  const environment = { ...inherited };
+  // The desktop provider currently represents Google-account Antigravity.
+  // Prevent unrelated Gemini/Vertex environment credentials from silently
+  // changing the auth mode underneath the oauth-personal ACP session.
+  for (const key of [
+    'GEMINI_API_KEY',
+    'GOOGLE_API_KEY',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'GOOGLE_CLOUD_PROJECT',
+    'GOOGLE_CLOUD_LOCATION',
+    'GOOGLE_CLOUD_QUOTA_PROJECT',
+    'GOOGLE_GENAI_USE_VERTEXAI',
+    'GCLOUD_PROJECT',
+    'CLOUDSDK_CORE_PROJECT',
+    'AGY_ACP_CCPA_PROJECT',
+    'AGY_ACP_ENABLE_OAUTH',
+    'ANTIGRAVITY_HARNESS_PATH',
+    'ELECTRON_RUN_AS_NODE',
+  ]) delete environment[key];
+  environment.ANTIGRAVITY_HARNESS_PATH = harnessPath;
+  environment.AGY_ACP_FORCE_FILE_STORAGE = '1';
+  environment.PYTHONUNBUFFERED = '1';
+  return environment;
+}
+
+function requiredText(value, label) {
+  const result = text(value);
+  if (!result) throw new TypeError(`${label} is required.`);
+  return result;
+}
+function text(value) { return typeof value === 'string' ? value.trim() : ''; }
+function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
