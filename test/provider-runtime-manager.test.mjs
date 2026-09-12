@@ -53,19 +53,51 @@ test('manager reuses one ACP process while applying model and effort to each log
   assert.equal(log.at(-1), 'close');
 });
 
-test('manager replaces ACP runtime for backend or project authority changes, not model changes', async () => {
+test('manager keeps different ACP providers warm and reuses them when switching back', async () => {
   const logs = [];
-  const manager = new ProviderRuntimeManager({ usageRecorder: async () => {}, acpRuntimeFactory: () => { const log = []; logs.push(log); return fakeRuntime(log); } });
+  const manager = new ProviderRuntimeManager({ usageRecorder: async () => {}, acpRuntimeFactory: ({ backendId }) => { const log = [backendId]; logs.push(log); return fakeRuntime(log); } });
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'a' } }), projectRoot: '/tmp/a' }).stream([]);
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'b' } }), projectRoot: '/tmp/a' }).stream([]);
   assert.equal(logs.length, 1);
   assert.ok(!logs[0].includes('close'));
+
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/a' }).stream([]);
   assert.equal(logs.length, 2);
-  assert.ok(logs[0].includes('close'));
+  assert.equal(manager.size, 2);
+  assert.ok(!logs[0].includes('close'));
+
+  await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'c' } }), projectRoot: '/tmp/a' }).stream([]);
+  assert.equal(logs.length, 2);
+  assert.deepEqual(logs[0].filter((item) => typeof item === 'string'), ['opencode', 'start', 'newSession', 'newSession']);
+  assert.ok(!logs[1].includes('close'));
+
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/b' }).stream([]);
   assert.equal(logs.length, 3);
+  assert.ok(logs[0].includes('close'));
   assert.ok(logs[1].includes('close'));
+  assert.equal(manager.size, 1);
+  await manager.close();
+});
+
+test('manager bounds warm provider processes with least-recently-used eviction', async () => {
+  const logs = new Map();
+  const manager = new ProviderRuntimeManager({
+    maxWarmRuntimes: 2,
+    usageRecorder: async () => {},
+    acpRuntimeFactory: ({ backendId }) => {
+      const log = [];
+      logs.set(backendId, log);
+      return fakeRuntime(log);
+    },
+  });
+  await manager.adapterFor({ sessionId: 'chat-lru', adapter: managedAdapter({ providerID: 'opencode' }), projectRoot: '/tmp/a' }).stream([]);
+  await manager.adapterFor({ sessionId: 'chat-lru', adapter: managedAdapter({ providerID: 'kiro' }, 'kiro'), projectRoot: '/tmp/a' }).stream([]);
+  await manager.adapterFor({ sessionId: 'chat-lru', adapter: managedAdapter({ providerID: 'opencode' }), projectRoot: '/tmp/a' }).stream([]);
+  await manager.adapterFor({ sessionId: 'chat-lru', adapter: managedAdapter({ providerID: 'github-copilot' }, 'github-copilot'), projectRoot: '/tmp/a' }).stream([]);
+  assert.equal(manager.size, 2);
+  assert.ok(logs.get('kiro').includes('close'));
+  assert.ok(!logs.get('opencode').includes('close'));
+  assert.ok(!logs.get('github-copilot').includes('close'));
   await manager.close();
 });
 
