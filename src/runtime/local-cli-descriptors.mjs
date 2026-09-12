@@ -38,6 +38,9 @@ const DESCRIPTORS = Object.freeze({
   kiro: descriptor({
     id: 'kiro', label: 'Kiro', transport: 'acp', command: 'kiro-cli', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_KIRO_BIN',
     loginHint: 'Run `kiro-cli` in Terminal once and complete sign-in, then retry.',
+    // Kiro's ACP implementation currently names the PromptRequest content array `content`
+    // instead of the standard `prompt`. Keep this as driver metadata, never a transport-core ID check.
+    promptParameter: 'content',
   }),
   antigravity: descriptor({
     id: 'antigravity', label: 'Google Antigravity', transport: 'headless-plan', command: 'agy', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_ANTIGRAVITY_BIN',
