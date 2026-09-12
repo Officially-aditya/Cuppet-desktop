@@ -8,6 +8,7 @@ on:
       - feat/provider-architecture-v2
     paths:
       - .github/test-trigger
+      - .github/provider-v2-test-trigger
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref_name }}
