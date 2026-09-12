@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { CodexSubscriptionProvider } from '../src/runtime/codex-provider.mjs';
+import { CodexSessionRuntime, CodexSubscriptionProvider } from '../src/runtime/codex-provider.mjs';
 
 class FakeCodexClient extends EventEmitter {
   constructor({ account = { type: 'chatgpt', planType: 'plus' }, toolCall = true } = {}) {
@@ -11,9 +11,12 @@ class FakeCodexClient extends EventEmitter {
     this.requests = [];
     this.responses = [];
     this.startedTurn = deferred();
+    this.startCount = 0;
+    this.closeCount = 0;
+    this.closed = false;
   }
-  async start() { return this; }
-  async close() { this.closed = true; }
+  async start() { this.startCount += 1; return this; }
+  async close() { this.closeCount += 1; this.closed = true; }
   async request(method, params = {}) {
     this.requests.push({ method, params });
     if (method === 'account/read') return { account: this.account, requiresOpenaiAuth: true };
@@ -117,6 +120,50 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(client.threadParams.dynamicTools[0].inputSchema.type, 'object');
   assert.match(client.threadParams.cwd, /cuppet-codex-runtime/);
   assert.equal(client.closed, true);
+});
+
+test('managed Codex runtime reuses one app-server while model and effort change per ephemeral thread', async () => {
+  const client = new FakeCodexClient({ toolCall: false });
+  const runtime = new CodexSessionRuntime({
+    configuration: {
+      codexLaunch: { command: 'fake', args: [], source: 'test' },
+      clientFactory: () => client,
+    },
+  });
+  try {
+    await runtime.start();
+    const first = await runtime.runTurn({
+      messages: [{ role: 'user', content: 'first' }],
+      selection: { model: 'gpt-first', effort: 'high' },
+    });
+    const second = await runtime.runTurn({
+      messages: [{ role: 'user', content: 'second' }],
+      selection: { model: 'gpt-second', effort: 'low' },
+    });
+    assert.equal(first.text, 'done');
+    assert.equal(second.text, 'done');
+    assert.equal(client.startCount, 1);
+    assert.equal(client.closeCount, 0);
+    const threadStarts = client.requests.filter((request) => request.method === 'thread/start');
+    assert.equal(threadStarts.length, 2);
+    assert.equal(threadStarts[0].params.model, 'gpt-first');
+    assert.deepEqual(threadStarts[0].params.config, { model_reasoning_effort: 'high' });
+    assert.equal(threadStarts[1].params.model, 'gpt-second');
+    assert.deepEqual(threadStarts[1].params.config, { model_reasoning_effort: 'low' });
+    assert.equal(threadStarts[0].params.ephemeral, true);
+    assert.equal(threadStarts[1].params.ephemeral, true);
+  } finally {
+    await runtime.close();
+  }
+  assert.equal(client.closeCount, 1);
+});
+
+test('Codex provider exposes managed app-server runtime metadata without changing stateless fallback', () => {
+  const provider = new CodexSubscriptionProvider({ providerID: 'codex', model: 'gpt-test' });
+  const managed = provider.cuppetManagedRuntime();
+  assert.equal(managed.protocol, 'codex-app-server');
+  assert.equal(managed.backendId, 'codex');
+  assert.equal(managed.configuration.model, 'gpt-test');
 });
 
 test('Codex Activity and text observers cannot fail a successful turn', async () => {
