@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
 import { fetchProviderModelCatalog } from './provider-model-catalog.mjs';
+import { providerPreset } from './provider-presets.mjs';
 import { cliAgentConnect, cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
@@ -124,22 +125,17 @@ function registerIpc() {
   }));
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    let result = await settings.save(source);
+    const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim()
+      ? source.providerID.trim()
+      : settings.rendererValue().primary?.providerID || settings.rendererValue().providerID || '';
+    const preset = providerPreset(requestedProviderID);
     const explicitModel = typeof source.model === 'string' && source.model.trim();
-    const resolveDefault = source.resolveDefault === true;
-    if (resolveDefault && !explicitModel && result.authType === 'local-cli') {
-      const advertised = await fetchProviderModelCatalog(settings.runtimeValue()).catch(() => null);
-      const exactDefault = typeof advertised?.defaultModel === 'string' ? advertised.defaultModel.trim() : '';
-      if (exactDefault && exactDefault !== 'cli-default' && exactDefault !== result.primary?.modelID) {
-        result = await settings.save({
-providerID: result.primary?.providerID || result.providerID,
-baseUrl: result.baseUrl || '',
-model: exactDefault,
-backgroundModel: exactDefault,
-secondaryAuto: true,
-        });
-      }
-    }
+    const resetToProviderDefault = source.resolveDefault === true && !explicitModel && preset?.authType === 'local-cli';
+    const defaultModel = resetToProviderDefault ? String(preset.model || 'cli-default').trim() : '';
+    const saveSource = resetToProviderDefault
+      ? { ...source, model: defaultModel, backgroundModel: defaultModel, secondaryAuto: true }
+      : source;
+    const result = await settings.save(saveSource);
     await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
     return result;
   });
