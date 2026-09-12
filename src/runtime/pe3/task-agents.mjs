@@ -9,6 +9,10 @@ const PATH_TOKEN = /(?:\.?\.?\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)+(?:\.[A-
 const CONTINUATION_CUES = ['also','that','those','the previous','same task','same issue','continue','keep going','update the tests','fix the tests','what about'];
 const SWITCH_CUES = ['new task','separate task','separately','unrelated','instead','switch to','now build','now implement','move on to'];
 const RETURN_CUES = ['go back to','return to','back to','resume the','resume that','previous task','earlier task'];
+const FOLLOW_UP_CUES = ['try again','before answering','actual files','check the actual','look at the actual',"isn't helping",'isnt helping',"doesn't answer",'doesnt answer','you missed','be specific','based on that','based on this','from your last','from the previous','what do you mean','which ones','show me those','show me these'];
+const CONTEXT_REFERENCE = /\b(?:this|that|these|those|it|them|they|same|above|previous|earlier|again)\b/;
+const FOLLOW_UP_PREFIX = /^(?:yeah|yes|yep|no|nope|okay|ok|right|wait|but|actually)\b/;
+const TASK_ACTION = /\b(?:implement|build|add|create|remove|delete|migrate|refactor|debug|investigate|research|audit|design|write|test|optimize|upgrade|replace|rename|configure|integrate|fix|review|analyze|analyse|inspect|check|update|compare|benchmark|document|trace|profile)\b/;
 const STOP_TERMS = new Set(['about','after','again','also','and','are','been','before','build','can','change','code','could','create','does','doing','file','files','fix','for','from','have','here','into','issue','just','make','more','need','now','please','should','task','that','the','their','then','there','these','they','this','those','update','use','using','want','what','when','where','which','with','work','working','would','you']);
 
 const SOURCE_STRENGTH = { prompt: 0, localized: 1, active: 2, symbol: 2, touched: 3 };
@@ -38,6 +42,7 @@ export class TaskAgentRouter {
     const affinity = affinityFor(active, prompt, evidence); const normalized = normalizeText(prompt); const explicitSwitch = hasCue(normalized, SWITCH_CUES); const explicitReturn = hasCue(normalized, RETURN_CUES); const dormant = bestDormant(this.#agents, active, prompt, evidence);
     if (explicitReturn && dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'explicit return language matches a dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
     if (!explicitSwitch && hasCue(normalized, CONTINUATION_CUES)) return { action: 'continue', agent: cloneAgent(active), reason: 'continuation language defaults to the active agent', affinity };
+    if (!explicitSwitch && isContextDependentPrompt(normalized)) return { action: 'continue', agent: cloneAgent(active), reason: 'context-dependent follow-up preserves the active agent', affinity };
     if (!explicitSwitch && strongMatch(affinity)) return { action: 'continue', agent: cloneAgent(active), reason: 'active working-set affinity is sufficient', affinity };
     if (!strongMismatch(active, prompt, affinity, evidence, explicitSwitch)) return { action: 'continue', agent: cloneAgent(active), reason: 'ambiguous or weak mismatch stays on the active agent', affinity, ...(semanticEligible(prompt, affinity) ? { semanticEligible: true } : {}) };
     if (dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'strong active mismatch with a matching dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
@@ -89,8 +94,18 @@ function affinityFor(agent, prompt, evidence) {
 }
 function bestDormant(agents, active, prompt, evidence) { return [...agents.values()].filter((a)=>a.id!==active.id).map((agent)=>({agent,affinity:affinityFor(agent,prompt,evidence)})).filter(({affinity})=>affinity.pathOverlap>0||affinity.symbolOverlap>0||affinity.score>=.54).sort((a,b)=>b.affinity.score-a.affinity.score||b.agent.lastActiveAt-a.agent.lastActiveAt)[0]; }
 function strongMatch(a) { return a.pathOverlap>0 || a.symbolOverlap>0 || a.weightedOverlap>=1.15 || (a.termOverlap>=2 && a.lexicalRatio>=.55) || a.score>=.58; }
-function strongMismatch(active, prompt, affinity, evidence, explicitSwitch) { if (explicitSwitch && affinity.pathOverlap===0 && affinity.symbolOverlap===0) return true; const paths = [...extractPaths(prompt),...normalizePaths(evidence.localizedPaths??[])]; const known = new Set(active.fingerprint.paths.filter((s)=>s.weight>=.35).map((s)=>s.value)); if (paths.length && known.size && paths.every((p)=>!known.has(p)) && affinity.symbolOverlap===0) return true; return extractTerms(prompt).length>=4 && affinity.score<.14 && affinity.lexicalRatio<.2; }
-function semanticEligible(prompt, affinity) { return extractTerms(prompt).length>=4 && affinity.pathOverlap===0 && affinity.symbolOverlap===0 && affinity.score<.58; }
+function strongMismatch(active, prompt, affinity, evidence, explicitSwitch) {
+  if (explicitSwitch && affinity.pathOverlap===0 && affinity.symbolOverlap===0) return true;
+  const paths = [...extractPaths(prompt),...normalizePaths(evidence.localizedPaths??[])];
+  const known = new Set(active.fingerprint.paths.filter((s)=>s.weight>=.35).map((s)=>s.value));
+  return Boolean(paths.length && known.size && paths.every((p)=>!known.has(p)) && affinity.symbolOverlap===0);
+}
+function semanticEligible(prompt, affinity) {
+  const normalized = normalizeText(prompt);
+  return looksLikeStandaloneTask(normalized) && !isContextDependentPrompt(normalized) && extractTerms(prompt).length>=3 && affinity.pathOverlap===0 && affinity.symbolOverlap===0 && affinity.score<.58;
+}
+function isContextDependentPrompt(normalized) { return FOLLOW_UP_PREFIX.test(normalized) || CONTEXT_REFERENCE.test(normalized) || hasCue(normalized,FOLLOW_UP_CUES); }
+function looksLikeStandaloneTask(normalized) { return TASK_ACTION.test(normalized); }
 function mergeSignals(target, values, weight, source, limit, now) { for (const value of boundedUnique(values, limit)) { const existing = target.find((s)=>s.value===value); if (existing) { if (weight > existing.weight || SOURCE_STRENGTH[source] >= SOURCE_STRENGTH[existing.source]) { existing.weight = Math.max(existing.weight, weight); existing.source = source; } existing.updatedAt = now; } else target.push({ value, weight, source, updatedAt: now }); } target.sort((a,b)=>b.weight-a.weight||b.updatedAt-a.updatedAt); target.splice(limit); }
 function decayFingerprint(fp) { for (const list of [fp.paths,fp.symbols,fp.terms]) { for (const signal of list) if (signal.source==='prompt'||signal.source==='localized') signal.weight*=FINGERPRINT_DECAY; for (let i=list.length-1;i>=0;i--) if (list[i].weight<MIN_FINGERPRINT_WEIGHT) list.splice(i,1); } fp.revision += 1; }
 function extractPaths(value) { return boundedUnique((String(value).match(PATH_TOKEN)??[]).map(normalizePath).filter(Boolean), MAX_PATHS); }
