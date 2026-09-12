@@ -19,7 +19,7 @@ export type ActivityEntry = {
   details?: string;
 };
 
-type TraceReasoning = { id: string; type: 'reasoning'; text: string };
+type TraceReasoning = { id: string; type: 'reasoning'; text: string; sequence: number };
 type TraceTool = {
   id: string;
   type: 'tool';
@@ -28,6 +28,7 @@ type TraceTool = {
   argumentsJson: string;
   label: string;
   details?: string;
+  sequence: number;
 };
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
@@ -121,14 +122,11 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
       if (!messageId || !activity) return;
 
       if (event.source === 'provider' && activityType === 'activity.reasoning.delta') {
-        const segment = typeof activity.text === 'string' ? activity.text.trim() : '';
-        if (!segment) return;
+        const segment = typeof activity.text === 'string' ? activity.text : '';
+        if (!segment.trim()) return;
         setTraceByMessage((current) => {
           const existing = current[messageId] ?? readStoredTrace(messageId, true);
-          const last = existing.at(-1);
-          const next = last?.type === 'reasoning' && last.text === segment
-            ? existing
-            : boundTrace([...existing, { id: `reason-${Date.now()}-${existing.length}`, type: 'reasoning', text: segment }]);
+          const next = appendReasoningTrace(existing, segment);
           if (next !== existing) storeTrace(messageId, next);
           return next === existing ? current : { ...current, [messageId]: next };
         });
@@ -429,7 +427,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
 }
 
 function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
-  const [traceOpen, setTraceOpen] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(live);
   const [copied, setCopied] = useState(false);
   const responseRef = useRef<HTMLDivElement | null>(null);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
@@ -459,7 +457,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
       <div className="message-role">
-        {hasTrace && !live ? (
+        {hasTrace ? (
           <button
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
@@ -472,8 +470,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && live && <TraceView trace={trace} />}
-      {hasTrace && !live && traceOpen && <TraceView trace={trace} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
         content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
@@ -492,9 +489,10 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
 }
 
 function TraceView({ trace }: { trace: TraceItem[] }) {
+  const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
-      {trace.map((item) => item.type === 'reasoning' ? (
+      {ordered.map((item) => item.type === 'reasoning' ? (
         <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
       ) : (
         <div key={item.id} className={`thread-activity-line ${item.status}`}>{friendlyActivityLabel({ id: item.id, kind: 'tool', status: item.status, label: item.label, details: item.details })}</div>
@@ -626,6 +624,33 @@ async function applyPermissionPreference(session: Session | null) {
   await window.cuppet.permissions.autoSet(session.id, effective).catch(() => undefined);
 }
 
+function appendReasoningTrace(trace: TraceItem[], segment: string): TraceItem[] {
+  const incoming = segment.trim();
+  if (!incoming) return trace;
+  const last = trace.at(-1);
+  if (last?.type === 'reasoning') {
+    const text = mergeReasoningText(last.text, incoming);
+    if (text === last.text) return trace;
+    const next = [...trace];
+    next[next.length - 1] = { ...last, text };
+    return boundTrace(next);
+  }
+  return boundTrace([
+    ...trace,
+    { id: `reason-${Date.now()}-${trace.length}`, type: 'reasoning', text: incoming, sequence: nextTraceSequence(trace) },
+  ]);
+}
+
+function mergeReasoningText(previous: string, incoming: string) {
+  const before = previous.trim();
+  const next = incoming.trim();
+  if (!before) return next;
+  if (!next || next === before || before.endsWith(next)) return before;
+  if (next.startsWith(before)) return next;
+  const separator = /\s$/.test(previous) || /^\s/.test(incoming) || /^[,.;:!?)}\]]/.test(next) ? '' : ' ';
+  return `${previous}${separator}${incoming}`;
+}
+
 function updateToolTraceFromActivity(trace: TraceItem[], activity: any): TraceItem[] {
   const id = String(activity?.executionId ?? activity?.callId ?? `tool-${Date.now()}`);
   const existingIndex = trace.findIndex((item) => item.type === 'tool' && item.id === id);
@@ -641,12 +666,29 @@ function updateToolTraceFromActivity(trace: TraceItem[], activity: any): TraceIt
     tool,
     argumentsJson,
     label: toolActivityLabel(tool, argumentsJson, status),
+    sequence: existing?.sequence ?? nextTraceSequence(trace),
     ...(typeof activity?.details === 'string' && activity.details ? { details: activity.details } : existing?.details ? { details: existing.details } : {}),
   };
   const next = [...trace];
   if (existingIndex >= 0) next[existingIndex] = patch;
   else next.push(patch);
   return boundTrace(next);
+}
+
+function nextTraceSequence(trace: TraceItem[]) {
+  let max = -1;
+  for (let index = 0; index < trace.length; index += 1) {
+    const sequence = Number(trace[index]?.sequence);
+    max = Math.max(max, Number.isFinite(sequence) ? sequence : index);
+  }
+  return max + 1;
+}
+
+function orderedTrace(trace: TraceItem[]) {
+  return trace
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => a.item.sequence - b.item.sequence || a.index - b.index)
+    .map(({ item }) => item);
 }
 
 function friendlyActivityLabel(entry: ActivityEntry) {
@@ -774,15 +816,19 @@ function readStoredTrace(messageId: string, keepRunning = false): TraceItem[] {
     const raw = localStorage.getItem(`${TRACE_KEY_PREFIX}${messageId}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed
+      if (Array.isArray(parsed)) return normalizeStoredTrace(parsed
         .filter(validTraceItem)
-        .map((item) => item.type === 'tool' && item.status === 'running' && !keepRunning ? { ...item, status: 'complete', label: toolActivityLabel(item.tool, item.argumentsJson, 'complete') } : item);
+        .map((item) => item.type === 'tool' && item.status === 'running' && !keepRunning ? { ...item, status: 'complete', label: toolActivityLabel(item.tool, item.argumentsJson, 'complete') } : item));
     }
     const legacy = localStorage.getItem(`${LEGACY_REASONING_KEY_PREFIX}${messageId}`)?.trim();
-    return legacy ? [{ id: 'legacy-reasoning', type: 'reasoning', text: legacy }] : [];
+    return legacy ? [{ id: 'legacy-reasoning', type: 'reasoning', text: legacy, sequence: 0 }] : [];
   } catch {
     return [];
   }
+}
+
+function normalizeStoredTrace(trace: Array<TraceItem | (Omit<TraceReasoning, 'sequence'> & { sequence?: number }) | (Omit<TraceTool, 'sequence'> & { sequence?: number })>): TraceItem[] {
+  return trace.map((item, index) => ({ ...item, sequence: Number.isFinite(Number(item.sequence)) ? Number(item.sequence) : index })) as TraceItem[];
 }
 
 function validTraceItem(value: unknown): value is TraceItem {
@@ -793,7 +839,7 @@ function validTraceItem(value: unknown): value is TraceItem {
 }
 
 function storeTrace(messageId: string, trace: TraceItem[]) {
-  try { localStorage.setItem(`${TRACE_KEY_PREFIX}${messageId}`, JSON.stringify(boundTrace(trace))); }
+  try { localStorage.setItem(`${TRACE_KEY_PREFIX}${messageId}`, JSON.stringify(boundTrace(orderedTrace(trace)))); }
   catch { /* local persistence is best-effort; the final answer remains durable in the runtime DB. */ }
 }
 
