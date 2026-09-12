@@ -4,6 +4,7 @@ const rl = createInterface({ input: process.stdin });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let model = 'provider/model-a';
 let effort = 'low';
+let sessionNewAttempts = 0;
 
 function effortValues() {
   return model === 'provider/model-b' ? ['medium', 'max'] : ['low', 'high'];
@@ -26,6 +27,11 @@ rl.on('line', (line) => {
     return;
   }
   if (message.method === 'session/new') {
+    sessionNewAttempts += 1;
+    if (process.env.FAKE_ACP_SESSION_NEW_INTERNAL_ONCE === '1' && sessionNewAttempts === 1) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Internal error', data: { service: 'directory' } } });
+      return;
+    }
     write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'config-session', configOptions: options() } });
     return;
   }
