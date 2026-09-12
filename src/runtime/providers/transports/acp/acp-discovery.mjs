@@ -14,10 +14,14 @@ import { AcpSessionRuntime } from './acp-session.mjs';
  *    refreshes settings that depend on that model. The explicit user effort is
  *    not applied, so reasoning.currentValue remains the provider's default for
  *    that model rather than echoing the saved Cuppet override.
+ *
+ * Managed ACP providers may pass a runtime descriptor explicitly. This keeps
+ * installation/spawn policy in the backend while the ACP discovery algorithm
+ * remains provider-agnostic.
  */
 export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
   const id = text(providerID).toLowerCase();
-  const descriptor = localCliDescriptor(id);
+  const descriptor = options.descriptor ?? localCliDescriptor(id);
   if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Unsupported ACP provider: ${providerID ?? 'unknown'}`);
   const configuration = record(options.configuration);
   const cwd = text(options.cwd) || tmpdir();
