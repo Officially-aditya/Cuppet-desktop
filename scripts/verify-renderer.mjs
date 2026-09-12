@@ -4,10 +4,11 @@ import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
+const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
+  read('src/runtime/providers/backends/codex.mjs'),
   read('src/main/provider-settings.mjs'),
   read('src/main/provider-presets.mjs'),
   read('src/main/custom-models.mjs'),
@@ -107,8 +108,10 @@ assert.match(modelPicker, /presetDefaultID/, 'provider-owned automatic default s
 assert.match(modelPicker, /advertised\.defaultModel/, 'model picker does not resolve advertised provider defaults');
 assert.match(modelPicker, /modelDependentSettings === true/, 'model picker does not use generic model-dependent capability refresh');
 assert.doesNotMatch(modelPicker, /providerID === 'codex'|advertised\.source === 'codex'|advertised\.source === 'acp'/, 'model picker leaks provider or transport-specific capability checks');
-assert.match(codexAuth, /client\.request\('model\/list'/, 'Codex model catalog is not sourced from the official app-server model/list API');
-assert.match(codexAuth, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
+assert.match(codexAuth, /listCodexModelsFromDriver/, 'Codex auth host no longer delegates compatibility model requests to the provider driver');
+assert.doesNotMatch(codexAuth, /client\.request\('model\/list'/, 'Codex auth host duplicated model discovery instead of delegating to the provider driver');
+assert.match(codexDriver, /client\.request\('model\/list'/, 'Codex provider driver is not sourced from the official app-server model/list API');
+assert.match(codexDriver, /includeHidden:\s*false/, 'hidden Codex models should not be shown in the consumer picker');
 assert.match(providerSettings, /const model = requestedModel \|\| currentPrimaryModel \|\| modelID\(preset\?\.model\)/, 'provider presets still force the default model instead of allowing user selection');
 assert.match(providerSettings, /customModels:\s*customModelEntries\(this\.#customModels\)/, 'provider-scoped custom models are not projected to the renderer');
 assert.match(providerSettings, /await probeCustomModel\(this\.runtimeValue\(\), customModel\)/, 'custom model IDs are persisted without a real provider validation request');
