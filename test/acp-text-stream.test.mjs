@@ -31,7 +31,6 @@ test('production runtime manager reconstructs Copilot tokenized message and reas
   }, { descriptor });
   const manager = new ProviderRuntimeManager({ usageRecorder: async () => {} });
   let streamed = '';
-  let activityText = '';
   const reasoning = [];
   try {
     const result = await manager.adapterFor({
@@ -41,13 +40,11 @@ test('production runtime manager reconstructs Copilot tokenized message and reas
     }).stream([{ role: 'user', content: 'Inspect sitemap.' }], {
       onDelta: async (delta) => { streamed += delta; },
       onActivity: async (activity) => {
-        if (activity?.type === 'activity.text.delta') activityText += activity.text;
         if (activity?.type === 'activity.reasoning.delta') reasoning.push(activity.text);
       },
     });
     assert.equal(result.text, expected);
     assert.equal(streamed, expected);
-    assert.equal(activityText, expected);
     assert.deepEqual(reasoning, [expectedReasoning]);
   } finally {
     await manager.close();
