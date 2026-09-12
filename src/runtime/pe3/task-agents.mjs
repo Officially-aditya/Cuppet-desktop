@@ -4,14 +4,16 @@ const MAX_SYMBOLS = 16;
 const MAX_DESCRIPTOR_BYTES = 320;
 const FINGERPRINT_DECAY = 0.96;
 const MIN_FINGERPRINT_WEIGHT = 0.08;
+const SHORT_FOLLOW_UP_WORDS = 10;
 
 const PATH_TOKEN = /(?:\.?\.?\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)+(?:\.[A-Za-z0-9_-]+)?|[A-Za-z0-9_.@-]+\.(?:ts|tsx|js|jsx|rs|py|go|java|json|md|yaml|yml|toml|css|html)/g;
 const CONTINUATION_CUES = ['also','that','those','the previous','same task','same issue','continue','keep going','update the tests','fix the tests','what about'];
-const SWITCH_CUES = ['new task','separate task','separately','unrelated','instead','switch to','now build','now implement','move on to'];
 const RETURN_CUES = ['go back to','return to','back to','resume the','resume that','previous task','earlier task'];
 const FOLLOW_UP_CUES = ['try again','before answering','actual files','check the actual','look at the actual',"isn't helping",'isnt helping',"doesn't answer",'doesnt answer','you missed','be specific','based on that','based on this','from your last','from the previous','what do you mean','which ones','show me those','show me these'];
 const CONTEXT_REFERENCE = /\b(?:this|that|these|those|it|them|they|same|above|previous|earlier|again)\b/;
 const FOLLOW_UP_PREFIX = /^(?:yeah|yes|yep|no|nope|okay|ok|right|wait|but|actually)\b/;
+const QUESTION_PREFIX = /^(?:what|why|how|which|where|when|who|can|could|would|should|did|does|do|is|are|was|were)\b/;
+const EXPLICIT_SWITCH = /^(?:new task\b|separate task\b|unrelated(?: task)?\b|switch (?:tasks?|to)\b|move on to\b|let(?:'s| us) move on to\b)/;
 const TASK_ACTION = /\b(?:implement|build|add|create|remove|delete|migrate|refactor|debug|investigate|research|audit|design|write|test|optimize|upgrade|replace|rename|configure|integrate|fix|review|analyze|analyse|inspect|check|update|compare|benchmark|document|trace|profile)\b/;
 const STOP_TERMS = new Set(['about','after','again','also','and','are','been','before','build','can','change','code','could','create','does','doing','file','files','fix','for','from','have','here','into','issue','just','make','more','need','now','please','should','task','that','the','their','then','there','these','they','this','those','update','use','using','want','what','when','where','which','with','work','working','would','you']);
 
@@ -39,22 +41,30 @@ export class TaskAgentRouter {
     const active = this.#activeID ? this.#agents.get(this.#activeID) : undefined;
     if (!active) return { action: 'create', reason: 'no active task agent', affinity: emptyAffinity() };
     mergeEvidence(active, evidence, this.#now());
-    const affinity = affinityFor(active, prompt, evidence); const normalized = normalizeText(prompt); const explicitSwitch = hasCue(normalized, SWITCH_CUES); const explicitReturn = hasCue(normalized, RETURN_CUES); const dormant = bestDormant(this.#agents, active, prompt, evidence);
+    const affinity = affinityFor(active, prompt, evidence); const normalized = normalizeText(prompt); const explicitSwitch = isExplicitSwitchPrompt(normalized); const explicitReturn = hasCue(normalized, RETURN_CUES); const dormant = bestDormant(this.#agents, active, prompt, evidence);
     if (explicitReturn && dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'explicit return language matches a dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
-    if (!explicitSwitch && hasCue(normalized, CONTINUATION_CUES)) return { action: 'continue', agent: cloneAgent(active), reason: 'continuation language defaults to the active agent', affinity };
-    if (!explicitSwitch && isContextDependentPrompt(normalized)) return { action: 'continue', agent: cloneAgent(active), reason: 'context-dependent follow-up preserves the active agent', affinity };
-    if (!explicitSwitch && strongMatch(affinity)) return { action: 'continue', agent: cloneAgent(active), reason: 'active working-set affinity is sufficient', affinity };
-    if (!strongMismatch(active, prompt, affinity, evidence, explicitSwitch)) return { action: 'continue', agent: cloneAgent(active), reason: 'ambiguous or weak mismatch stays on the active agent', affinity, ...(semanticEligible(prompt, affinity) ? { semanticEligible: true } : {}) };
-    if (dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'strong active mismatch with a matching dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
-    return { action: 'create', reason: 'strong task mismatch with no matching dormant agent', affinity };
+    if (explicitSwitch) {
+      if (dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'explicit task switch matches a dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
+      return { action: 'create', reason: 'explicit task switch creates a sibling task agent', affinity };
+    }
+    if (hasCue(normalized, CONTINUATION_CUES)) return { action: 'continue', agent: cloneAgent(active), reason: 'continuation language defaults to the active agent', affinity };
+    if (isContextDependentPrompt(normalized)) return { action: 'continue', agent: cloneAgent(active), reason: 'context-dependent follow-up preserves the active agent', affinity };
+    if (strongMatch(affinity)) return { action: 'continue', agent: cloneAgent(active), reason: 'active working-set affinity is sufficient', affinity };
+    if (strongMismatch(active, prompt, affinity, evidence)) {
+      if (dormant) return { action: 'reactivate', agent: cloneAgent(dormant.agent), reason: 'hard workspace mismatch with a matching dormant task agent', affinity: dormant.affinity, refreshPaths: [...dormant.agent.stalePaths] };
+      return { action: 'create', reason: 'hard workspace mismatch with no matching dormant agent', affinity };
+    }
+    if (isLikelyConversationalFollowUp(prompt, normalized)) return { action: 'continue', agent: cloneAgent(active), reason: 'short or elliptical prompt preserves the active agent', affinity };
+    return { action: 'continue', agent: cloneAgent(active), reason: 'ambiguous or weak mismatch stays on the active agent', affinity, ...(semanticEligible(prompt, affinity) ? { semanticEligible: true } : {}) };
   }
   recordTurn(prompt, evidence = {}) {
     const active = this.#activeID ? this.#agents.get(this.#activeID) : undefined; if (!active) return undefined;
     const text = String(prompt).trim(); const now = this.#now();
     if (text) {
       decayFingerprint(active.fingerprint);
-      const paths = extractPaths(text), symbols = extractSymbols(text), terms = extractTerms(text);
-      if (paths.length || symbols.length || terms.length) active.taskDescriptor = bounded(text, MAX_DESCRIPTOR_BYTES);
+      const paths = extractPaths(text), symbols = extractSymbols(text), terms = extractTerms(text), normalized = normalizeText(text);
+      const establishesTask = active.turns === 0 || !active.taskDescriptor || isSelfContainedTaskPrompt(text, normalized);
+      if (establishesTask && (paths.length || symbols.length || terms.length)) active.taskDescriptor = bounded(text, MAX_DESCRIPTOR_BYTES);
       active.activePaths = mergeRecent(active.activePaths, paths, MAX_PATHS); active.recentSymbols = mergeRecent(active.recentSymbols, symbols, MAX_SYMBOLS); active.terms = mergeRecent(active.terms, terms, MAX_TERMS); active.turns += 1;
       mergeSignals(active.fingerprint.paths, paths, .45, 'prompt', MAX_PATHS, now); mergeSignals(active.fingerprint.symbols, symbols, .42, 'prompt', MAX_SYMBOLS, now); mergeSignals(active.fingerprint.terms, terms, .26, 'prompt', MAX_TERMS, now);
     }
@@ -94,18 +104,28 @@ function affinityFor(agent, prompt, evidence) {
 }
 function bestDormant(agents, active, prompt, evidence) { return [...agents.values()].filter((a)=>a.id!==active.id).map((agent)=>({agent,affinity:affinityFor(agent,prompt,evidence)})).filter(({affinity})=>affinity.pathOverlap>0||affinity.symbolOverlap>0||affinity.score>=.54).sort((a,b)=>b.affinity.score-a.affinity.score||b.agent.lastActiveAt-a.agent.lastActiveAt)[0]; }
 function strongMatch(a) { return a.pathOverlap>0 || a.symbolOverlap>0 || a.weightedOverlap>=1.15 || (a.termOverlap>=2 && a.lexicalRatio>=.55) || a.score>=.58; }
-function strongMismatch(active, prompt, affinity, evidence, explicitSwitch) {
-  if (explicitSwitch && affinity.pathOverlap===0 && affinity.symbolOverlap===0) return true;
+function strongMismatch(active, prompt, affinity, evidence) {
   const paths = [...extractPaths(prompt),...normalizePaths(evidence.localizedPaths??[])];
   const known = new Set(active.fingerprint.paths.filter((s)=>s.weight>=.35).map((s)=>s.value));
   return Boolean(paths.length && known.size && paths.every((p)=>!known.has(p)) && affinity.symbolOverlap===0);
 }
 function semanticEligible(prompt, affinity) {
   const normalized = normalizeText(prompt);
-  return looksLikeStandaloneTask(normalized) && !isContextDependentPrompt(normalized) && extractTerms(prompt).length>=3 && affinity.pathOverlap===0 && affinity.symbolOverlap===0 && affinity.score<.58;
+  return isSelfContainedTaskPrompt(prompt, normalized) && affinity.pathOverlap===0 && affinity.symbolOverlap===0 && affinity.score<.58;
+}
+function isSelfContainedTaskPrompt(prompt, normalized = normalizeText(prompt)) {
+  if (!TASK_ACTION.test(normalized) || isContextDependentPrompt(normalized) || QUESTION_PREFIX.test(normalized)) return false;
+  if (extractPaths(prompt).length) return true;
+  return wordCount(normalized) > SHORT_FOLLOW_UP_WORDS && extractTerms(prompt).length >= 4;
+}
+function isLikelyConversationalFollowUp(prompt, normalized = normalizeText(prompt)) {
+  if (isContextDependentPrompt(normalized)) return true;
+  if (QUESTION_PREFIX.test(normalized) && !extractPaths(prompt).length) return true;
+  return wordCount(normalized) <= SHORT_FOLLOW_UP_WORDS && extractPaths(prompt).length === 0;
 }
 function isContextDependentPrompt(normalized) { return FOLLOW_UP_PREFIX.test(normalized) || CONTEXT_REFERENCE.test(normalized) || hasCue(normalized,FOLLOW_UP_CUES); }
-function looksLikeStandaloneTask(normalized) { return TASK_ACTION.test(normalized); }
+function isExplicitSwitchPrompt(normalized) { return EXPLICIT_SWITCH.test(normalized); }
+function wordCount(normalized) { return (String(normalized).match(/[a-z0-9_$.-]+/g) ?? []).length; }
 function mergeSignals(target, values, weight, source, limit, now) { for (const value of boundedUnique(values, limit)) { const existing = target.find((s)=>s.value===value); if (existing) { if (weight > existing.weight || SOURCE_STRENGTH[source] >= SOURCE_STRENGTH[existing.source]) { existing.weight = Math.max(existing.weight, weight); existing.source = source; } existing.updatedAt = now; } else target.push({ value, weight, source, updatedAt: now }); } target.sort((a,b)=>b.weight-a.weight||b.updatedAt-a.updatedAt); target.splice(limit); }
 function decayFingerprint(fp) { for (const list of [fp.paths,fp.symbols,fp.terms]) { for (const signal of list) if (signal.source==='prompt'||signal.source==='localized') signal.weight*=FINGERPRINT_DECAY; for (let i=list.length-1;i>=0;i--) if (list[i].weight<MIN_FINGERPRINT_WEIGHT) list.splice(i,1); } fp.revision += 1; }
 function extractPaths(value) { return boundedUnique((String(value).match(PATH_TOKEN)??[]).map(normalizePath).filter(Boolean), MAX_PATHS); }
