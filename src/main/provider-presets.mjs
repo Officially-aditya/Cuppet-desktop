@@ -19,7 +19,7 @@ export const PROVIDER_PRESETS = Object.freeze({
     ]),
     authType: 'local-cli',
     authLabel: 'Local OpenCode CLI',
-    note: 'Uses your locally installed OpenCode CLI through ACP. Cuppet never reads or stores OpenCode provider credentials.',
+    note: 'Uses your locally installed OpenCode CLI through Cuppet’s managed OpenCode server/HTTP adapter. OpenCode authentication stays local, while Cuppet retains execution and permission authority.',
   }),
   'claude-code': Object.freeze({
     id: 'claude-code',
@@ -55,7 +55,7 @@ export const PROVIDER_PRESETS = Object.freeze({
     ]),
     authType: 'local-cli',
     authLabel: 'Local Antigravity CLI',
-    note: 'Uses your locally authenticated Google Antigravity CLI. Cuppet runs the current headless transport in plan + sandbox mode so it cannot bypass Cuppet mutation permissions; this provider is analysis/planning-only until Google exposes an interceptable agent protocol.',
+    note: 'Uses Google’s managed Antigravity ACP server and companion harness through Cuppet’s shared ACP runtime. Antigravity authentication remains isolated while Cuppet retains execution and permission authority.',
   }),
   'github-copilot': Object.freeze({
     id: 'github-copilot',
