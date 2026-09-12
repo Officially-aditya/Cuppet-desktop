@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
+import { capabilitiesFromAcpSession } from '../src/runtime/providers/transports/acp/acp-capabilities.mjs';
 import { discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
@@ -58,6 +59,33 @@ test('provider descriptors use their current official transport entrypoints', ()
   assert.equal(localCliDescriptor('opencode')?.transport, 'acp');
   assert.deepEqual(localCliDescriptor('opencode')?.args, ['acp']);
   assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
+});
+
+test('shared ACP capability parser accepts grouped config options and legacy model state', () => {
+  const stable = capabilitiesFromAcpSession({
+    configOptions: [{
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: 'provider/model-b',
+      options: [
+        { group: 'Recommended', options: [{ value: 'provider/model-a', name: 'Model A' }] },
+        { group: 'More', options: [{ value: 'provider/model-b', name: 'Model B' }] },
+      ],
+    }],
+  });
+  assert.deepEqual(stable.models.map((item) => item.id), ['provider/model-a', 'provider/model-b']);
+  assert.equal(stable.settings.find((item) => item.category === 'model')?.value, 'provider/model-b');
+
+  const legacy = capabilitiesFromAcpSession({
+    models: {
+      availableModels: [{ modelId: 'kiro/model-a', name: 'Kiro A' }, { modelId: 'kiro/model-b', name: 'Kiro B' }],
+      currentModelId: 'kiro/model-a',
+    },
+  });
+  assert.deepEqual(legacy.models.map((item) => item.id), ['kiro/model-a', 'kiro/model-b']);
+  assert.equal(legacy.settings.find((item) => item.category === 'model')?.value, 'kiro/model-a');
 });
 
 test('Kiro ACP compatibility accepts standard prompt requests and session/notification updates', async () => {
