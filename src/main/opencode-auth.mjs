@@ -7,9 +7,14 @@ export function parseOpenCodeAuthList(value) {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
 
   const countMatch = text.match(/\b(\d+)\s+credentials?\b/i);
+  const environmentMatch = text.match(/\b(\d+)\s+environment\s+variables?\b/i);
   const credentialCount = countMatch ? Number(countMatch[1]) : null;
+  const environmentSummaryCount = environmentMatch ? Number(environmentMatch[1]) : null;
   if (Number.isFinite(credentialCount) && credentialCount > 0) {
     return { connected: true, source: 'credentials', credentialCount };
+  }
+  if (Number.isFinite(environmentSummaryCount) && environmentSummaryCount > 0) {
+    return { connected: true, source: 'environment', environmentCount: environmentSummaryCount };
   }
 
   let section = '';
@@ -40,7 +45,7 @@ export function parseOpenCodeAuthList(value) {
     connected: false,
     source: 'none',
     credentialCount: Number.isFinite(credentialCount) ? credentialCount : 0,
-    environmentCount,
+    environmentCount: Number.isFinite(environmentSummaryCount) ? environmentSummaryCount : environmentCount,
   };
 }
 
