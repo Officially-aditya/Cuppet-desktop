@@ -32,14 +32,19 @@ const chat = await readFile(join(root, 'src/renderer/react/ChatPane.tsx'), 'utf8
 if (!/dist-renderer.*index\.html/s.test(host)) throw new Error('Electron does not load the Vite renderer');
 if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) throw new Error('React conversation send surface missing');
 
-// Some integration tests intentionally leave runtime handles alive, so the suite
-// needs --test-force-exit. Keep the forced test runner off the GitHub Actions
-// stdout pipe to avoid a post-success reporter EPIPE. Test-spawned grandchildren
-// can also inherit our capture pipes, so trust the runner's `exit` code, drain a
-// short grace window, then close the capture streams instead of waiting forever
-// for `close` on descendant-owned file descriptors.
-await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000'], { timeoutMs: 180000, drainMs: 150 });
-console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
+// Node's default --test discovery also treats executable provider fixtures under
+// test/fixtures as test files. Those fixtures are intentionally long-lived stdio
+// servers and therefore time out when executed directly. Run only actual test
+// modules while keeping force-exit for integration tests that leave runtime
+// handles alive. Capture reporter output off the GitHub Actions stdout pipe to
+// avoid the known post-success EPIPE race during forced exit.
+const testFiles = (await walk(join(root, 'test')))
+  .filter((path) => /\.test\.(?:mjs|js|cjs)$/.test(path))
+  .map((path) => relative(root, path))
+  .sort();
+if (!testFiles.length) throw new Error('No Phase 1 test files found');
+await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000', ...testFiles], { timeoutMs: 180000, drainMs: 150 });
+console.log(`Phase 1 gate passed: ${productionFiles.length} production files, ${testFiles.length} test files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
   return /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*opencode[^'"]*['"]/i.test(text);
