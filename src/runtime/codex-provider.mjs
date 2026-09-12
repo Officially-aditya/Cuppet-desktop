@@ -13,76 +13,95 @@ export class CodexSubscriptionProvider {
 
   constructor(configuration = {}) { this.#configuration = { ...configuration }; }
 
-  async stream(messages, { signal, onDelta = () => {}, onActivity = () => {}, tools = [], executeTool } = {}) {
+  cuppetManagedRuntime() {
+    return {
+      protocol: 'codex-app-server',
+      backendId: 'codex',
+      configuration: this.#configuration,
+    };
+  }
+
+  async stream(messages, options = {}) {
+    const runtime = new CodexSessionRuntime({ configuration: this.#configuration });
+    try {
+      await runtime.start();
+      return await runtime.runTurn({ messages, selection: codexSessionSelection(this.#configuration) }, options);
+    } finally {
+      await runtime.close().catch(() => undefined);
+    }
+  }
+}
+
+export class CodexSessionRuntime {
+  #configuration;
+  #client = null;
+  #state = 'idle';
+  #activeTurn = null;
+
+  constructor({ configuration = {} } = {}) {
+    this.#configuration = { ...configuration };
+  }
+
+  async start() {
+    if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
+    if (this.#state === 'closed') throw new Error('Codex app-server runtime is closed.');
+    if (this.#state === 'starting') throw new Error('Codex app-server runtime is already starting.');
+    this.#state = 'starting';
     const launch = this.#configuration.codexLaunch ?? await resolveCodexAppServerCommand();
-    if (!launch) throw new Error('Official Codex app-server is unavailable. Reinstall Cuppet or configure CUPPET_CODEX_APP_SERVER_BIN for development.');
+    if (!launch) {
+      this.#state = 'error';
+      throw new Error('Official Codex app-server is unavailable. Reinstall Cuppet or configure CUPPET_CODEX_APP_SERVER_BIN for development.');
+    }
     await mkdir(SAFE_CODEX_CWD, { recursive: true, mode: 0o700 });
 
     const client = typeof this.#configuration.clientFactory === 'function'
       ? this.#configuration.clientFactory(launch)
       : new CodexAppServerClient(launch);
-    let abortListener;
-    let threadId = null;
-    let turnId = null;
+    this.#client = client;
+    this.#installClientHandlers(client);
     try {
       await client.start();
       const account = parseCodexAccount(await client.request('account/read', {}));
       if (!account.loggedIn) throw new Error('Connect your ChatGPT account in Settings to use the Codex subscription provider.');
+      this.#state = 'ready';
+      return this.snapshot();
+    } catch (error) {
+      this.#state = 'error';
+      if (this.#client === client) this.#client = null;
+      await client.close().catch(() => undefined);
+      throw error;
+    }
+  }
 
-      const dynamicTools = toDynamicTools(tools);
-      if (dynamicTools.length && typeof executeTool !== 'function') throw new Error('Cuppet tool execution bridge is unavailable for Codex.');
+  snapshot() {
+    return Object.freeze({ state: this.#state, active: Boolean(this.#activeTurn) });
+  }
 
-      const completed = deferred();
-      let text = '';
-      let usage = null;
+  async runTurn(input = {}, hooks = {}) {
+    if (this.#state === 'idle' || this.#state === 'error') await this.start();
+    if (this.#state !== 'ready') throw new Error('Codex app-server runtime is not ready.');
+    if (this.#activeTurn) throw new Error('Codex app-server runtime already has an active turn.');
+    const client = this.#client;
+    if (!client) throw new Error('Codex app-server is unavailable.');
 
-      client.on('request', (message) => {
-        void handleServerRequest({ client, message, executeTool, signal }).catch((error) => {
-          client.respondError(message.id, cleanError(error));
-        });
-      });
-      client.on('notification', (message) => {
-        const params = record(message.params);
-        if (message.method === 'item/agentMessage/delta') {
-          const delta = typeof params.delta === 'string' ? params.delta : '';
-          if (delta) {
-            text += delta;
-            void notifyObserver(onDelta, delta);
-            void notifyObserver(onActivity, providerActivity('activity.text.delta', { text: delta }));
-          }
-          return;
-        }
-        if (message.method === 'thread/tokenUsage/updated') {
-          const eventThreadId = String(params.threadId ?? '');
-          const eventTurnId = String(params.turnId ?? '');
-          if (threadId && eventThreadId && eventThreadId !== threadId) return;
-          if (turnId && eventTurnId && eventTurnId !== turnId) return;
-          const tokenUsage = record(params.tokenUsage);
-          const nextUsage = normalizeUsage(tokenUsage.total) ?? normalizeUsage(tokenUsage.last);
-          if (nextUsage) {
-            usage = nextUsage;
-            void notifyObserver(onActivity, providerActivity('activity.usage', { usage: nextUsage }));
-          }
-          return;
-        }
-        if (message.method === 'turn/completed') {
-          const turn = record(params.turn);
-          const completedTurnId = String(turn.id ?? params.turnId ?? '');
-          const completedThreadId = String(params.threadId ?? '');
-          if (threadId && completedThreadId && completedThreadId !== threadId) return;
-          if (turnId && completedTurnId && completedTurnId !== turnId) return;
-          const status = String(turn.status ?? params.status ?? 'completed');
-          const legacyUsage = normalizeUsage(turn.usage ?? params.usage);
-          void notifyObserver(onActivity, providerActivity('activity.status', {
-            phase: 'turn',
-            status,
-            transport: 'codex-app-server',
-          }));
-          completed.resolve({ status, usage: usage ?? legacyUsage });
-        }
-      });
-      client.on('exit', ({ code, signal: exitSignal }) => completed.reject(new Error(`Codex app-server exited during turn (${code ?? 'null'}${exitSignal ? `, ${exitSignal}` : ''})`)));
+    const dynamicTools = toDynamicTools(hooks.tools);
+    if (dynamicTools.length && typeof hooks.executeTool !== 'function') throw new Error('Cuppet tool execution bridge is unavailable for Codex.');
+    const completed = deferred();
+    const selection = normalizeCodexSelection(input.selection, this.#configuration);
+    const turn = {
+      completed,
+      text: '',
+      usage: null,
+      threadId: null,
+      turnId: null,
+      signal: hooks.signal,
+      hooks,
+      abortListener: null,
+    };
+    this.#activeTurn = turn;
+    this.#state = 'running';
 
+    try {
       const threadParams = {
         cwd: SAFE_CODEX_CWD,
         approvalPolicy: 'never',
@@ -97,44 +116,128 @@ export class CodexSubscriptionProvider {
         ].join('\n'),
         dynamicTools,
       };
-      const configuredModel = String(this.#configuration.model || '').trim();
-      if (configuredModel && configuredModel !== 'codex-default') threadParams.model = configuredModel;
-      const configuredEffort = reasoningEffort(this.#configuration.primaryEffort);
+      if (selection.model && selection.model !== 'codex-default') threadParams.model = selection.model;
+      const configuredEffort = reasoningEffort(selection.effort);
       if (configuredEffort) threadParams.config = { model_reasoning_effort: configuredEffort };
+
       const startedThread = await client.request('thread/start', threadParams);
-      threadId = String(record(startedThread).thread?.id ?? '');
-      if (!threadId) throw new Error('Codex app-server did not return a thread ID.');
+      turn.threadId = String(record(startedThread).thread?.id ?? '');
+      if (!turn.threadId) throw new Error('Codex app-server did not return a thread ID.');
 
       // Emit Cuppet's turn state before issuing turn/start. Some app-server
       // implementations can deliver notifications immediately after accepting
       // the request, so emitting afterward can invert the Activity ordering.
-      await notifyObserver(onActivity, providerActivity('activity.status', {
+      await notifyObserver(hooks.onActivity, providerActivity('activity.status', {
         phase: 'turn',
         status: 'running',
         transport: 'codex-app-server',
       }));
-      const turn = await client.request('turn/start', {
-        threadId,
-        input: [{ type: 'text', text: serializeConversation(messages) }],
+      const startedTurn = await client.request('turn/start', {
+        threadId: turn.threadId,
+        input: [{ type: 'text', text: serializeConversation(input.messages) }],
       });
-      turnId = String(record(turn).turn?.id ?? '');
-      if (!turnId) throw new Error('Codex app-server did not return a turn ID.');
+      turn.turnId = String(record(startedTurn).turn?.id ?? '');
+      if (!turn.turnId) throw new Error('Codex app-server did not return a turn ID.');
 
-      abortListener = () => {
-        if (threadId && turnId) client.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
-      };
-      signal?.addEventListener('abort', abortListener, { once: true });
-      if (signal?.aborted) abortListener();
+      turn.abortListener = () => { void this.cancel(); };
+      hooks.signal?.addEventListener('abort', turn.abortListener, { once: true });
+      if (hooks.signal?.aborted) turn.abortListener();
 
       const finished = await completed.promise;
-      if (signal?.aborted || finished.status === 'interrupted') throw abortError();
+      if (hooks.signal?.aborted || finished.status === 'interrupted') throw abortError();
       if (finished.status && !['completed', 'complete'].includes(finished.status)) throw new Error(`Codex turn ${finished.status}.`);
-      return { text, toolCalls: [], usage: finished.usage };
+      return { text: turn.text, toolCalls: [], usage: finished.usage };
     } finally {
-      if (abortListener) signal?.removeEventListener('abort', abortListener);
-      await client.close().catch(() => undefined);
+      if (turn.abortListener) hooks.signal?.removeEventListener('abort', turn.abortListener);
+      if (this.#activeTurn === turn) this.#activeTurn = null;
+      if (this.#state !== 'closed' && this.#client) this.#state = 'ready';
     }
   }
+
+  async cancel() {
+    const turn = this.#activeTurn;
+    const client = this.#client;
+    if (!turn || !client || !turn.threadId || !turn.turnId) return;
+    await client.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId }, 5_000).catch(() => undefined);
+  }
+
+  async close() {
+    if (this.#state === 'closed') return;
+    this.#state = 'closed';
+    await this.cancel().catch(() => undefined);
+    const client = this.#client;
+    this.#client = null;
+    await client?.close().catch(() => undefined);
+  }
+
+  #installClientHandlers(client) {
+    client.on('request', (message) => {
+      const turn = this.#activeTurn;
+      if (!turn) {
+        client.respondError(message.id, 'Codex requested a tool outside an active Cuppet turn.');
+        return;
+      }
+      void handleServerRequest({ client, message, executeTool: turn.hooks.executeTool, signal: turn.signal }).catch((error) => {
+        client.respondError(message.id, cleanError(error));
+      });
+    });
+    client.on('notification', (message) => {
+      const turn = this.#activeTurn;
+      if (!turn) return;
+      const params = record(message.params);
+      if (message.method === 'item/agentMessage/delta') {
+        const delta = typeof params.delta === 'string' ? params.delta : '';
+        if (delta) {
+          turn.text += delta;
+          void notifyObserver(turn.hooks.onDelta ?? turn.hooks.onText, delta);
+          void notifyObserver(turn.hooks.onActivity, providerActivity('activity.text.delta', { text: delta }));
+        }
+        return;
+      }
+      if (message.method === 'thread/tokenUsage/updated') {
+        const eventThreadId = String(params.threadId ?? '');
+        const eventTurnId = String(params.turnId ?? '');
+        if (turn.threadId && eventThreadId && eventThreadId !== turn.threadId) return;
+        if (turn.turnId && eventTurnId && eventTurnId !== turn.turnId) return;
+        const tokenUsage = record(params.tokenUsage);
+        const nextUsage = normalizeUsage(tokenUsage.total) ?? normalizeUsage(tokenUsage.last);
+        if (nextUsage) {
+          turn.usage = nextUsage;
+          void notifyObserver(turn.hooks.onActivity, providerActivity('activity.usage', { usage: nextUsage }));
+        }
+        return;
+      }
+      if (message.method === 'turn/completed') {
+        const completedTurn = record(params.turn);
+        const completedTurnId = String(completedTurn.id ?? params.turnId ?? '');
+        const completedThreadId = String(params.threadId ?? '');
+        if (turn.threadId && completedThreadId && completedThreadId !== turn.threadId) return;
+        if (turn.turnId && completedTurnId && completedTurnId !== turn.turnId) return;
+        const status = String(completedTurn.status ?? params.status ?? 'completed');
+        const legacyUsage = normalizeUsage(completedTurn.usage ?? params.usage);
+        void notifyObserver(turn.hooks.onActivity, providerActivity('activity.status', {
+          phase: 'turn',
+          status,
+          transport: 'codex-app-server',
+        }));
+        turn.completed.resolve({ status, usage: turn.usage ?? legacyUsage });
+      }
+    });
+    client.on('exit', ({ code, signal: exitSignal }) => {
+      if (this.#client === client) this.#client = null;
+      if (this.#state !== 'closed') this.#state = 'idle';
+      this.#activeTurn?.completed.reject(new Error(`Codex app-server exited during turn (${code ?? 'null'}${exitSignal ? `, ${exitSignal}` : ''})`));
+    });
+  }
+}
+
+export function codexSessionSelection(configuration = {}) {
+  const source = record(configuration);
+  const primary = record(source.primary);
+  return Object.freeze({
+    model: safeText(primary.modelID || source.model || source.modelID, 240) || null,
+    effort: reasoningEffort(source.primaryEffort || primary.variant) || null,
+  });
 }
 
 async function handleServerRequest({ client, message, executeTool, signal }) {
@@ -161,6 +264,15 @@ async function handleServerRequest({ client, message, executeTool, signal }) {
     return;
   }
   client.respondError(message.id, `Unsupported Codex server request: ${message.method}`, -32601);
+}
+
+function normalizeCodexSelection(selection, configuration) {
+  if (selection === undefined) return codexSessionSelection(configuration);
+  const source = record(selection);
+  return {
+    model: safeText(source.model, 240) || null,
+    effort: reasoningEffort(source.effort) || null,
+  };
 }
 
 function dynamicToolContentItems(result) {
@@ -220,6 +332,7 @@ function reasoningEffort(value) {
   const effort = typeof value === 'string' ? value.trim().slice(0, 80) : '';
   return /^[A-Za-z0-9._-]+$/.test(effort) ? effort : '';
 }
+function safeText(value, max) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function number(value) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 2000); }
