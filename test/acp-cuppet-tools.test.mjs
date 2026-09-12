@@ -3,12 +3,19 @@ import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
+import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url));
 
-test('ACP session receives Cuppet tools through MCP and calls back into ToolRuntime', async () => {
-  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+test('ACP session receives Cuppet tools through MCP only when the backend explicitly advertises the bridge', async () => {
+  const descriptor = {
+    ...localCliDescriptor('claude-code'),
+    id: 'mcp-fixture',
+    label: 'MCP Fixture',
+    mcpToolBridge: true,
+  };
+  const provider = new AcpProviderAdapter({ providerID: 'mcp-fixture', cliCommand: process.execPath, cliArgs: [fixture] }, { descriptor });
   const events = [];
   const runtime = new JournaledToolRuntime({
     journal: null,
