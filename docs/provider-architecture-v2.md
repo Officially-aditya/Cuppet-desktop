@@ -66,7 +66,7 @@ A Cuppet-owned vocabulary for visible runtime work: text, reasoning, tools, plan
 
 ### Conversation bridge
 
-A later migration slice owns the mapping between a Cuppet session and a provider session/resume state. Provider session ownership must not live in React or global settings.
+The Conversation Bridge owns the mapping between a Cuppet conversation and warm provider runtime routes. Cuppet remains the durable context authority: every turn receives a full replay of Cuppet-owned messages, while provider-side logical sessions/threads remain turn-isolated. Route state is tracked per runtime fingerprint so a conversation can switch providers and later return to a still-warm process without treating provider history as durable context.
 
 ### Execution Kernel
 
@@ -212,7 +212,9 @@ Codex item/tool/call ─┐
 ACP MCP tools/call ───┘
 ```
 
-Codex already receives Cuppet dynamic tools and is instructed not to use its built-in project mutation capabilities. Provider Architecture V2 moves that tool path through the same Execution Kernel policy used by ACP.
+Codex receives Cuppet dynamic tools and is instructed not to use its built-in project mutation capabilities. Provider Architecture V2 moves that tool path through the same Execution Kernel policy used by ACP.
+
+The managed Codex path keeps one app-server process warm while starting a fresh ephemeral Codex thread for every Cuppet turn. Model and reasoning effort are supplied at `thread/start`, so changing either does not require restarting the app-server and does not make Codex thread history authoritative.
 
 ## Authority rules
 
@@ -232,13 +234,17 @@ Codex already receives Cuppet dynamic tools and is instructed not to use its bui
 
 ## Runtime lifecycle
 
-Managed ACP currently reuses one provider process per Cuppet chat while opening a fresh ACP logical session per turn. This avoids startup/auth churn without pretending the provider owns context that Cuppet's Conversation Bridge has not yet accounted for.
+The runtime manager keeps a bounded warm pool of provider processes per Cuppet conversation and project authority (three routes by default). Switching backend selects or creates a route in that pool instead of automatically closing the previous provider process. Least-recently-used routes and idle routes are evicted.
 
-A runtime is replaced when backend, project root, model, effort, command, session policy, or execution-authority configuration changes. Failure/cancellation discards ambiguous runtime state. Idle processes are evicted.
+Managed ACP keeps the provider process warm while opening a fresh ACP logical session per Cuppet turn. Model and reasoning-effort selection are applied to that logical session through provider-advertised configuration options, so ordinary model/effort changes do not restart the process. Clearing an explicit ACP selection back to provider defaults conservatively restarts that route because ACP does not define a portable reset-to-default operation.
 
-`session.cleanup` explicitly forgets the managed provider runtime and Execution Kernel session state. Runtime/app shutdown explicitly closes all managed provider processes; idle eviction is an optimization rather than the ownership mechanism.
+Managed Codex keeps the app-server process warm while opening a fresh ephemeral thread per turn. Model and effort are supplied to the new thread, so model switching is process-local and context remains Cuppet-owned.
 
-Conversation Bridge may later permit persistent logical ACP sessions once duplicated-context semantics are proven.
+Project-root authority changes flush the conversation's warm pool. Process-affecting changes such as executable/arguments, process environment, session metadata/policy, execution-authority configuration, or Codex launch authority produce a different runtime route. Failure/cancellation discards the affected ambiguous route without invalidating unrelated warm providers.
+
+`session.cleanup` explicitly forgets every managed provider route for the Cuppet conversation and the Execution Kernel session state. Runtime/app shutdown explicitly closes all managed provider processes; idle/LRU eviction is an optimization rather than the ownership mechanism.
+
+Conversation Bridge may later permit persistent provider logical sessions/threads only after duplicated-context and resume semantics are proven. Until then, full Cuppet replay plus turn-isolated provider sessions is the context contract.
 
 ## Migration path
 
@@ -278,6 +284,9 @@ stalled providers cancel and terminate
 old tool-session credentials cannot retain authority
 session cleanup and runtime shutdown close managed provider state
 backend-specific execution restrictions are passed as descriptor session metadata
+model/effort changes reuse a provider process when the transport supports per-turn/session selection
+switching between warm ACP/Codex routes preserves Cuppet full-replay context authority
+warm runtime count is bounded and least-recently-used routes are evicted
 ```
 
 Benchmark gates should measure at least:
