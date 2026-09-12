@@ -6,6 +6,7 @@ import { recordProviderUsage } from '../usage-ledger.mjs';
 import { ConversationBridge } from './conversation-bridge.mjs';
 import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
 import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
+import { AcpTextStreamAssembler } from './transports/acp/acp-text-stream.mjs';
 import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
 
 const DEFAULT_IDLE_MS = 5 * 60_000;
@@ -116,6 +117,7 @@ export class ProviderRuntimeManager {
     let toolSession = null;
     let abortToolSession = null;
     const legacyState = new Map();
+    const textStream = new AcpTextStreamAssembler(descriptor.textStream);
     try {
       const allowExternalMcp = descriptor?.mcpToolBridge === true;
       if (allowExternalMcp && Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
@@ -145,7 +147,10 @@ export class ProviderRuntimeManager {
         signal: options.signal,
         executeTool: options.executeTool,
         requestAgentPermission: options.requestAgentPermission,
-        onText: options.onDelta,
+        onText: async (rawDelta) => {
+          const delta = textStream.push(rawDelta);
+          if (delta) await options.onDelta?.(delta);
+        },
         onActivity: async (activity) => {
           if (typeof options.onActivity === 'function') {
             await options.onActivity(activity);
@@ -156,14 +161,16 @@ export class ProviderRuntimeManager {
           if (legacy) await options.onProviderEvent?.(legacy);
         },
       });
+      textStream.flush();
+      const normalizedResult = { ...result, text: textStream.text || result?.text || '' };
       this.#conversationBridge.completeTurn(bridgePlan);
       entry.turns += 1;
       await this.#usageRecorder?.({
         providerID: backendId,
         modelID: configuredModel(providerConfig) || 'unknown',
-        usage: result?.usage,
+        usage: normalizedResult?.usage,
       }).catch?.(() => undefined);
-      return result;
+      return normalizedResult;
     } catch (error) {
       this.#conversationBridge.abortTurn?.(bridgePlan);
       if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId);
@@ -211,6 +218,7 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
     cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : Array.isArray(descriptor?.args) ? descriptor.args.map(String) : [],
     sessionMeta: stableValue(descriptor?.sessionMeta),
     mcpToolBridge: descriptor?.mcpToolBridge === true,
+    textStream: stableValue(descriptor?.textStream),
     model: text(primary.modelID || source.model || source.modelID),
     effort: text(source.primaryEffort || primary.variant),
     runtimeSettings: stableValue(source.runtimeSettings),
