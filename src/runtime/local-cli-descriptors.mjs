@@ -33,6 +33,19 @@ const DESCRIPTORS = Object.freeze({
     // transport whitespace around each fragment. Reassemble only those boundary
     // artifacts; the shared ACP runtime remains provider-agnostic.
     textStream: { framing: 'tokenized-whitespace' },
+    // Copilot CLI 1.0.84-1 can resolve session/prompt with end_turn while an attached
+    // async shell is still running, then autonomously emit more tool calls/text 12+
+    // seconds later. Keep this provider quirk declarative instead of hard-coding
+    // Copilot identity in the shared ACP transport.
+    turnCompletion: {
+      afterEndTurn: {
+        toolInputModes: ['async'],
+        firstActivityWaitMs: 20_000,
+        toolActivityWaitMs: 20_000,
+        quietPeriodMs: 1_500,
+        maxWaitMs: 120_000,
+      },
+    },
   }),
   'mistral-vibe': descriptor({
     id: 'mistral-vibe', label: 'Mistral Vibe', transport: 'acp', command: 'vibe-acp', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_VIBE_BIN',
@@ -68,6 +81,7 @@ function descriptor(value) {
     ...(value.authentication ? { authentication: freezeValue(cloneValue(value.authentication)) } : {}),
     ...(value.clientCapabilities ? { clientCapabilities: freezeValue(cloneValue(value.clientCapabilities)) } : {}),
     ...(value.textStream ? { textStream: freezeValue(cloneValue(value.textStream)) } : {}),
+    ...(value.turnCompletion ? { turnCompletion: freezeValue(cloneValue(value.turnCompletion)) } : {}),
   };
   return Object.freeze(copy);
 }
@@ -80,6 +94,7 @@ function cloneDescriptor(item) {
     ...(item.authentication ? { authentication: cloneValue(item.authentication) } : {}),
     ...(item.clientCapabilities ? { clientCapabilities: cloneValue(item.clientCapabilities) } : {}),
     ...(item.textStream ? { textStream: cloneValue(item.textStream) } : {}),
+    ...(item.turnCompletion ? { turnCompletion: cloneValue(item.turnCompletion) } : {}),
   };
 }
 function cloneValue(value) {
