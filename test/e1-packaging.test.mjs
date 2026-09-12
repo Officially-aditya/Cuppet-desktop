@@ -59,7 +59,11 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
   ]) assert.ok(packagedFiles.has(required), `missing packaged surface: ${required}`);
   assert.equal(packagedFiles.has('src/**/*'), false, 'packaging should stay explicit instead of bundling every source file');
   assert.deepEqual(pkg.dependencies, {});
-  assert.equal(pkg.build.asarUnpack, undefined);
+  assert.deepEqual(
+    pkg.build.asarUnpack,
+    ['src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs'],
+    'ASAR unpacking must stay restricted to the external ACP MCP stdio entrypoint that provider CLIs execute directly',
+  );
   assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
   assert.match(pkg.scripts['pack:dir'], /electron-builder --dir --publish never$/);
