@@ -1,10 +1,10 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCuppetMcpBridgeEndpoint } from './cuppet-mcp-endpoint.mjs';
 
 const MAX_BRIDGE_LINE_BYTES = 4 * 1024 * 1024;
 const MAX_RESULT_BYTES = 128 * 1024;
@@ -32,7 +32,7 @@ export class CuppetMcpToolSession {
   async start() {
     if (this.#server) return this;
     if (this.#closed) throw new Error('Cuppet MCP tool session is closed.');
-    this.#endpoint = bridgeEndpoint();
+    this.#endpoint = createCuppetMcpBridgeEndpoint();
     if (process.platform !== 'win32') await rm(this.#endpoint, { force: true }).catch(() => undefined);
     this.#server = createServer((socket) => this.#accept(socket));
     await new Promise((resolveListen, rejectListen) => {
@@ -218,7 +218,6 @@ function mcpResult(result) {
 }
 function toolFailure(message) { return { content: [{ type: 'text', text: capText(message) }], isError: true }; }
 function capText(value) { const textValue = String(value ?? ''); return Buffer.byteLength(textValue) <= MAX_RESULT_BYTES ? textValue : `${Buffer.from(textValue).subarray(0, MAX_RESULT_BYTES - 64).toString('utf8')}\n… Cuppet tool result truncated.`; }
-function bridgeEndpoint() { return process.platform === 'win32' ? `\\\\.\\pipe\\cuppet-mcp-${process.pid}-${randomUUID()}` : join(tmpdir(), `cuppet-mcp-${process.pid}-${randomUUID()}.sock`); }
 function sameToken(value, expected) { const left = Buffer.from(String(value ?? '')); const right = Buffer.from(String(expected ?? '')); return left.length === right.length && timingSafeEqual(left, right); }
 function safeId(value) { return String(value ?? '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 64) || 'unknown'; }
 function requiredText(value, label) { const result = text(value); if (!result) throw new TypeError(`${label} is required.`); return result; }
