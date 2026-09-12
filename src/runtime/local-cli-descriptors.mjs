@@ -1,8 +1,7 @@
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
-    id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
+    id: 'opencode', label: 'OpenCode', transport: 'opencode-http', command: 'opencode', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use.',
-    environment: opencodeEnvironment,
   }),
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
@@ -43,8 +42,8 @@ const DESCRIPTORS = Object.freeze({
     promptParameter: 'content',
   }),
   antigravity: descriptor({
-    id: 'antigravity', label: 'Google Antigravity', transport: 'headless-plan', command: 'agy', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_ANTIGRAVITY_BIN',
-    loginHint: 'Run `agy` in Terminal once and complete Google sign-in, then retry.',
+    id: 'antigravity', label: 'Google Antigravity', transport: 'managed-acp', command: 'agy', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_ANTIGRAVITY_BIN',
+    loginHint: 'Complete Google Antigravity sign-in when Cuppet opens the authentication flow, then retry.',
   }),
 });
 
@@ -63,6 +62,7 @@ function descriptor(value) {
     versionArgs: Object.freeze([...value.versionArgs]),
     ...(value.sessionMeta ? { sessionMeta: freezeValue(cloneValue(value.sessionMeta)) } : {}),
     ...(value.authentication ? { authentication: freezeValue(cloneValue(value.authentication)) } : {}),
+    ...(value.clientCapabilities ? { clientCapabilities: freezeValue(cloneValue(value.clientCapabilities)) } : {}),
   };
   return Object.freeze(copy);
 }
@@ -73,18 +73,7 @@ function cloneDescriptor(item) {
     versionArgs: [...item.versionArgs],
     ...(item.sessionMeta ? { sessionMeta: cloneValue(item.sessionMeta) } : {}),
     ...(item.authentication ? { authentication: cloneValue(item.authentication) } : {}),
-  };
-}
-function opencodeEnvironment(inherited = {}) {
-  let config = {};
-  try {
-    const parsed = JSON.parse(inherited.OPENCODE_CONFIG_CONTENT || '{}');
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) config = parsed;
-  } catch {}
-  return {
-    ...inherited,
-    OPENCODE_DISABLE_AUTOUPDATE: '1',
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission: { '*': 'ask' } }),
+    ...(item.clientCapabilities ? { clientCapabilities: cloneValue(item.clientCapabilities) } : {}),
   };
 }
 function cloneValue(value) {
