@@ -2,6 +2,7 @@ const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use.',
+    environment: opencodeEnvironment,
   }),
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
@@ -18,6 +19,13 @@ const DESCRIPTORS = Object.freeze({
   'grok-build': descriptor({
     id: 'grok-build', label: 'Grok Build', transport: 'acp', command: 'grok', args: ['--no-auto-update', 'agent', 'stdio'], versionArgs: ['version'], envOverride: 'CUPPET_GROK_BIN',
     loginHint: 'Run `grok login` in Terminal once, then retry.',
+    authentication: {
+      methods: [
+        { id: 'xai.api_key', requiresEnv: 'XAI_API_KEY' },
+        { id: 'cached_token' },
+      ],
+      meta: { headless: true },
+    },
   }),
   'github-copilot': descriptor({
     id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--disable-builtin-mcps'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
@@ -39,24 +47,42 @@ const DESCRIPTORS = Object.freeze({
 
 export function localCliDescriptor(value) {
   const item = DESCRIPTORS[String(value ?? '').trim().toLowerCase()];
-  return item ? {
-    ...item,
-    args: [...item.args],
-    versionArgs: [...item.versionArgs],
-    ...(item.sessionMeta ? { sessionMeta: cloneValue(item.sessionMeta) } : {}),
-  } : null;
+  return item ? cloneDescriptor(item) : null;
 }
 
 export function isLocalCliProvider(value) { return Boolean(localCliDescriptor(value)); }
 export function localCliProviderIDs() { return Object.keys(DESCRIPTORS); }
 
 function descriptor(value) {
-  return Object.freeze({
+  const copy = {
     ...value,
     args: Object.freeze([...value.args]),
     versionArgs: Object.freeze([...value.versionArgs]),
     ...(value.sessionMeta ? { sessionMeta: freezeValue(cloneValue(value.sessionMeta)) } : {}),
-  });
+    ...(value.authentication ? { authentication: freezeValue(cloneValue(value.authentication)) } : {}),
+  };
+  return Object.freeze(copy);
+}
+function cloneDescriptor(item) {
+  return {
+    ...item,
+    args: [...item.args],
+    versionArgs: [...item.versionArgs],
+    ...(item.sessionMeta ? { sessionMeta: cloneValue(item.sessionMeta) } : {}),
+    ...(item.authentication ? { authentication: cloneValue(item.authentication) } : {}),
+  };
+}
+function opencodeEnvironment(inherited = {}) {
+  let config = {};
+  try {
+    const parsed = JSON.parse(inherited.OPENCODE_CONFIG_CONTENT || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) config = parsed;
+  } catch {}
+  return {
+    ...inherited,
+    OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission: { '*': 'ask' } }),
+  };
 }
 function cloneValue(value) {
   if (Array.isArray(value)) return value.map(cloneValue);
