@@ -85,9 +85,12 @@ test('generic ACP adapter delegates ACP host operations through Cuppet', async (
   assert.equal(result.usage.totalTokens, 12);
 });
 
-test('provider factory routes OpenCode through the universal ACP adapter without moving other ACP providers yet', () => {
+test('provider factory routes every ACP descriptor through the universal ACP adapter', () => {
   assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof AcpProviderAdapter);
-  assert.equal(createUntrackedChatProvider({ providerID: 'grok-build' }).constructor.name, 'AcpCliAgentProvider');
+  assert.ok(createUntrackedChatProvider({ providerID: 'grok-build' }) instanceof AcpProviderAdapter);
+  assert.ok(createUntrackedChatProvider({ providerID: 'github-copilot' }) instanceof AcpProviderAdapter);
+  assert.ok(createUntrackedChatProvider({ providerID: 'mistral-vibe' }) instanceof AcpProviderAdapter);
+  assert.ok(createUntrackedChatProvider({ providerID: 'kiro' }) instanceof AcpProviderAdapter);
 });
 
 test('ACP v2 cancels and terminates a genuinely silent stalled turn', async () => {
