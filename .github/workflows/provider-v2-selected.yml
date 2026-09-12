@@ -62,10 +62,38 @@ jobs:
           npm install -g opencode-ai@1.18.30
           opencode --version
           node scripts/smoke-live-opencode-acp.mjs
-      - name: Verify benchmark and authenticated smoke harnesses
+      - name: Verify benchmark, authenticated smoke, and release gate harnesses
         run: |
           node --check scripts/run-provider-benchmark.mjs
           node --check scripts/compare-provider-benchmarks.mjs
           node --check scripts/run-provider-benchmark-suite.mjs
           node --check scripts/smoke-authenticated-opencode-acp.mjs
+          node --check scripts/verify-provider-release-gate.mjs
           node -e "const fs=require('node:fs'); const schema=JSON.parse(fs.readFileSync('benchmarks/provider-v2.schema.json','utf8')); const example=JSON.parse(fs.readFileSync('benchmarks/provider-v2.example.json','utf8')); if(schema.properties.schemaVersion.const!==1 || example.schemaVersion!==1 || !Array.isArray(example.tasks) || !example.tasks.length) process.exit(1)"
+
+          GITHUB_REF_NAME=feat/provider-architecture-v2 \
+          GITHUB_EVENT_NAME=workflow_dispatch \
+          GITHUB_SHA=gate-test-sha \
+          CUPPET_AUTHENTICATED_OPENCODE_COMMIT=gate-test-sha \
+          CUPPET_AUTHENTICATED_OPENCODE_PASSED=true \
+          node scripts/verify-provider-release-gate.mjs
+
+          if GITHUB_REF_NAME=feat/provider-architecture-v2 \
+             GITHUB_EVENT_NAME=push \
+             GITHUB_SHA=gate-test-sha \
+             CUPPET_AUTHENTICATED_OPENCODE_COMMIT=gate-test-sha \
+             CUPPET_AUTHENTICATED_OPENCODE_PASSED=true \
+             node scripts/verify-provider-release-gate.mjs; then
+            echo "Provider V2 push release gate unexpectedly passed" >&2
+            exit 1
+          fi
+
+          if GITHUB_REF_NAME=feat/provider-architecture-v2 \
+             GITHUB_EVENT_NAME=workflow_dispatch \
+             GITHUB_SHA=gate-test-sha \
+             CUPPET_AUTHENTICATED_OPENCODE_COMMIT=wrong-sha \
+             CUPPET_AUTHENTICATED_OPENCODE_PASSED=true \
+             node scripts/verify-provider-release-gate.mjs; then
+            echo "Provider V2 mismatched-SHA release gate unexpectedly passed" >&2
+            exit 1
+          fi
