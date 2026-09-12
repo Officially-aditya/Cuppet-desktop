@@ -1,114 +1,102 @@
 import assert from 'node:assert/strict';
-import { tmpdir } from 'node:os';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fetchProviderModelCatalog } from '../src/main/provider-model-catalog.mjs';
-import { classifyProviderError } from '../src/runtime/provider-error.mjs';
-import { OpenCodeServerProvider, discoverOpenCodeModels, opencodeBackendDefinition } from '../src/runtime/providers/backends/opencode.mjs';
+import test from 'node:test';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
+import { classifyProviderError } from '../src/runtime/provider-error.mjs';
+import { buildProviderBackendRegistry } from '../src/runtime/providers/default-registry.mjs';
 
-const fixture = fileURLToPath(new URL('./fixtures/fake-opencode-server.mjs', import.meta.url));
+const fixture = fileURLToPath(new URL('./fixtures/fake-opencode-acp-agent.mjs', import.meta.url));
 
-function provider(prompt = 'Hello OpenCode.') {
-  return new OpenCodeServerProvider({
+function configuration(extra = {}) {
+  return {
     providerID: 'opencode',
     cliCommand: process.execPath,
     cliArgs: [fixture],
-    primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
-  });
-}
-
-function streamOptions() {
-  return {
-    projectRoot: tmpdir(),
-    tools: [{ type: 'function', function: { name: 'workspace_read', description: 'Read workspace', parameters: { type: 'object', properties: {} } } }],
-    executeTool: async () => ({ success: true, output: 'fixture', contentItems: [] }),
+    primary: { modelID: 'provider/model-b', variant: 'max' },
+    ...extra,
   };
 }
 
-test('OpenCode uses managed serve/http transport with Cuppet-owned execution authority', async () => {
-  let streamed = '';
-  const options = streamOptions();
-  options.onDelta = async (delta) => { streamed += delta; };
-  const result = await provider().stream([{ role: 'user', content: 'Hello OpenCode.' }], options);
-  assert.equal(result.text, 'OpenCode ready.');
-  assert.equal(streamed, 'OpenCode ready.');
-  assert.equal(result.usage.inputTokens, 3);
-  assert.equal(result.usage.outputTokens, 2);
-  assert.equal(result.usage.cachedInputTokens, 1);
-  assert.equal(result.usage.reasoningTokens, 1);
+test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge', () => {
+  const descriptor = localCliDescriptor('opencode');
+  assert.equal(descriptor.transport, 'acp');
+  assert.deepEqual(descriptor.args, ['acp']);
+  assert.equal(descriptor.mcpToolBridge, true);
 });
 
-test('OpenCode preserves structured provider auth failures instead of replacing them with an empty-response error', async () => {
-  let failure;
+test('OpenCode descriptor isolates built-in execution while preserving unrelated inline config', () => {
+  const descriptor = localCliDescriptor('opencode');
+  const environment = descriptor.environment({
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ theme: 'system', permission: { custom_tool: 'ask' } }),
+    OPENCODE_SERVER_PASSWORD: 'should-not-cross-stdio-boundary',
+  });
+  const config = JSON.parse(environment.OPENCODE_CONFIG_CONTENT);
+  assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
+  assert.equal(environment.OPENCODE_SERVER_PASSWORD, undefined);
+  assert.equal(config.theme, 'system');
+  assert.equal(config.tools.bash, false);
+  assert.equal(config.tools.read, false);
+  assert.equal(config.permission.custom_tool, 'ask');
+  assert.equal(config.permission['*'], 'deny');
+  assert.equal(config.permission['cuppet-runtime_*'], 'allow');
+  assert.equal(config.permission['cuppet_runtime_*'], 'allow');
+});
+
+test('OpenCode runs through the shared ACP adapter with model and effort selection', async () => {
+  const registry = buildProviderBackendRegistry();
+  const runtime = registry.createConfiguredRuntime(configuration());
+  assert.equal(runtime.constructor.name, 'AcpProviderAdapter');
+  const deltas = [];
+  const result = await runtime.stream([{ role: 'user', content: 'Reply when ready.' }], {
+    projectRoot: process.cwd(),
+    onDelta: async (delta) => deltas.push(delta),
+  });
+  assert.equal(result.text, 'OpenCode ACP ready.');
+  assert.equal(deltas.join(''), 'OpenCode ACP ready.');
+  assert.equal(result.usage.totalTokens, 11);
+});
+
+test('OpenCode ACP session receives only the session-scoped Cuppet MCP bridge for tools', async () => {
+  const registry = buildProviderBackendRegistry();
+  const runtime = registry.createConfiguredRuntime(configuration({ cliEnv: { FAKE_OPENCODE_REQUIRE_MCP: '1' } }));
+  const result = await runtime.stream([{ role: 'user', content: 'Use Cuppet tools if needed.' }], {
+    projectRoot: process.cwd(),
+    tools: [{ name: 'workspace_read', description: 'Read a workspace file', inputSchema: { type: 'object', properties: {} } }],
+    executeTool: async () => ({ ok: true }),
+  });
+  assert.equal(result.text, 'OpenCode ACP ready.');
+});
+
+test('OpenCode ACP authentication failure reaches the generic reauthentication classifier', async () => {
+  const registry = buildProviderBackendRegistry();
+  const runtime = registry.createConfiguredRuntime(configuration());
+  let error;
   try {
-    await provider().stream([{ role: 'user', content: 'TRIGGER_PROVIDER_AUTH_ERROR' }], streamOptions());
-  } catch (error) {
-    failure = error;
+    await runtime.stream([{ role: 'user', content: 'AUTH_ERROR' }], { projectRoot: process.cwd() });
+  } catch (caught) {
+    error = caught;
   }
-  assert.ok(failure instanceof Error);
-  assert.equal(failure.name, 'ProviderAuthError');
-  assert.match(failure.message, /Missing provider credentials/i);
-  assert.doesNotMatch(failure.message, /completed without a user-visible response/i);
-  const classified = classifyProviderError(failure, { providerID: 'opencode' });
-  assert.equal(classified.category, 'authentication');
-  assert.equal(classified.action, 'reauthenticate');
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /provider authentication required/i);
+  const failure = classifyProviderError(error, { providerID: 'opencode' });
+  assert.equal(failure.category, 'authentication');
+  assert.equal(failure.action, 'reauthenticate');
+  assert.equal(failure.title, 'Sign-in required');
 });
 
-test('OpenCode preserves structured provider HTTP status for generic provider classification', async () => {
-  let failure;
+test('OpenCode ACP no-provider failure is not collapsed into unexpected error', async () => {
+  const registry = buildProviderBackendRegistry();
+  const runtime = registry.createConfiguredRuntime(configuration());
+  let error;
   try {
-    await provider().stream([{ role: 'user', content: 'TRIGGER_API_ERROR' }], streamOptions());
-  } catch (error) {
-    failure = error;
+    await runtime.stream([{ role: 'user', content: 'NO_PROVIDER' }], { projectRoot: process.cwd() });
+  } catch (caught) {
+    error = caught;
   }
-  assert.ok(failure instanceof Error);
-  assert.equal(failure.name, 'APIError');
-  assert.equal(failure.status, 429);
-  assert.match(failure.message, /Rate limit exceeded/i);
-  const classified = classifyProviderError(failure, { providerID: 'opencode' });
-  assert.equal(classified.category, 'rate_limit');
-});
-
-test('OpenCode model discovery keeps provider-advertised variants from verbose inventory', async () => {
-  const catalog = await discoverOpenCodeModels(localCliDescriptor('opencode'), {
-    configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
-  });
-  assert.equal(catalog.available, true);
-  assert.deepEqual(catalog.models.map((model) => model.id), ['anthropic/test-model', 'openai/test-model']);
-  assert.deepEqual(catalog.models[0].variants, ['low', 'medium', 'high']);
-  assert.equal(catalog.models[0].context, 200000);
-  assert.equal(catalog.models[0].outputLimit, 64000);
-});
-
-test('OpenCode capability discovery exposes effort for the selected model', async () => {
-  const backend = opencodeBackendDefinition();
-  const capabilities = await backend.operations.discoverCapabilities({
-    configuration: {
-      providerID: 'opencode',
-      cliCommand: process.execPath,
-      cliArgs: [fixture],
-      primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
-    },
-  });
-  assert.equal(capabilities.modelDependentSettings, true);
-  assert.equal(capabilities.currentModel, 'anthropic/test-model');
-  assert.equal(capabilities.reasoning.configId, 'variant');
-  assert.equal(capabilities.reasoning.currentValue, 'high');
-  assert.deepEqual(capabilities.reasoning.options.map((item) => item.id), ['low', 'medium', 'high']);
-});
-
-test('OpenCode effort survives the main-process model catalog projection', async () => {
-  const catalog = await fetchProviderModelCatalog({
-    providerID: 'opencode',
-    cliCommand: process.execPath,
-    cliArgs: [fixture],
-    primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
-    primaryEffort: 'high',
-  });
-  assert.equal(catalog.source, 'opencode-http');
-  assert.equal(catalog.modelDependentSettings, true);
-  assert.equal(catalog.configuredModel, 'anthropic/test-model');
-  assert.equal(catalog.reasoning.currentValue, 'high');
-  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'medium', 'high']);
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /no provider available/i);
+  const failure = classifyProviderError(error, { providerID: 'opencode' });
+  assert.equal(failure.category, 'model_unavailable');
+  assert.equal(failure.action, 'change_model');
+  assert.notEqual(failure.category, 'unknown');
 });
