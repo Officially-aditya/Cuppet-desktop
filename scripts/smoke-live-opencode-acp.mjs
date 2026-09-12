@@ -43,6 +43,10 @@ try {
 
   const capabilities = await runtime.capabilities();
   assert.ok(capabilities && typeof capabilities === 'object', 'released OpenCode ACP did not expose a capability snapshot');
+  console.log(`OpenCode ACP capabilities: ${JSON.stringify({
+    models: capabilities.models,
+    settings: capabilities.settings,
+  })}`);
 
   // Provider V2 deliberately owns durable context and opens a fresh provider
   // logical session for each Cuppet turn. This second session therefore exercises
