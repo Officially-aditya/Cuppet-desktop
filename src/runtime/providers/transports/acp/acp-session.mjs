@@ -82,6 +82,7 @@ export class AcpSessionRuntime {
   async newSession({ mcpServers = [], selection } = {}) {
     if (this.#state === 'idle') return this.start({ mcpServers, selection });
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
+    await this.#closeRetiredSession();
     await this.#openSession(mcpServers, selection);
     return this.snapshot();
   }
@@ -219,6 +220,14 @@ export class AcpSessionRuntime {
     }, this.#cancelGraceMs);
   }
 
+  async #closeRetiredSession() {
+    const sessionId = text(this.#session?.sessionId);
+    if (!sessionId || !supportsSessionClose(this.#initialized)) return;
+    await this.#rpc.request('session/close', { sessionId }, REQUEST_TIMEOUT_MS);
+    this.#session = null;
+    this.#capabilities = null;
+  }
+
   async #openSession(mcpServers = [], selection) {
     const descriptorMeta = record(this.#descriptor?.sessionMeta);
     const params = {
@@ -354,6 +363,7 @@ function sessionPromptParams(descriptor, sessionId, textValue) {
 }
 function serializeConversation(messages) { const value=(Array.isArray(messages)?messages:[]).map((m)=>`[${String(m?.role??'user').toUpperCase()}]\n${typeof m?.content==='string'?m.content:JSON.stringify(m?.content??'')}`).join('\n\n'); const bytes=Buffer.from(value,'utf8'); return bytes.length<=MAX_PROMPT_BYTES?value:`${bytes.subarray(bytes.length-MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before ACP transport.]`; }
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
+function supportsSessionClose(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.close !== undefined && sessions.close !== false;}
 async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
 function enrichProviderError(descriptor,error,stderr){const message=cleanError(error); const detail=cleanError(stderr).trim(); if(/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`); return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);}
 function cleanError(error){return error instanceof Error?error.message:String(error??'');}
