@@ -15,7 +15,7 @@ test('shared ACP provider delegates filesystem and terminal operations through C
   const calls = [];
   const permissions = [];
   let streamed = '';
-  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] }, { descriptor: localCliDescriptor('opencode') });
+  const provider = new AcpProviderAdapter({ providerID: 'claude-code', cliCommand: process.execPath, cliArgs: [fixture] }, { descriptor: localCliDescriptor('claude-code') });
   try {
     const result = await provider.stream([{ role: 'user', content: 'Update the sample.' }], {
       projectRoot: root,
@@ -41,11 +41,12 @@ test('shared ACP provider delegates filesystem and terminal operations through C
   }
 });
 
-test('local ACP provider descriptors use official stdio entrypoints', () => {
+test('provider descriptors use their current official transport entrypoints', () => {
   assert.deepEqual(localCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
   assert.equal(localCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
   assert.deepEqual(localCliDescriptor('kiro')?.args, ['acp']);
-  assert.equal(localCliDescriptor('antigravity')?.transport, 'headless-plan');
+  assert.equal(localCliDescriptor('opencode')?.transport, 'opencode-http');
+  assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
 });
 
 test('Kiro ACP compatibility accepts content prompts and session/notification updates', async () => {
@@ -64,12 +65,12 @@ test('Kiro ACP compatibility accepts content prompts and session/notification up
 test('shared ACP provider applies advertised model and reasoning effort and surfaces native activity', async () => {
   const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
   const provider = new AcpProviderAdapter({
-    providerID: 'opencode',
+    providerID: 'claude-code',
     cliCommand: process.execPath,
     cliArgs: [configFixture],
-    primary: { providerID: 'opencode', modelID: 'provider/model-b' },
+    primary: { providerID: 'claude-code', modelID: 'provider/model-b' },
     primaryEffort: 'max',
-  }, { descriptor: localCliDescriptor('opencode') });
+  }, { descriptor: localCliDescriptor('claude-code') });
   const activity = [];
   let streamed = '';
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
