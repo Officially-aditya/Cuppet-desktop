@@ -2,38 +2,34 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { AntigravityHeadlessProvider } from '../src/runtime/antigravity-provider.mjs';
+import { ManagedAntigravityProvider, antigravityAcpDescriptor } from '../src/runtime/providers/backends/antigravity.mjs';
 
-const fixture = fileURLToPath(new URL('./fixtures/fake-antigravity-agent.mjs', import.meta.url));
+const fixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+const installation = Object.freeze({ command: process.execPath, harnessPath: fixture, args: [fixture], version: 'test', source: 'override' });
 
-test('Antigravity provider stays in safe headless plan/sandbox mode and forwards selected effort', async () => {
+test('Antigravity generation uses the shared ACP runtime with a managed Google ACP installation', async () => {
   let streamed = '';
-  const provider = new AntigravityHeadlessProvider({
+  const provider = new ManagedAntigravityProvider({
     providerID: 'antigravity',
-    cliCommand: process.execPath,
-    cliArgs: [fixture],
-    primary: { providerID: 'antigravity', modelID: 'fake-requires-effort', variant: 'high' },
-  });
+    primary: { providerID: 'antigravity', modelID: 'provider/model-b', variant: 'max' },
+  }, { resolveInstallation: async () => installation });
   const result = await provider.stream([{ role: 'user', content: 'Inspect this project.' }], {
     projectRoot: tmpdir(),
     onDelta: async (delta) => { streamed += delta; },
   });
-  assert.equal(result.text, 'Plan ready.');
-  assert.equal(streamed, 'Plan ready.');
-  assert.equal(result.usage.totalTokens, 14);
-  assert.equal(result.usage.cachedInputTokens, 4);
-  assert.equal(result.usage.reasoningTokens, 2);
+  assert.equal(result.text, 'Done.');
+  assert.equal(streamed, 'Done.');
 });
 
-test('Antigravity provider surfaces terminal stream-json errors from stdout', async () => {
-  const provider = new AntigravityHeadlessProvider({
-    providerID: 'antigravity',
-    cliCommand: process.execPath,
-    cliArgs: [fixture],
-    primary: { providerID: 'antigravity', modelID: 'error-model' },
-  });
-  await assert.rejects(
-    () => provider.stream([{ role: 'user', content: 'Inspect.' }], { projectRoot: tmpdir() }),
-    /invalid model selection: error-model is unavailable/,
-  );
+test('Antigravity ACP descriptor carries Google harness/auth policy without leaking it into ACP core', () => {
+  const descriptor = antigravityAcpDescriptor(installation);
+  assert.equal(descriptor.transport, 'acp');
+  assert.equal(descriptor.command, process.execPath);
+  assert.deepEqual(descriptor.authentication.methods, [{ id: 'oauth-personal' }]);
+  const env = descriptor.environment({ ELECTRON_RUN_AS_NODE: '1', GOOGLE_API_KEY: 'do-not-forward', PATH: '/bin' });
+  assert.equal(env.ANTIGRAVITY_HARNESS_PATH, fixture);
+  assert.equal(env.AGY_ACP_FORCE_FILE_STORAGE, '1');
+  assert.equal(env.GOOGLE_API_KEY, undefined);
+  assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
+  assert.equal(env.PATH, '/bin');
 });
