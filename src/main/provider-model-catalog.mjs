@@ -1,10 +1,6 @@
 import { discoverProviderCapabilitySnapshot } from '../runtime/providers/default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from '../runtime/providers/capability-snapshot.mjs';
 
-export { catalogFromCodexModels } from '../runtime/providers/backends/codex.mjs';
-export { parseApiCatalog } from '../runtime/providers/backends/api.mjs';
-export { discoverAntigravityModels, parseAntigravityModelOutput } from '../runtime/providers/backends/antigravity.mjs';
-
 /**
  * Project the active provider driver's capability snapshot into the renderer's
  * model-catalog compatibility shape.
