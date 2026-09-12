@@ -4,17 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { AcpCliAgentProvider, acpCliDescriptor } from '../src/runtime/acp-cli-provider.mjs';
+import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
+import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
 
-test('ACP CLI provider delegates filesystem and terminal operations through Cuppet', async () => {
+test('shared ACP provider delegates filesystem and terminal operations through Cuppet', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-acp-'));
   await writeFile(join(root, 'sample.txt'), 'hello');
   const calls = [];
   const permissions = [];
   let streamed = '';
-  const provider = new AcpCliAgentProvider({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] }, { descriptor: localCliDescriptor('opencode') });
   try {
     const result = await provider.stream([{ role: 'user', content: 'Update the sample.' }], {
       projectRoot: root,
@@ -40,18 +41,16 @@ test('ACP CLI provider delegates filesystem and terminal operations through Cupp
   }
 });
 
-
 test('local ACP provider descriptors use official stdio entrypoints', () => {
-  assert.deepEqual(acpCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
-  assert.equal(acpCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
-  assert.deepEqual(acpCliDescriptor('kiro')?.args, ['acp']);
-  assert.equal(acpCliDescriptor('antigravity'), null);
+  assert.deepEqual(localCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
+  assert.equal(localCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
+  assert.deepEqual(localCliDescriptor('kiro')?.args, ['acp']);
+  assert.equal(localCliDescriptor('antigravity')?.transport, 'headless-plan');
 });
-
 
 test('Kiro ACP compatibility accepts content prompts and session/notification updates', async () => {
   const kiroFixture = fileURLToPath(new URL('./fixtures/fake-kiro-acp-agent.mjs', import.meta.url));
-  const provider = new AcpCliAgentProvider({ providerID: 'kiro', cliCommand: process.execPath, cliArgs: [kiroFixture] });
+  const provider = new AcpProviderAdapter({ providerID: 'kiro', cliCommand: process.execPath, cliArgs: [kiroFixture] }, { descriptor: localCliDescriptor('kiro') });
   let streamed = '';
   const result = await provider.stream([{ role: 'user', content: 'Hello Kiro' }], {
     projectRoot: tmpdir(),
@@ -62,16 +61,15 @@ test('Kiro ACP compatibility accepts content prompts and session/notification up
   assert.equal(streamed, 'Kiro ready.');
 });
 
-
-test('ACP provider applies advertised model and reasoning effort and surfaces native activity', async () => {
+test('shared ACP provider applies advertised model and reasoning effort and surfaces native activity', async () => {
   const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
-  const provider = new AcpCliAgentProvider({
+  const provider = new AcpProviderAdapter({
     providerID: 'opencode',
     cliCommand: process.execPath,
     cliArgs: [configFixture],
     primary: { providerID: 'opencode', modelID: 'provider/model-b' },
     primaryEffort: 'max',
-  });
+  }, { descriptor: localCliDescriptor('opencode') });
   const activity = [];
   let streamed = '';
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
