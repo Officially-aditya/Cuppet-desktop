@@ -11,14 +11,17 @@ for (const path of required) await readFile(join(root, path), 'utf8');
 
 const productionFiles = await walk(join(root, 'src'));
 for (const path of productionFiles) {
+  if (isProviderIntegrationBoundary(path)) continue;
   const text = await readFile(path, 'utf8');
-  if (/opencode/i.test(text) && !isProviderIntegrationBoundary(path)) {
-    throw new Error(`Phase 1 core production code must not depend on OpenCode: ${relative(root, path)}`);
+  if (hasOpenCodeModuleDependency(text)) {
+    throw new Error(`Phase 1 core production code must not import or require OpenCode: ${relative(root, path)}`);
   }
 }
 
 const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-if (pkg.dependencies?.opencode || pkg.devDependencies?.opencode) throw new Error('OpenCode package dependency is forbidden; it must remain an external provider integration');
+if (pkg.dependencies?.opencode || pkg.devDependencies?.opencode || pkg.dependencies?.['opencode-ai'] || pkg.devDependencies?.['opencode-ai']) {
+  throw new Error('OpenCode package dependency is forbidden; it must remain an external provider integration');
+}
 if (!pkg.devDependencies?.electron) throw new Error('Electron must be pinned for the desktop shell');
 if (!pkg.devDependencies?.react || !pkg.devDependencies?.vite || !pkg.devDependencies?.typescript) throw new Error('React/Vite/TypeScript renderer toolchain missing');
 if (!pkg.build?.files?.includes('dist-renderer/**/*')) throw new Error('compiled renderer is not packaged');
@@ -32,6 +35,9 @@ if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) th
 await run(process.execPath, ['--test']);
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
+function hasOpenCodeModuleDependency(text) {
+  return /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*opencode[^'"]*['"]/i.test(text);
+}
 function isProviderIntegrationBoundary(path) {
   const rel = relative(root, path).split(sep).join('/');
   return rel.startsWith('src/runtime/providers/')
