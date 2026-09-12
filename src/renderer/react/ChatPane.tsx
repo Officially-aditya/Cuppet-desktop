@@ -8,6 +8,12 @@ import {
   readPermissionMode,
   readSendBehavior,
 } from './behavior-preferences';
+import {
+  hydrateTranscript,
+  orderedTranscriptItems,
+  reduceTranscriptEvent,
+  type TranscriptState,
+} from './chat-transcript';
 
 export type DeliveryMode = 'queue' | 'steer';
 export type ComposerMode = 'build' | 'plan' | 'orchestrate';
@@ -56,8 +62,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
   const [queuedBySession, setQueuedBySession] = useState<Record<string, QueuedMessage[]>>({});
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
-  const [traceByMessage, setTraceByMessage] = useState<Record<string, TraceItem[]>>({});
-  const [preview, setPreview] = useState<{ messageId: string; content: string } | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptState>({});
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -76,7 +81,6 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
 
   useEffect(() => setSelected(0), [value]);
 
-  // Re-measure after React commits any programmatic composer value change, including send/queue clears.
   useEffect(() => {
     resize(textarea.current);
   }, [value]);
@@ -86,10 +90,11 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (fileInput.current) fileInput.current.value = '';
   }, [session?.id, draft?.projectId]);
 
+  // Canonical transcript state is hydrated from the runtime DB. Live events use
+  // the same reducer, so reload and streaming are two views of one state model.
   useEffect(() => {
-    setPreview(null);
-    setTraceByMessage(loadStoredTraces(session));
-  }, [session?.id]);
+    setTranscript(hydrateTranscript(session?.activities ?? []));
+  }, [session?.id, session?.activities]);
 
   useEffect(() => {
     void applyPermissionPreference(session);
@@ -113,41 +118,13 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   }, [running]);
 
   useEffect(() => window.cuppet.onEvent((event) => {
-    if (!session?.id || String(event?.sessionId ?? '') !== session.id) return;
-    const messageId = String(event?.messageId ?? '');
-
-    if (event.type === 'runtime.activity') {
-      const activity = event?.activity && typeof event.activity === 'object' && !Array.isArray(event.activity) ? event.activity : null;
-      const activityType = String(activity?.type ?? '');
-      if (!messageId || !activity) return;
-
-      if (event.source === 'provider' && activityType === 'activity.reasoning.delta') {
-        const segment = typeof activity.text === 'string' ? activity.text : '';
-        if (!segment.trim()) return;
-        setTraceByMessage((current) => {
-          const existing = current[messageId] ?? readStoredTrace(messageId, true);
-          const next = appendReasoningTrace(existing, segment);
-          if (next !== existing) storeTrace(messageId, next);
-          return next === existing ? current : { ...current, [messageId]: next };
-        });
-        return;
-      }
-
-      if (event.source === 'execution' && activityType.startsWith('activity.tool.')) {
-        setTraceByMessage((current) => {
-          const existing = current[messageId] ?? readStoredTrace(messageId, true);
-          const next = updateToolTraceFromActivity(existing, activity);
-          storeTrace(messageId, next);
-          return { ...current, [messageId]: next };
-        });
-      }
-      return;
-    }
-
-    if (event.type === 'message.preview' && messageId) {
-      const content = typeof event.content === 'string' ? event.content : '';
-      setPreview(content ? { messageId, content } : (current) => current?.messageId === messageId ? null : current);
-    }
+    if (!session?.id) return;
+    const eventSessionId = String(event?.sessionId ?? event?.message?.sessionId ?? '');
+    if (eventSessionId && eventSessionId !== session.id) return;
+    const messageId = String(event?.messageId ?? event?.message?.id ?? '');
+    if (!messageId) return;
+    if (!['runtime.activity', 'message.preview', 'message.delta', 'message.completed'].includes(String(event.type ?? ''))) return;
+    setTranscript((current) => reduceTranscriptEvent(current, { ...event, messageId }));
   }), [session?.id]);
 
   useEffect(() => {
@@ -171,7 +148,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (!node) return;
     const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
-  }, [session?.messages, traceByMessage, preview?.content]);
+  }, [session?.messages, transcript]);
 
   useEffect(() => {
     const sessionId = session?.id;
@@ -204,7 +181,6 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     setValue('');
     setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
-    // Collapse immediately; the value effect above re-measures after the empty value is committed.
     if (textarea.current) textarea.current.style.height = '54px';
     textarea.current?.focus();
   };
@@ -334,8 +310,9 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const messages = session?.messages?.filter((message) => message.role !== 'system') ?? [];
   const runningAssistant = running ? [...messages].reverse().find((message) => message.role === 'assistant') ?? null : null;
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
-  const runningPreview = runningAssistant && preview?.messageId === runningAssistant.id ? preview.content : '';
-  const runningTrace = runningAssistant ? traceByMessage[runningAssistant.id] ?? [] : [];
+  const runningState = runningAssistant ? transcript[runningAssistant.id] : undefined;
+  const runningPreview = runningState?.preview ?? '';
+  const runningTrace = runningAssistant ? traceForMessage(transcript, runningAssistant.id) : [];
   const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
@@ -344,7 +321,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
           <div className="empty-state"><img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
-        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceByMessage[message.id] ?? []} />)}
+        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceForMessage(transcript, message.id)} />)}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView
             key={runningAssistant.id}
@@ -501,6 +478,22 @@ function TraceView({ trace }: { trace: TraceItem[] }) {
   );
 }
 
+function traceForMessage(state: TranscriptState, messageId: string): TraceItem[] {
+  const items = orderedTranscriptItems(state[messageId]?.items ?? []);
+  return items.map((item) => item.type === 'reasoning'
+    ? { id: item.id, type: 'reasoning', text: item.text, sequence: item.sequence }
+    : {
+        id: item.id,
+        type: 'tool',
+        status: item.status,
+        tool: item.tool,
+        argumentsJson: item.argumentsJson,
+        label: toolActivityLabel(item.tool, item.argumentsJson, item.status),
+        sequence: item.sequence,
+        ...(item.details ? { details: item.details } : {}),
+      });
+}
+
 function IntegrationMentionPalette({ onChoose }: { onChoose: () => void }) {
   return (
     <div className="command-palette react-command-palette integration-mention-palette" role="listbox" aria-label="Cuppet integrations">
@@ -624,66 +617,6 @@ async function applyPermissionPreference(session: Session | null) {
   await window.cuppet.permissions.autoSet(session.id, effective).catch(() => undefined);
 }
 
-function appendReasoningTrace(trace: TraceItem[], segment: string): TraceItem[] {
-  const incoming = segment.trim();
-  if (!incoming) return trace;
-  const last = trace.at(-1);
-  if (last?.type === 'reasoning') {
-    const text = mergeReasoningText(last.text, incoming);
-    if (text === last.text) return trace;
-    const next = [...trace];
-    next[next.length - 1] = { ...last, text };
-    return boundTrace(next);
-  }
-  return boundTrace([
-    ...trace,
-    { id: `reason-${Date.now()}-${trace.length}`, type: 'reasoning', text: incoming, sequence: nextTraceSequence(trace) },
-  ]);
-}
-
-function mergeReasoningText(previous: string, incoming: string) {
-  const before = previous.trim();
-  const next = incoming.trim();
-  if (!before) return next;
-  if (!next || next === before || before.endsWith(next)) return before;
-  if (next.startsWith(before)) return next;
-  const separator = /\s$/.test(previous) || /^\s/.test(incoming) || /^[,.;:!?)}\]]/.test(next) ? '' : ' ';
-  return `${previous}${separator}${incoming}`;
-}
-
-function updateToolTraceFromActivity(trace: TraceItem[], activity: any): TraceItem[] {
-  const id = String(activity?.executionId ?? activity?.callId ?? `tool-${Date.now()}`);
-  const existingIndex = trace.findIndex((item) => item.type === 'tool' && item.id === id);
-  const existing = existingIndex >= 0 ? trace[existingIndex] as TraceTool : null;
-  const tool = String(activity?.tool ?? existing?.tool ?? '');
-  const argumentsJson = typeof activity?.argumentsJson === 'string' ? activity.argumentsJson : existing?.argumentsJson ?? '{}';
-  const closed = activity?.type === 'activity.tool.closed';
-  const status: TraceTool['status'] = closed ? (activity?.status === 'success' ? 'complete' : 'error') : 'running';
-  const patch: TraceTool = {
-    id,
-    type: 'tool',
-    status,
-    tool,
-    argumentsJson,
-    label: toolActivityLabel(tool, argumentsJson, status),
-    sequence: existing?.sequence ?? nextTraceSequence(trace),
-    ...(typeof activity?.details === 'string' && activity.details ? { details: activity.details } : existing?.details ? { details: existing.details } : {}),
-  };
-  const next = [...trace];
-  if (existingIndex >= 0) next[existingIndex] = patch;
-  else next.push(patch);
-  return boundTrace(next);
-}
-
-function nextTraceSequence(trace: TraceItem[]) {
-  let max = -1;
-  for (let index = 0; index < trace.length; index += 1) {
-    const sequence = Number(trace[index]?.sequence);
-    max = Math.max(max, Number.isFinite(sequence) ? sequence : index);
-  }
-  return max + 1;
-}
-
 function orderedTrace(trace: TraceItem[]) {
   return trace
     .map((item, index) => ({ item, index }))
@@ -795,58 +728,6 @@ function targetName(path: string) {
 function compactActivityText(value: string) {
   const text = value.replace(/[\r\n\t]+/g, ' ').trim();
   return text.length > 72 ? `${text.slice(0, 69)}…` : text;
-}
-
-const TRACE_KEY_PREFIX = 'cuppet.desktop.trace.';
-const LEGACY_REASONING_KEY_PREFIX = 'cuppet.desktop.reasoning.';
-const MAX_TRACE_CHARS = 140_000;
-
-function loadStoredTraces(session: Session | null) {
-  const output: Record<string, TraceItem[]> = {};
-  for (const message of session?.messages ?? []) {
-    if (message.role !== 'assistant') continue;
-    const value = readStoredTrace(message.id, message.status === 'streaming');
-    if (value.length) output[message.id] = value;
-  }
-  return output;
-}
-
-function readStoredTrace(messageId: string, keepRunning = false): TraceItem[] {
-  try {
-    const raw = localStorage.getItem(`${TRACE_KEY_PREFIX}${messageId}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return normalizeStoredTrace(parsed
-        .filter(validTraceItem)
-        .map((item) => item.type === 'tool' && item.status === 'running' && !keepRunning ? { ...item, status: 'complete', label: toolActivityLabel(item.tool, item.argumentsJson, 'complete') } : item));
-    }
-    const legacy = localStorage.getItem(`${LEGACY_REASONING_KEY_PREFIX}${messageId}`)?.trim();
-    return legacy ? [{ id: 'legacy-reasoning', type: 'reasoning', text: legacy, sequence: 0 }] : [];
-  } catch {
-    return [];
-  }
-}
-
-function normalizeStoredTrace(trace: Array<TraceItem | (Omit<TraceReasoning, 'sequence'> & { sequence?: number }) | (Omit<TraceTool, 'sequence'> & { sequence?: number })>): TraceItem[] {
-  return trace.map((item, index) => ({ ...item, sequence: Number.isFinite(Number(item.sequence)) ? Number(item.sequence) : index })) as TraceItem[];
-}
-
-function validTraceItem(value: unknown): value is TraceItem {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const item = value as Record<string, unknown>;
-  if (item.type === 'reasoning') return typeof item.id === 'string' && typeof item.text === 'string';
-  return item.type === 'tool' && typeof item.id === 'string' && typeof item.label === 'string' && typeof item.tool === 'string' && typeof item.argumentsJson === 'string' && ['running', 'complete', 'error'].includes(String(item.status));
-}
-
-function storeTrace(messageId: string, trace: TraceItem[]) {
-  try { localStorage.setItem(`${TRACE_KEY_PREFIX}${messageId}`, JSON.stringify(boundTrace(orderedTrace(trace)))); }
-  catch { /* local persistence is best-effort; the final answer remains durable in the runtime DB. */ }
-}
-
-function boundTrace(trace: TraceItem[]) {
-  let next = trace.slice(-80);
-  while (JSON.stringify(next).length > MAX_TRACE_CHARS && next.length > 1) next = next.slice(1);
-  return next;
 }
 
 function resize(node: HTMLTextAreaElement | null) {
