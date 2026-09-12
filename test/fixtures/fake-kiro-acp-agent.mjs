@@ -8,6 +8,10 @@ rl.on('line', (line) => {
     return;
   }
   if (message.method === 'session/new') {
+    if (Array.isArray(message.params?.mcpServers) && message.params.mcpServers.length) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'external MCP servers are unsupported in this Kiro fixture' } });
+      return;
+    }
     write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kiro-session' } });
     return;
   }
