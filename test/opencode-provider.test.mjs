@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { fetchProviderModelCatalog } from '../src/main/provider-model-catalog.mjs';
 import { OpenCodeServerProvider, discoverOpenCodeModels, opencodeBackendDefinition } from '../src/runtime/providers/backends/opencode.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 
@@ -55,4 +56,19 @@ test('OpenCode capability discovery exposes effort for the selected model', asyn
   assert.equal(capabilities.reasoning.configId, 'variant');
   assert.equal(capabilities.reasoning.currentValue, 'high');
   assert.deepEqual(capabilities.reasoning.options.map((item) => item.id), ['low', 'medium', 'high']);
+});
+
+test('OpenCode effort survives the main-process model catalog projection', async () => {
+  const catalog = await fetchProviderModelCatalog({
+    providerID: 'opencode',
+    cliCommand: process.execPath,
+    cliArgs: [fixture],
+    primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
+    primaryEffort: 'high',
+  });
+  assert.equal(catalog.source, 'opencode-http');
+  assert.equal(catalog.modelDependentSettings, true);
+  assert.equal(catalog.configuredModel, 'anthropic/test-model');
+  assert.equal(catalog.reasoning.currentValue, 'high');
+  assert.deepEqual(catalog.reasoning.options.map((item) => item.id), ['low', 'medium', 'high']);
 });
