@@ -53,8 +53,6 @@ export function opencodeBackendDefinition() {
           settings: [],
           defaultModel: text(catalog.defaultModel) || null,
           currentModel: active?.id ?? null,
-          // OpenCode variants are model-specific. The renderer will refresh this
-          // read-only capability snapshot when the candidate model changes.
           modelDependentSettings: true,
           ...(variants.length ? {
             reasoning: {
@@ -97,6 +95,7 @@ export class OpenCodeServerProvider {
         spawnImpl: typeof this.#configuration.spawnImpl === 'function' ? this.#configuration.spawnImpl : spawn,
         fetchImpl: typeof this.#configuration.fetchImpl === 'function' ? this.#configuration.fetchImpl : globalThis.fetch,
       });
+
       const query = `?directory=${encodeURIComponent(projectRoot)}`;
       const session = await requestJson(`${server.baseUrl}/session${query}`, {
         method: 'POST',
@@ -123,17 +122,22 @@ export class OpenCodeServerProvider {
         signal: options.signal,
         fetchImpl: server.fetchImpl,
       });
+
       const payload = record(response?.data ?? response);
+      const providerError = openCodeResponseError(payload);
+      if (providerError) throw providerError;
+
       const output = extractText(payload.parts);
-      if (!output) throw new Error('OpenCode completed without a user-visible response.');
+      if (!output) throw new Error('OpenCode completed without a user-visible response or structured provider error.');
       await options.onDelta?.(output);
       return { text: output, toolCalls: [], usage: normalizeUsage(payload.info) };
     } catch (error) {
       if (options.signal?.aborted || error?.name === 'AbortError') throw abortError();
       const detail = server?.stderr?.().trim();
-      throw new Error(detail && !cleanError(error).includes(detail)
+      const message = detail && !cleanError(error).includes(detail)
         ? `OpenCode: ${cleanError(error)}\n${detail.slice(-MAX_ERROR_BYTES)}`
-        : `OpenCode: ${cleanError(error)}`);
+        : `OpenCode: ${cleanError(error)}`;
+      throw wrapOpenCodeError(error, message);
     } finally {
       await Promise.allSettled([
         Promise.resolve(server?.close?.()),
@@ -220,6 +224,31 @@ export function parseOpenCodeModelOutput(output = '') {
     if (models.length >= 1024) break;
   }
   return models;
+}
+
+/**
+ * OpenCode returns model/provider failures inside a successful HTTP response as
+ * `info.error`. Treat that as the authoritative turn failure instead of erasing
+ * it behind a generic empty-response error.
+ */
+export function openCodeResponseError(value) {
+  const payload = record(value);
+  const info = record(payload.info);
+  const errorValue = record(info.error ?? payload.error);
+  if (!Object.keys(errorValue).length) return null;
+
+  const data = record(errorValue.data);
+  const name = text(errorValue.name) || 'OpenCodeError';
+  const providerID = text(data.providerID || errorValue.providerID);
+  const message = text(data.message || errorValue.message) || 'OpenCode reported a provider error.';
+  const status = httpStatus(data.statusCode ?? errorValue.statusCode ?? errorValue.status);
+  const prefix = providerID ? `${name} (${providerID})` : name;
+  const error = new Error(`${prefix}: ${sanitizeErrorText(message)}`);
+  error.name = name;
+  if (status) error.status = status;
+  if (providerID) error.providerID = providerID;
+  error.openCodeError = true;
+  return error;
 }
 
 async function maybeToolSession({ options }) {
@@ -340,7 +369,9 @@ async function requestJson(url, { method = 'GET', body, signal, fetchImpl }) {
   }
   if (!response.ok) {
     const detail = typeof payload === 'string' ? payload : safeJson(payload);
-    throw new Error(`HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+    const error = new Error(`HTTP ${response.status}${detail ? `: ${sanitizeErrorText(detail)}` : ''}`);
+    error.status = response.status;
+    throw error;
   }
   return payload ?? {};
 }
@@ -463,13 +494,30 @@ function normalizeUsage(info) {
     reasoningTokens: reasoning,
   };
 }
+function wrapOpenCodeError(error, message) {
+  const wrapped = new Error(sanitizeErrorText(message), { cause: error instanceof Error ? error : undefined });
+  const name = text(error?.name);
+  if (name && name !== 'Error') wrapped.name = name;
+  const status = httpStatus(error?.status ?? error?.statusCode ?? error?.response?.status);
+  if (status) wrapped.status = status;
+  const providerID = text(error?.providerID);
+  if (providerID) wrapped.providerID = providerID;
+  return wrapped;
+}
 function launchError(command, error) { return error?.code === 'ENOENT' ? new Error(`OpenCode CLI was not found (${command}). Run OpenCode once and complete provider sign-in.`) : error instanceof Error ? error : new Error(String(error)); }
 function abortError() { const error = new Error('Provider request aborted.'); error.name = 'AbortError'; return error; }
 function delay(ms) { return new Promise((resolveDelay) => setTimeout(resolveDelay, ms)); }
 function positiveInt(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0; }
 function nonNegative(value) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : 0; }
+function httpStatus(value) { const number = Number(value); return Number.isInteger(number) && number >= 100 && number <= 599 ? number : 0; }
 function safeJson(value) { try { return JSON.stringify(value).slice(0, MAX_ERROR_BYTES); } catch { return ''; } }
 function stripAnsi(value) { return String(value ?? '').replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, ''); }
-function cleanError(error) { return error instanceof Error ? error.message : String(error ?? 'Unknown OpenCode error'); }
+function sanitizeErrorText(value) {
+  return String(value ?? '')
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
+    .replace(/(?:api[_-]?key|token|secret)\s*[=:]\s*[A-Za-z0-9._~+/=-]{12,}/gi, '$1=[redacted]')
+    .slice(0, MAX_ERROR_BYTES);
+}
+function cleanError(error) { return sanitizeErrorText(error instanceof Error ? error.message : String(error ?? 'Unknown OpenCode error')); }
 function text(value) { return typeof value === 'string' ? value.trim().slice(0, 4000) : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
