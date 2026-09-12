@@ -33,6 +33,7 @@ jobs:
           test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-runtime-manager-real-acp.test.mjs
+          test/provider-runtime-manager-codex.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/provider-acp-model-switch.test.mjs
           test/acp-text-stream.test.mjs
