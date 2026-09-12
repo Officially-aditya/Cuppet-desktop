@@ -447,8 +447,8 @@ export class RuntimeService {
         integrations,
         mode: this.#cognitive.mode(sessionId),
         signal,
-        onDelta: async (delta) => {
-          if (signal.aborted || this.#closed) return;
+        onDelta: async (delta, meta = {}) => {
+          if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;
           const message = this.#db.appendMessageContent(assistantId, delta);
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
         },
