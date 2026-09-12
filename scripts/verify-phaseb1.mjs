@@ -12,7 +12,8 @@ expect(text['src/runtime/tst-client.mjs'].includes("TST_PROTOCOL_VERSION = 'cupp
 expect(text['src/runtime/background-enricher.mjs'].includes("provenance: 'model_candidate'") && text['src/runtime/background-enricher.mjs'].includes('!this.#tst?.configured'),'background evidence/TST gates missing');
 expect(text['src/runtime/candidate-ledger.mjs'].includes('if (observation.trustedSupport)'),'candidate evidence gate missing');
 expect(text['src/preload/preload.cjs'].includes('modeSet') && text['src/preload/preload.cjs'].includes('orchestratorSet') && text['src/preload/preload.cjs'].includes('backgroundPause'),'cognitive preload surface missing');
-expect(text['src/renderer/react/ChatPane.tsx'].includes('onToggleMode') && text['src/renderer/react/App.tsx'].includes('window.cuppet.commands.list'),'React cognitive/command surface missing');
+const chatPane=text['src/renderer/react/ChatPane.tsx'];
+expect(chatPane.includes('onModeChange') && chatPane.includes('<option value="build">Build</option>') && chatPane.includes('<option value="plan">Plan</option>') && chatPane.includes('<option value="orchestrate">Orchestrate</option>') && text['src/renderer/react/App.tsx'].includes('window.cuppet.commands.list'),'React cognitive/command surface missing');
 expect(text['src/runtime/commands.mjs'].includes("command('background'") && text['src/runtime/commands.mjs'].includes("command('orchestrator'") && text['src/runtime/commands.mjs'].includes("command('plan'"),'visible slash cognitive controls missing');
 expect(text['src/main/provider-settings.mjs'].includes('backgroundModel'),'secondary model setting missing');
 const tests=['test/context-compiler.test.mjs','test/lossless-plan.test.mjs','test/candidate-ledger.test.mjs','test/background-enricher.test.mjs','test/cognitive-state.test.mjs','test/runtime-cognitive.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
