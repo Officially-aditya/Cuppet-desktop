@@ -6,6 +6,8 @@ let model = 'provider/model-a';
 let effort = 'low';
 let mode = 'build';
 let sessionId = 'opencode-acp-session';
+let sessionCounter = 0;
+const openSessions = new Set();
 const guardAgent = process.env.CUPPET_OPENCODE_AGENT_ID || '';
 
 function configOptions() {
@@ -67,11 +69,19 @@ rl.on('line', (line) => {
       write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: environmentError } });
       return;
     }
-    write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+    write({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } }, authMethods: [] },
+    });
     return;
   }
 
   if (message.method === 'session/new') {
+    if (openSessions.size > 0) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'previous ACP session was not closed' } });
+      return;
+    }
     if (process.env.FAKE_OPENCODE_REQUIRE_MCP === '1') {
       const servers = Array.isArray(message.params?.mcpServers) ? message.params.mcpServers : [];
       const server = servers.find((item) => item?.name === 'cuppet-runtime');
@@ -81,8 +91,20 @@ rl.on('line', (line) => {
       }
     }
     mode = 'build';
-    sessionId = `opencode-acp-${Date.now()}`;
+    sessionCounter += 1;
+    sessionId = `opencode-acp-${sessionCounter}`;
+    openSessions.add(sessionId);
     write({ jsonrpc: '2.0', id: message.id, result: { sessionId, configOptions: configOptions() } });
+    return;
+  }
+
+  if (message.method === 'session/close') {
+    const requested = String(message.params?.sessionId ?? '');
+    if (!openSessions.delete(requested)) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'unknown session' } });
+      return;
+    }
+    write({ jsonrpc: '2.0', id: message.id, result: {} });
     return;
   }
 
@@ -98,6 +120,10 @@ rl.on('line', (line) => {
     const prompt = Array.isArray(message.params?.prompt)
       ? message.params.prompt.map((item) => String(item?.text ?? '')).join('')
       : '';
+    if (!openSessions.has(String(message.params?.sessionId ?? ''))) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'prompt for closed session' } });
+      return;
+    }
     if (prompt.includes('AUTH_ERROR')) {
       write({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'provider authentication required', data: { providerId: 'anthropic' } } });
       return;
