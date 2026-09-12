@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { localCliDescriptor } from '../runtime/local-cli-descriptors.mjs';
 import { normalizeProviderInstallation } from '../runtime/providers/operations.mjs';
+import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const STATUS_TIMEOUT_MS = 8_000;
@@ -70,14 +71,26 @@ export function localProviderOperations(providerID, { userData, runImpl = run, p
     const marker = await providerState(userData, descriptor.id);
     let providerReady = false;
     let probeError = null;
-    try { providerReady = await probeConnection(descriptor, detected.installation.executable, runImpl); }
-    catch (error) { probeError = cleanError(error); }
-    const connected = descriptor.id === 'opencode' ? true : Boolean(providerReady || marker.linkedAt);
+    let authentication = null;
+    try {
+      if (descriptor.id === 'opencode') {
+        authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl });
+        providerReady = authentication.connected === true;
+      } else {
+        providerReady = await probeConnection(descriptor, detected.installation.executable, runImpl);
+      }
+    } catch (error) { probeError = cleanError(error); }
+    // OpenCode exposes an authoritative read-only credential listing. Never let
+    // a historical Cuppet link marker override a current zero-credential result.
+    const connected = descriptor.id === 'opencode'
+      ? Boolean(providerReady)
+      : Boolean(providerReady || marker.linkedAt);
     return {
       ...detected,
       connected,
       available: connected,
-      probe: providerReady ? 'provider' : marker.linkedAt ? 'linked-marker' : 'not-authenticated',
+      probe: providerReady ? 'provider' : marker.linkedAt && descriptor.id !== 'opencode' ? 'linked-marker' : 'not-authenticated',
+      ...(authentication ? { authentication } : {}),
       ...(probeError ? { probeError } : {}),
     };
   };
@@ -168,7 +181,9 @@ function statusProjection(descriptor, state, platform) {
         : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
-        : `${descriptor.label} is installed. Connect once and Cuppet will open the provider's official sign-in flow.`,
+        : descriptor.id === 'opencode' && state.authentication?.connected === false
+          ? 'OpenCode is installed, but no authenticated provider credentials were found. Run `opencode auth login` in Terminal, then refresh or reconnect.'
+          : `${descriptor.label} is installed. Connect once and Cuppet will open the provider's official sign-in flow.`,
   };
 }
 
@@ -231,7 +246,6 @@ export function loginSpec(providerID, commandOverride = '') {
 }
 
 async function probeConnection(descriptor, command, runImpl) {
-  if (descriptor.id === 'opencode') return true;
   if (descriptor.id === 'claude-code') {
     if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
     await runImpl(command, ['--cli', 'auth', 'status', '--json'], STATUS_TIMEOUT_MS, { stdin: 'ignore', discardOutput: true });
