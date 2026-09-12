@@ -22,36 +22,65 @@ test('PE3 keeps related turns together, splits explicit disjoint work, and react
   assert.equal(back.agent.sessionID, 'session-a');
 });
 
-test('PE3 preserves short and corrective conversational follow-ups on the active task', () => {
+test('PE3 preserves short, elliptical, and corrective conversational follow-ups on the active task', () => {
   const router = new TaskAgentRouter();
   router.register('session-a');
-  router.recordTurn('Review backlink targets and sitemap pages for this project');
+  const task = 'Review backlink targets and sitemap pages for this project';
+  router.recordTurn(task);
 
-  const shortFollowUp = router.route('yeah, what are these pages?');
-  assert.equal(shortFollowUp.action, 'continue');
-  assert.equal(shortFollowUp.agent.sessionID, 'session-a');
-  assert.equal(shortFollowUp.reason, 'context-dependent follow-up preserves the active agent');
-  assert.equal(shortFollowUp.semanticEligible, undefined);
+  const followUps = [
+    'yeah, what are these pages?',
+    "please check the actual files before answering, this isn't helping at all",
+    'why?',
+    'what else?',
+    'did you check the repository?',
+    'can you verify?',
+    'and the other pages?',
+    'do that',
+    'fix it',
+    'now what?',
+  ];
 
-  const correctiveFollowUp = router.route("please check the actual files before answering, this isn't helping at all");
-  assert.equal(correctiveFollowUp.action, 'continue');
-  assert.equal(correctiveFollowUp.agent.sessionID, 'session-a');
-  assert.equal(correctiveFollowUp.reason, 'context-dependent follow-up preserves the active agent');
-  assert.equal(correctiveFollowUp.semanticEligible, undefined);
+  for (const prompt of followUps) {
+    const route = router.route(prompt);
+    assert.equal(route.action, 'continue', prompt);
+    assert.equal(route.agent.sessionID, 'session-a', prompt);
+    assert.equal(route.semanticEligible, undefined, prompt);
+  }
+
+  router.recordTurn('yeah, what are these pages?');
+  router.recordTurn("please check the actual files before answering, this isn't helping at all");
+  assert.equal(router.active.taskDescriptor, task, 'conversational turns must not replace the semantic task anchor');
 });
 
-test('PE3 reserves semantic novelty routing for self-contained task requests', () => {
+test('PE3 only escalates semantic novelty for sufficiently self-contained task requests', () => {
   const router = new TaskAgentRouter();
   router.register('session-a');
   router.recordTurn('Review backlink targets and sitemap pages for this project');
 
-  const standalone = router.route('Implement billing retries with webhook idempotency');
-  assert.equal(standalone.action, 'continue');
-  assert.equal(standalone.semanticEligible, true);
-  assert.match(standalone.reason, /ambiguous or weak mismatch/);
+  const shortStandalone = router.route('Implement billing retries with webhook idempotency');
+  assert.equal(shortStandalone.action, 'continue');
+  assert.equal(shortStandalone.semanticEligible, undefined);
+  assert.equal(shortStandalone.reason, 'short or elliptical prompt preserves the active agent');
+
+  const detailedStandalone = router.route('Implement a resilient billing retry worker with Stripe webhook idempotency and dead-letter recovery');
+  assert.equal(detailedStandalone.action, 'continue');
+  assert.equal(detailedStandalone.semanticEligible, true);
+  assert.match(detailedStandalone.reason, /ambiguous or weak mismatch/);
 
   const explicit = router.route('New task: implement billing retries with webhook idempotency');
   assert.equal(explicit.action, 'create');
+  assert.equal(explicit.reason, 'explicit task switch creates a sibling task agent');
+});
+
+test('PE3 still splits on hard contradictory workspace evidence without requiring a long prompt', () => {
+  const router = new TaskAgentRouter();
+  router.register('session-a');
+  router.recordTurn('Implement login validation in src/auth/login.ts', { touchedPaths: ['src/auth/login.ts'] });
+
+  const route = router.route('Fix src/billing/invoice.ts');
+  assert.equal(route.action, 'create');
+  assert.equal(route.reason, 'hard workspace mismatch with no matching dormant agent');
 });
 
 test('workspace mutation removes dormant file privilege and requires refresh on reactivation', () => {
