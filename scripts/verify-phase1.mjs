@@ -33,11 +33,12 @@ if (!/dist-renderer.*index\.html/s.test(host)) throw new Error('Electron does no
 if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) throw new Error('React conversation send surface missing');
 
 // Some integration tests intentionally leave runtime handles alive, so the suite
-// needs --test-force-exit. Do not connect the forced child directly to the GitHub
-// Actions stdout pipe: Node's test reporter can race that inherited pipe during
-// force-exit and throw EPIPE after a completely successful test run. Capture the
-// child streams until `close`, then replay them from this long-lived verifier.
-await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000'], { timeoutMs: 180000 });
+// needs --test-force-exit. Keep the forced test runner off the GitHub Actions
+// stdout pipe to avoid a post-success reporter EPIPE. Test-spawned grandchildren
+// can also inherit our capture pipes, so trust the runner's `exit` code, drain a
+// short grace window, then close the capture streams instead of waiting forever
+// for `close` on descendant-owned file descriptors.
+await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000'], { timeoutMs: 180000, drainMs: 150 });
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
@@ -60,7 +61,7 @@ async function walk(dir) {
   }
   return output;
 }
-function runCaptured(command, args, { timeoutMs = 0 } = {}) {
+function runCaptured(command, args, { timeoutMs = 0, drainMs = 100 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
@@ -75,26 +76,33 @@ function runCaptured(command, args, { timeoutMs = 0 } = {}) {
       process.stdout.write(chunks.join(''));
       chunks.length = 0;
     };
-    const timer = timeoutMs > 0 ? setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGTERM');
-      replay();
-      reject(new Error(`${command} exceeded ${timeoutMs}ms`));
-    }, timeoutMs) : undefined;
-    timer?.unref?.();
-
+    const stopCapture = () => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
     const finish = (fn) => {
       if (settled) return false;
       settled = true;
       if (timer) clearTimeout(timer);
       replay();
+      stopCapture();
       fn();
       return true;
     };
-    child.on('close', (code, signal) => finish(() => code === 0
-      ? resolve()
-      : reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`))));
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      if (settled) return;
+      child.kill('SIGTERM');
+      finish(() => reject(new Error(`${command} exceeded ${timeoutMs}ms`)));
+    }, timeoutMs) : undefined;
+    timer?.unref?.();
+
+    child.on('exit', (code, signal) => {
+      if (settled) return;
+      if (timer) clearTimeout(timer);
+      setTimeout(() => finish(() => code === 0
+        ? resolve()
+        : reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`))), drainMs);
+    });
     child.on('error', (error) => finish(() => reject(error)));
   });
 }
