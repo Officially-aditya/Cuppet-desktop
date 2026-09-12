@@ -271,24 +271,36 @@ test('malformed provider telemetry and host emit failures cannot fail a successf
   }
 });
 
-test('renderer consumes canonical Activity directly and preload suppresses duplicate legacy activity', async () => {
-  const [preload, chat] = await Promise.all([
+test('renderer consumes one canonical transcript reducer and preload suppresses duplicate legacy activity', async () => {
+  const [preload, chat, transcript, database, runtime] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/database.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/journaled-tool-runtime.mjs', import.meta.url), 'utf8'),
   ]);
   assert.match(preload, /LEGACY_ACTIVITY_EVENTS/);
   assert.match(preload, /callback\(payload\)/);
   assert.doesNotMatch(preload, /projectActivityForLegacyUi/);
-  assert.match(chat, /event\.type === 'runtime\.activity'/);
-  assert.match(chat, /event\.source === 'provider'.*activity\.reasoning\.delta/s);
-  assert.match(chat, /event\.source === 'execution'.*activity\.tool\./s);
-  assert.match(chat, /appendReasoningTrace/);
-  assert.match(chat, /updateToolTraceFromActivity/);
-  assert.match(chat, /sequence: existing\?\.sequence \?\? nextTraceSequence\(trace\)/);
-  assert.match(chat, /const ordered = orderedTrace\(trace\)/);
+
+  assert.match(chat, /hydrateTranscript\(session\?\.activities \?\? \[\]\)/);
+  assert.match(chat, /reduceTranscriptEvent\(current/);
+  assert.match(chat, /mergeTranscriptState\(current, durable\)/);
+  assert.match(chat, /traceForMessage\(transcript/);
   assert.match(chat, /const \[traceOpen, setTraceOpen\] = useState\(live\)/);
   assert.match(chat, /hasTrace && traceOpen && <TraceView trace=\{trace\} \/>/);
-  assert.doesNotMatch(chat, /hasTrace && live && <TraceView/);
+  assert.doesNotMatch(chat, /TRACE_KEY_PREFIX/);
+  assert.doesNotMatch(chat, /LEGACY_REASONING_KEY_PREFIX/);
   assert.doesNotMatch(chat, /event\.type === 'message\.reasoning'/);
-  assert.doesNotMatch(chat, /event\.type === 'tool\.started'.*event\.type === 'tool\.finished'/s);
+
+  assert.match(transcript, /export function reduceTranscriptEvent/);
+  assert.match(transcript, /export function hydrateTranscript/);
+  assert.match(transcript, /export function mergeTranscriptState/);
+  assert.match(transcript, /activity\.reasoning\.delta/);
+  assert.match(transcript, /activity\.tool\./);
+
+  assert.match(database, /CREATE TABLE IF NOT EXISTS message_activities/);
+  assert.match(database, /appendMessageActivity/);
+  assert.match(database, /activities:this\.listMessageActivities\(id\)/);
+  assert.match(runtime, /appendMessageActivity/);
 });
