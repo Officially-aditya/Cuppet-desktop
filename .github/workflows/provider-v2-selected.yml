@@ -55,6 +55,11 @@ jobs:
           test/provider-model-catalog.test.mjs
           test/antigravity-model-discovery.test.mjs
           test/antigravity-provider.test.mjs
+      - name: Smoke released OpenCode ACP transport
+        run: |
+          npm install -g opencode-ai@1.18.30
+          opencode --version
+          node scripts/smoke-live-opencode-acp.mjs
       - name: Verify benchmark harness
         run: |
           node --check scripts/run-provider-benchmark.mjs
