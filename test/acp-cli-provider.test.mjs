@@ -45,7 +45,8 @@ test('provider descriptors use their current official transport entrypoints', ()
   assert.deepEqual(localCliDescriptor('github-copilot')?.args.slice(0, 2), ['--acp', '--stdio']);
   assert.equal(localCliDescriptor('mistral-vibe')?.command, 'vibe-acp');
   assert.deepEqual(localCliDescriptor('kiro')?.args, ['acp']);
-  assert.equal(localCliDescriptor('opencode')?.transport, 'opencode-http');
+  assert.equal(localCliDescriptor('opencode')?.transport, 'acp');
+  assert.deepEqual(localCliDescriptor('opencode')?.args, ['acp']);
   assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
 });
 
