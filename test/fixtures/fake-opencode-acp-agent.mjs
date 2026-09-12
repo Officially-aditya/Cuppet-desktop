@@ -25,16 +25,19 @@ function configOptions() {
 }
 
 function validateEnvironment() {
-  let config = {};
-  try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch {}
-  const requiredDisabled = ['bash', 'edit', 'write', 'patch', 'read', 'glob', 'grep', 'webfetch', 'websearch', 'task', 'todowrite', 'lsp', 'skill', 'question'];
-  const tools = config?.tools && typeof config.tools === 'object' ? config.tools : {};
-  const permission = config?.permission && typeof config.permission === 'object' ? config.permission : {};
-  const missing = requiredDisabled.filter((name) => tools[name] !== false);
-  if (missing.length) return `OpenCode built-in tools not disabled: ${missing.join(',')}`;
-  if (permission['*'] !== 'deny') return 'OpenCode default tool permission is not deny';
-  if (permission['cuppet-runtime_*'] !== 'allow' || permission['cuppet_runtime_*'] !== 'allow') return 'Cuppet MCP tool permission is not allowed';
   if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1') return 'OpenCode auto-update not disabled';
+
+  let permission = {};
+  try { permission = JSON.parse(process.env.OPENCODE_PERMISSION || '{}'); } catch {}
+  const requiredDenied = [
+    '*', 'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'todowrite',
+    'question', 'webfetch', 'websearch', 'lsp', 'skill', 'external_directory',
+  ];
+  const missing = requiredDenied.filter((name) => permission?.[name] !== 'deny');
+  if (missing.length) return `OpenCode native permission overlay missing deny rules: ${missing.join(',')}`;
+  if (permission['cuppet-runtime_*'] !== 'allow' || permission['cuppet_runtime_*'] !== 'allow') {
+    return 'Cuppet MCP tool permission is not allowed';
+  }
   return '';
 }
 
