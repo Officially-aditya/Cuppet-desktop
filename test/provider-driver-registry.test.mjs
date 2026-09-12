@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 test('built-in provider registry owns transport resolution', () => {
   const registry = buildProviderBackendRegistry();
-  assert.equal(registry.requireResolved({ providerID: 'opencode' }).transport, 'opencode-http');
+  assert.equal(registry.requireResolved({ providerID: 'opencode' }).transport, 'acp');
   assert.equal(registry.requireResolved({ providerID: 'antigravity' }).transport, 'managed-acp');
   assert.equal(registry.requireResolved({ providerID: 'kiro' }).transport, 'acp');
   assert.equal(registry.requireResolved({ providerID: 'some-openai-compatible-provider' }).id, 'openai-compatible');
@@ -21,11 +21,18 @@ test('built-in provider registry owns transport resolution', () => {
 test('every ACP descriptor creates the same shared ACP provider adapter', () => {
   const registry = buildProviderBackendRegistry();
   const acpProviderIDs = localCliProviderIDs().filter((id) => localCliDescriptor(id)?.transport === 'acp');
-  assert.ok(acpProviderIDs.length >= 2);
+  assert.ok(acpProviderIDs.includes('opencode'));
+  assert.ok(acpProviderIDs.length >= 3);
   for (const providerID of acpProviderIDs) {
     const runtime = registry.createConfiguredRuntime({ providerID });
     assert.equal(runtime.constructor.name, 'AcpProviderAdapter', `${providerID} escaped the universal ACP runtime`);
   }
+});
+
+test('OpenCode has no parallel production HTTP execution backend', async () => {
+  const registrySource = await readFile(`${root}/src/runtime/providers/default-registry.mjs`, 'utf8');
+  assert.doesNotMatch(registrySource, /opencodeBackendDefinition|backends\/opencode/);
+  assert.match(registrySource, /new AcpProviderAdapter/);
 });
 
 test('capability snapshot retains last known good models on transient discovery failure', async () => {
