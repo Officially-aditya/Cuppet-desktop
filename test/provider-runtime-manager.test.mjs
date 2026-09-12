@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
-import { ProviderRuntimeManager, acpRuntimeFingerprint, openCodeRuntimeFingerprint } from '../src/runtime/providers/runtime-manager.mjs';
+import { ProviderRuntimeManager, acpRuntimeFingerprint } from '../src/runtime/providers/runtime-manager.mjs';
 
 function fakeRuntime(log) {
   return {
@@ -21,7 +21,7 @@ function managedAdapter(config, backendId = 'opencode') {
     cuppetManagedRuntime: () => ({
       protocol: 'acp',
       backendId,
-      descriptor: { id: backendId, label: backendId, transport: 'acp', command: backendId, args: [], envOverride: '', loginHint: '' },
+      descriptor: { id: backendId, label: backendId, transport: 'acp', command: backendId, args: [], envOverride: '', loginHint: '', mcpToolBridge: true },
       configuration: config,
     }),
     stream: async () => ({ text: 'stateless' }),
@@ -171,15 +171,16 @@ test('manager cancel revokes active MCP authority as well as cancelling the prov
 });
 
 test('ACP runtime fingerprint is stable and sensitive to backend execution authority', () => {
-  const descriptor = { id: 'opencode', command: 'opencode', args: ['acp'] };
-  const one = acpRuntimeFingerprint({ backendId: 'opencode', descriptor, configuration: { providerID: 'opencode', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
-  const same = acpRuntimeFingerprint({ backendId: 'opencode', descriptor, configuration: { primaryEffort: 'high', primary: { modelID: 'a' }, providerID: 'opencode' }, projectRoot: '/tmp/project' });
-  const modelChanged = acpRuntimeFingerprint({ backendId: 'opencode', descriptor, configuration: { providerID: 'opencode', primary: { modelID: 'b' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
-  const backendChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor: { id: 'kiro', command: 'kiro-cli', args: ['acp'] }, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const descriptor = { id: 'kiro', command: 'kiro-cli', args: ['acp'], mcpToolBridge: false };
+  const one = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const same = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { primaryEffort: 'high', primary: { modelID: 'a' }, providerID: 'kiro' }, projectRoot: '/tmp/project' });
+  const modelChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'b' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const backendChanged = acpRuntimeFingerprint({ backendId: 'github-copilot', descriptor: { id: 'github-copilot', command: 'copilot', args: ['--acp'], mcpToolBridge: false }, configuration: { providerID: 'github-copilot', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const mcpChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor: { ...descriptor, mcpToolBridge: true }, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
   assert.equal(one, same);
   assert.notEqual(one, modelChanged);
   assert.notEqual(one, backendChanged);
-  assert.equal(openCodeRuntimeFingerprint({ providerID: 'opencode', primary: { modelID: 'a' }, primaryEffort: 'high' }, '/tmp/project'), one);
+  assert.notEqual(one, mcpChanged);
 });
 
 test('JournaledToolRuntime binds adapters through the session-aware runtime manager', async () => {
