@@ -72,6 +72,9 @@
     "productName": "Cuppet",
     "executableName": "cuppet",
     "asar": true,
+    "asarUnpack": [
+      "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs"
+    ],
     "files": [
       "src/main/**/*",
       "src/preload/**/*",
