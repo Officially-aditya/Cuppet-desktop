@@ -5,6 +5,7 @@ import { discoverAcpRuntimeCatalog } from './transports/acp/acp-discovery.mjs';
 import { AcpProviderAdapter } from './backends/acp.mjs';
 import { antigravityBackendDefinition } from './backends/antigravity.mjs';
 import { codexBackendDefinition } from './backends/codex.mjs';
+import { opencodeBackendDefinition } from './backends/opencode.mjs';
 import { discoverApiCapabilities } from './backends/api.mjs';
 import { ProviderBackendRegistry } from './backend-registry.mjs';
 import { ProviderCapabilitySnapshotStore } from './capability-snapshot.mjs';
@@ -15,12 +16,11 @@ export const providerCapabilitySnapshots = new ProviderCapabilitySnapshotStore()
 export function buildProviderBackendRegistry() {
   const registry = new ProviderBackendRegistry();
   registry.register(codexBackendDefinition());
+  registry.register(opencodeBackendDefinition());
+  registry.register(antigravityBackendDefinition());
 
   for (const id of localCliProviderIDs()) {
-    if (id === 'antigravity') {
-      registry.register(antigravityBackendDefinition());
-      continue;
-    }
+    if (id === 'opencode' || id === 'antigravity') continue;
     const descriptor = localCliDescriptor(id);
     if (!descriptor) continue;
     registry.register({
@@ -47,9 +47,9 @@ export function buildProviderBackendRegistry() {
           };
         },
       },
-      // Transport is the runtime contract: every ACP descriptor uses the same
-      // adapter. Provider-specific behavior belongs in the descriptor/support
-      // shim, never in a second ACP execution implementation.
+      // ACP is a shared protocol runtime. Provider-specific policy lives in
+      // descriptors/support shims; provider-specific transports live in their
+      // own backend definitions instead of being forced through ACP.
       createRuntime: ({ configuration = {} } = {}) => new AcpProviderAdapter(configuration, { descriptor }),
     });
   }
