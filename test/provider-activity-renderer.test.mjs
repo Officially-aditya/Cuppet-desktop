@@ -170,6 +170,72 @@ test('Copilot keeps ambiguous pre-tool text out of the live assistant preview', 
   }
 });
 
+test('aborting deferred provider text does not persist ambiguous pre-tool content', async () => {
+  const emitted = [];
+  const finalDeltas = [];
+  const controller = new AbortController();
+  const descriptor = {
+    id: 'github-copilot',
+    label: 'GitHub Copilot',
+    transport: 'acp',
+    command: 'copilot',
+    args: [],
+    envOverride: '',
+    textStream: { framing: 'tokenized-whitespace', preview: 'defer-unclassified' },
+  };
+  const adapter = {
+    cuppetManagedRuntime: () => ({
+      protocol: 'acp',
+      backendId: 'github-copilot',
+      descriptor,
+      configuration: { providerID: 'github-copilot' },
+    }),
+    async stream(_messages, { onDelta }) {
+      await onDelta('ambiguous pre-tool text');
+      controller.abort();
+      const error = new Error('stopped');
+      error.name = 'AbortError';
+      throw error;
+    },
+  };
+  const manager = {
+    adapterFor: ({ adapter: selected }) => selected,
+    async close() {},
+  };
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    emit: (event) => emitted.push(event),
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-abort', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    providerRuntimeManager: manager,
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  try {
+    await assert.rejects(
+      runtime.run({
+        adapter,
+        messages: [{ role: 'user', content: 'Inspect the repository.' }],
+        sessionId: 'chat-copilot-abort',
+        projectRoot: null,
+        signal: controller.signal,
+        onDelta: async (delta) => finalDeltas.push(delta),
+      }),
+      (error) => error?.name === 'AbortError',
+    );
+    assert.deepEqual(finalDeltas, []);
+    const previews = emitted.filter((event) => event.type === 'message.preview').map((event) => String(event.content ?? ''));
+    assert.ok(!previews.some((content) => content.includes('ambiguous')));
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('malformed provider telemetry and host emit failures cannot fail a successful turn', async () => {
   const adapter = {
     async stream(_messages, options) {
