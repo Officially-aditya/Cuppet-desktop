@@ -29,6 +29,10 @@ const DESCRIPTORS = Object.freeze({
   'github-copilot': descriptor({
     id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--disable-builtin-mcps'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
     loginHint: 'Run `copilot` in Terminal once and complete GitHub sign-in, then retry.',
+    // Copilot ACP can frame ordinary assistant text as extremely small chunks with
+    // transport whitespace around each fragment. Reassemble only those boundary
+    // artifacts; the shared ACP runtime remains provider-agnostic.
+    textStream: { framing: 'tokenized-whitespace' },
   }),
   'mistral-vibe': descriptor({
     id: 'mistral-vibe', label: 'Mistral Vibe', transport: 'acp', command: 'vibe-acp', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_VIBE_BIN',
@@ -37,9 +41,9 @@ const DESCRIPTORS = Object.freeze({
   kiro: descriptor({
     id: 'kiro', label: 'Kiro', transport: 'acp', command: 'kiro-cli', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_KIRO_BIN',
     loginHint: 'Run `kiro-cli` in Terminal once and complete sign-in, then retry.',
-    // Kiro's ACP implementation currently names the PromptRequest content array `content`
-    // instead of the standard `prompt`. Keep this as driver metadata, never a transport-core ID check.
-    promptParameter: 'content',
+    // Kiro follows the standard ACP PromptRequest `prompt` field. Do not override
+    // the shared protocol shape here; older documentation used `content`, but the
+    // live agent rejects/hangs on that legacy field.
   }),
   antigravity: descriptor({
     id: 'antigravity', label: 'Google Antigravity', transport: 'managed-acp', command: 'agy', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_ANTIGRAVITY_BIN',
@@ -63,6 +67,7 @@ function descriptor(value) {
     ...(value.sessionMeta ? { sessionMeta: freezeValue(cloneValue(value.sessionMeta)) } : {}),
     ...(value.authentication ? { authentication: freezeValue(cloneValue(value.authentication)) } : {}),
     ...(value.clientCapabilities ? { clientCapabilities: freezeValue(cloneValue(value.clientCapabilities)) } : {}),
+    ...(value.textStream ? { textStream: freezeValue(cloneValue(value.textStream)) } : {}),
   };
   return Object.freeze(copy);
 }
@@ -74,6 +79,7 @@ function cloneDescriptor(item) {
     ...(item.sessionMeta ? { sessionMeta: cloneValue(item.sessionMeta) } : {}),
     ...(item.authentication ? { authentication: cloneValue(item.authentication) } : {}),
     ...(item.clientCapabilities ? { clientCapabilities: cloneValue(item.clientCapabilities) } : {}),
+    ...(item.textStream ? { textStream: cloneValue(item.textStream) } : {}),
   };
 }
 function cloneValue(value) {
