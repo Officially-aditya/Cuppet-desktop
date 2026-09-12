@@ -15,6 +15,19 @@ function providerFactory() {
         if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
         assert.equal(Array.isArray(tools), true);
         if (step++ === 0) {
+          // Product sessions are optimized-first: raw writes are intentionally hidden
+          // until the structured mutation path fails. Exercise that real policy here
+          // instead of assuming workspace_write is advertised immediately.
+          assert.equal(tools.some((entry) => entry.function?.name === 'tst_edit_batch'), true);
+          assert.equal(tools.some((entry) => entry.function?.name === 'workspace_write'), false);
+          return {
+            text: '',
+            toolCalls: [{ id: 'call_batch', name: 'tst_edit_batch', arguments: '{}' }],
+          };
+        }
+        if (step === 2) {
+          const failedBatch = [...messages].reverse().find((message) => message.role === 'tool');
+          assert.match(failedBatch?.content ?? '', /Tool failed:/);
           assert.equal(tools.some((entry) => entry.function?.name === 'workspace_write'), true);
           return {
             text: '',
@@ -49,7 +62,7 @@ async function waitFor(predicate, message, earlyFailure = null) {
   throw new Error(message);
 }
 
-test('runtime blocks a model tool on permission, resumes after approval, and keeps tool audit outside visible transcript', async () => {
+test('runtime blocks a raw mutation fallback on permission, resumes after approval, and keeps tool audit outside visible transcript', async () => {
   const previousPe3 = process.env.CUPPET_PE3;
   process.env.CUPPET_PE3 = '0';
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-runtime-c1-'));
@@ -98,11 +111,12 @@ test('runtime blocks a model tool on permission, resumes after approval, and kee
     assert.equal(await readFile(join(projectRoot, 'src', 'generated.txt'), 'utf8'), 'created by C1\n');
     assert.equal(completed.messages.find((message) => message.role === 'assistant')?.content, 'tool completed');
     assert.equal(completed.messages.some((message) => message.content.includes('Wrote 14 bytes')), false);
-    assert.equal(completed.toolExecutions.length, 1);
-    assert.equal(completed.toolExecutions[0].toolName, 'workspace_write');
-    assert.equal(completed.toolExecutions[0].status, 'complete');
-    assert.equal(completed.toolExecutions[0].permissionSource, 'user-once');
-    assert.match(completed.toolExecutions[0].output, /Wrote \d+ bytes to src\/generated\.txt/);
+    const batchExecution = completed.toolExecutions.find((item) => item.toolName === 'tst_edit_batch');
+    const writeExecution = completed.toolExecutions.find((item) => item.toolName === 'workspace_write');
+    assert.equal(batchExecution?.status, 'error');
+    assert.equal(writeExecution?.status, 'complete');
+    assert.equal(writeExecution?.permissionSource, 'user-once');
+    assert.match(writeExecution?.output ?? '', /Wrote \d+ bytes to src\/generated\.txt/);
     assert.equal(events.some((event) => event.type === 'permission.resolved' && event.requestId === permission.id && event.allowed === true), true);
     assert.equal(events.some((event) => event.type === 'tool.finished' && event.tool === 'workspace_write' && event.success === true), true);
   } finally {
