@@ -161,7 +161,36 @@ jobs:
           ZIP="dist/Cuppet-${VERSION}-apple-silicon-test.zip"
           DMG="dist/Cuppet-${VERSION}-apple-silicon-test.dmg"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-          hdiutil create -volname "Cuppet Test" -srcfolder "$APP" -ov -format UDZO "$DMG"
+
+          # hdiutil can intermittently report "Resource busy" on hosted macOS
+          # runners even after the signed app has passed package acceptance.
+          # Build from an isolated staging directory and retry only the DMG
+          # creation step; the app itself is not rebuilt or modified here.
+          DMG_STAGE="$(mktemp -d "${RUNNER_TEMP}/cuppet-dmg.XXXXXX")"
+          trap 'rm -rf "$DMG_STAGE"' EXIT
+          ditto "$APP" "$DMG_STAGE/$(basename "$APP")"
+          hdiutil detach "/Volumes/Cuppet Test" -force >/dev/null 2>&1 || true
+
+          created=0
+          for attempt in 1 2 3; do
+            rm -f "$DMG"
+            if hdiutil create -volname "Cuppet Test" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"; then
+              created=1
+              break
+            fi
+            echo "hdiutil create attempt ${attempt} failed; collecting disk image state and retrying" >&2
+            hdiutil info || true
+            hdiutil detach "/Volumes/Cuppet Test" -force >/dev/null 2>&1 || true
+            sleep $((attempt * 5))
+          done
+          if [[ "$created" -ne 1 ]]; then
+            echo "Failed to create Apple Silicon test DMG after 3 attempts" >&2
+            exit 1
+          fi
+
+          test -s "$ZIP"
+          test -s "$DMG"
+          hdiutil imageinfo "$DMG" >/dev/null
           shasum -a 256 "$ZIP" "$DMG" > dist/SHA256SUMS.txt
           cat > dist/TESTING.txt <<'EOF'
           Cuppet Apple Silicon test build
@@ -185,6 +214,8 @@ jobs:
           - TST-backed graph/context behavior in both projects
           - memory persistence after restart
           - project isolation
+          - OpenCode Settings reports connected only when `opencode auth list` shows usable credentials or provider environment auth
+          - retry the same OpenCode prompt that previously produced the generic unexpected-error card; structured provider/auth errors should now surface directly
           EOF
 
       - name: Upload Actions artifact
@@ -214,5 +245,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Unsigned/notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
+            --notes "Ad-hoc-signed, non-notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
             --prerelease
