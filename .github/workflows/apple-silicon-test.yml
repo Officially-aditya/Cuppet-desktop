@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/e2-apple-silicon-test
+      - feat/provider-architecture-v2
     paths:
       - .github/release-trigger
 
