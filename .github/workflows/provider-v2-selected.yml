@@ -62,9 +62,10 @@ jobs:
           npm install -g opencode-ai@1.18.30
           opencode --version
           node scripts/smoke-live-opencode-acp.mjs
-      - name: Verify benchmark harness
+      - name: Verify benchmark and authenticated smoke harnesses
         run: |
           node --check scripts/run-provider-benchmark.mjs
           node --check scripts/compare-provider-benchmarks.mjs
           node --check scripts/run-provider-benchmark-suite.mjs
+          node --check scripts/smoke-authenticated-opencode-acp.mjs
           node -e "const fs=require('node:fs'); const schema=JSON.parse(fs.readFileSync('benchmarks/provider-v2.schema.json','utf8')); const example=JSON.parse(fs.readFileSync('benchmarks/provider-v2.example.json','utf8')); if(schema.properties.schemaVersion.const!==1 || example.schemaVersion!==1 || !Array.isArray(example.tasks) || !example.tasks.length) process.exit(1)"
