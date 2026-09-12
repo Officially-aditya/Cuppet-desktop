@@ -46,7 +46,7 @@ test('runtime streams into durable assistant message and completes', async () =>
       ['assistant', 'one two', 'complete'],
     ]);
   } finally {
-    runtime.close();
+    await runtime.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -67,7 +67,8 @@ test('Stop aborts the active generation and persists partial output as stopped',
   try {
     const session = await runtime.handle('session.create');
     await runtime.handle('session.send', { sessionId: session.id, text: 'long task', provider: {} });
-    await waitFor(events, (event) => event.type === 'message.delta');
+    const preview = await waitFor(events, (event) => event.type === 'message.preview' && event.content === 'partial');
+    assert.equal(preview.content, 'partial');
     const stop = await runtime.handle('session.stop', { sessionId: session.id });
     assert.equal(stop.stopped, true);
     await waitFor(events, (event) => event.type === 'run.finished');
@@ -75,7 +76,7 @@ test('Stop aborts the active generation and persists partial output as stopped',
     assert.equal(restored.messages.at(-1).content, 'partial');
     assert.equal(restored.messages.at(-1).status, 'stopped');
   } finally {
-    runtime.close();
+    await runtime.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
