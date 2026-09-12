@@ -35,16 +35,18 @@ if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) th
 // Node's default --test discovery also treats executable provider fixtures under
 // test/fixtures as test files. Those fixtures are intentionally long-lived stdio
 // servers and therefore time out when executed directly. Run only actual test
-// modules while keeping force-exit for integration tests that leave runtime
-// handles alive. Capture reporter output off the GitHub Actions stdout pipe to
-// avoid the known post-success EPIPE race during forced exit.
+// modules. Runtime integration tests mutate process-wide env and depend on brief
+// permission/abort lifecycle windows, so serialize the suite instead of allowing
+// unrelated files to interfere with those contracts under CI load. Keep force-exit
+// for tests that intentionally leave runtime handles alive, and capture reporter
+// output off the GitHub Actions stdout pipe to avoid the post-success EPIPE race.
 const testFiles = (await walk(join(root, 'test')))
   .filter((path) => /\.test\.(?:mjs|js|cjs)$/.test(path))
   .map((path) => relative(root, path))
   .sort();
 if (!testFiles.length) throw new Error('No Phase 1 test files found');
-await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000', ...testFiles], { timeoutMs: 180000, drainMs: 150 });
-console.log(`Phase 1 gate passed: ${productionFiles.length} production files, ${testFiles.length} test files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
+await runCaptured(process.execPath, ['--test', '--test-concurrency=1', '--test-force-exit', '--test-timeout=120000', ...testFiles], { timeoutMs: 240000, drainMs: 150 });
+console.log(`Phase 1 gate passed: ${productionFiles.length} production files, ${testFiles.length} serialized test files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
   return /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*opencode[^'"]*['"]/i.test(text);
