@@ -1,6 +1,12 @@
 import { discoverProviderCapabilitySnapshot } from '../runtime/providers/default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from '../runtime/providers/capability-snapshot.mjs';
 
+// Compatibility exports for existing tests/tools. Production discovery does not
+// invoke these through the main-process catalog; provider drivers own them.
+export { catalogFromCodexModels } from '../runtime/providers/backends/codex.mjs';
+export { parseApiCatalog } from '../runtime/providers/backends/api.mjs';
+export { discoverAntigravityModels, parseAntigravityModelOutput } from '../runtime/providers/backends/antigravity.mjs';
+
 /**
  * Project the active provider driver's capability snapshot into the renderer's
  * model-catalog compatibility shape.
