@@ -6,9 +6,14 @@ import { AntigravityHeadlessProvider } from '../src/runtime/antigravity-provider
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-antigravity-agent.mjs', import.meta.url));
 
-test('Antigravity provider stays in safe headless plan/sandbox mode', async () => {
+test('Antigravity provider stays in safe headless plan/sandbox mode and forwards selected effort', async () => {
   let streamed = '';
-  const provider = new AntigravityHeadlessProvider({ providerID: 'antigravity', cliCommand: process.execPath, cliArgs: [fixture] });
+  const provider = new AntigravityHeadlessProvider({
+    providerID: 'antigravity',
+    cliCommand: process.execPath,
+    cliArgs: [fixture],
+    primary: { providerID: 'antigravity', modelID: 'fake-requires-effort', variant: 'high' },
+  });
   const result = await provider.stream([{ role: 'user', content: 'Inspect this project.' }], {
     projectRoot: tmpdir(),
     onDelta: async (delta) => { streamed += delta; },
@@ -18,4 +23,17 @@ test('Antigravity provider stays in safe headless plan/sandbox mode', async () =
   assert.equal(result.usage.totalTokens, 14);
   assert.equal(result.usage.cachedInputTokens, 4);
   assert.equal(result.usage.reasoningTokens, 2);
+});
+
+test('Antigravity provider surfaces terminal stream-json errors from stdout', async () => {
+  const provider = new AntigravityHeadlessProvider({
+    providerID: 'antigravity',
+    cliCommand: process.execPath,
+    cliArgs: [fixture],
+    primary: { providerID: 'antigravity', modelID: 'error-model' },
+  });
+  await assert.rejects(
+    () => provider.stream([{ role: 'user', content: 'Inspect.' }], { projectRoot: tmpdir() }),
+    /invalid model selection: error-model is unavailable/,
+  );
 });
