@@ -35,9 +35,11 @@ const DESCRIPTORS = Object.freeze({
     id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--disable-builtin-mcps'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
     loginHint: 'Run `copilot` in Terminal once and complete GitHub sign-in, then retry.',
     // Copilot ACP can frame ordinary assistant text as extremely small chunks with
-    // transport whitespace around each fragment. Reassemble only those boundary
-    // artifacts; the shared ACP runtime remains provider-agnostic.
-    textStream: { framing: 'tokenized-whitespace' },
+    // transport whitespace around each fragment. It can also emit pre-tool planning
+    // through agent_message_chunk rather than agent_thought_chunk. Reassemble framing
+    // artifacts, but do not render unclassified text as the live final answer until
+    // Cuppet knows whether a tool call follows.
+    textStream: { framing: 'tokenized-whitespace', preview: 'defer-unclassified' },
     // Copilot CLI 1.0.84-1 can resolve session/prompt with end_turn while an attached
     // async shell is still running, then autonomously emit more tool calls/text 12+
     // seconds later. Keep this provider quirk declarative instead of hard-coding
