@@ -36,6 +36,7 @@ function isProviderIntegrationBoundary(path) {
   const rel = relative(root, path).split(sep).join('/');
   return rel.startsWith('src/runtime/providers/')
     || rel === 'src/runtime/local-cli-descriptors.mjs'
+    || rel === 'src/main/main.mjs'
     || rel === 'src/main/local-provider-operations.mjs'
     || rel.startsWith('src/main/provider-');
 }
