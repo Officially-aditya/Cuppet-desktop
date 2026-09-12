@@ -38,13 +38,12 @@ function backgroundFactory() {
   });
 }
 
-async function waitFor(predicate, message) {
-  // RuntimeService work is intentionally asynchronous. A one-second wall-clock
-  // budget is too tight on shared CI runners even when the permission path is
-  // correct; keep polling bounded while allowing ordinary scheduler variance.
+async function waitFor(predicate, message, earlyFailure = null) {
   for (let i = 0; i < 300; i++) {
     const value = await predicate();
     if (value) return value;
+    const failure = earlyFailure?.();
+    if (failure) throw new Error(`${message}; foreground runtime failed first: ${failure}`);
     await sleep(10);
   }
   throw new Error(message);
@@ -74,6 +73,11 @@ test('runtime blocks a model tool on permission, resumes after approval, and kee
     const permission = await waitFor(
       async () => events.find((event) => event.type === 'permission.requested')?.request,
       'permission request did not appear',
+      () => {
+        const runtimeError = events.find((event) => event.type === 'runtime.error');
+        if (!runtimeError) return '';
+        return `${runtimeError.message}${runtimeError.providerError?.diagnostic ? ` | diagnostic: ${runtimeError.providerError.diagnostic}` : ''}`;
+      },
     );
     assert.equal(permission.action, 'write');
     assert.deepEqual(permission.resources, ['src/generated.txt']);
