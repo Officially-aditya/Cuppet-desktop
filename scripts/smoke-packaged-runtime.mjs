@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createCuppetMcpBridgeEndpoint } from '../src/runtime/providers/transports/acp/cuppet-mcp-endpoint.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const executable = resolve(process.argv[2] || defaultExecutable(root));
@@ -53,9 +54,7 @@ function resourcesDirectory(executablePath) {
 }
 
 async function smokePackagedMcpHelper(execPath, mcpEntry) {
-  const endpoint = process.platform === 'win32'
-    ? `\\\\.\\pipe\\cuppet-packaged-mcp-${process.pid}-${randomUUID()}`
-    : join(tmpdir(), `cuppet-packaged-mcp-${process.pid}-${randomUUID()}.sock`);
+  const endpoint = createCuppetMcpBridgeEndpoint();
   const token = randomUUID().replaceAll('-', '');
   if (process.platform !== 'win32') await rm(endpoint, { force: true }).catch(() => undefined);
 
