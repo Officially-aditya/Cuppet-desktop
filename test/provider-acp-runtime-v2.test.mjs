@@ -6,13 +6,14 @@ import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
-import { OpenCodeAcpProviderV2 } from '../src/runtime/providers/backends/opencode.mjs';
+import { OpenCodeServerProvider } from '../src/runtime/providers/backends/opencode.mjs';
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
+const acpDescriptor = () => localCliDescriptor('claude-code');
 
 test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', async () => {
-  const runtime = new AcpSessionRuntime({ descriptor: localCliDescriptor('opencode'), configuration: { cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, projectRoot: tmpdir() });
+  const runtime = new AcpSessionRuntime({ descriptor: acpDescriptor(), configuration: { cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, projectRoot: tmpdir() });
   const seen = [];
   try {
     await runtime.start();
@@ -28,7 +29,7 @@ test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', as
 
 test('ACP session startup retries one transient internal error without dropping configuration', async () => {
   const runtime = new AcpSessionRuntime({
-    descriptor: localCliDescriptor('opencode'),
+    descriptor: acpDescriptor(),
     configuration: {
       cliCommand: process.execPath,
       cliArgs: [configFixture],
@@ -48,7 +49,7 @@ test('ACP session startup retries one transient internal error without dropping 
 
 test('ACP v2 observer callbacks cannot fail an otherwise successful provider turn', async () => {
   const runtime = new AcpSessionRuntime({
-    descriptor: localCliDescriptor('opencode'),
+    descriptor: acpDescriptor(),
     configuration: { cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' },
     projectRoot: tmpdir(),
   });
@@ -64,7 +65,7 @@ test('ACP v2 observer callbacks cannot fail an otherwise successful provider tur
 });
 
 test('generic ACP adapter preserves current stream callbacks', async () => {
-  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' });
+  const provider = new AcpProviderAdapter({ providerID: 'claude-code', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, { descriptor: acpDescriptor() });
   const events = [];
   let text = '';
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
@@ -77,18 +78,11 @@ test('generic ACP adapter preserves current stream callbacks', async () => {
   assert.deepEqual(events.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
 });
 
-test('OpenCode compatibility export is only a thin ACP adapter alias', () => {
-  const provider = new OpenCodeAcpProviderV2({ cliCommand: process.execPath, cliArgs: [configFixture] });
-  const managed = provider.cuppetManagedRuntime();
-  assert.equal(managed.protocol, 'acp');
-  assert.equal(managed.backendId, 'opencode');
-});
-
 test('generic ACP adapter delegates ACP host operations through Cuppet', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
   const calls = [];
   const permissions = [];
-  const provider = new AcpProviderAdapter({ providerID: 'opencode', cliCommand: process.execPath, cliArgs: [fixture] });
+  const provider = new AcpProviderAdapter({ providerID: 'claude-code', cliCommand: process.execPath, cliArgs: [fixture] }, { descriptor: acpDescriptor() });
   const result = await provider.stream([{ role: 'user', content: 'Update' }], {
     projectRoot: tmpdir(),
     requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
@@ -106,8 +100,8 @@ test('generic ACP adapter delegates ACP host operations through Cuppet', async (
   assert.equal(result.usage.totalTokens, 12);
 });
 
-test('provider factory routes every ACP descriptor through the universal ACP adapter', () => {
-  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof AcpProviderAdapter);
+test('provider factory uses shared ACP only for providers whose transport is ACP', () => {
+  assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof OpenCodeServerProvider);
   assert.ok(createUntrackedChatProvider({ providerID: 'grok-build' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'github-copilot' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'mistral-vibe' }) instanceof AcpProviderAdapter);
@@ -116,7 +110,7 @@ test('provider factory routes every ACP descriptor through the universal ACP ada
 
 test('ACP authentication policy is descriptor-owned rather than provider-ID owned', async () => {
   const descriptor = {
-    ...localCliDescriptor('opencode'),
+    ...acpDescriptor(),
     id: 'auth-fixture',
     label: 'Auth Fixture',
     environment: undefined,
@@ -155,7 +149,7 @@ test('ACP authentication policy is descriptor-owned rather than provider-ID owne
 test('ACP v2 cancels and terminates a genuinely silent stalled turn', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/fake-acp-hanging-agent.mjs', import.meta.url));
   const runtime = new AcpSessionRuntime({
-    descriptor: localCliDescriptor('opencode'),
+    descriptor: acpDescriptor(),
     configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
     projectRoot: tmpdir(),
     liveness: { inactivityMs: 35, cancelGraceMs: 15 },
@@ -174,7 +168,7 @@ test('ACP v2 cancels and terminates a genuinely silent stalled turn', async () =
 test('ACP v2 liveness resets on genuine reasoning activity', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/fake-acp-heartbeat-agent.mjs', import.meta.url));
   const runtime = new AcpSessionRuntime({
-    descriptor: localCliDescriptor('opencode'),
+    descriptor: acpDescriptor(),
     configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
     projectRoot: tmpdir(),
     liveness: { inactivityMs: 35, cancelGraceMs: 15 },
