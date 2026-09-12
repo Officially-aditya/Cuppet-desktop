@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { CodexSessionRuntime, codexSessionSelection } from '../codex-provider.mjs';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { recordProviderUsage } from '../usage-ledger.mjs';
 import { ConversationBridge } from './conversation-bridge.mjs';
@@ -14,6 +15,7 @@ const DEFAULT_MAX_WARM_RUNTIMES = 3;
 
 export class ProviderRuntimeManager {
   #acpRuntimeFactory;
+  #codexRuntimeFactory;
   #toolSessionFactory;
   #usageRecorder;
   #conversationBridge;
@@ -23,12 +25,13 @@ export class ProviderRuntimeManager {
   #entries = new Map();
   #closed = false;
 
-  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, conversationBridge = new ConversationBridge(), idleMs = DEFAULT_IDLE_MS, maxWarmRuntimes = DEFAULT_MAX_WARM_RUNTIMES } = {}) {
+  constructor({ acpRuntimeFactory, openCodeRuntimeFactory, codexRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, conversationBridge = new ConversationBridge(), idleMs = DEFAULT_IDLE_MS, maxWarmRuntimes = DEFAULT_MAX_WARM_RUNTIMES } = {}) {
     this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new AcpSessionRuntime({
       descriptor,
       configuration,
       projectRoot,
     }));
+    this.#codexRuntimeFactory = codexRuntimeFactory ?? (({ configuration }) => new CodexSessionRuntime({ configuration }));
     this.#toolSessionFactory = toolSessionFactory ?? (({ sessionId, backendId }) => new CuppetMcpToolSession({ sessionId, backendId }));
     this.#usageRecorder = usageRecorder;
     this.#conversationBridge = conversationBridge;
@@ -39,23 +42,42 @@ export class ProviderRuntimeManager {
   adapterFor({ sessionId, projectRoot = null, adapter }) {
     if (this.#closed) throw new Error('Provider runtime manager is closed.');
     const managed = typeof adapter?.cuppetManagedRuntime === 'function' ? adapter.cuppetManagedRuntime() : null;
-    if (!managed || managed.protocol !== 'acp') return adapter;
+    if (!managed) return adapter;
     const id = requiredText(sessionId, 'sessionId');
+    const protocol = text(managed.protocol).toLowerCase();
     const backendId = requiredText(managed.backendId, 'backendId').toLowerCase();
-    const descriptor = managed.descriptor ?? localCliDescriptor(backendId);
-    if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Managed ACP backend '${backendId}' has no ACP descriptor.`);
     const providerConfig = record(managed.configuration);
-    return {
-      stream: (messages, options = {}) => this.#runAcp({
-        sessionId: id,
-        backendId,
-        descriptor,
-        providerConfig,
-        projectRoot,
-        messages,
-        options,
-      }),
-    };
+
+    if (protocol === 'acp') {
+      const descriptor = managed.descriptor ?? localCliDescriptor(backendId);
+      if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Managed ACP backend '${backendId}' has no ACP descriptor.`);
+      return {
+        stream: (messages, options = {}) => this.#runAcp({
+          sessionId: id,
+          backendId,
+          descriptor,
+          providerConfig,
+          projectRoot,
+          messages,
+          options,
+        }),
+      };
+    }
+
+    if (protocol === 'codex-app-server' && backendId === 'codex') {
+      return {
+        stream: (messages, options = {}) => this.#runCodex({
+          sessionId: id,
+          backendId,
+          providerConfig,
+          projectRoot,
+          messages,
+          options,
+        }),
+      };
+    }
+
+    return adapter;
   }
 
   async cancel(sessionId) {
@@ -101,21 +123,7 @@ export class ProviderRuntimeManager {
   async #runAcp({ sessionId, backendId, descriptor, providerConfig, projectRoot, messages, options }) {
     const fingerprint = acpRuntimeFingerprint({ backendId, descriptor, configuration: providerConfig, projectRoot });
     const selection = acpSessionSelection(providerConfig);
-    const projectAuthority = resolvedProjectRoot(projectRoot);
-    let staleGroup = null;
-    let group = this.#entries.get(sessionId);
-    if (group && group.projectAuthority !== projectAuthority) {
-      staleGroup = group;
-      this.#entries.delete(sessionId);
-      this.#conversationBridge.forget?.(sessionId);
-      group = null;
-    }
-    if (!group) {
-      group = { projectAuthority, routes: new Map(), busy: false, activeFingerprint: null };
-      this.#entries.set(sessionId, group);
-    }
-    if (group.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
-    group.busy = true;
+    const { group, staleGroup } = this.#claimConversationGroup(sessionId, projectRoot);
 
     let entry = null;
     let bridgePlan = null;
@@ -135,18 +143,7 @@ export class ProviderRuntimeManager {
       if (!entry) {
         await this.#makeRoomForRuntime(sessionId, group);
         const runtime = this.#acpRuntimeFactory({ backendId, descriptor, configuration: providerConfig, projectRoot });
-        entry = {
-          runtime,
-          backendId,
-          fingerprint,
-          selection: null,
-          started: false,
-          turns: 0,
-          idleTimer: null,
-          busy: false,
-          activeToolSession: null,
-          lastUsed: ++this.#useCounter,
-        };
+        entry = createManagedEntry({ runtime, backendId, fingerprint, lastUsed: ++this.#useCounter });
         group.routes.set(fingerprint, entry);
       }
 
@@ -207,39 +204,126 @@ export class ProviderRuntimeManager {
       });
       textStream.flush();
       const normalizedResult = { ...result, text: textStream.text || result?.text || '' };
-      this.#conversationBridge.completeTurn(bridgePlan);
+      this.#completeManagedTurn({ bridgePlan, entry });
       bridgePlan = null;
-      entry.turns += 1;
-      entry.lastUsed = ++this.#useCounter;
-      await this.#usageRecorder?.({
-        providerID: backendId,
-        modelID: selection.model || 'unknown',
-        usage: normalizedResult?.usage,
-      }).catch?.(() => undefined);
+      await this.#recordUsage(backendId, selection.model, normalizedResult?.usage);
       return normalizedResult;
     } catch (error) {
-      if (bridgePlan) this.#conversationBridge.abortTurn?.(bridgePlan);
-      if (entry && group.routes.get(fingerprint) === entry) {
-        group.routes.delete(fingerprint);
-        clearTimeout(entry.idleTimer);
-        await closeManagedEntry(entry);
-      }
-      if (!group.routes.size && this.#entries.get(sessionId) === group) {
-        this.#entries.delete(sessionId);
-        this.#conversationBridge.forget?.(sessionId);
-      }
+      await this.#failManagedTurn({ sessionId, fingerprint, group, entry, bridgePlan });
+      bridgePlan = null;
       throw error;
     } finally {
       if (abortToolSession) options.signal?.removeEventListener?.('abort', abortToolSession);
       await toolSession?.close().catch(() => undefined);
       if (entry?.activeToolSession === toolSession) entry.activeToolSession = null;
-      if (entry) entry.busy = false;
-      if (group.activeFingerprint === fingerprint) group.activeFingerprint = null;
-      group.busy = false;
-      if (entry && group.routes.get(fingerprint) === entry && this.#entries.get(sessionId) === group) {
-        this.#armIdle(sessionId, fingerprint, group, entry);
-      }
+      this.#releaseConversationGroup({ sessionId, fingerprint, group, entry });
     }
+  }
+
+  async #runCodex({ sessionId, backendId, providerConfig, projectRoot, messages, options }) {
+    const fingerprint = codexRuntimeFingerprint({ configuration: providerConfig, projectRoot });
+    const selection = codexSessionSelection(providerConfig);
+    const { group, staleGroup } = this.#claimConversationGroup(sessionId, projectRoot);
+    let entry = null;
+    let bridgePlan = null;
+    try {
+      if (staleGroup) await closeManagedGroup(staleGroup);
+      entry = group.routes.get(fingerprint) ?? null;
+      if (!entry) {
+        await this.#makeRoomForRuntime(sessionId, group);
+        const runtime = this.#codexRuntimeFactory({ backendId, configuration: providerConfig, projectRoot });
+        entry = createManagedEntry({ runtime, backendId, fingerprint, lastUsed: ++this.#useCounter });
+        group.routes.set(fingerprint, entry);
+      }
+
+      group.activeFingerprint = fingerprint;
+      entry.busy = true;
+      entry.lastUsed = ++this.#useCounter;
+      clearTimeout(entry.idleTimer);
+      bridgePlan = this.#conversationBridge.beginTurn({
+        conversationId: sessionId,
+        runtimeFingerprint: fingerprint,
+        messages,
+      });
+
+      if (!entry.started) {
+        await entry.runtime.start();
+        entry.started = true;
+      }
+      entry.selection = selection;
+      const result = await entry.runtime.runTurn({ messages: bridgePlan.messages, selection }, {
+        signal: options.signal,
+        tools: options.tools,
+        executeTool: options.executeTool,
+        onDelta: options.onDelta,
+        onActivity: options.onActivity,
+      });
+      this.#completeManagedTurn({ bridgePlan, entry });
+      bridgePlan = null;
+      await this.#recordUsage(backendId, selection.model, result?.usage);
+      return result;
+    } catch (error) {
+      await this.#failManagedTurn({ sessionId, fingerprint, group, entry, bridgePlan });
+      bridgePlan = null;
+      throw error;
+    } finally {
+      this.#releaseConversationGroup({ sessionId, fingerprint, group, entry });
+    }
+  }
+
+  #claimConversationGroup(sessionId, projectRoot) {
+    const projectAuthority = resolvedProjectRoot(projectRoot);
+    let staleGroup = null;
+    let group = this.#entries.get(sessionId);
+    if (group && group.projectAuthority !== projectAuthority) {
+      staleGroup = group;
+      this.#entries.delete(sessionId);
+      this.#conversationBridge.forget?.(sessionId);
+      group = null;
+    }
+    if (!group) {
+      group = { projectAuthority, routes: new Map(), busy: false, activeFingerprint: null };
+      this.#entries.set(sessionId, group);
+    }
+    if (group.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
+    group.busy = true;
+    return { group, staleGroup };
+  }
+
+  #completeManagedTurn({ bridgePlan, entry }) {
+    this.#conversationBridge.completeTurn(bridgePlan);
+    entry.turns += 1;
+    entry.lastUsed = ++this.#useCounter;
+  }
+
+  async #failManagedTurn({ sessionId, fingerprint, group, entry, bridgePlan }) {
+    if (bridgePlan) this.#conversationBridge.abortTurn?.(bridgePlan);
+    if (entry && group.routes.get(fingerprint) === entry) {
+      group.routes.delete(fingerprint);
+      clearTimeout(entry.idleTimer);
+      await closeManagedEntry(entry);
+    }
+    if (!group.routes.size && this.#entries.get(sessionId) === group) {
+      this.#entries.delete(sessionId);
+      this.#conversationBridge.forget?.(sessionId);
+    }
+  }
+
+  #releaseConversationGroup({ sessionId, fingerprint, group, entry }) {
+    if (entry) entry.busy = false;
+    if (group.activeFingerprint === fingerprint) group.activeFingerprint = null;
+    group.busy = false;
+    if (entry && group.routes.get(fingerprint) === entry && this.#entries.get(sessionId) === group) {
+      this.#armIdle(sessionId, fingerprint, group, entry);
+    }
+  }
+
+  async #recordUsage(backendId, model, usage) {
+    await this.#usageRecorder?.({
+      providerID: backendId,
+      modelID: model || 'unknown',
+      usage,
+    }).catch?.(() => undefined);
   }
 
   async #makeRoomForRuntime(sessionId, group) {
@@ -273,6 +357,21 @@ export class ProviderRuntimeManager {
   }
 }
 
+function createManagedEntry({ runtime, backendId, fingerprint, lastUsed }) {
+  return {
+    runtime,
+    backendId,
+    fingerprint,
+    selection: null,
+    started: false,
+    turns: 0,
+    idleTimer: null,
+    busy: false,
+    activeToolSession: null,
+    lastUsed,
+  };
+}
+
 async function closeManagedGroup(group) {
   const entries = [...(group?.routes?.values?.() ?? [])];
   group?.routes?.clear?.();
@@ -302,6 +401,18 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
     mcpToolBridge: descriptor?.mcpToolBridge === true,
     textStream: stableValue(descriptor?.textStream),
     runtimeSettings: stableValue(source.runtimeSettings),
+  };
+  return createHash('sha256').update(stableStringify(payload)).digest('hex');
+}
+
+export function codexRuntimeFingerprint({ configuration = {}, projectRoot = null } = {}) {
+  const source = record(configuration);
+  const payload = {
+    protocol: 'codex-app-server',
+    backendId: 'codex',
+    projectRoot: resolvedProjectRoot(projectRoot),
+    codexLaunch: stableValue(source.codexLaunch),
+    resourcesPath: text(source.resourcesPath),
   };
   return createHash('sha256').update(stableStringify(payload)).digest('hex');
 }
