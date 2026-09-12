@@ -32,9 +32,11 @@ jobs:
           test/provider-driver-registry.test.mjs
           test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
+          test/provider-runtime-manager-real-acp.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/claude-code-provider.test.mjs
           test/codex-provider.test.mjs
+          test/opencode-provider.test.mjs
           test/cli-agent-linking.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/provider-activity-renderer.test.mjs
