@@ -15,4 +15,13 @@ test('React running composer exposes preference-driven queue and steer paths',()
   assert.match(app,/queue\.dispatched/);
 });
 
-test('React activity surface consumes tool and validation events',()=>{assert.match(app,/tool\.started/);assert.match(app,/tool\.finished/);assert.match(app,/validation\.completed/);assert.match(chat,/ActivityPanel/);assert.match(chat,/Agent activity/);});
+test('React transcript trace consumes provider reasoning, tool, and validation activity',()=>{
+  assert.match(app,/tool\.started/);
+  assert.match(app,/tool\.finished/);
+  assert.match(app,/validation\.completed/);
+  assert.match(chat,/runtime\.activity/);
+  assert.match(chat,/activity\.reasoning\.delta/);
+  assert.match(chat,/activity\.tool\./);
+  assert.match(chat,/traceByMessage/);
+  assert.match(chat,/updateToolTraceFromActivity/);
+});
