@@ -1,8 +1,8 @@
-import { isAcpCliProvider } from './acp-cli-provider.mjs';
+import { isLocalCliProvider } from './local-cli-descriptors.mjs';
 import { providerRequest } from './provider-policy.mjs';
 
 const TITLE_TIMEOUT_MS = 15_000;
-const ACCOUNT_PROVIDERS = new Set(['codex', 'antigravity']);
+const ACCOUNT_PROVIDERS = new Set(['codex']);
 
 export async function generateChatTitle({ providerFactory, providerConfig, userText, timeoutMs = TITLE_TIMEOUT_MS }) {
   if (typeof providerFactory !== 'function') return null;
@@ -43,7 +43,7 @@ export function secondaryProviderConfiguration(configuration = {}) {
   const providerID = text(secondary.providerID) || text(source.providerID) || text(source.primary?.providerID);
   if (!providerID) return null;
 
-  if (ACCOUNT_PROVIDERS.has(providerID.toLowerCase()) || isAcpCliProvider(providerID)) {
+  if (ACCOUNT_PROVIDERS.has(providerID.toLowerCase()) || isLocalCliProvider(providerID)) {
     const modelID = text(secondary.modelID) || text(source.backgroundModel) || text(source.model) || text(source.primary?.modelID);
     return {
       ...source,
