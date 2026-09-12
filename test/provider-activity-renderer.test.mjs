@@ -102,6 +102,74 @@ test('JournaledToolRuntime emits separate provider and execution Activity envelo
   }
 });
 
+test('Copilot keeps ambiguous pre-tool text out of the live assistant preview', async () => {
+  const emitted = [];
+  const finalDeltas = [];
+  const descriptor = {
+    id: 'github-copilot',
+    label: 'GitHub Copilot',
+    transport: 'acp',
+    command: 'copilot',
+    args: [],
+    envOverride: '',
+    textStream: { framing: 'tokenized-whitespace', preview: 'defer-unclassified' },
+  };
+  const manager = new ProviderRuntimeManager({
+    usageRecorder: async () => {},
+    acpRuntimeFactory: () => ({
+      async start() {},
+      async newSession() {},
+      async runTurn(_input, hooks) {
+        await hooks.onText('the\n\nrepository\n\nand\n\nreport\n\nits\n\nstatus');
+        const toolResult = await hooks.executeTool({ id: 'call-preview', name: 'cuppet_plan', arguments: '{"action":"overview"}' });
+        assert.equal(toolResult.success, true);
+        await hooks.onText('Final answer.');
+        return { text: 'the repository and report its status Final answer.', usage: null, stopReason: 'end_turn' };
+      },
+      async cancel() {},
+      async close() {},
+    }),
+  });
+  const adapter = {
+    cuppetManagedRuntime: () => ({
+      protocol: 'acp',
+      backendId: 'github-copilot',
+      descriptor,
+      configuration: { providerID: 'github-copilot' },
+    }),
+  };
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    emit: (event) => emitted.push(event),
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-preview', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    providerRuntimeManager: manager,
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  try {
+    await runtime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'Inspect the repository.' }],
+      sessionId: 'chat-copilot-preview',
+      projectRoot: null,
+      onDelta: async (delta) => finalDeltas.push(delta),
+    });
+    const previews = emitted.filter((event) => event.type === 'message.preview').map((event) => String(event.content ?? ''));
+    assert.ok(!previews.some((content) => content.includes('repository')));
+    assert.deepEqual(finalDeltas, ['Final answer.']);
+    const reasoning = emitted.filter((event) => event.type === 'runtime.activity' && event.source === 'provider' && event.activity?.type === 'activity.reasoning.delta');
+    assert.ok(reasoning.some((event) => String(event.activity.text).includes('repository')));
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('malformed provider telemetry and host emit failures cannot fail a successful turn', async () => {
   const adapter = {
     async stream(_messages, options) {
