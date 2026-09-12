@@ -10,6 +10,7 @@ const required = [
   'src/runtime/provider.mjs',
   'src/runtime/provider-policy.mjs',
   'src/runtime/provider-factory.mjs',
+  'src/runtime/providers/default-registry.mjs',
   'src/runtime/native-provider.mjs',
   'src/runtime/service.mjs',
   'src/runtime/background-enricher.mjs',
@@ -25,10 +26,15 @@ expect(contract.phase === 'D3' && contract.status === 'implemented-candidate', '
 for (const [key, value] of Object.entries(contract.requirements ?? {})) expect(value === true, `D3 contract requirement missing: ${key}`);
 
 const factory = text['src/runtime/provider-factory.mjs'];
-expect(factory.includes('createNativeProvider') && factory.includes('new OpenAICompatibleChatProvider'), 'shared provider factory must preserve native routing and generic fallback');
-expect(factory.includes("providerRequest(configuration, 'primary').providerID"), 'native routing must use resolved model provider authority');
-expect(factory.includes("kind === 'vertex-gemini'") && factory.includes("'x-goog-api-key': key") && factory.includes("searchParams.delete('key')"), 'Vertex API key must be removed from request URLs');
-expect(factory.includes("kind === 'gemini-interactions'") && factory.includes('result: { content: item.result }'), 'Gemini function_result lowering must match current Interactions REST shape');
+expect(factory.includes("import { createProviderRuntime, nativeProviderKind } from './providers/default-registry.mjs'") && factory.includes('return createProviderRuntime(configuration)'), 'shared provider factory must delegate runtime selection to Provider V2 registry');
+expect(!factory.includes('createNativeProvider(') && !factory.includes('new OpenAICompatibleChatProvider('), 'provider factory must not duplicate backend dispatch outside the Provider V2 registry');
+
+const registry = text['src/runtime/providers/default-registry.mjs'];
+expect(registry.includes("id: 'native-api'") && registry.includes('createNativeProvider(prepared)'), 'Provider V2 registry must preserve reviewed native routing');
+expect(registry.includes("id: 'openai-compatible'") && registry.includes('new OpenAICompatibleChatProvider(configuration)'), 'Provider V2 registry must preserve generic OpenAI-compatible fallback');
+expect(registry.includes("matches: (configuration) => Boolean(nativeProviderKind(configuredProviderId(configuration)))") && registry.includes("matches: () => true"), 'native routing must precede the catch-all fallback through registry match authority');
+expect(registry.includes("kind === 'vertex-gemini'") && registry.includes("'x-goog-api-key': key") && registry.includes("searchParams.delete('key')"), 'Vertex API key must be removed from request URLs');
+expect(registry.includes("kind === 'gemini-interactions'") && registry.includes('result: { content: item.result }'), 'Gemini function_result lowering must match current Interactions REST shape');
 
 const native = text['src/runtime/native-provider.mjs'];
 for (const className of ['OpenAIResponsesProvider','AnthropicMessagesProvider','GeminiInteractionsProvider','VertexGeminiProvider']) expect(native.includes(`class ${className}`), `native adapter missing: ${className}`);
@@ -38,8 +44,8 @@ expect(native.includes(':streamGenerateContent') && native.includes('publishers/
 expect(native.includes("type === 'response.output_text.delta'") && native.includes("type === 'input_json_delta'") && native.includes("type === 'interaction.created'"), 'native streaming parsers are incomplete');
 
 const service = text['src/runtime/service.mjs'];
-expect(service.includes("import { createChatProvider } from './provider-factory.mjs'"), 'RuntimeService does not import shared native provider factory');
-expect(service.includes('providerFactory = createChatProvider'), 'RuntimeService default provider factory is not native-aware');
+expect(service.includes("import { createChatProvider } from './provider-factory.mjs'"), 'RuntimeService does not import shared provider factory');
+expect(service.includes('providerFactory = createChatProvider'), 'RuntimeService default provider factory is not Provider V2 aware');
 expect(service.includes('new BackgroundEnricher({ providerFactory: this.#providerFactory'), 'background role does not share foreground provider factory');
 
 const background = text['src/runtime/background-enricher.mjs'];
@@ -48,6 +54,7 @@ expect(background.includes("providerRequest(this.#providerConfig ?? {}, 'seconda
 for (const script of [
   'src/runtime/provider.mjs',
   'src/runtime/provider-factory.mjs',
+  'src/runtime/providers/default-registry.mjs',
   'src/runtime/native-provider.mjs',
   'src/runtime/service.mjs',
 ]) {
@@ -60,8 +67,9 @@ const tests = [
   'test/provider.test.mjs',
   'test/d-provider-policy.test.mjs',
   'test/background-enricher.test.mjs',
+  'test/provider-driver-registry.test.mjs',
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);
 
-console.log('D3 gate passed: reviewed native OpenAI/Anthropic/Gemini/Vertex execution, tool continuations, host-local credentials, shared foreground/background routing, and OpenAI-compatible fallback verified.');
+console.log('D3 gate passed: Provider V2 registry-owned native OpenAI/Anthropic/Gemini/Vertex execution, tool continuations, host-local credentials, shared foreground/background routing, and generic fallback verified.');
