@@ -38,6 +38,7 @@ jobs:
           test/claude-code-provider.test.mjs
           test/codex-provider.test.mjs
           test/opencode-provider.test.mjs
+          test/opencode-auth-status.test.mjs
           test/cli-agent-linking.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/provider-activity-renderer.test.mjs
