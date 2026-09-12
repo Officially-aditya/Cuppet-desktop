@@ -215,7 +215,7 @@ class ToolMutationCapture {
     } catch (error) {
       const stopped = options?.signal?.aborted || error?.name === 'AbortError';
       if (stopped && this.#previewPolicy !== 'defer-unclassified' && pendingText) {
-        await finalDelta(pendingText);
+        await finalDelta(pendingText, { stoppedPartial: true });
         pendingText = '';
       }
       this.#onPreview('');
