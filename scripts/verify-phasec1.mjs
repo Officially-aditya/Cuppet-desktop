@@ -11,6 +11,9 @@ expect(text['src/runtime/provider.mjs'].includes('request.tools = tools') && tex
 expect(text['src/runtime/database.mjs'].includes('CREATE TABLE IF NOT EXISTS tool_executions'),'durable tool audit missing');
 expect(text['src/runtime/service.mjs'].includes("case 'permission.list'") && text['src/runtime/service.mjs'].includes('this.#tools.run'),'runtime permission/tool authority missing');
 expect(text['src/main/main.mjs'].includes('cuppet:permission:reply') && text['src/preload/preload.cjs'].includes('permissions:'),'Electron permission bridge missing');
-const renderer=text['src/renderer/react/PermissionModal.tsx'];for(const token of ['Allow once','Always this exact request','Enable guarded auto','permissions'])expect(renderer.includes(token),`React permission surface missing: ${token}`);expect(renderer.includes("onResolve('reject')"),'React permission rejection missing');
+const renderer=text['src/renderer/react/PermissionModal.tsx'];
+expect(renderer.includes('Permission required') && renderer.includes('Enable guarded auto'),'React permission prompt/auto surface missing');
+expect(renderer.includes("run('once')") && renderer.includes("run('always')") && renderer.includes("run('reject')"),'React once/always/reject permission replies missing');
+expect(renderer.includes('Always allow this exact request') && renderer.includes('>Always</button>') && renderer.includes('>Allow</button>') && renderer.includes('>Deny</button>'),'React permission labels/exact-request policy missing');
 const tests=['test/c1-permissions.test.mjs','test/provider-tools.test.mjs','test/tool-runtime.test.mjs','test/runtime-c1.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
 console.log('Phase C1 gate passed: runtime tools, streamed tool calls, durable audit, permission policy, guarded auto, and React approval flow verified.');
