@@ -3,31 +3,71 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { fetchProviderModelCatalog } from '../src/main/provider-model-catalog.mjs';
+import { classifyProviderError } from '../src/runtime/provider-error.mjs';
 import { OpenCodeServerProvider, discoverOpenCodeModels, opencodeBackendDefinition } from '../src/runtime/providers/backends/opencode.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-opencode-server.mjs', import.meta.url));
 
-test('OpenCode uses managed serve/http transport with Cuppet-owned execution authority', async () => {
-  let streamed = '';
-  const provider = new OpenCodeServerProvider({
+function provider(prompt = 'Hello OpenCode.') {
+  return new OpenCodeServerProvider({
     providerID: 'opencode',
     cliCommand: process.execPath,
     cliArgs: [fixture],
     primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
   });
-  const result = await provider.stream([{ role: 'user', content: 'Hello OpenCode.' }], {
+}
+
+function streamOptions() {
+  return {
     projectRoot: tmpdir(),
     tools: [{ type: 'function', function: { name: 'workspace_read', description: 'Read workspace', parameters: { type: 'object', properties: {} } } }],
     executeTool: async () => ({ success: true, output: 'fixture', contentItems: [] }),
-    onDelta: async (delta) => { streamed += delta; },
-  });
+  };
+}
+
+test('OpenCode uses managed serve/http transport with Cuppet-owned execution authority', async () => {
+  let streamed = '';
+  const options = streamOptions();
+  options.onDelta = async (delta) => { streamed += delta; };
+  const result = await provider().stream([{ role: 'user', content: 'Hello OpenCode.' }], options);
   assert.equal(result.text, 'OpenCode ready.');
   assert.equal(streamed, 'OpenCode ready.');
   assert.equal(result.usage.inputTokens, 3);
   assert.equal(result.usage.outputTokens, 2);
   assert.equal(result.usage.cachedInputTokens, 1);
   assert.equal(result.usage.reasoningTokens, 1);
+});
+
+test('OpenCode preserves structured provider auth failures instead of replacing them with an empty-response error', async () => {
+  let failure;
+  try {
+    await provider().stream([{ role: 'user', content: 'TRIGGER_PROVIDER_AUTH_ERROR' }], streamOptions());
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof Error);
+  assert.equal(failure.name, 'ProviderAuthError');
+  assert.match(failure.message, /Missing provider credentials/i);
+  assert.doesNotMatch(failure.message, /completed without a user-visible response/i);
+  const classified = classifyProviderError(failure, { providerID: 'opencode' });
+  assert.equal(classified.category, 'authentication');
+  assert.equal(classified.action, 'reauthenticate');
+});
+
+test('OpenCode preserves structured provider HTTP status for generic provider classification', async () => {
+  let failure;
+  try {
+    await provider().stream([{ role: 'user', content: 'TRIGGER_API_ERROR' }], streamOptions());
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof Error);
+  assert.equal(failure.name, 'APIError');
+  assert.equal(failure.status, 429);
+  assert.match(failure.message, /Rate limit exceeded/i);
+  const classified = classifyProviderError(failure, { providerID: 'opencode' });
+  assert.equal(classified.category, 'rate_limit');
 });
 
 test('OpenCode model discovery keeps provider-advertised variants from verbose inventory', async () => {
