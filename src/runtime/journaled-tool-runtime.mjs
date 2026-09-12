@@ -213,6 +213,11 @@ class ToolMutationCapture {
         ...(executeTool ? { executeTool } : {}),
       });
     } catch (error) {
+      const stopped = options?.signal?.aborted || error?.name === 'AbortError';
+      if (stopped && this.#previewPolicy !== 'defer-unclassified' && pendingText) {
+        await finalDelta(pendingText);
+        pendingText = '';
+      }
       this.#onPreview('');
       throw error;
     }
