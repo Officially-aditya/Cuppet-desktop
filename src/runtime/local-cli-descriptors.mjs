@@ -3,11 +3,12 @@ const DESCRIPTORS = Object.freeze({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
     mcpToolBridge: true,
-    // OpenCode owns provider credentials and configuration. Cuppet must not rewrite
-    // OPENCODE_CONFIG_CONTENT or strip OpenCode environment variables before ACP starts;
-    // otherwise the in-app process no longer matches the authenticated CLI the user
-    // configured in Terminal. Cuppet execution authority is scoped independently by the
-    // per-turn MCP bridge supplied through ACP session/new.
+    // OpenCode owns provider credentials and configuration. Preserve its normal CLI
+    // environment verbatim, then use OpenCode's dedicated permission overlay to make
+    // Cuppet the execution authority. This avoids rewriting OPENCODE_CONFIG_CONTENT
+    // (which can change provider/auth behavior) while still removing native execution
+    // tools from the model-visible surface. Session-scoped Cuppet tools arrive through
+    // ACP mcpServers and are explicitly re-allowed by the overlay below.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
@@ -118,5 +119,27 @@ function freezeValue(value) {
 }
 
 function openCodeAcpEnvironment(inherited = process.env) {
-  return { ...inherited, OPENCODE_DISABLE_AUTOUPDATE: '1' };
+  return {
+    ...inherited,
+    OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_PERMISSION: JSON.stringify({
+      '*': 'deny',
+      read: 'deny',
+      edit: 'deny',
+      glob: 'deny',
+      grep: 'deny',
+      list: 'deny',
+      bash: 'deny',
+      task: 'deny',
+      todowrite: 'deny',
+      question: 'deny',
+      webfetch: 'deny',
+      websearch: 'deny',
+      lsp: 'deny',
+      skill: 'deny',
+      external_directory: 'deny',
+      'cuppet-runtime_*': 'allow',
+      'cuppet_runtime_*': 'allow',
+    }),
+  };
 }
