@@ -17,6 +17,15 @@ export type Message = {
   sequence?: number;
 };
 
+export type MessageActivity = {
+  sessionId: string;
+  messageId: string;
+  sequence: number;
+  source: string;
+  activity: Record<string, any>;
+  createdAt?: number;
+};
+
 export type ToolExecution = {
   id: string;
   toolName?: string;
@@ -35,6 +44,7 @@ export type Session = {
   deletedAt?: number | null;
   purgeAt?: number | null;
   messages: Message[];
+  activities?: MessageActivity[];
   toolExecutions?: ToolExecution[];
 };
 
