@@ -221,7 +221,30 @@ class ToolMutationCapture {
       await flushReasoning();
       for (const call of toolCalls) this.#rememberCall(call);
       if (this.#journal && this.#projectRoot) for (const call of toolCalls) await this.#prepareCall(call);
-      return response;
+      if (!executeTool) return response;
+
+      const conversation = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: response?.text || null,
+          tool_calls: toolCalls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.arguments ?? '{}' },
+          })),
+        },
+      ];
+      for (const call of toolCalls) {
+        const result = await executeTool(call);
+        conversation.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          name: call.name,
+          content: result?.output ?? '',
+        });
+      }
+      return this.stream(conversation, options);
     }
     if (!pendingText && typeof response?.text === 'string') pendingText = response.text;
     if (pendingText) await finalDelta(pendingText);
