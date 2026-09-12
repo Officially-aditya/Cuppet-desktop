@@ -282,7 +282,13 @@ test('renderer consumes canonical Activity directly and preload suppresses dupli
   assert.match(chat, /event\.type === 'runtime\.activity'/);
   assert.match(chat, /event\.source === 'provider'.*activity\.reasoning\.delta/s);
   assert.match(chat, /event\.source === 'execution'.*activity\.tool\./s);
+  assert.match(chat, /appendReasoningTrace/);
   assert.match(chat, /updateToolTraceFromActivity/);
+  assert.match(chat, /sequence: existing\?\.sequence \?\? nextTraceSequence\(trace\)/);
+  assert.match(chat, /const ordered = orderedTrace\(trace\)/);
+  assert.match(chat, /const \[traceOpen, setTraceOpen\] = useState\(live\)/);
+  assert.match(chat, /hasTrace && traceOpen && <TraceView trace=\{trace\} \/>/);
+  assert.doesNotMatch(chat, /hasTrace && live && <TraceView/);
   assert.doesNotMatch(chat, /event\.type === 'message\.reasoning'/);
   assert.doesNotMatch(chat, /event\.type === 'tool\.started'.*event\.type === 'tool\.finished'/s);
 });
