@@ -9,6 +9,7 @@ test('provider errors produce specific user-facing categories',()=>{
   assert.equal(classify('401 Unauthorized: token expired').category,'authentication');
   assert.equal(classify('insufficient_quota: no credits remaining').category,'quota_exhausted');
   assert.equal(classify('service unavailable 503').category,'provider_unavailable');
+  assert.equal(classify('Internal error','opencode').category,'provider_unavailable');
   assert.equal(classify('fetch failed ECONNRESET').category,'network');
   assert.equal(classify('request timed out').category,'timeout');
   assert.equal(classify('maximum context length exceeded').category,'context_limit');
