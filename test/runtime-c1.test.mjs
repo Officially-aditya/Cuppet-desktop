@@ -39,7 +39,10 @@ function backgroundFactory() {
 }
 
 async function waitFor(predicate, message) {
-  for (let i = 0; i < 100; i++) {
+  // RuntimeService work is intentionally asynchronous. A one-second wall-clock
+  // budget is too tight on shared CI runners even when the permission path is
+  // correct; keep polling bounded while allowing ordinary scheduler variance.
+  for (let i = 0; i < 300; i++) {
     const value = await predicate();
     if (value) return value;
     await sleep(10);
