@@ -1,35 +1,13 @@
-import { OpenAICompatibleChatProvider } from './provider.mjs';
 import { providerRequest } from './provider-policy.mjs';
-import { createNativeProvider, nativeProviderKind } from './native-provider.mjs';
-import { CodexSubscriptionProvider } from './codex-provider.mjs';
-import { AcpCliAgentProvider, isAcpCliProvider } from './acp-cli-provider.mjs';
-import { AntigravityHeadlessProvider } from './antigravity-provider.mjs';
-import { AcpProviderAdapter } from './providers/backends/acp.mjs';
+import { createProviderRuntime, nativeProviderKind } from './providers/default-registry.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
-
-const MANAGED_ACP_BACKENDS = new Set(['opencode', 'claude-code']);
 
 export function createChatProvider(configuration = {}) {
   return trackUsage(createUntrackedChatProvider(configuration), providerIdentity(configuration));
 }
 
 export function createUntrackedChatProvider(configuration = {}) {
-  const providerID = String(configuration?.providerID ?? '').toLowerCase();
-  if (providerID === 'codex') return new CodexSubscriptionProvider(configuration);
-  // Backends move onto the universal ACP adapter only after parity coverage is in place.
-  // OpenCode proved the path; Claude Code is the second backend sharing the same runtime.
-  if (MANAGED_ACP_BACKENDS.has(providerID)) return new AcpProviderAdapter(configuration);
-  if (providerID === 'antigravity') return new AntigravityHeadlessProvider(configuration);
-  if (isAcpCliProvider(providerID)) return new AcpCliAgentProvider(configuration);
-  const kind = resolvedNativeKind(configuration);
-  if (kind) {
-    const sourceFetch = configuration?.fetchImpl ?? globalThis.fetch;
-    const prepared = typeof sourceFetch === 'function'
-      ? { ...configuration, fetchImpl: nativeFetchGuard(kind, sourceFetch) }
-      : configuration;
-    return createNativeProvider(prepared);
-  }
-  return new OpenAICompatibleChatProvider(configuration);
+  return createProviderRuntime(configuration);
 }
 
 function trackUsage(provider, identity) {
@@ -57,44 +35,6 @@ function providerIdentity(configuration) {
     } catch {}
   }
   return { providerID: providerID || 'unknown', modelID: modelID || 'unknown' };
-}
-
-function resolvedNativeKind(configuration) {
-  try { return nativeProviderKind(providerRequest(configuration, 'primary').providerID); }
-  catch { return nativeProviderKind(configuration?.providerID); }
-}
-
-function nativeFetchGuard(kind, inner) {
-  return async (url, init = {}) => {
-    let nextUrl = String(url);
-    let nextInit = init;
-
-    if (kind === 'vertex-gemini') {
-      try {
-        const parsed = new URL(nextUrl);
-        const key = parsed.searchParams.get('key');
-        if (key) {
-          parsed.searchParams.delete('key');
-          nextUrl = parsed.toString();
-          nextInit = { ...init, headers: { ...(init.headers ?? {}), 'x-goog-api-key': key } };
-        }
-      } catch {}
-    }
-
-    if (kind === 'gemini-interactions' && typeof nextInit.body === 'string') {
-      try {
-        const body = JSON.parse(nextInit.body);
-        if (Array.isArray(body?.input)) {
-          body.input = body.input.map((item) => item?.type === 'function_result' && Array.isArray(item.result)
-            ? { ...item, result: { content: item.result } }
-            : item);
-          nextInit = { ...nextInit, body: JSON.stringify(body) };
-        }
-      } catch {}
-    }
-
-    return inner(nextUrl, nextInit);
-  };
 }
 
 function text(value) { return typeof value === 'string' ? value.trim().slice(0, 240) : ''; }
