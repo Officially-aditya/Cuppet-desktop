@@ -77,7 +77,7 @@ export function classifyProviderError(error, context = {}) {
 
   if (status >= 500 || matches(lower, [
     'service unavailable', 'temporarily unavailable', 'provider unavailable', 'overloaded', 'server overloaded',
-    'internal server error', 'bad gateway', 'gateway timeout', 'upstream error', 'server error',
+    'internal server error', 'internal error', 'bad gateway', 'gateway timeout', 'upstream error', 'server error',
     'provider failed', 'capacity unavailable',
   ])) return failure('provider_unavailable', 'Provider is unavailable', `${provider} is currently failing or unavailable. Retry in a moment or switch providers.`, 'retry_later', raw, providerID, provider);
 
