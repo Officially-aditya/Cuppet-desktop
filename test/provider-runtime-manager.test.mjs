@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
-import { ProviderRuntimeManager, acpRuntimeFingerprint } from '../src/runtime/providers/runtime-manager.mjs';
+import { ProviderRuntimeManager, acpRuntimeFingerprint, acpSessionSelection } from '../src/runtime/providers/runtime-manager.mjs';
 
 function fakeRuntime(log) {
   return {
-    async start() { log.push('start'); },
-    async newSession() { log.push('newSession'); },
+    async start(options = {}) { log.push('start', ['selection', 'start', options.selection]); },
+    async newSession(options = {}) { log.push('newSession', ['selection', 'newSession', options.selection]); },
     async runTurn({ messages }, hooks) {
       log.push(['run', messages.at(-1)?.content]);
       await hooks.onText?.('ok');
@@ -31,36 +31,60 @@ function toolDefinition(name = 'cuppet_plan') {
   return { type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } };
 }
 
-test('manager reuses one ACP process per Cuppet session but refreshes ACP logical session per turn', async () => {
+test('manager reuses one ACP process while applying model and effort to each logical session', async () => {
   const log = [];
   let constructed = 0;
   const manager = new ProviderRuntimeManager({
     usageRecorder: async () => {},
     acpRuntimeFactory: () => { constructed += 1; return fakeRuntime(log); },
   });
-  const adapter = managedAdapter({ providerID: 'opencode', primary: { modelID: 'provider/model-a' } });
-  await manager.adapterFor({ sessionId: 'chat-1', adapter, projectRoot: '/tmp/project' }).stream([{ role: 'user', content: 'one' }]);
-  await manager.adapterFor({ sessionId: 'chat-1', adapter, projectRoot: '/tmp/project' }).stream([{ role: 'user', content: 'two' }]);
+  const first = managedAdapter({ providerID: 'opencode', primary: { modelID: 'provider/model-a', variant: 'high' } });
+  const second = managedAdapter({ providerID: 'opencode', primary: { modelID: 'provider/model-b', variant: 'max' } });
+  await manager.adapterFor({ sessionId: 'chat-1', adapter: first, projectRoot: '/tmp/project' }).stream([{ role: 'user', content: 'one' }]);
+  await manager.adapterFor({ sessionId: 'chat-1', adapter: second, projectRoot: '/tmp/project' }).stream([{ role: 'user', content: 'two' }]);
   assert.equal(constructed, 1);
   assert.deepEqual(log.filter((item) => typeof item === 'string'), ['start', 'newSession']);
+  assert.deepEqual(log.filter((item) => Array.isArray(item) && item[0] === 'selection'), [
+    ['selection', 'start', { model: 'provider/model-a', effort: 'high' }],
+    ['selection', 'newSession', { model: 'provider/model-b', effort: 'max' }],
+  ]);
   assert.equal(manager.size, 1);
   await manager.close();
   assert.equal(log.at(-1), 'close');
 });
 
-test('manager replaces ACP runtime when backend, model, or project authority changes', async () => {
+test('manager replaces ACP runtime for backend or project authority changes, not model changes', async () => {
   const logs = [];
   const manager = new ProviderRuntimeManager({ usageRecorder: async () => {}, acpRuntimeFactory: () => { const log = []; logs.push(log); return fakeRuntime(log); } });
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'a' } }), projectRoot: '/tmp/a' }).stream([]);
   await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'b' } }), projectRoot: '/tmp/a' }).stream([]);
+  assert.equal(logs.length, 1);
+  assert.ok(!logs[0].includes('close'));
+  await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/a' }).stream([]);
   assert.equal(logs.length, 2);
   assert.ok(logs[0].includes('close'));
-  await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/a' }).stream([]);
+  await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/b' }).stream([]);
   assert.equal(logs.length, 3);
   assert.ok(logs[1].includes('close'));
-  await manager.adapterFor({ sessionId: 'chat-1', adapter: managedAdapter({ providerID: 'kiro', primary: { modelID: 'b' } }, 'kiro'), projectRoot: '/tmp/b' }).stream([]);
-  assert.equal(logs.length, 4);
-  assert.ok(logs[2].includes('close'));
+  await manager.close();
+});
+
+test('manager restarts when an explicit ACP selection is cleared back to provider defaults', async () => {
+  const logs = [];
+  const manager = new ProviderRuntimeManager({ usageRecorder: async () => {}, acpRuntimeFactory: () => { const log = []; logs.push(log); return fakeRuntime(log); } });
+  await manager.adapterFor({
+    sessionId: 'chat-default-reset',
+    adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'provider/model-a', variant: 'high' } }),
+    projectRoot: '/tmp/a',
+  }).stream([]);
+  await manager.adapterFor({
+    sessionId: 'chat-default-reset',
+    adapter: managedAdapter({ providerID: 'opencode', primary: { modelID: 'cli-default' } }),
+    projectRoot: '/tmp/a',
+  }).stream([]);
+  assert.equal(logs.length, 2);
+  assert.ok(logs[0].includes('close'));
+  assert.deepEqual(logs[1].find((item) => Array.isArray(item) && item[0] === 'selection'), ['selection', 'start', { model: 'cli-default', effort: null }]);
   await manager.close();
 });
 
@@ -170,17 +194,22 @@ test('manager cancel revokes active MCP authority as well as cancelling the prov
   await manager.close();
 });
 
-test('ACP runtime fingerprint is stable and sensitive to backend execution authority', () => {
+test('ACP runtime fingerprint tracks process authority while session selection tracks model intent', () => {
   const descriptor = { id: 'kiro', command: 'kiro-cli', args: ['acp'], mcpToolBridge: false };
   const one = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
   const same = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { primaryEffort: 'high', primary: { modelID: 'a' }, providerID: 'kiro' }, projectRoot: '/tmp/project' });
   const modelChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'b' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const effortChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'low' }, projectRoot: '/tmp/project' });
   const backendChanged = acpRuntimeFingerprint({ backendId: 'github-copilot', descriptor: { id: 'github-copilot', command: 'copilot', args: ['--acp'], mcpToolBridge: false }, configuration: { providerID: 'github-copilot', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
   const mcpChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor: { ...descriptor, mcpToolBridge: true }, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high' }, projectRoot: '/tmp/project' });
+  const envChanged = acpRuntimeFingerprint({ backendId: 'kiro', descriptor, configuration: { providerID: 'kiro', primary: { modelID: 'a' }, primaryEffort: 'high', cliEnv: { TEST_MODE: '1' } }, projectRoot: '/tmp/project' });
   assert.equal(one, same);
-  assert.notEqual(one, modelChanged);
+  assert.equal(one, modelChanged);
+  assert.equal(one, effortChanged);
   assert.notEqual(one, backendChanged);
   assert.notEqual(one, mcpChanged);
+  assert.notEqual(one, envChanged);
+  assert.deepEqual(acpSessionSelection({ primary: { modelID: 'b', variant: 'max' } }), { model: 'b', effort: 'max' });
 });
 
 test('JournaledToolRuntime binds adapters through the session-aware runtime manager', async () => {
