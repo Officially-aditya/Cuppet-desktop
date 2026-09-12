@@ -1,13 +1,15 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const MAX_BRIDGE_LINE_BYTES = 4 * 1024 * 1024;
 const MAX_RESULT_BYTES = 128 * 1024;
-const SERVER_SCRIPT = fileURLToPath(new URL('./cuppet-mcp-stdio.mjs', import.meta.url));
+const SERVER_RELATIVE_PATH = join('src', 'runtime', 'providers', 'transports', 'acp', 'cuppet-mcp-stdio.mjs');
+const SOURCE_SERVER_SCRIPT = fileURLToPath(new URL('./cuppet-mcp-stdio.mjs', import.meta.url));
 
 export class CuppetMcpToolSession {
   #sessionId;
@@ -55,7 +57,7 @@ export class CuppetMcpToolSession {
     return {
       name: 'cuppet-runtime',
       command: process.execPath,
-      args: [SERVER_SCRIPT],
+      args: [resolveCuppetMcpServerScript()],
       env: [
         { name: 'CUPPET_MCP_BRIDGE_ENDPOINT', value: this.#endpoint },
         { name: 'CUPPET_MCP_BRIDGE_TOKEN', value: this.#token },
@@ -160,6 +162,25 @@ export class CuppetMcpToolSession {
   #write(socket, value) {
     if (!socket.destroyed) socket.write(`${JSON.stringify(value)}\n`);
   }
+}
+
+export function resolveCuppetMcpServerScript({
+  resourcesPath = text(process.env.CUPPET_RESOURCES_PATH) || text(process.resourcesPath),
+  sourcePath = SOURCE_SERVER_SCRIPT,
+  exists = existsSync,
+} = {}) {
+  const resources = text(resourcesPath);
+  if (resources) {
+    const unpacked = join(resources, 'app.asar.unpacked', SERVER_RELATIVE_PATH);
+    if (exists(unpacked)) return unpacked;
+  }
+
+  const marker = `${sep}app.asar${sep}`;
+  if (sourcePath.includes(marker)) {
+    const unpacked = sourcePath.replace(marker, `${sep}app.asar.unpacked${sep}`);
+    if (exists(unpacked)) return unpacked;
+  }
+  return sourcePath;
 }
 
 function normalizeTools(definitions) {
