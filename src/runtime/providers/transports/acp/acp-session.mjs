@@ -57,7 +57,7 @@ export class AcpSessionRuntime {
     });
   }
 
-  async start({ mcpServers = [] } = {}) {
+  async start({ mcpServers = [], selection } = {}) {
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
     if (this.#state === 'starting') throw new Error(`${this.#descriptor.label} runtime is already starting.`);
@@ -70,7 +70,7 @@ export class AcpSessionRuntime {
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, REQUEST_TIMEOUT_MS);
       await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment);
-      await this.#openSession(mcpServers);
+      await this.#openSession(mcpServers, selection);
       this.#state = 'ready';
       return this.snapshot();
     } catch (error) {
@@ -79,10 +79,10 @@ export class AcpSessionRuntime {
     }
   }
 
-  async newSession({ mcpServers = [] } = {}) {
-    if (this.#state === 'idle') return this.start({ mcpServers });
+  async newSession({ mcpServers = [], selection } = {}) {
+    if (this.#state === 'idle') return this.start({ mcpServers, selection });
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
-    await this.#openSession(mcpServers);
+    await this.#openSession(mcpServers, selection);
     return this.snapshot();
   }
 
@@ -219,7 +219,7 @@ export class AcpSessionRuntime {
     }, this.#cancelGraceMs);
   }
 
-  async #openSession(mcpServers = []) {
+  async #openSession(mcpServers = [], selection) {
     const descriptorMeta = record(this.#descriptor?.sessionMeta);
     const params = {
       cwd: this.#projectRoot,
@@ -229,16 +229,17 @@ export class AcpSessionRuntime {
     this.#session = await this.#rpc.request('session/new', params, REQUEST_TIMEOUT_MS);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
-    await this.#applyConfiguredSettings();
+    await this.#applyConfiguredSettings(selection);
   }
 
-  async #applyConfiguredSettings() {
-    const configuredModel = text(this.#configuration?.primary?.modelID || this.#configuration?.model);
+  async #applyConfiguredSettings(selection) {
+    const configured = selection === undefined ? sessionSelection(this.#configuration) : normalizeSessionSelection(selection);
+    const configuredModel = text(configured.model);
     if (configuredModel && configuredModel !== 'cli-default') {
       const modelSetting = modelRuntimeSetting(this.#capabilities);
       await this.#applySelectSetting(modelSetting, configuredModel, 'model');
     }
-    const configuredEffort = text(this.#configuration?.primaryEffort || this.#configuration?.primary?.variant);
+    const configuredEffort = text(configured.effort);
     if (configuredEffort) {
       const reasoningSetting = reasoningRuntimeSetting(this.#capabilities);
       await this.#applySelectSetting(reasoningSetting, configuredEffort, 'reasoning effort');
@@ -309,6 +310,21 @@ function providerEnvironment(descriptor, configuration) {
     else environment[key] = String(value).slice(0, 32_768);
   }
   return environment;
+}
+function sessionSelection(configuration) {
+  const source = record(configuration);
+  const primary = record(source.primary);
+  return {
+    model: text(primary.modelID || source.model || source.modelID) || null,
+    effort: text(source.primaryEffort || primary.variant) || null,
+  };
+}
+function normalizeSessionSelection(selection) {
+  const source = record(selection);
+  return {
+    model: text(source.model) || null,
+    effort: text(source.effort) || null,
+  };
 }
 function sessionPromptParams(descriptor, sessionId, textValue) {
   const content = [{ type: 'text', text: textValue }];
