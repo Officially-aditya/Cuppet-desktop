@@ -10,8 +10,9 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 test('built-in provider registry owns transport resolution', () => {
   const registry = buildProviderBackendRegistry();
-  assert.equal(registry.requireResolved({ providerID: 'opencode' }).transport, 'acp');
-  assert.equal(registry.requireResolved({ providerID: 'antigravity' }).transport, 'headless-plan');
+  assert.equal(registry.requireResolved({ providerID: 'opencode' }).transport, 'opencode-http');
+  assert.equal(registry.requireResolved({ providerID: 'antigravity' }).transport, 'managed-acp');
+  assert.equal(registry.requireResolved({ providerID: 'kiro' }).transport, 'acp');
   assert.equal(registry.requireResolved({ providerID: 'some-openai-compatible-provider' }).id, 'openai-compatible');
   assert.equal(registry.operationSupport('opencode').discoverCapabilities, true);
   assert.equal(registry.operationSupport('antigravity').discoverCapabilities, true);
