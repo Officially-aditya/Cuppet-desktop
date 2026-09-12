@@ -67,7 +67,7 @@ export class AcpRpcChannel {
       const pending = this.#pending.get(message.id);
       if (!pending) return;
       this.#pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+      if (message.error) pending.reject(acpRpcError(message.error));
       else pending.resolve(message.result ?? {});
       return;
     }
@@ -91,6 +91,18 @@ export class AcpRpcChannel {
     for (const pending of this.#pending.values()) pending.reject(error instanceof Error ? error : new Error(String(error)));
     this.#pending.clear();
   }
+}
+
+function acpRpcError(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const message = typeof source.message === 'string' && source.message.trim()
+    ? source.message.trim()
+    : JSON.stringify(source);
+  const error = new Error(message || 'ACP request failed.');
+  const code = Number(source.code);
+  if (Number.isInteger(code)) error.rpcCode = code;
+  if (Object.prototype.hasOwnProperty.call(source, 'data')) error.rpcData = source.data;
+  return error;
 }
 
 function cleanError(error) {
