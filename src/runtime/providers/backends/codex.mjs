@@ -75,6 +75,8 @@ export function catalogFromCodexModels(catalog = {}, configuredModel = '') {
     settings: reasoning ? [{ id: reasoning.configId, kind: 'select', category: 'thought_level', label: 'Reasoning effort', value: reasoning.currentValue ?? undefined, options: reasoning.options }] : [],
     defaultModel,
     currentModel: effectiveModel || null,
+    configuredModel: configured || null,
+    fetchedAt: Date.now(),
     ...(reasoning ? { reasoning } : {}),
     ...(text(input.error) ? { error: text(input.error) } : {}),
   };
