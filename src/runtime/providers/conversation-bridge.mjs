@@ -3,14 +3,11 @@ import { createHash, randomUUID } from 'node:crypto';
 /**
  * Owns the mapping between a Cuppet conversation and provider logical sessions.
  *
- * V2 intentionally starts with replay-isolated semantics: Cuppet is the durable
- * context authority, every provider turn receives the compiled conversation,
- * and every turn after the first opens a fresh provider logical session. This
- * makes provider process reuse an implementation detail rather than implicit
- * provider-owned conversation history.
- *
- * Persistent provider continuation/resume must be introduced as a separate
- * strategy only after parity tests prove that Cuppet does not duplicate context.
+ * Cuppet is the durable context authority. Every provider turn receives the
+ * compiled conversation, while provider processes may stay warm as an
+ * implementation detail. Bridge state is tracked per runtime fingerprint so a
+ * conversation can switch providers and later return to a still-warm runtime
+ * without confusing provider-owned history with Cuppet-owned replay context.
  */
 export class ConversationBridge {
   #states = new Map();
@@ -19,53 +16,78 @@ export class ConversationBridge {
     const id = requiredText(conversationId, 'conversationId');
     const fingerprint = requiredText(runtimeFingerprint, 'runtimeFingerprint');
     let state = this.#states.get(id);
-    if (state && state.runtimeFingerprint !== fingerprint) {
-      this.#states.delete(id);
-      state = null;
-    }
     if (!state) {
       state = {
-        runtimeFingerprint: fingerprint,
-        completedTurns: 0,
+        routes: new Map(),
         activeToken: null,
-        lastReplayFingerprint: null,
+        activeRuntimeFingerprint: null,
+        lastRuntimeFingerprint: null,
+        totalCompletedTurns: 0,
       };
       this.#states.set(id, state);
     }
     if (state.activeToken) throw new Error('This Cuppet conversation already has an active provider bridge turn.');
 
+    let route = state.routes.get(fingerprint);
+    if (!route) {
+      route = { completedTurns: 0, lastReplayFingerprint: null };
+      state.routes.set(fingerprint, route);
+    }
+
     const token = `bridge_${randomUUID()}`;
     const replayMessages = cloneMessages(messages);
     const replayFingerprint = fingerprintMessages(replayMessages);
     state.activeToken = token;
+    state.activeRuntimeFingerprint = fingerprint;
+    state.lastRuntimeFingerprint = fingerprint;
 
     return Object.freeze({
       token,
       conversationId: id,
+      runtimeFingerprint: fingerprint,
       contextOwner: 'cuppet',
       delivery: 'full-replay',
       providerHistory: 'turn-isolated',
-      providerSessionAction: state.completedTurns === 0 ? 'start' : 'new-session',
+      providerSessionAction: route.completedTurns === 0 ? 'start' : 'new-session',
       replayFingerprint,
       messages: Object.freeze(replayMessages),
     });
   }
 
   completeTurn(plan) {
-    const state = this.#stateForPlan(plan);
+    const { state, route } = this.#stateForPlan(plan);
     state.activeToken = null;
-    state.completedTurns += 1;
-    state.lastReplayFingerprint = plan.replayFingerprint;
+    state.activeRuntimeFingerprint = null;
+    state.lastRuntimeFingerprint = plan.runtimeFingerprint;
+    state.totalCompletedTurns += 1;
+    route.completedTurns += 1;
+    route.lastReplayFingerprint = plan.replayFingerprint;
     return this.snapshot(plan.conversationId);
   }
 
   abortTurn(plan) {
-    const state = this.#states.get(String(plan?.conversationId ?? ''));
+    const id = String(plan?.conversationId ?? '');
+    const state = this.#states.get(id);
     if (!state || state.activeToken !== plan?.token) return false;
-    // A failed/cancelled provider turn has ambiguous provider-side state. Forget
-    // the bridge mapping so the next attempt starts from Cuppet's durable replay.
-    this.#states.delete(plan.conversationId);
+    const fingerprint = String(plan?.runtimeFingerprint ?? state.activeRuntimeFingerprint ?? '');
+    state.activeToken = null;
+    state.activeRuntimeFingerprint = null;
+    if (fingerprint) state.routes.delete(fingerprint);
+    if (state.lastRuntimeFingerprint === fingerprint) state.lastRuntimeFingerprint = null;
+    if (!state.routes.size) this.#states.delete(id);
     return true;
+  }
+
+  forgetRuntime(conversationId, runtimeFingerprint) {
+    const id = String(conversationId ?? '');
+    const fingerprint = String(runtimeFingerprint ?? '');
+    const state = this.#states.get(id);
+    if (!state || !fingerprint) return false;
+    if (state.activeRuntimeFingerprint === fingerprint) throw new Error('Cannot forget an active provider bridge runtime.');
+    const removed = state.routes.delete(fingerprint);
+    if (state.lastRuntimeFingerprint === fingerprint) state.lastRuntimeFingerprint = null;
+    if (!state.routes.size && !state.activeToken) this.#states.delete(id);
+    return removed;
   }
 
   forget(conversationId) {
@@ -78,35 +100,51 @@ export class ConversationBridge {
 
   snapshot(conversationId) {
     const state = this.#states.get(String(conversationId ?? ''));
-    return Object.freeze(state ? {
+    if (!state) return emptySnapshot();
+    const fingerprint = state.activeRuntimeFingerprint || state.lastRuntimeFingerprint || null;
+    const route = fingerprint ? state.routes.get(fingerprint) : null;
+    return Object.freeze({
       contextOwner: 'cuppet',
       delivery: 'full-replay',
       providerHistory: 'turn-isolated',
-      runtimeFingerprint: state.runtimeFingerprint,
-      completedTurns: state.completedTurns,
+      runtimeFingerprint: fingerprint,
+      completedTurns: route?.completedTurns ?? 0,
+      totalCompletedTurns: state.totalCompletedTurns,
+      warmRuntimeCount: state.routes.size,
       active: Boolean(state.activeToken),
-      lastReplayFingerprint: state.lastReplayFingerprint,
-    } : {
-      contextOwner: 'cuppet',
-      delivery: 'full-replay',
-      providerHistory: 'turn-isolated',
-      runtimeFingerprint: null,
-      completedTurns: 0,
-      active: false,
-      lastReplayFingerprint: null,
+      lastReplayFingerprint: route?.lastReplayFingerprint ?? null,
     });
   }
 
   #stateForPlan(plan) {
     const id = requiredText(plan?.conversationId, 'plan.conversationId');
+    const fingerprint = requiredText(plan?.runtimeFingerprint, 'plan.runtimeFingerprint');
     const state = this.#states.get(id);
-    if (!state || state.activeToken !== plan?.token) throw new Error('Conversation bridge turn is no longer active.');
-    return state;
+    if (!state || state.activeToken !== plan?.token || state.activeRuntimeFingerprint !== fingerprint) {
+      throw new Error('Conversation bridge turn is no longer active.');
+    }
+    const route = state.routes.get(fingerprint);
+    if (!route) throw new Error('Conversation bridge runtime route is no longer available.');
+    return { state, route };
   }
 }
 
 export function fingerprintConversationMessages(messages = []) {
   return fingerprintMessages(cloneMessages(messages));
+}
+
+function emptySnapshot() {
+  return Object.freeze({
+    contextOwner: 'cuppet',
+    delivery: 'full-replay',
+    providerHistory: 'turn-isolated',
+    runtimeFingerprint: null,
+    completedTurns: 0,
+    totalCompletedTurns: 0,
+    warmRuntimeCount: 0,
+    active: false,
+    lastReplayFingerprint: null,
+  });
 }
 
 function cloneMessages(messages) {
