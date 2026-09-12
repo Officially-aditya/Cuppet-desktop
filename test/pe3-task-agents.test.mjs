@@ -22,6 +22,38 @@ test('PE3 keeps related turns together, splits explicit disjoint work, and react
   assert.equal(back.agent.sessionID, 'session-a');
 });
 
+test('PE3 preserves short and corrective conversational follow-ups on the active task', () => {
+  const router = new TaskAgentRouter();
+  router.register('session-a');
+  router.recordTurn('Review backlink targets and sitemap pages for this project');
+
+  const shortFollowUp = router.route('yeah, what are these pages?');
+  assert.equal(shortFollowUp.action, 'continue');
+  assert.equal(shortFollowUp.agent.sessionID, 'session-a');
+  assert.equal(shortFollowUp.reason, 'context-dependent follow-up preserves the active agent');
+  assert.equal(shortFollowUp.semanticEligible, undefined);
+
+  const correctiveFollowUp = router.route("please check the actual files before answering, this isn't helping at all");
+  assert.equal(correctiveFollowUp.action, 'continue');
+  assert.equal(correctiveFollowUp.agent.sessionID, 'session-a');
+  assert.equal(correctiveFollowUp.reason, 'context-dependent follow-up preserves the active agent');
+  assert.equal(correctiveFollowUp.semanticEligible, undefined);
+});
+
+test('PE3 reserves semantic novelty routing for self-contained task requests', () => {
+  const router = new TaskAgentRouter();
+  router.register('session-a');
+  router.recordTurn('Review backlink targets and sitemap pages for this project');
+
+  const standalone = router.route('Implement billing retries with webhook idempotency');
+  assert.equal(standalone.action, 'continue');
+  assert.equal(standalone.semanticEligible, true);
+  assert.match(standalone.reason, /ambiguous or weak mismatch/);
+
+  const explicit = router.route('New task: implement billing retries with webhook idempotency');
+  assert.equal(explicit.action, 'create');
+});
+
 test('workspace mutation removes dormant file privilege and requires refresh on reactivation', () => {
   const router = new TaskAgentRouter();
   router.register('session-a');
