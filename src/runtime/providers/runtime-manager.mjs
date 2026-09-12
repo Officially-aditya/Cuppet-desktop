@@ -92,8 +92,9 @@ export class ProviderRuntimeManager {
 
   async #runAcp({ sessionId, backendId, descriptor, providerConfig, projectRoot, messages, options }) {
     const fingerprint = acpRuntimeFingerprint({ backendId, descriptor, configuration: providerConfig, projectRoot });
+    const selection = acpSessionSelection(providerConfig);
     let entry = this.#entries.get(sessionId);
-    if (entry && entry.fingerprint !== fingerprint) {
+    if (entry && (entry.fingerprint !== fingerprint || selectionRequiresFreshProcess(entry.selection, selection))) {
       this.#entries.delete(sessionId);
       this.#conversationBridge.forget?.(sessionId);
       clearTimeout(entry.idleTimer);
@@ -102,7 +103,7 @@ export class ProviderRuntimeManager {
     }
     if (!entry) {
       const runtime = this.#acpRuntimeFactory({ backendId, descriptor, configuration: providerConfig, projectRoot });
-      entry = { runtime, backendId, fingerprint, started: false, turns: 0, idleTimer: null, busy: false, activeToolSession: null };
+      entry = { runtime, backendId, fingerprint, selection: null, started: false, turns: 0, idleTimer: null, busy: false, activeToolSession: null };
       this.#entries.set(sessionId, entry);
     }
     if (entry.busy) throw new Error('This Cuppet session already has an active managed provider turn.');
@@ -134,7 +135,7 @@ export class ProviderRuntimeManager {
           if (options.signal.aborted) abortToolSession();
         }
       }
-      const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [] };
+      const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [], selection };
       if (bridgePlan.providerSessionAction === 'start') {
         if (entry.started) throw new Error('Conversation Bridge requested a provider start for an already-started runtime.');
         await entry.runtime.start(sessionOptions);
@@ -143,6 +144,7 @@ export class ProviderRuntimeManager {
         if (!entry.started) throw new Error('Conversation Bridge requested a new logical session before the provider runtime started.');
         await entry.runtime.newSession(sessionOptions);
       }
+      entry.selection = selection;
       const result = await entry.runtime.runTurn({ messages: bridgePlan.messages }, {
         signal: options.signal,
         executeTool: options.executeTool,
@@ -167,7 +169,7 @@ export class ProviderRuntimeManager {
       entry.turns += 1;
       await this.#usageRecorder?.({
         providerID: backendId,
-        modelID: configuredModel(providerConfig) || 'unknown',
+        modelID: selection.model || 'unknown',
         usage: normalizedResult?.usage,
       }).catch?.(() => undefined);
       return normalizedResult;
@@ -209,31 +211,43 @@ async function closeManagedEntry(entry) {
 
 export function acpRuntimeFingerprint({ backendId, descriptor = null, configuration = {}, projectRoot = null } = {}) {
   const source = record(configuration);
-  const primary = record(source.primary);
   const payload = {
     protocol: 'acp',
     backendId: text(backendId || descriptor?.id || providerId(source)).toLowerCase(),
     projectRoot: resolve(projectRoot || tmpdir()),
     command: text(source.cliCommand || descriptor?.command),
     cliArgs: Array.isArray(source.cliArgs) ? source.cliArgs.map((item) => String(item)) : Array.isArray(descriptor?.args) ? descriptor.args.map(String) : [],
+    cliEnv: stableValue(source.cliEnv),
     sessionMeta: stableValue(descriptor?.sessionMeta),
     mcpToolBridge: descriptor?.mcpToolBridge === true,
     textStream: stableValue(descriptor?.textStream),
-    model: text(primary.modelID || source.model || source.modelID),
-    effort: text(source.primaryEffort || primary.variant),
     runtimeSettings: stableValue(source.runtimeSettings),
   };
   return createHash('sha256').update(stableStringify(payload)).digest('hex');
+}
+
+export function acpSessionSelection(configuration = {}) {
+  const source = record(configuration);
+  const primary = record(source.primary);
+  return Object.freeze({
+    model: text(primary.modelID || source.model || source.modelID) || null,
+    effort: text(source.primaryEffort || primary.variant) || null,
+  });
 }
 
 export function openCodeRuntimeFingerprint(configuration = {}, projectRoot = null) {
   return acpRuntimeFingerprint({ backendId: 'opencode', descriptor: localCliDescriptor('opencode'), configuration, projectRoot });
 }
 
-function configuredModel(configuration) {
-  const source = record(configuration);
-  const primary = record(source.primary);
-  return text(primary.modelID || source.model || source.modelID);
+function selectionRequiresFreshProcess(previous, next) {
+  if (!previous) return false;
+  const previousModel = text(previous.model);
+  const nextModel = text(next?.model);
+  const previousEffort = text(previous.effort);
+  const nextEffort = text(next?.effort);
+  const clearsModel = previousModel && previousModel !== 'cli-default' && (!nextModel || nextModel === 'cli-default');
+  const clearsEffort = Boolean(previousEffort && !nextEffort);
+  return Boolean(clearsModel || clearsEffort);
 }
 function providerId(configuration) {
   const source = record(configuration);
