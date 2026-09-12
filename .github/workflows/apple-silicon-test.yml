@@ -2,6 +2,21 @@ name: Apple Silicon Test Build
 
 on:
   workflow_dispatch:
+    inputs:
+      authenticated_opencode_commit:
+        description: Exact commit SHA that passed scripts/smoke-authenticated-opencode-acp.mjs on an authenticated Mac
+        required: false
+        type: string
+      authenticated_opencode_passed:
+        description: Confirm the authenticated OpenCode prompt + Cuppet MCP smoke passed for this exact commit
+        required: false
+        default: false
+        type: boolean
+      publish_prerelease:
+        description: Publish the tested artifact as a GitHub prerelease after all acceptance steps pass
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - feat/e2-apple-silicon-test
@@ -24,8 +39,18 @@ jobs:
       TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
       BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CUPPET_AUTHENTICATED_OPENCODE_COMMIT: ${{ inputs.authenticated_opencode_commit }}
+      CUPPET_AUTHENTICATED_OPENCODE_PASSED: ${{ inputs.authenticated_opencode_passed }}
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enforce Provider V2 authenticated OpenCode release gate
+        run: node scripts/verify-provider-release-gate.mjs
 
       - uses: actions/checkout@v6
         with:
@@ -40,11 +65,6 @@ jobs:
           ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
           path: .e2/browsercontrol
           persist-credentials: false
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          package-manager-cache: false
 
       - name: Verify Apple Silicon runner
         run: |
@@ -192,8 +212,11 @@ jobs:
           test -s "$DMG"
           hdiutil imageinfo "$DMG" >/dev/null
           shasum -a 256 "$ZIP" "$DMG" > dist/SHA256SUMS.txt
-          cat > dist/TESTING.txt <<'EOF'
+          cat > dist/TESTING.txt <<EOF
           Cuppet Apple Silicon test build
+
+          Source commit: ${GITHUB_SHA}
+          Provider V2 authenticated OpenCode smoke attested for this exact commit before packaging.
 
           This build is ARM64 and ad-hoc signed for testing, but it is NOT Developer ID signed or notarized yet.
           If macOS blocks the first launch, right-click the app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
@@ -214,6 +237,8 @@ jobs:
           - TST-backed graph/context behavior in both projects
           - memory persistence after restart
           - project isolation
+          - switch OpenCode model/effort within one chat and confirm the response continues without reconnecting the CLI
+          - switch OpenCode -> Codex -> OpenCode in one chat and confirm Cuppet full replay preserves conversation context
           - OpenCode Settings reports connected only when `opencode auth list` shows usable credentials or provider environment auth
           - retry the same OpenCode prompt that previously produced the generic unexpected-error card; structured provider/auth errors should now surface directly
           EOF
@@ -231,6 +256,7 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub prerelease assets
+        if: ${{ github.ref_name != 'feat/provider-architecture-v2' || (github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true) }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -245,5 +271,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Ad-hoc-signed, non-notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
+            --notes "Ad-hoc-signed, non-notarized Apple Silicon test candidate. The DMG is the recommended download. Built on native arm64 macOS after an authenticated OpenCode provider-turn smoke was attested for this exact commit, and passed React renderer verification plus E1/F1/E2 packaged acceptance with the complete official OpenAI Codex app-server package and the pinned browserControl Chrome MCP runtime." \
             --prerelease
