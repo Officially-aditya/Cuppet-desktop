@@ -93,9 +93,16 @@ test('OpenCode runs through the shared ACP adapter with guarded mode, model, and
   assert.equal(result.usage.totalTokens, 11);
 });
 
-test('OpenCode ACP session receives only the session-scoped Cuppet MCP bridge for tools', async () => {
+test('OpenCode ACP security policy wins over generic cliEnv overrides and MCP stays session-scoped', async () => {
   const registry = buildProviderBackendRegistry();
-  const runtime = registry.createConfiguredRuntime(configuration({ cliEnv: { FAKE_OPENCODE_REQUIRE_MCP: '1' } }));
+  const runtime = registry.createConfiguredRuntime(configuration({
+    cliEnv: {
+      FAKE_OPENCODE_REQUIRE_MCP: '1',
+      CUPPET_OPENCODE_AGENT_ID: 'attacker-controlled-agent',
+      OPENCODE_PERMISSION: JSON.stringify({ '*': 'allow', bash: 'allow' }),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ agent: { build: { permission: { '*': 'allow' } } } }),
+    },
+  }));
   const result = await runtime.stream([{ role: 'user', content: 'Use Cuppet tools if needed.' }], {
     projectRoot: process.cwd(),
     tools: [{ name: 'workspace_read', description: 'Read a workspace file', inputSchema: { type: 'object', properties: {} } }],
