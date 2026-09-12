@@ -5,16 +5,15 @@ import { modelCatalogFromCapabilitySnapshot } from '../runtime/providers/capabil
 // invoke these through the main-process catalog; provider drivers own them.
 export { catalogFromCodexModels } from '../runtime/providers/backends/codex.mjs';
 export { parseApiCatalog } from '../runtime/providers/backends/api.mjs';
-export { discoverAntigravityModels, parseAntigravityModelOutput } from '../runtime/providers/backends/antigravity.mjs';
 
 /**
  * Project the active provider driver's capability snapshot into the renderer's
  * model-catalog compatibility shape.
  *
  * The main process deliberately does not know whether the provider uses ACP,
- * Codex app-server, a headless CLI, or HTTP. Transport/provider quirks belong
- * to the registered driver; this layer only applies a read-only candidate model
- * and returns the normalized snapshot.
+ * Codex app-server, a managed provider runtime, or HTTP. Transport/provider
+ * quirks belong to the registered driver; this layer only applies a read-only
+ * candidate model and returns the normalized snapshot.
  */
 export async function fetchProviderModelCatalog(configuration = {}, options = {}) {
   const providerID = text(configuration.providerID || configuration.primary?.providerID).toLowerCase();
