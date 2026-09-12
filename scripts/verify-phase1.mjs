@@ -32,10 +32,12 @@ const chat = await readFile(join(root, 'src/renderer/react/ChatPane.tsx'), 'utf8
 if (!/dist-renderer.*index\.html/s.test(host)) throw new Error('Electron does not load the Vite renderer');
 if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) throw new Error('React conversation send surface missing');
 
-// Let the Node test reporter flush normally. --test-force-exit can terminate the
-// reporter while stdout is still draining and produce a false EPIPE failure even
-// after every test has passed. The parent timeout still bounds leaked handles.
-await run(process.execPath, ['--test', '--test-timeout=120000'], { timeoutMs: 180000 });
+// Some integration tests intentionally leave runtime handles alive, so the suite
+// needs --test-force-exit. Do not connect the forced child directly to the GitHub
+// Actions stdout pipe: Node's test reporter can race that inherited pipe during
+// force-exit and throw EPIPE after a completely successful test run. Capture the
+// child streams until `close`, then replay them from this long-lived verifier.
+await runCaptured(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000'], { timeoutMs: 180000 });
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
@@ -58,25 +60,39 @@ async function walk(dir) {
   }
   return output;
 }
-function run(command, args, { timeoutMs = 0 } = {}) {
+function runCaptured(command, args, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
+    const child = spawn(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = [];
     let settled = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => chunks.push(chunk));
+    child.stderr.on('data', (chunk) => chunks.push(chunk));
+
+    const replay = () => {
+      if (!chunks.length) return;
+      process.stdout.write(chunks.join(''));
+      chunks.length = 0;
+    };
     const timer = timeoutMs > 0 ? setTimeout(() => {
       if (settled) return;
       settled = true;
       child.kill('SIGTERM');
+      replay();
       reject(new Error(`${command} exceeded ${timeoutMs}ms`));
     }, timeoutMs) : undefined;
     timer?.unref?.();
+
     const finish = (fn) => {
       if (settled) return false;
       settled = true;
       if (timer) clearTimeout(timer);
+      replay();
       fn();
       return true;
     };
-    child.on('exit', (code, signal) => finish(() => code === 0
+    child.on('close', (code, signal) => finish(() => code === 0
       ? resolve()
       : reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`))));
     child.on('error', (error) => finish(() => reject(error)));
