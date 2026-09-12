@@ -51,7 +51,7 @@ if (config?.permission?.['*'] !== 'deny' || mcp?.type !== 'local' || !Array.isAr
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://127.0.0.1:${port}`);
   if (request.method === 'GET' && url.pathname === '/global/health') {
-    return json(response, 200, { healthy: true, version: '1.18.5' });
+    return json(response, 200, { healthy: true, version: '1.18.30' });
   }
   if (request.method === 'POST' && url.pathname === '/session') {
     await body(request);
@@ -71,6 +71,39 @@ const server = createServer(async (request, response) => {
     if (!String(payload?.system || '').includes('Cuppet')) {
       return json(response, 400, { error: 'Cuppet runtime instructions missing' });
     }
+
+    const prompt = payload.parts.map((part) => part?.text || '').join('\n');
+    if (prompt.includes('TRIGGER_PROVIDER_AUTH_ERROR')) {
+      return json(response, 200, {
+        info: {
+          error: {
+            name: 'ProviderAuthError',
+            data: {
+              providerID: 'anthropic',
+              message: 'Missing provider credentials',
+            },
+          },
+        },
+        parts: [],
+      });
+    }
+    if (prompt.includes('TRIGGER_API_ERROR')) {
+      return json(response, 200, {
+        info: {
+          error: {
+            name: 'APIError',
+            data: {
+              providerID: 'anthropic',
+              message: 'Rate limit exceeded',
+              statusCode: 429,
+              isRetryable: true,
+            },
+          },
+        },
+        parts: [],
+      });
+    }
+
     return json(response, 200, {
       info: { tokens: { input: 3, output: 2, reasoning: 1, cache: { read: 1 } } },
       parts: [{ type: 'text', text: 'OpenCode ready.' }],
