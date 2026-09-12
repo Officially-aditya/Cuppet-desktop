@@ -45,6 +45,7 @@ jobs:
           test/runtime-service-provider-lifecycle.test.mjs
           test/runtime-c1.test.mjs
           test/provider-activity-renderer.test.mjs
+          test/message-activities.test.mjs
           test/provider-model-renderer-sync.test.mjs
           test/provider-error.test.mjs
           test/execution-capabilities.test.mjs
