@@ -2,7 +2,29 @@ import { createServer } from 'node:http';
 
 const args = process.argv.slice(2);
 if (args[0] === 'models') {
-  process.stdout.write('anthropic/test-model\nopenai/test-model\n');
+  if (!args.includes('--verbose')) {
+    process.stderr.write('expected --verbose model discovery\n');
+    process.exit(5);
+  }
+  process.stdout.write([
+    'anthropic/test-model',
+    JSON.stringify({
+      id: 'test-model',
+      name: 'Anthropic Test Model',
+      family: 'claude-test',
+      limit: { context: 200000, output: 64000 },
+      variants: { low: {}, medium: {}, high: {} },
+    }, null, 2),
+    'openai/test-model',
+    JSON.stringify({
+      id: 'test-model',
+      name: 'OpenAI Test Model',
+      family: 'gpt-test',
+      limit: { context: 128000, output: 32000 },
+      variants: { minimal: {}, high: {} },
+    }, null, 2),
+    '',
+  ].join('\n'));
   process.exit(0);
 }
 
@@ -39,6 +61,9 @@ const server = createServer(async (request, response) => {
     const payload = await body(request);
     if (payload?.model?.providerID !== 'anthropic' || payload?.model?.modelID !== 'test-model') {
       return json(response, 400, { error: 'model was not forwarded' });
+    }
+    if (payload?.variant !== 'high') {
+      return json(response, 400, { error: 'variant was not forwarded' });
     }
     if (payload?.agent !== 'build' || payload?.tools?.bash !== false || payload?.tools?.edit !== false || !Array.isArray(payload?.parts)) {
       return json(response, 400, { error: 'Cuppet execution isolation was not forwarded' });
