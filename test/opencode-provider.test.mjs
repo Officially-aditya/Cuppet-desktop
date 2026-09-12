@@ -4,6 +4,7 @@ import test from 'node:test';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { classifyProviderError } from '../src/runtime/provider-error.mjs';
 import { buildProviderBackendRegistry } from '../src/runtime/providers/default-registry.mjs';
+import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-opencode-acp-agent.mjs', import.meta.url));
 
@@ -109,6 +110,33 @@ test('OpenCode ACP security policy wins over generic cliEnv overrides and MCP st
     executeTool: async () => ({ ok: true }),
   });
   assert.equal(result.text, 'OpenCode ACP ready.');
+});
+
+test('warm OpenCode route reapplies the guarded mode on every fresh ACP logical session', async () => {
+  const registry = buildProviderBackendRegistry();
+  const manager = new ProviderRuntimeManager();
+  const adapter = registry.createConfiguredRuntime(configuration());
+  const managed = manager.adapterFor({
+    sessionId: 'opencode-warm-guard-test',
+    projectRoot: process.cwd(),
+    adapter,
+  });
+  try {
+    const first = await managed.stream([{ role: 'user', content: 'First turn.' }], {});
+    const second = await managed.stream([
+      { role: 'user', content: 'First turn.' },
+      { role: 'assistant', content: first.text },
+      { role: 'user', content: 'Second turn.' },
+    ], {});
+    assert.equal(first.text, 'OpenCode ACP ready.');
+    assert.equal(second.text, 'OpenCode ACP ready.');
+    const snapshot = manager.conversationSnapshot('opencode-warm-guard-test');
+    assert.equal(snapshot?.totalCompletedTurns, 2);
+    assert.equal(snapshot?.completedTurns, 2);
+    assert.equal(snapshot?.warmRuntimeCount, 1);
+  } finally {
+    await manager.close();
+  }
 });
 
 test('OpenCode ACP authentication failure reaches the generic reauthentication classifier', async () => {
