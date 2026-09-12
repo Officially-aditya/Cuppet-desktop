@@ -41,6 +41,7 @@ export function classifyProviderError(error, context = {}) {
   ])) return failure('quota_exhausted', 'Provider allowance exhausted', `${provider} reports that this account has no remaining allowance or credits. Wait for the plan to reset, add provider billing/credits if applicable, or switch providers.`, 'provider_billing', raw, providerID, provider);
 
   if (status === 401 || status === 403 || matches(lower, [
+    'providerautherror', 'missing provider credentials', 'missing provider credential', 'missing api key',
     'unauthorized', 'unauthenticated', 'authentication failed', 'authentication error', 'invalid api key',
     'invalid_api_key', 'invalid token', 'token expired', 'expired token', 'session expired', 'login expired',
     'not logged in', 'not authenticated', 'sign in required', 'signin required', 'login required',
