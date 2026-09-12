@@ -5,7 +5,14 @@ import { providerActivity } from '../../activity.mjs';
 import { AcpProcess } from './acp-process.mjs';
 import { AcpRpcChannel } from './acp-rpc.mjs';
 import { AcpHostBridge } from './acp-host-bridge.mjs';
-import { capabilitiesFromAcpSession, withAcpConfigOptions } from './acp-capabilities.mjs';
+import {
+  capabilitiesFromAcpSession,
+  hasNativeAcpConfigOption,
+  legacyAcpAdvertisesModel,
+  withAcpCompatConfigOption,
+  withAcpConfigOptions,
+  withLegacyAcpModel,
+} from './acp-capabilities.mjs';
 import { AcpActivityNormalizer } from './acp-activity.mjs';
 import { AcpTurnCompletionGate } from './acp-turn-completion.mjs';
 
@@ -238,6 +245,8 @@ export class AcpSessionRuntime {
     this.#session = await this.#rpc.request('session/new', params, REQUEST_TIMEOUT_MS);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
+    await this.#refreshCommandSettings();
+    this.#refreshCapabilities();
     await this.#applyRequiredSessionSettings();
     await this.#applyConfiguredSettings(selection);
   }
@@ -265,6 +274,10 @@ export class AcpSessionRuntime {
     if (configuredModel && configuredModel !== 'cli-default') {
       const modelSetting = modelRuntimeSetting(this.#capabilities);
       await this.#applySelectSetting(modelSetting, configuredModel, 'model');
+      // Model-dependent command settings (for example reasoning effort) must be
+      // re-read after the provider accepts a model change.
+      await this.#refreshCommandSettings();
+      this.#refreshCapabilities();
     }
     const configuredEffort = text(configured.effort);
     if (configuredEffort) {
@@ -277,13 +290,70 @@ export class AcpSessionRuntime {
     if (!setting) throw new Error(`${this.#descriptor.label} does not advertise a switchable ${label}; leaving its provider default unchanged.`);
     if (!settingAdvertisesValue(setting, requested)) throw new Error(`${this.#descriptor.label} no longer advertises ${label} '${requested}'. Refresh provider capabilities.`);
     if (setting.value === requested) return;
+
+    const sessionId = text(this.#session?.sessionId);
+    if (hasNativeAcpConfigOption(this.#session, setting.id)) {
+      const result = await this.#rpc.request('session/set_config_option', {
+        sessionId,
+        configId: setting.id,
+        value: requested,
+      }, REQUEST_TIMEOUT_MS);
+      this.#session = withAcpConfigOptions(this.#session, result);
+      this.#refreshCapabilities();
+      return;
+    }
+
+    if (isModelSetting(setting) && legacyAcpAdvertisesModel(this.#session, requested)) {
+      await this.#rpc.request('session/set_model', { sessionId, modelId: requested }, REQUEST_TIMEOUT_MS);
+      this.#session = withLegacyAcpModel(this.#session, requested);
+      this.#refreshCapabilities();
+      return;
+    }
+
+    const commandSetting = descriptorCommandSetting(this.#descriptor, setting);
+    if (commandSetting) {
+      const executeMethod = text(commandSetting.executeMethod);
+      const command = text(commandSetting.command);
+      if (!executeMethod || !command) throw new Error(`${this.#descriptor.label} has an incomplete ACP command setting for ${label}.`);
+      await this.#rpc.request(executeMethod, {
+        sessionId,
+        command: { command, args: { value: requested } },
+      }, REQUEST_TIMEOUT_MS);
+      await this.#refreshCommandSettings({ [setting.id]: requested });
+      this.#refreshCapabilities();
+      return;
+    }
+
+    // Stable Config Options remain the generic fallback for agents that advertise
+    // a normalized setting through another compatible session shape.
     const result = await this.#rpc.request('session/set_config_option', {
-      sessionId: text(this.#session?.sessionId),
+      sessionId,
       configId: setting.id,
       value: requested,
     }, REQUEST_TIMEOUT_MS);
     this.#session = withAcpConfigOptions(this.#session, result);
     this.#refreshCapabilities();
+  }
+
+  async #refreshCommandSettings(currentOverrides = {}) {
+    const sessionId = text(this.#session?.sessionId);
+    if (!sessionId) return;
+    for (const raw of Array.isArray(this.#descriptor?.sessionCommandSettings) ? this.#descriptor.sessionCommandSettings : []) {
+      const setting = record(raw);
+      const id = text(setting.id);
+      const command = text(setting.command);
+      const optionsMethod = text(setting.optionsMethod);
+      if (!id || !command || !optionsMethod) continue;
+      try {
+        const result = await this.#rpc.request(optionsMethod, { sessionId, command, partial: '' }, REQUEST_TIMEOUT_MS);
+        const option = commandConfigOption(setting, result, this.#session, currentOverrides[id]);
+        if (option) this.#session = withAcpCompatConfigOption(this.#session, option);
+      } catch {
+        // Descriptor command settings are capability probes, not startup authority.
+        // If an older/newer agent omits the extension, leave the setting unavailable
+        // and let an explicit user selection fail closed later rather than breaking chat.
+      }
+    }
   }
 
   #refreshCapabilities() {
@@ -307,6 +377,60 @@ async function authenticateIfNeeded(rpc, descriptor, initialized, environment) {
   if (!methodId) throw new Error(descriptor.loginHint);
   const meta = record(policy.meta);
   await rpc.request('authenticate', { methodId, ...(Object.keys(meta).length ? { _meta: meta } : {}) }, REQUEST_TIMEOUT_MS);
+}
+
+function commandConfigOption(setting, result, session, override) {
+  const source = record(result);
+  const options = [];
+  const seen = new Set();
+  let advertisedCurrent = '';
+  for (const raw of Array.isArray(source.options) ? source.options : []) {
+    const item = typeof raw === 'string' ? { value: raw } : record(raw);
+    const value = text(item.value || item.id);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    if (item.current === true || item.selected === true || item.isCurrent === true) advertisedCurrent = value;
+    options.push({
+      value,
+      name: text(item.label || item.name) || value,
+      ...(text(item.description) ? { description: text(item.description) } : {}),
+    });
+  }
+  if (!options.length) return null;
+  const requestedCurrent = text(override);
+  const responseCurrent = text(source.currentValue || source.current_value || source.current || source.value);
+  const previousCurrent = compatSettingCurrent(session, text(setting.id));
+  const candidates = [requestedCurrent, responseCurrent, advertisedCurrent, previousCurrent];
+  const currentValue = candidates.find((value) => value && options.some((item) => item.value === value)) || '';
+  return {
+    id: text(setting.id),
+    name: text(setting.label) || text(setting.id),
+    category: text(setting.category),
+    type: 'select',
+    ...(currentValue ? { currentValue } : {}),
+    options,
+  };
+}
+
+function compatSettingCurrent(session, settingId) {
+  const requested = text(settingId);
+  if (!requested) return '';
+  const options = Array.isArray(record(session)._cuppetConfigOptions) ? record(session)._cuppetConfigOptions : [];
+  const match = options.find((raw) => text(record(raw).id) === requested);
+  const source = record(match);
+  return text(source.currentValue || source.current_value);
+}
+
+function descriptorCommandSetting(descriptor, setting) {
+  const id = text(setting?.id);
+  const category = text(setting?.category);
+  return (Array.isArray(descriptor?.sessionCommandSettings) ? descriptor.sessionCommandSettings : [])
+    .map(record)
+    .find((item) => (id && text(item.id) === id) || (category && text(item.category) === category)) ?? null;
+}
+
+function isModelSetting(setting) {
+  return text(setting?.category) === 'model' || text(setting?.id) === 'model';
 }
 
 function normalizeMcpServers(value) {
