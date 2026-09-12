@@ -63,7 +63,7 @@ export class JournaledToolRuntime {
     });
     const emitProviderActivity = (activity) => {
       if (!messageId || !isProviderActivity(activity)) return;
-      this.#safeEmit({ type: 'runtime.activity', source: 'provider', sessionId: options.sessionId, messageId, activity });
+      this.#emitActivity({ source: 'provider', sessionId: options.sessionId, messageId, activity });
     };
     const capture = new ToolMutationCapture({
       journal: this.#journal,
@@ -152,14 +152,32 @@ export class JournaledToolRuntime {
     try { activity = activityFromToolRuntimeEvent(decorated); } catch {}
     const messageId = String(decorated?.messageId ?? '');
     if (activity && messageId) {
-      this.#safeEmit({
-        type: 'runtime.activity',
+      this.#emitActivity({
         source: 'execution',
         sessionId: decorated.sessionId,
         messageId,
         activity,
       });
     }
+  }
+
+  #emitActivity({ source, sessionId, messageId, activity }) {
+    let persisted = null;
+    try {
+      persisted = this.#db?.appendMessageActivity?.({ sessionId, messageId, source, activity }) ?? null;
+    } catch {
+      // Activity persistence must never break foreground generation. The event
+      // still reaches live clients, but the renderer will not pretend it is durable.
+    }
+    this.#safeEmit({
+      type: 'runtime.activity',
+      source,
+      sessionId,
+      messageId,
+      activity,
+      ...(persisted?.sequence !== undefined ? { sequence: persisted.sequence } : {}),
+      ...(persisted?.createdAt !== undefined ? { createdAt: persisted.createdAt } : {}),
+    });
   }
 
   #safeEmit(event) {
