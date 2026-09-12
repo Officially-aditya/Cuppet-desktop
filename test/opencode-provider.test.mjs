@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { OpenCodeServerProvider, discoverOpenCodeModels } from '../src/runtime/providers/backends/opencode.mjs';
+import { OpenCodeServerProvider, discoverOpenCodeModels, opencodeBackendDefinition } from '../src/runtime/providers/backends/opencode.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-opencode-server.mjs', import.meta.url));
@@ -29,10 +29,30 @@ test('OpenCode uses managed serve/http transport with Cuppet-owned execution aut
   assert.equal(result.usage.reasoningTokens, 1);
 });
 
-test('OpenCode model discovery uses provider CLI inventory, not ACP session startup', async () => {
+test('OpenCode model discovery keeps provider-advertised variants from verbose inventory', async () => {
   const catalog = await discoverOpenCodeModels(localCliDescriptor('opencode'), {
     configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
   });
   assert.equal(catalog.available, true);
   assert.deepEqual(catalog.models.map((model) => model.id), ['anthropic/test-model', 'openai/test-model']);
+  assert.deepEqual(catalog.models[0].variants, ['low', 'medium', 'high']);
+  assert.equal(catalog.models[0].context, 200000);
+  assert.equal(catalog.models[0].outputLimit, 64000);
+});
+
+test('OpenCode capability discovery exposes effort for the selected model', async () => {
+  const backend = opencodeBackendDefinition();
+  const capabilities = await backend.operations.discoverCapabilities({
+    configuration: {
+      providerID: 'opencode',
+      cliCommand: process.execPath,
+      cliArgs: [fixture],
+      primary: { providerID: 'opencode', modelID: 'anthropic/test-model', variant: 'high' },
+    },
+  });
+  assert.equal(capabilities.modelDependentSettings, true);
+  assert.equal(capabilities.currentModel, 'anthropic/test-model');
+  assert.equal(capabilities.reasoning.configId, 'variant');
+  assert.equal(capabilities.reasoning.currentValue, 'high');
+  assert.deepEqual(capabilities.reasoning.options.map((item) => item.id), ['low', 'medium', 'high']);
 });
