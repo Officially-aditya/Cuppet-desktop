@@ -7,6 +7,7 @@ import { AcpRpcChannel } from './acp-rpc.mjs';
 import { AcpHostBridge } from './acp-host-bridge.mjs';
 import { capabilitiesFromAcpSession, withAcpConfigOptions } from './acp-capabilities.mjs';
 import { AcpActivityNormalizer } from './acp-activity.mjs';
+import { AcpTurnCompletionGate } from './acp-turn-completion.mjs';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const PROMPT_TIMEOUT_MS = 30 * 60_000;
@@ -45,9 +46,14 @@ export class AcpSessionRuntime {
     this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: this.#environment, label: descriptor.label });
     this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label });
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
-    this.#rpc.setRequestHandler((message) => {
+    this.#rpc.setRequestHandler(async (message) => {
       this.#touchActiveTurn();
-      return this.#hostBridge.handle(message);
+      const finishCompletionRequest = this.#activeTurn?.completion?.beginRequest?.() ?? (() => {});
+      try {
+        return await this.#hostBridge.handle(message);
+      } finally {
+        finishCompletionRequest();
+      }
     });
   }
 
@@ -106,6 +112,7 @@ export class AcpSessionRuntime {
       stalled: false,
       activityTimer: null,
       terminateTimer: null,
+      completion: new AcpTurnCompletionGate(this.#descriptor),
       hooks,
       sessionId,
     };
@@ -125,11 +132,14 @@ export class AcpSessionRuntime {
       if (message.method !== 'session/update' && message.method !== 'session/notification') return;
       const params = record(message.params);
       if (params.sessionId && String(params.sessionId) !== sessionId) return;
+      const update = params.update ?? params;
+      turn.completion.observeUpdate(update);
       this.#touchActiveTurn();
-      await emit(this.#normalizer.normalize(params.update ?? params));
+      await emit(this.#normalizer.normalize(update));
     });
     const onAbort = () => {
       turn.cancelled = true;
+      turn.completion.cancel();
       this.#rpc.notify('session/cancel', { sessionId });
       this.#armTermination(turn);
     };
@@ -143,6 +153,9 @@ export class AcpSessionRuntime {
       );
       if (turn.stalled) throw stalledError(this.#descriptor);
       if (signal?.aborted || turn.cancelled) throw abortError();
+      await turn.completion.afterPrompt(prompt);
+      if (turn.stalled) throw stalledError(this.#descriptor);
+      if (signal?.aborted || turn.cancelled) throw abortError();
       return { text: output, toolCalls: [], usage: normalizeUsage(prompt?.usage ?? prompt?._meta?.usage), stopReason: text(prompt?.stopReason) || null };
     } catch (error) {
       if (turn.stalled) throw stalledError(this.#descriptor);
@@ -150,8 +163,10 @@ export class AcpSessionRuntime {
       throw enrichProviderError(this.#descriptor, error, this.#rpc.stderr());
     } finally {
       signal?.removeEventListener?.('abort', onAbort);
+      turn.completion.cancel();
       clearTimeout(turn.activityTimer);
       clearTimeout(turn.terminateTimer);
+      this.#rpc.setNotificationHandler();
       this.setHostHandlers();
       this.#activeTurn = null;
       if (this.#state !== 'closed') this.#state = 'ready';
@@ -163,6 +178,7 @@ export class AcpSessionRuntime {
     if (!sessionId || !this.#activeTurn) return;
     const turn = this.#activeTurn;
     turn.cancelled = true;
+    turn.completion?.cancel?.();
     this.#rpc.notify('session/cancel', { sessionId });
     this.#armTermination(turn);
   }
@@ -186,6 +202,7 @@ export class AcpSessionRuntime {
     turn.activityTimer = setTimeout(() => {
       if (this.#activeTurn !== turn || turn.cancelled || turn.stalled) return;
       turn.stalled = true;
+      turn.completion?.cancel?.();
       void notifyObserver(turn.hooks.onActivity, providerActivity('activity.warning', {
         code: 'provider_stalled',
         message: `${this.#descriptor.label} stopped producing ACP activity.`,
