@@ -57,6 +57,22 @@ jobs:
           test/provider-model-catalog.test.mjs
           test/antigravity-model-discovery.test.mjs
           test/antigravity-provider.test.mjs
+      - name: Run Phase 1 tail regressions
+        run: >-
+          node --test --test-concurrency=1
+          test/runtime-cognitive.test.mjs
+          test/runtime-pe3.test.mjs
+          test/runtime-process.test.mjs
+          test/runtime-project-binding.test.mjs
+          test/runtime-queue-contract.test.mjs
+          test/runtime-service-provider-lifecycle.test.mjs
+          test/runtime-service.test.mjs
+          test/session-retention.test.mjs
+          test/title-generator.test.mjs
+          test/tool-runtime.test.mjs
+          test/tst-data-alias.test.mjs
+          test/usage-ledger.test.mjs
+          test/workspace-enhancements.test.mjs
       - name: Smoke released OpenCode ACP transport
         run: |
           npm install -g opencode-ai@1.18.30
