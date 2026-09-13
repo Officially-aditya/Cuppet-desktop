@@ -90,6 +90,18 @@ contextBridge.exposeInMainWorld('cuppet', {
     relocate: (projectId, path) => ipcRenderer.invoke('cuppet:project:relocate', projectId, path),
     remove: (projectId) => ipcRenderer.invoke('cuppet:project:remove', projectId),
   },
+  terminal: {
+    start: (projectId) => ipcRenderer.invoke('cuppet:terminal:start', projectId),
+    write: (sessionId, input) => ipcRenderer.invoke('cuppet:terminal:write', sessionId, input),
+    interrupt: (sessionId) => ipcRenderer.invoke('cuppet:terminal:interrupt', sessionId),
+    stop: (sessionId) => ipcRenderer.invoke('cuppet:terminal:stop', sessionId),
+    onEvent: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('cuppet:terminal:event', listener);
+      return () => ipcRenderer.removeListener('cuppet:terminal:event', listener);
+    },
+  },
   native: {
     platform: process.platform,
     chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
