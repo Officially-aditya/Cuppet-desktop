@@ -4,13 +4,18 @@ import { createHash } from 'node:crypto';
 import { RemoteCommandAdapter } from '../src/runtime/remote/commands.mjs';
 
 function fixture(){
-  const sessions=new Map([['s1',{id:'s1',projectId:'p1',title:'One',messages:[{role:'assistant',status:'complete',content:'ok'}]}]]);const calls=[];
+  const sessions=new Map([['s1',{
+    id:'s1',projectId:'p1',title:'One',
+    messages:[{id:'m1',role:'assistant',status:'complete',content:'ok'}],
+    activities:[{sessionId:'s1',messageId:'m1',sequence:1,source:'execution',activity:{type:'activity.tool.closed',callId:'c1',tool:'cuppet_plan',status:'success'}}],
+    toolExecutions:[{id:'e1',sessionId:'s1',callId:'c1',toolName:'cuppet_plan',status:'complete'}],
+  }]]);const calls=[];
   const call=async(method,params={},context)=>{calls.push({method,params,...(context?{context}:{})});switch(method){
     case 'project.list':return[{id:'p1',name:'Project',canonicalPath:'/tmp/project'}];
     case 'project.get':return params.projectId==='p1'?{id:'p1',name:'Project',canonicalPath:'/tmp/project',missing:false}:null;
-    case 'session.list':return[...sessions.values()].map(({messages,...rest})=>rest).filter((s)=>params.projectId===undefined||s.projectId===params.projectId);
+    case 'session.list':return[...sessions.values()].map(({messages,activities,toolExecutions,...rest})=>rest).filter((s)=>params.projectId===undefined||s.projectId===params.projectId);
     case 'session.get':{const value=sessions.get(params.sessionId);if(!value)throw new Error('unknown session');return structuredClone(value);}
-    case 'session.create':{const value={id:'s2',projectId:params.projectId??null,title:'Two',messages:[]};sessions.set('s2',value);return{...value,messages:undefined};}
+    case 'session.create':{const value={id:'s2',projectId:params.projectId??null,title:'Two',messages:[],activities:[],toolExecutions:[]};sessions.set('s2',value);return{...value,messages:undefined,activities:undefined,toolExecutions:undefined};}
     case 'session.mode.get':return{sessionId:params.sessionId,mode:'build'};
     case 'session.mode.set':return{sessionId:params.sessionId,mode:params.mode};
     case 'session.auto.get':return{sessionId:params.sessionId,enabled:false};
@@ -49,6 +54,20 @@ test('remote command adapter keeps provider secret local and binds device worksp
   assert.equal(send.params.provider.baseUrl,'https://api.example.test/v1');
   assert.deepEqual(send.context,{commandId:expectedRemoteCommandId('dev_1','submit_1')});
   assert.equal(JSON.stringify(await adapter.execute(actor,'session.snapshot')).includes('super-secret'),false);
+});
+
+test('session snapshot is the durable remote transcript projection',async()=>{
+  const {adapter}=fixture();
+  await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+  await adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  const snapshot=await adapter.execute(actor,'session.snapshot');
+  assert.equal(snapshot.projectionVersion,1);
+  assert.equal(snapshot.session.id,'s1');
+  assert.deepEqual(snapshot.session.messages,[{id:'m1',role:'assistant',status:'complete',content:'ok'}]);
+  assert.equal(snapshot.session.activities[0]?.activity?.type,'activity.tool.closed');
+  assert.equal(snapshot.session.toolExecutions[0]?.callId,'c1');
+  assert.equal(snapshot.mode,'build');
+  assert.equal(snapshot.autoMode,false);
 });
 
 test('ordinary remote submits derive stable device-scoped durable command ids',async()=>{
