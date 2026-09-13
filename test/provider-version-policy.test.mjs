@@ -103,12 +103,54 @@ test('unparseable version output fails closed when a minimum is required', async
   assert.deepEqual(calls, ['detect']);
 });
 
-function controlPlane(operations) {
+test('capability discovery cannot launch an incompatible OpenCode binary', async () => {
+  const calls = [];
+  let discoveryCalls = 0;
+  const operations = fakeOperations({
+    calls,
+    detected: installedState('opencode 1.18.29', { ownedByCuppet: false, canUpdate: false }),
+  });
+  const plane = controlPlane(operations, {
+    capabilityDiscovery: async () => {
+      discoveryCalls += 1;
+      return { providerID: 'opencode', available: true, models: [{ id: 'm1' }] };
+    },
+  });
+
+  await assert.rejects(() => plane.models({ providerID: 'opencode' }), (error) => {
+    assert.equal(error.code, 'PROVIDER_VERSION_UNSUPPORTED');
+    return true;
+  });
+  assert.equal(discoveryCalls, 0);
+  assert.deepEqual(calls, ['detect']);
+});
+
+test('compatible OpenCode passes version detection before capability discovery', async () => {
+  const calls = [];
+  let discoveryCalls = 0;
+  const operations = fakeOperations({
+    calls,
+    detected: installedState('opencode 1.18.30', { ownedByCuppet: false, canUpdate: false }),
+  });
+  const plane = controlPlane(operations, {
+    capabilityDiscovery: async () => {
+      discoveryCalls += 1;
+      return { providerID: 'opencode', source: 'acp', available: true, models: [{ id: 'm1', label: 'M1' }], defaultModel: 'm1', fetchedAt: 1 };
+    },
+  });
+
+  const catalog = await plane.models({ providerID: 'opencode' });
+  assert.equal(discoveryCalls, 1);
+  assert.equal(catalog.models[0].id, 'm1');
+  assert.deepEqual(calls, ['detect']);
+});
+
+function controlPlane(operations, overrides = {}) {
   return new ProviderControlPlane({
     dataDir: '/tmp/cuppet-version-policy-test',
     operationsFactory: () => operations,
     runtimeHealth: () => ({ state: 'stopped' }),
-    capabilityDiscovery: async () => ({ models: [] }),
+    capabilityDiscovery: overrides.capabilityDiscovery ?? (async () => ({ models: [] })),
   });
 }
 
