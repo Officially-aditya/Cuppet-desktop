@@ -8,7 +8,6 @@ let mode = 'build';
 let sessionId = 'opencode-acp-session';
 let sessionCounter = 0;
 const openSessions = new Set();
-const guardAgent = process.env.CUPPET_OPENCODE_AGENT_ID || '';
 
 function configOptions() {
   const efforts = model === 'provider/model-b' ? ['medium', 'max'] : ['low', 'high'];
@@ -27,17 +26,13 @@ function configOptions() {
     },
     {
       id: 'mode', name: 'Session Mode', category: 'mode', type: 'select', currentValue: mode,
-      options: [
-        { value: 'build', name: 'Build' },
-        ...(guardAgent ? [{ value: guardAgent, name: 'Cuppet Runtime Guard' }] : []),
-      ],
+      options: [{ value: 'build', name: 'Build' }],
     },
   ];
 }
 
 function validateEnvironment() {
   if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1') return 'OpenCode auto-update not disabled';
-  if (!guardAgent.startsWith('cuppet-runtime-')) return 'Cuppet OpenCode guard agent id missing';
 
   let permission = {};
   try { permission = JSON.parse(process.env.OPENCODE_PERMISSION || '{}'); } catch {}
@@ -50,14 +45,6 @@ function validateEnvironment() {
   if (permission['cuppet-runtime_*'] !== 'allow' || permission['cuppet_runtime_*'] !== 'allow') {
     return 'Cuppet MCP tool permission is not allowed';
   }
-
-  let config = {};
-  try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch { return 'Cuppet OpenCode guard config is invalid JSON'; }
-  const agent = config?.agent?.[guardAgent];
-  if (!agent || agent.mode !== 'primary' || agent.hidden !== false) return 'Cuppet OpenCode guard agent missing';
-  const guardPermission = agent.permission || {};
-  if (requiredDenied.some((name) => guardPermission[name] !== 'deny')) return 'Cuppet OpenCode guard agent does not deny native tools';
-  if (guardPermission['cuppet-runtime_*'] !== 'allow' || guardPermission['cuppet_runtime_*'] !== 'allow') return 'Cuppet OpenCode guard agent does not allow Cuppet MCP tools';
   return '';
 }
 
@@ -130,10 +117,6 @@ rl.on('line', (line) => {
     }
     if (prompt.includes('NO_PROVIDER')) {
       write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'No provider available', data: { service: 'session', errorName: 'APIError' } } });
-      return;
-    }
-    if (mode !== guardAgent) {
-      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: `unsafe mode ${mode || '(missing)'}` } });
       return;
     }
     if (model !== 'provider/model-b' || effort !== 'max') {
