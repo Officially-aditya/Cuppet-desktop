@@ -33,12 +33,14 @@ jobs:
           test/provider-architecture-v2.test.mjs
           test/provider-driver-registry.test.mjs
           test/provider-control-plane.test.mjs
+          test/provider-credential-boundary.test.mjs
           test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-runtime-manager-real-acp.test.mjs
           test/provider-runtime-manager-codex.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/provider-acp-model-switch.test.mjs
+          test/acp-runtime-supervisor.test.mjs
           test/acp-text-stream.test.mjs
           test/claude-code-provider.test.mjs
           test/codex-provider.test.mjs
