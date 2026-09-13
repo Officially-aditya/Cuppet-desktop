@@ -82,13 +82,17 @@ test('bridge preserves structured receipt error codes and replays the exact fail
   bridge.stop();
 });
 
-test('bridge buffers semantic runtime events while offline and preserves sequence after attach snapshot', async () => {
+test('bridge buffers projection invalidations while offline without copying transcript payloads', async () => {
   const transport=new FakeTransport();
   const bridge=new RemoteBridge({hostId:'host_2',transport,commandAdapter:{detachDevice(){},async execute(){return null;}},authenticateDevice:async()=>undefined,buildAttachSnapshot:async()=>({snapshot:{}})});
   bridge.start();bridge.onRuntimeEvent({type:'message.delta',sessionId:'s1',delta:'hello'});bridge.onRuntimeEvent({type:'run.finished',sessionId:'s1'});
   assert.equal(transport.sent.length,0);transport.connect();await settle();
   assert.equal(transport.sent[0].type,'host.attach');assert.equal(transport.sent[0].seq,0);
-  assert.deepEqual(transport.sent.slice(1).map((frame)=>[frame.seq,frame.type]),[[1,'assistant.text.delta'],[2,'session.idle']]);
+  assert.deepEqual(transport.sent.slice(1).map((frame)=>[frame.seq,frame.type,frame.sessionId,frame.payload]),[
+    [1,'session.projection.invalidated','s1',{}],
+    [2,'session.projection.invalidated','s1',{}],
+  ]);
+  assert.equal(JSON.stringify(transport.sent).includes('hello'),false);
   bridge.stop();
 });
 
