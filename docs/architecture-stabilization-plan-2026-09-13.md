@@ -42,7 +42,6 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Runtime-owned durable queue replaces renderer-owned dispatch queues.
 - Runs and queue state share `conversations.sqlite3` with messages and tool history.
 - Assistant message + run phase transitions share one SQLite transaction through projection triggers.
-- Durable run phases currently include `starting`, `running`, `waiting`, `settling`, and terminal states.
 - `RunStateProjection` is the sole semantic active-run authority; the live AbortController map is process metadata only.
 - Runtime health reports durable `activeRuns` separately from process-local `liveExecutions`.
 - Permission/question waits are reference-counted by request ID so overlapping waits cannot resume a run early.
@@ -75,43 +74,27 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Durable event projection deliberately excludes prompt bodies, tool arguments, tool output, full diffs, API keys, and arbitrary provider payloads; bounded diagnostics redact bearer credentials.
 - Whitelisted mutation events are persisted before renderer/remote publication; persistence failure is surfaced as a durability diagnostic rather than publishing the mutation event as if durable.
 
+### Explicit Turn authority — complete for current scope
+
+- `runs.phase` is the canonical detailed durable turn lifecycle; existing `runs.status` remains a compatibility projection for admission and older clients during migration.
+- Canonical phases are `preparing`, `provider_starting`, `streaming`, `waiting_for_user`, `tool_running`, `waiting_for_provider`, `settling`, plus terminal `complete`, `stopped`, `interrupted`, and `error`.
+- The assistant transcript row and `preparing` run projection are created in one SQLite transaction.
+- Runtime ownership advances the run to `provider_starting`; first durable text/reasoning output advances it to `streaming`.
+- Tool lifecycle projects `tool_running -> waiting_for_provider` without provider-specific interpretation above the execution boundary.
+- Permission/question requests project `waiting_for_user`; provider telemetry cannot resume the run while any human wait remains; the final resolution advances to `waiting_for_provider`.
+- Message terminalization projects `settling` before final run completion.
+- Terminal run history is immutable; restart recovery deterministically terminalizes active runs as `interrupted` and records the previous detailed phase.
+- Existing databases gain the phase column through deterministic compatibility backfill, and existing coarse status consumers remain valid.
+- Lifecycle regressions cover normal streaming, tools, human waits, resume ordering, transactional rollback, terminalization, and legacy-schema restart migration.
+- Milestone 1.3 was validated on exact head `852344ea236fb592cdb65e40d59d5d55c82a8309` with Provider V2 Selected, full phase gates, live OpenCode ACP, macOS LaunchServices, and packaged-runtime smoke all green.
+
 ## Remaining milestones
 
 # Milestone 1 — Durable Runtime Core
 
 Priority: P0
 
-The next implementation milestone is explicit Turn authority.
-
-### 1.3 Explicit Turn authority
-
-Converge the durable lifecycle to one canonical model:
-
-```text
-queued
-  -> preparing
-  -> provider_starting
-  -> streaming
-       -> waiting (permission/question)
-       -> tool_running
-       -> waiting_for_provider
-  -> settling
-  -> complete
-
-terminal:
-  stopped
-  interrupted
-  error
-```
-
-Requirements:
-
-- message status is a transcript projection, not the sole run authority;
-- provider protocol completion and Cuppet turn completion remain separate;
-- terminal state is immutable;
-- restart recovery is deterministic and journaled;
-- side effects are never replayed merely to reconstruct state;
-- migration from the existing coarse `starting / running / waiting / settling` contract must be incremental and keep existing clients compatible until they consume the canonical detailed lifecycle.
+The next implementation milestone is command idempotency for dangerous externally issued mutations.
 
 ### 1.4 Command receipts / idempotency
 
@@ -227,13 +210,12 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Finish canonical Turn lifecycle transitions and publication ordering.
-2. Finish command receipts/idempotency for dangerous mutation and remote mutation commands.
-3. Tighten remaining command/event/projection transaction boundaries.
-4. Extract remaining renderer server-state ownership.
-5. Remove legacy provider event compatibility.
-6. Remote/PE3 projection parity and graph/history durability.
-7. Signing/notarization and final production supervisor hardening.
+1. Finish command receipts/idempotency for dangerous mutation and remote mutation commands.
+2. Tighten remaining command/event/projection transaction boundaries.
+3. Extract remaining renderer server-state ownership.
+4. Remove legacy provider event compatibility.
+5. Remote/PE3 projection parity and graph/history durability.
+6. Signing/notarization and final production supervisor hardening.
 
 ## Release rule
 
