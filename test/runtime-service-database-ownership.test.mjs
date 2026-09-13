@@ -48,10 +48,12 @@ test('RuntimeService borrows a host-owned ConversationDatabase without closing i
 test('runtime main keeps one physical conversation database owner and injects its receipt-aware view into RuntimeService', async () => {
   const source = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
   const physicalOwners = source.match(/new ConversationDatabase\(databasePath\)/g) ?? [];
+  const runtimeServiceConfig = source.match(/const runtimeService = new RuntimeService\(\{([\s\S]*?)\}\);/)?.[1] ?? '';
 
   assert.equal(physicalOwners.length, 1, 'runtime main must create exactly one physical ConversationDatabase');
   assert.match(source, /const localState = new ConversationDatabase\(databasePath\)/);
   assert.match(source, /const receiptDatabase = new CommandReceiptDatabaseFacade\(localState, commandReceipts\)/);
-  assert.match(source, /new RuntimeService\(\{ database: receiptDatabase\.database, databasePath, dataDir, emit, tst, browserControl \}\)/);
-  assert.doesNotMatch(source, /new RuntimeService\(\{ database: new ConversationDatabase/);
+  assert.match(runtimeServiceConfig, /\bdatabase:\s*receiptDatabase\.database\b/, 'RuntimeService must borrow the receipt-aware host database view');
+  assert.match(runtimeServiceConfig, /(?:^|,)\s*runState\s*(?:,|$)/, 'RuntimeService must receive the durable run-state authority');
+  assert.doesNotMatch(runtimeServiceConfig, /new ConversationDatabase/, 'RuntimeService construction must not create a second physical database owner');
 });
