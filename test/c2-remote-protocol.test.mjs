@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { encodeFrame, parseCommandFrame, MAX_FRAME_BYTES, PROTOCOL_VERSION, scopeForCommand } from '../src/runtime/remote/protocol.mjs';
+import { encodeFrame, parseCommandFrame, publicEventFor, MAX_FRAME_BYTES, PROTOCOL_VERSION, scopeForCommand } from '../src/runtime/remote/protocol.mjs';
 import { authenticateDevice, claimPairingInvite, createPairingInvite, revokeDevice } from '../src/runtime/remote/pairing.mjs';
 import { ensureHostIdentity } from '../src/runtime/remote/identity.mjs';
 import { verifyRemoteToken } from '../src/runtime/remote/token.mjs';
@@ -18,6 +18,33 @@ test('remote protocol is versioned, size-capped and fail-closed to known command
   assert.throws(()=>parseCommandFrame(JSON.stringify({version:2,id:'x',type:'session.list',ts:1})),/version/);
   assert.throws(()=>parseCommandFrame(JSON.stringify({version:1,id:'x',type:'memory.clear',ts:1})),/unsupported/);
   assert.throws(()=>encodeFrame('x'.repeat(MAX_FRAME_BYTES+1)),/exceeds/);
+});
+
+test('runtime transcript/tool/run events only invalidate the durable remote session projection', () => {
+  for (const event of [
+    {type:'message.delta',sessionId:'s1',delta:'private streamed text'},
+    {type:'runtime.activity',sessionId:'s1',activity:{type:'activity.reasoning.delta',text:'private reasoning'}},
+    {type:'tool.started',sessionId:'s1',callId:'c1',tool:'bash'},
+    {type:'tool.finished',sessionId:'s1',callId:'c1',tool:'bash',success:true,paths:['secret.txt']},
+    {type:'run.started',sessionId:'s1',messageId:'m1'},
+    {type:'run.finished',sessionId:'s1',messageId:'m1'},
+  ]) {
+    assert.deepEqual(publicEventFor(event),{type:'session.projection.invalidated',payload:{},sessionId:'s1'});
+  }
+  assert.deepEqual(publicEventFor({type:'pe3.routed',sourceSessionId:'s0',targetSessionId:'s2',action:'route'}),{type:'session.projection.invalidated',payload:{},sessionId:'s2'});
+  assert.equal(JSON.stringify(publicEventFor({type:'message.delta',sessionId:'s1',delta:'must-not-cross'})).includes('must-not-cross'),false);
+});
+
+test('remote browser renders session state from snapshot instead of raw transcript/tool events', async () => {
+  const source=await readFile(new URL('../src/remote-app/app.js',import.meta.url),'utf8');
+  assert.match(source,/session\.projection\.invalidated/);
+  assert.match(source,/command\('session\.snapshot'\)/);
+  assert.match(source,/session\.activities/);
+  assert.doesNotMatch(source,/assistant\.text\.delta/);
+  assert.doesNotMatch(source,/case 'tool\.started'/);
+  assert.doesNotMatch(source,/case 'tool\.completed'/);
+  assert.doesNotMatch(source,/command\('session\.messages'\)/);
+  assert.doesNotMatch(source,/ensureAssistant/);
 });
 
 test('pairing invites are atomic single-use credentials with viewer/trusted scopes and revocation', async () => {
