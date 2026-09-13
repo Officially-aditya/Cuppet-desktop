@@ -64,3 +64,57 @@ test('pairing can redeem a single-use invite without granting command authority 
   transport.receive(command('allowed','session.list',{},'dev_new'));await settle();assert.equal(calls,1);
   bridge.stop();
 });
+
+test('live device authorization is revalidated before every command', async () => {
+  const transport=new FakeTransport();
+  let valid=true;
+  let calls=0;
+  let detached=0;
+  const device={
+    scopes:['session.read'],
+    name:'phone',
+    reauthorize:async()=>valid?{scopes:['session.read'],name:'phone'}:undefined,
+  };
+  const bridge=new RemoteBridge({
+    hostId:'host_live',
+    transport,
+    commandAdapter:{detachDevice(){detached++;},async execute(){calls++;return[];}},
+    authenticateDevice:async(id,secret)=>id==='dev_1'&&secret==='secret'?device:undefined,
+  });
+  bridge.start();transport.connect();await settle();
+  transport.receive({version:1,type:'device.hello',deviceId:'dev_1',ts:Date.now(),payload:{secret:'secret'}});await settle();
+  transport.receive(command('before-revoke','session.list'));await settle();
+  assert.equal(calls,1);
+  assert.equal(bridge.activeDevices.length,1);
+
+  valid=false;
+  transport.receive(command('after-revoke','session.list'));await settle();
+  assert.equal(calls,1,'revoked device must not reach command execution');
+  assert.deepEqual(bridge.activeDevices,[]);
+  assert.ok(detached>=1);
+  assert.ok(transport.sent.some((frame)=>frame.type==='client.reject'&&frame.deviceId==='dev_1'));
+  assert.match(String(transport.sent.find((frame)=>frame.replyTo==='after-revoke')?.error),/authorization is no longer valid/i);
+  bridge.stop();
+});
+
+test('explicit revoke immediately ejects an authenticated live device', async () => {
+  const transport=new FakeTransport();
+  let calls=0;
+  const bridge=new RemoteBridge({
+    hostId:'host_revoke',
+    transport,
+    commandAdapter:{detachDevice(){},async execute(){calls++;return[];}},
+    authenticateDevice:async(id,secret)=>id==='dev_1'&&secret==='secret'?{scopes:['session.read'],name:'phone'}:undefined,
+  });
+  bridge.start();transport.connect();await settle();
+  transport.receive({version:1,type:'device.hello',deviceId:'dev_1',ts:Date.now(),payload:{secret:'secret'}});await settle();
+  assert.equal(bridge.activeDevices.length,1);
+  assert.equal(bridge.revokeDevice('dev_1'),true);
+  assert.deepEqual(bridge.activeDevices,[]);
+  assert.ok(transport.sent.some((frame)=>frame.type==='client.reject'&&frame.deviceId==='dev_1'&&/revoked/i.test(String(frame.payload?.reason))));
+
+  transport.receive(command('after-explicit-revoke','session.list'));await settle();
+  assert.equal(calls,0);
+  assert.match(String(transport.sent.find((frame)=>frame.replyTo==='after-explicit-revoke')?.error),/not authenticated/i);
+  bridge.stop();
+});
