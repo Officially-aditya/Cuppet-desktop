@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
 
 type TerminalSession = {
@@ -34,7 +34,7 @@ type Props = {
 
 type OutputChunk = {
   id: number;
-  kind: 'stdout' | 'stderr' | 'command' | 'system';
+  kind: 'stdout' | 'stderr' | 'command';
   text: string;
 };
 
@@ -50,7 +50,6 @@ export function ProjectTerminal({ project }: Props) {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [status, setStatus] = useState<'idle' | 'starting' | 'ready' | 'exited' | 'error'>('idle');
-  const [error, setError] = useState<string | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const nextId = useRef(1);
@@ -72,7 +71,6 @@ export function ProjectTerminal({ project }: Props) {
     setHistory([]);
     setHistoryIndex(-1);
     setStatus('idle');
-    setError(null);
     if (active) void terminal.stop(active.sessionId).catch(() => undefined);
   }, [project?.id, terminal]);
 
@@ -117,13 +115,11 @@ export function ProjectTerminal({ project }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [project?.id]);
 
-  const prompt = useMemo(() => project?.name?.trim() || 'project', [project?.name]);
   if (!project) return null;
 
   async function startTerminal(projectId: string) {
     const generation = ++startGeneration.current;
     setStatus('starting');
-    setError(null);
     try {
       const next = await terminal.start(projectId);
       const stale = generation !== startGeneration.current || projectIdRef.current !== projectId;
@@ -134,25 +130,11 @@ export function ProjectTerminal({ project }: Props) {
       setSession(next);
       sessionRef.current = next;
       setStatus('ready');
-      append('system', `Shell ready at ${next.cwd}\n`);
     } catch (reason) {
       if (generation !== startGeneration.current || projectIdRef.current !== projectId) return;
+      append('stderr', `${cleanError(reason)}\n`);
       setStatus('error');
-      setError(cleanError(reason));
     }
-  }
-
-  async function restart() {
-    const activeProjectId = projectIdRef.current;
-    if (!activeProjectId) return;
-    const active = sessionRef.current;
-    startGeneration.current += 1;
-    if (active) await terminal.stop(active.sessionId).catch(() => undefined);
-    setSession(null);
-    sessionRef.current = null;
-    setOutput([]);
-    setStatus('idle');
-    await startTerminal(activeProjectId);
   }
 
   async function submit() {
@@ -171,7 +153,7 @@ export function ProjectTerminal({ project }: Props) {
     try {
       await terminal.write(active.sessionId, `${command}\n`);
     } catch (reason) {
-      append('system', `${cleanError(reason)}\n`);
+      append('stderr', `${cleanError(reason)}\n`);
       setStatus('error');
     }
   }
@@ -182,16 +164,13 @@ export function ProjectTerminal({ project }: Props) {
       return;
     }
     if (event.type === 'exit') {
-      append('system', `\nShell exited${event.code !== null && event.code !== undefined ? ` with code ${event.code}` : ''}${event.signal ? ` (${event.signal})` : ''}.\n`);
       setStatus('exited');
       setSession(null);
       sessionRef.current = null;
       return;
     }
     if (event.type === 'error') {
-      const message = event.message || 'Terminal error';
-      append('system', `${message}\n`);
-      setError(message);
+      append('stderr', `${event.message || 'Terminal error'}\n`);
       setStatus('error');
     }
   }
@@ -232,37 +211,24 @@ export function ProjectTerminal({ project }: Props) {
       if (!active) return;
       event.preventDefault();
       append('command', '^C\n');
-      void terminal.interrupt(active.sessionId).catch((reason) => append('system', `${cleanError(reason)}\n`));
+      void terminal.interrupt(active.sessionId).catch((reason) => append('stderr', `${cleanError(reason)}\n`));
     }
   }
 
   return (
     <section className={`project-terminal ${open ? 'open' : 'collapsed'}`} aria-label="Project terminal">
-      <button type="button" className="project-terminal-bar" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <span className="project-terminal-glyph">›_</span>
+      <button type="button" className="project-terminal-bar" aria-expanded={open} aria-label={open ? 'Hide terminal' : 'Show terminal'} onClick={() => setOpen((current) => !current)}>
         <span className="project-terminal-title">Terminal</span>
-        <span className="project-terminal-project">{project.name}</span>
-        <span className={`project-terminal-status ${status}`}>{status === 'ready' ? 'ready' : status === 'starting' ? 'starting…' : status === 'error' ? 'error' : status === 'exited' ? 'exited' : ''}</span>
         <span className="project-terminal-shortcut">⌘J</span>
-        <span className="project-terminal-chevron" aria-hidden="true">{open ? '⌄' : '⌃'}</span>
       </button>
 
       {open && (
         <div className="project-terminal-body">
-          <div className="project-terminal-toolbar">
-            <span className="project-terminal-cwd" title={session?.cwd || project.name}>{session?.cwd || project.name}</span>
-            <div className="project-terminal-actions">
-              <button type="button" onClick={() => setOutput([])}>Clear</button>
-              <button type="button" onClick={() => void restart()}>Restart</button>
-            </div>
-          </div>
-          <div ref={outputRef} className="project-terminal-output" role="log" aria-live="polite">
+          <div ref={outputRef} className="project-terminal-output" role="log">
             {output.map((item) => <span key={item.id} className={`terminal-output-${item.kind}`}>{item.text}</span>)}
-            {status === 'starting' && <span className="terminal-output-system">Starting shell at the project root…\n</span>}
-            {error && <span className="terminal-output-stderr">{error}\n</span>}
           </div>
           <div className="project-terminal-input-row">
-            <span className="project-terminal-prompt" title={session?.cwd || project.name}>{prompt} ❯</span>
+            <span className="project-terminal-prompt" aria-hidden="true">❯</span>
             <input
               ref={inputRef}
               value={input}
@@ -272,7 +238,6 @@ export function ProjectTerminal({ project }: Props) {
               autoCapitalize="off"
               autoComplete="off"
               aria-label="Terminal command"
-              placeholder={status === 'ready' ? 'Run a command' : 'Starting shell…'}
               disabled={status !== 'ready'}
             />
           </div>
