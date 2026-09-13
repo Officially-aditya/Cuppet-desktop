@@ -476,6 +476,7 @@ export class RuntimeService {
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
       if (this.#closed) return;
+      if (this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
       const run = this.#runs.get(sessionId); this.#runs.delete(sessionId);
       const session = this.#db.getSessionSummary(sessionId); if (session) this.#emit({ type: 'session.updated', session });
       this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: run?.projectId ?? session?.projectId ?? null });
