@@ -65,7 +65,7 @@ const emit = (event) => {
 };
 const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
 const browserControl = new BrowserControlManager({ emit });
-const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl });
+const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, runState });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);
