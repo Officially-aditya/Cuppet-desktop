@@ -216,6 +216,10 @@ export class TurnStore {
     `).all(session, after, boundedLimit).map(eventRow);
   }
 
+  recordEvent({ sessionId, runId = null, queueId = null, type, payload = {}, createdAt = Date.now() }) {
+    return this.#transaction(() => this.#appendEvent({ sessionId, runId, queueId, type, payload, createdAt }));
+  }
+
   claimNext(sessionId, now = Date.now()) {
     const session = requiredText(sessionId, 'sessionId');
     return this.#transaction(() => {
