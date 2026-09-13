@@ -11,44 +11,138 @@ const MAX_CACHED_PLANS = 128;
 export class LosslessPlanStore {
   #directory;
   #plans = new Map();
-  #writes = new Map();
+  #mutations = new Map();
 
   constructor(directory) { this.#directory = directory; }
 
   async capture({ sessionID, messageID, prompt, agent = 'build' }) {
+    const id = String(sessionID ?? '');
     const sourcePrompt = String(prompt ?? '');
-    if (Buffer.byteLength(sourcePrompt) > MAX_SOURCE_BYTES) return this.get(sessionID);
+    if (!id || Buffer.byteLength(sourcePrompt) > MAX_SOURCE_BYTES) return this.get(id);
     const normalized = normalizePrompt(sourcePrompt);
-    if (!shouldCapture(normalized, agent)) return this.get(sessionID);
-    const existing = await this.get(sessionID);
-    if (existing?.sources.some((source) => source.messageID === messageID)) {
-      if (existing.lastAgent !== agent) await this.setAgent(sessionID, agent);
-      return this.get(sessionID);
-    }
-    const phases = splitPhases(normalized, messageID, existing?.phases.length ?? 0);
-    if (!phases.length) return existing;
-    const now = Date.now();
-    const source = { messageID, prompt: sourcePrompt, lineCount: lineCount(normalized), capturedAt: now };
-    const plan = existing ? {
-      ...existing,
-      sources: [...existing.sources, source],
-      phases: [...existing.phases, ...phases],
-      updatedAt: now,
-      lastAgent: agent,
-    } : {
-      schema: SCHEMA_VERSION,
-      sessionID,
-      sources: [source],
-      phases,
-      createdAt: now,
-      updatedAt: now,
-      lastAgent: agent,
-    };
-    await this.#save(plan);
-    return structuredClone(plan);
+    if (!shouldCapture(normalized, agent)) return this.get(id);
+    return this.#mutate(id, async () => {
+      const existing = await this.#load(id);
+      if (existing?.sources.some((source) => source.messageID === messageID)) {
+        if (existing.lastAgent !== agent) {
+          existing.lastAgent = agent;
+          existing.updatedAt = Date.now();
+          await this.#save(existing);
+        }
+        return structuredClone(existing);
+      }
+      const phases = splitPhases(normalized, messageID, existing?.phases.length ?? 0);
+      if (!phases.length) return existing ? structuredClone(existing) : undefined;
+      const now = Date.now();
+      const source = { messageID, prompt: sourcePrompt, lineCount: lineCount(normalized), capturedAt: now };
+      const plan = existing ? {
+        ...existing,
+        sources: [...existing.sources, source],
+        phases: [...existing.phases, ...phases],
+        updatedAt: now,
+        lastAgent: agent,
+      } : {
+        schema: SCHEMA_VERSION,
+        sessionID: id,
+        sources: [source],
+        phases,
+        createdAt: now,
+        updatedAt: now,
+        lastAgent: agent,
+      };
+      await this.#save(plan);
+      return structuredClone(plan);
+    });
   }
 
   async get(sessionID) {
+    const id = String(sessionID ?? '');
+    if (!id) return undefined;
+    const pending = this.#mutations.get(id);
+    if (pending) await pending.catch(() => undefined);
+    return this.#load(id);
+  }
+
+  async setAgent(sessionID, agent) {
+    const id = String(sessionID ?? '');
+    if (!id) return undefined;
+    return this.#mutate(id, async () => {
+      const plan = await this.#load(id);
+      if (!plan || plan.lastAgent === agent) return plan ? structuredClone(plan) : undefined;
+      plan.lastAgent = agent;
+      plan.updatedAt = Date.now();
+      await this.#save(plan);
+      return structuredClone(plan);
+    });
+  }
+
+  async delete(sessionID) {
+    const id = String(sessionID ?? '');
+    if (!id) return { sessionID: id, deleted: false };
+    return this.#mutate(id, async () => {
+      const cached = this.#plans.delete(id);
+      let deleted = Boolean(cached);
+      if (this.#directory) {
+        try {
+          await rm(this.#path(id));
+          deleted = true;
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+      }
+      return { sessionID: id, deleted };
+    });
+  }
+
+  async fork(sourceSessionID, targetSessionID, messageMap = {}) {
+    const sourceId = String(sourceSessionID ?? '');
+    const targetId = String(targetSessionID ?? '');
+    if (!sourceId || !targetId) return undefined;
+    if (sourceId === targetId) return this.get(sourceId);
+    const source = await this.get(sourceId);
+    if (!source) return undefined;
+    return this.#mutate(targetId, async () => {
+      const now = Date.now();
+      const mapID = (value) => typeof messageMap?.[value] === 'string' && messageMap[value] ? messageMap[value] : value;
+      const plan = {
+        ...structuredClone(source),
+        sessionID: targetId,
+        sources: source.sources.map((item) => ({ ...structuredClone(item), messageID: mapID(item.messageID) })),
+        phases: source.phases.map((item) => ({ ...structuredClone(item), sourceMessageID: mapID(item.sourceMessageID) })),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await this.#save(plan);
+      return structuredClone(plan);
+    });
+  }
+
+  async toolResult(sessionID, request = {}) {
+    const plan = await this.get(sessionID);
+    if (!plan) return undefined;
+    if (request.action === 'phase') {
+      const phase = plan.phases.find((item) => item.id.toLowerCase() === String(request.phaseID ?? '').toLowerCase());
+      if (!phase) return result(plan, `No phase named ${request.phaseID} exists.`, 0, false);
+      const offset = Math.min(Math.max(0, Number(request.offset ?? 0)), phase.text.length);
+      const limit = Math.min(Math.max(1, Number(request.limit ?? MAX_PHASE_TOOL_CHARS)), MAX_PHASE_TOOL_CHARS);
+      const end = Math.min(phase.text.length, offset + limit);
+      return result(plan, [
+        `${phase.id} · ${phase.title} (source lines ${phase.startLine}-${phase.endLine})`,
+        '', phase.text.slice(offset, end),
+        ...(end < phase.text.length ? ['', `Continue with offset=${end}.`] : []),
+      ].join('\n'), 1, end < phase.text.length);
+    }
+    if (request.action === 'search') {
+      const query = String(request.query ?? '').trim().toLowerCase();
+      const all = plan.phases.filter((phase) => `${phase.title}\n${phase.text}`.toLowerCase().includes(query));
+      const matches = all.slice(0, 12);
+      return result(plan, matches.length ? matches.map((phase) => `- ${phase.id} ${phase.summary}`).join('\n') : `No phases match "${request.query ?? ''}".`, matches.length, all.length > matches.length);
+    }
+    const rendered = renderOverview(plan, Number.POSITIVE_INFINITY);
+    return result(plan, rendered.text, plan.phases.length, rendered.truncated);
+  }
+
+  async #load(sessionID) {
     const cached = this.#plans.get(sessionID);
     if (cached) {
       this.#plans.delete(sessionID);
@@ -64,83 +158,29 @@ export class LosslessPlanStore {
     } catch { return undefined; }
   }
 
-  async setAgent(sessionID, agent) {
-    const plan = await this.get(sessionID);
-    if (!plan || plan.lastAgent === agent) return plan;
-    plan.lastAgent = agent;
-    plan.updatedAt = Date.now();
-    await this.#save(plan);
-    return structuredClone(plan);
-  }
-
-  async delete(sessionID) {
-    const id = String(sessionID ?? '');
-    if (!id) return { sessionID: id, deleted: false };
-    const pending = this.#writes.get(id);
-    if (pending) await pending.catch(() => undefined);
-    this.#writes.delete(id);
-    const cached = this.#plans.delete(id);
-    if (this.#directory) await rm(this.#path(id), { force: true });
-    return { sessionID: id, deleted: cached || Boolean(this.#directory) };
-  }
-
-  async fork(sourceSessionID, targetSessionID, messageMap = {}) {
-    const source = await this.get(sourceSessionID);
-    if (!source) return undefined;
-    const now = Date.now();
-    const mapID = (value) => typeof messageMap?.[value] === 'string' && messageMap[value] ? messageMap[value] : value;
-    const plan = {
-      ...structuredClone(source),
-      sessionID: targetSessionID,
-      sources: source.sources.map((item) => ({ ...structuredClone(item), messageID: mapID(item.messageID) })),
-      phases: source.phases.map((item) => ({ ...structuredClone(item), sourceMessageID: mapID(item.sourceMessageID) })),
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.#save(plan);
-    return structuredClone(plan);
-  }
-
-  async toolResult(sessionID, request = {}) {
-    const plan = await this.get(sessionID);
-    if (!plan) return undefined;
-    if (request.action === 'phase') {
-      const phase = plan.phases.find((item) => item.id.toLowerCase() === String(request.phaseID ?? '').toLowerCase());
-      if (!phase) return result(plan, `No phase named ${request.phaseID} exists.`, 0, false);
-      const offset = Math.min(Math.max(0, Number(request.offset ?? 0)), phase.text.length);
-      const limit = Math.min(Math.max(1, Number(request.limit ?? MAX_PHASE_TOOL_CHARS)), MAX_PHASE_TOOL_CHARS);
-      const end = Math.min(phase.text.length, offset + limit);
-      return result(plan, [
-        `${phase.id} · ${phase.title} (lines ${phase.startLine}-${phase.endLine}; ${phase.status})`,
-        '', phase.text.slice(offset, end),
-        ...(end < phase.text.length ? ['', `Continue with offset=${end}.`] : []),
-      ].join('\n'), 1, end < phase.text.length);
-    }
-    if (request.action === 'search') {
-      const query = String(request.query ?? '').trim().toLowerCase();
-      const all = plan.phases.filter((phase) => `${phase.title}\n${phase.text}`.toLowerCase().includes(query));
-      const matches = all.slice(0, 12);
-      return result(plan, matches.length ? matches.map((phase) => `- ${phase.id} [${phase.status}] ${phase.summary}`).join('\n') : `No phases match "${request.query ?? ''}".`, matches.length, all.length > matches.length);
-    }
-    const rendered = renderOverview(plan, Number.POSITIVE_INFINITY);
-    return result(plan, rendered.text, plan.phases.length, rendered.truncated);
+  async #mutate(sessionID, operation) {
+    const prior = this.#mutations.get(sessionID) ?? Promise.resolve();
+    const current = prior.catch(() => undefined).then(operation);
+    this.#mutations.set(sessionID, current);
+    try { return await current; }
+    finally { if (this.#mutations.get(sessionID) === current) this.#mutations.delete(sessionID); }
   }
 
   async #save(plan) {
     const snapshot = structuredClone(plan);
     this.#remember(snapshot);
     if (!this.#directory) return;
-    const previous = this.#writes.get(snapshot.sessionID) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(async () => {
-      await mkdir(this.#directory, { recursive: true, mode: 0o700 });
-      await chmod(this.#directory, 0o700);
-      const target = this.#path(snapshot.sessionID);
-      const temporary = join(this.#directory, `.${createHash('sha256').update(snapshot.sessionID).digest('hex')}.${randomBytes(6).toString('hex')}.tmp`);
+    await mkdir(this.#directory, { recursive: true, mode: 0o700 });
+    await chmod(this.#directory, 0o700);
+    const target = this.#path(snapshot.sessionID);
+    const temporary = join(this.#directory, `.${createHash('sha256').update(snapshot.sessionID).digest('hex')}.${randomBytes(6).toString('hex')}.tmp`);
+    try {
       await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
       await rename(temporary, target);
-    });
-    this.#writes.set(snapshot.sessionID, next);
-    try { await next; } finally { if (this.#writes.get(snapshot.sessionID) === next) this.#writes.delete(snapshot.sessionID); }
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   #path(sessionID) { return join(this.#directory, `${createHash('sha256').update(sessionID).digest('hex')}.json`); }
@@ -156,7 +196,7 @@ export function renderLosslessPlanContext(plan, agent = 'build') {
   return [
     `<CUPPET_LOSSLESS_PLAN canonical="true" agent="${escapeAttribute(agent)}" phases="${plan.phases.length}">`,
     "The user's full implementation specification is preserved in Cuppet's private lossless plan store. The visible execution checklist is not the source of truth.",
-    'Keep every unfinished phase represented. Retrieve exact phase requirements before declaring a phase complete.',
+    'Keep every requirement represented. Retrieve exact phase requirements before claiming they are satisfied.',
     '', overview.text,
     ...(overview.truncated ? ['', `Overview abbreviated; ${plan.phases.length} phases remain retrievable.`] : []),
     '</CUPPET_LOSSLESS_PLAN>',
@@ -169,7 +209,7 @@ function result(plan, output, resultCount, truncated) {
 function renderOverview(plan, limit) {
   const lines = [`CANONICAL IMPLEMENTATION PLAN (${plan.phases.length} phases)`];
   for (const phase of plan.phases) {
-    const line = `- ${phase.id} [${phase.status}] ${phase.summary} (source lines ${phase.startLine}-${phase.endLine})`;
+    const line = `- ${phase.id} ${phase.summary} (source lines ${phase.startLine}-${phase.endLine})`;
     if (Buffer.byteLength([...lines, line].join('\n')) > limit) return { text: lines.join('\n'), truncated: true };
     lines.push(line);
   }
@@ -188,7 +228,7 @@ function splitPhases(prompt, sourceMessageID, offset) {
   return sections.flatMap((section, index) => {
     const text = lines.slice(section.start, section.end + 1).join('\n').trim(); if (!text) return [];
     const title = firstContentLine(text) || `Plan segment ${index + 1}`;
-    return [{ id: `P${String(offset + index + 1).padStart(2, '0')}`, sourceMessageID, title: clipInline(title, 220), summary: clipInline(text, 360), text, startLine: section.start + 1, endLine: section.end + 1, status: 'pending' }];
+    return [{ id: `P${String(offset + index + 1).padStart(2, '0')}`, sourceMessageID, title: clipInline(title, 220), summary: clipInline(text, 360), text, startLine: section.start + 1, endLine: section.end + 1 }];
   });
 }
 function phaseStarts(lines) {
