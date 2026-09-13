@@ -61,7 +61,7 @@ test('managed ACP forwards canonical Activity without re-materializing legacy pr
   }
 });
 
-test('JournaledToolRuntime emits separate provider and execution Activity envelopes', async () => {
+test('JournaledToolRuntime emits canonical provider Activity and preserves execution lifecycle events', async () => {
   const emitted = [];
   const adapter = {
     async stream(_messages, options) {
@@ -97,6 +97,46 @@ test('JournaledToolRuntime emits separate provider and execution Activity envelo
     assert.ok(activities.some((event) => event.source === 'provider' && event.activity.type === 'activity.reasoning.delta'));
     assert.ok(activities.some((event) => event.source === 'execution' && event.activity.type === 'activity.tool.opened' && event.activity.tool === 'cuppet_plan'));
     assert.ok(activities.some((event) => event.source === 'execution' && event.activity.type === 'activity.tool.closed' && event.activity.status === 'success'));
+    assert.equal(emitted.some((event) => event.type === 'message.reasoning'), false, 'provider reasoning must not be re-materialized as a legacy runtime event');
+    assert.ok(emitted.some((event) => event.type === 'tool.started' && event.tool === 'cuppet_plan'), 'execution lifecycle tool.started must remain available');
+    assert.ok(emitted.some((event) => event.type === 'tool.finished' && event.tool === 'cuppet_plan'), 'execution lifecycle tool.finished must remain available');
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('legacy provider tool telemetry is ingress-only and cannot leak as execution lifecycle', async () => {
+  const emitted = [];
+  const adapter = {
+    async stream(_messages, options) {
+      await options.onProviderEvent?.({ type: 'tool.started', callId: 'provider-call', tool: 'provider_tool', argumentsJson: '{}' });
+      options.onDelta('Done.');
+      return { text: 'Done.', toolCalls: [] };
+    },
+  };
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    emit: (event) => emitted.push(event),
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-provider-tool', role: 'assistant', status: 'streaming', content: '' }] }),
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'plan' },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  try {
+    await runtime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'work' }],
+      sessionId: 'chat-provider-tool',
+      projectRoot: null,
+      onDelta: async () => {},
+    });
+    assert.ok(emitted.some((event) => event.type === 'runtime.activity' && event.source === 'provider' && event.activity?.type === 'activity.tool.opened'));
+    assert.equal(emitted.some((event) => event.type === 'tool.started' && event.callId === 'provider-call'), false);
   } finally {
     await runtime.close();
   }
@@ -271,7 +311,7 @@ test('malformed provider telemetry and host emit failures cannot fail a successf
   }
 });
 
-test('renderer consumes one canonical transcript reducer and preload suppresses duplicate legacy activity', async () => {
+test('renderer consumes one canonical transcript reducer without preload legacy suppression', async () => {
   const [preload, chat, clientTranscript, transcript, database, runtime] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
@@ -280,8 +320,8 @@ test('renderer consumes one canonical transcript reducer and preload suppresses 
     readFile(new URL('../src/runtime/database.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/journaled-tool-runtime.mjs', import.meta.url), 'utf8'),
   ]);
-  assert.match(preload, /LEGACY_ACTIVITY_EVENTS/);
-  assert.match(preload, /callback\(payload\)/);
+  assert.doesNotMatch(preload, /LEGACY_ACTIVITY_EVENTS/);
+  assert.match(preload, /const listener = \(_event, payload\) => callback\(payload\)/);
   assert.doesNotMatch(preload, /projectActivityForLegacyUi/);
 
   assert.match(chat, /useClientTranscript\(session\)/);
@@ -310,4 +350,6 @@ test('renderer consumes one canonical transcript reducer and preload suppresses 
   assert.match(database, /appendMessageActivity/);
   assert.match(database, /activities:this\.listMessageActivities\(id\)/);
   assert.match(runtime, /appendMessageActivity/);
+  assert.doesNotMatch(runtime, /type:\s*'message\.reasoning'/);
+  assert.doesNotMatch(runtime, /Keep legacy runtime events|Temporary compatibility event/);
 });
