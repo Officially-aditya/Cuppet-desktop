@@ -32,13 +32,13 @@ test('remote session.submit reauthorizes the inner slash command scope', async (
   const { adapter, calls } = fixture();
   const writer = { deviceID: 'writer', scopes: ['session.write'] };
   await assert.rejects(
-    () => adapter.execute(writer, 'session.submit', { prompt: '/effort status' }, { sessionId: 's1' }),
+    () => adapter.execute(writer, 'session.submit', { prompt: '/effort status' }, { id: 'effort-denied', sessionId: 's1' }),
     /missing scope 'model\.write'/,
   );
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 
   const modelWriter = { deviceID: 'model-writer', scopes: ['model.write'] };
-  const result = await adapter.execute(modelWriter, 'session.submit', { prompt: '/effort status' }, { sessionId: 's1' });
+  const result = await adapter.execute(modelWriter, 'session.submit', { prompt: '/effort status' }, { id: 'effort-status', sessionId: 's1' });
   assert.equal(result.command, true);
   assert.equal(result.id, 'effort');
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
@@ -48,7 +48,7 @@ test('remote slash steer delegates to canonical runtime session.steer and unknow
   const { adapter, calls } = fixture();
   const actor = { deviceID: 'writer', scopes: ['session.write'] };
 
-  const steered = await adapter.execute(actor, 'session.submit', { prompt: '/steer focus on the failing test' }, { sessionId: 's1' });
+  const steered = await adapter.execute(actor, 'session.submit', { prompt: '/steer focus on the failing test' }, { id: 'slash-steer', sessionId: 's1' });
   assert.equal(steered.command, true);
   assert.equal(steered.id, 'steer');
   const steerCall = calls.find((entry) => entry.method === 'session.steer');
@@ -58,7 +58,7 @@ test('remote slash steer delegates to canonical runtime session.steer and unknow
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 
   await assert.rejects(
-    () => adapter.execute(actor, 'session.submit', { prompt: '/unknown-cuppet-command' }, { sessionId: 's1' }),
+    () => adapter.execute(actor, 'session.submit', { prompt: '/unknown-cuppet-command' }, { id: 'slash-unknown', sessionId: 's1' }),
     /Unknown Cuppet command/,
   );
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
@@ -80,7 +80,7 @@ test('remote provider-free status slash stays provider-free', async () => {
   };
   const adapter = new RemoteCommandAdapter({ call, identity: { hostId: 'host_1', deviceName: 'Laptop' }, providerConfig: {} });
   const actor = { deviceID: 'viewer', scopes: ['session.read'] };
-  const result = await adapter.execute(actor, 'session.submit', { prompt: '/status' }, { sessionId: 's1' });
+  const result = await adapter.execute(actor, 'session.submit', { prompt: '/status' }, { id: 'slash-status', sessionId: 's1' });
   assert.equal(result.command, true);
   assert.equal(result.id, 'status');
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
