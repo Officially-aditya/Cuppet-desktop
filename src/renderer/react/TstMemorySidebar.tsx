@@ -47,6 +47,8 @@ type Props = {
 
 const MAX_GRAPH_FILES = 180;
 const ACTIVE_EDIT_MS = 12_000;
+const MIN_GRAPH_ZOOM = 0.65;
+const MAX_GRAPH_ZOOM = 2.5;
 
 export function TstMemorySidebar({ sessionId, projectName, running = false }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
@@ -203,6 +205,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   const sceneRef = useRef(scene);
   const selectedRef = useRef(selectedPath);
   const rotationRef = useRef({ x: -0.16, y: 0.1 });
+  const zoomRef = useRef(1);
   const pointerRef = useRef({ x: 0, y: 0, dragging: false, moved: false });
   const projectedRef = useRef<Array<{ node: GraphNode; x: number; y: number; r: number }>>([]);
 
@@ -241,7 +244,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       const elapsed = Math.min(48, now - last);
       last = now;
       if (!pointerRef.current.dragging) rotationRef.current.y += elapsed * 0.000055;
-      drawScene(context, width, height, sceneRef.current, rotationRef.current, selectedRef.current, projectedRef, now);
+      drawScene(context, width, height, sceneRef.current, rotationRef.current, zoomRef.current, selectedRef.current, projectedRef, now);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -276,8 +279,15 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     pointerRef.current.dragging = false;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
   };
+  const wheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
+    event.preventDefault();
+    const deltaUnit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 120 : 1;
+    const delta = event.deltaY * deltaUnit;
+    const next = zoomRef.current * Math.exp(-delta * 0.0016);
+    zoomRef.current = Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, next));
+  };
 
-  return <canvas ref={canvasRef} className="memory-graph-canvas" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { pointerRef.current.dragging = false; }} />;
+  return <canvas ref={canvasRef} className="memory-graph-canvas" onWheel={wheel} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { pointerRef.current.dragging = false; }} />;
 }
 
 function buildScene(filesInput: string[], edits: EditedFile[]) {
@@ -331,6 +341,7 @@ function drawScene(
   height: number,
   scene: { nodes: GraphNode[]; edges: GraphEdge[] },
   rotation: { x: number; y: number },
+  zoom: number,
   selectedPath: string | null,
   projectedRef: React.MutableRefObject<Array<{ node: GraphNode; x: number; y: number; r: number }>>,
   now: number,
@@ -338,7 +349,7 @@ function drawScene(
   context.clearRect(0, 0, width, height);
   const centerX = width / 2;
   const centerY = height / 2 - 4;
-  const scale = Math.min(width, height) * 0.54;
+  const scale = Math.min(width, height) * 0.54 * zoom;
   const projected = scene.nodes.map((node) => ({ node, ...project(node, rotation, centerX, centerY, scale) })).sort((a, b) => a.depth - b.depth);
   const byId = new Map(projected.map((item) => [item.node.id, item]));
 
