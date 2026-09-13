@@ -40,6 +40,7 @@ const SAFE_RETRY_METHODS = new Set([
   'tst.graph.locate',
   'tst.graph.refresh',
   'remote.provider-config',
+  'provider.config.sync',
 ]);
 const DURABLE_COMMAND_METHODS = new Set(['session.send']);
 
@@ -84,8 +85,6 @@ export class RuntimeClient extends EventEmitter {
     this.#restartDelaysMs = Array.isArray(restartDelaysMs) && restartDelaysMs.length
       ? restartDelaysMs.slice(0, 8).map((value) => Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0)
       : [...DEFAULT_RESTART_DELAYS_MS];
-    // EventEmitter treats an unhandled "error" event as fatal. Keep runtime/pipe failures observable
-    // without allowing a child-process error to crash Electron's main process.
     this.on('error', () => undefined);
   }
 
@@ -224,9 +223,6 @@ export class RuntimeClient extends EventEmitter {
         { replaceCurrent: unavailableBeforeWrite },
       ));
       if (unavailableBeforeWrite || SAFE_RETRY_METHODS.has(method) || DURABLE_COMMAND_METHODS.has(method)) {
-        // Durable commands reuse the same request id. The runtime receipt layer
-        // either returns the accepted result, executes an as-yet unseen command,
-        // or refuses an unknown outcome. It never creates a second turn for this id.
         return this.#rawRequest(method, params, timeoutMs, requestId);
       }
       throw runtimeError(
@@ -361,7 +357,7 @@ export class RuntimeClient extends EventEmitter {
       const pending = this.#pending.get(message.id);
       if (!pending) return;
       if (message.ok) pending.resolve(message.result);
-      else pending.reject(new Error(message.error || 'runtime request failed'));
+      else pending.reject(runtimeError(message.error || 'runtime request failed', typeof message.code === 'string' ? message.code : 'CUPPET_RUNTIME_REQUEST_FAILED'));
       return;
     }
     if (message.kind === 'protocol-error') this.emit('protocol-error', new Error(message.error || 'runtime protocol error'));
