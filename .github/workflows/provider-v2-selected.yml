@@ -25,6 +25,8 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm install --ignore-scripts
+      - name: Verify renderer compiles against runtime-owned queueing
+        run: npm run renderer:verify
       - name: Run provider architecture and ACP regressions
         run: >-
           node --test --test-concurrency=1
@@ -67,6 +69,7 @@ jobs:
           test/runtime-process.test.mjs
           test/runtime-project-binding.test.mjs
           test/runtime-queue-contract.test.mjs
+          test/turn-store.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/runtime-service.test.mjs
           test/session-retention.test.mjs
