@@ -1,4 +1,4 @@
-import { access, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -25,12 +25,16 @@ input.on('line', async (line) => {
     return;
   }
   if (request.method === 'session.send') {
-    const alreadySeen = await exists(sendMarker);
-    if (alreadySeen) {
-      respond(request.id, { replayed: true });
+    const priorId = await markerId(sendMarker);
+    if (priorId) {
+      if (priorId !== request.id) {
+        respondError(request.id, 'durable session.send was retried with a different command id');
+        return;
+      }
+      respond(request.id, { replayed: true, sameCommandId: true });
       return;
     }
-    await writeFile(sendMarker, 'seen', 'utf8');
+    await writeFile(sendMarker, request.id, 'utf8');
     setTimeout(() => process.exit(23), 5);
     return;
   }
@@ -51,11 +55,11 @@ function respondError(id, error) {
   write({ kind: 'response', id, ok: false, error });
 }
 
-async function exists(path) {
+async function markerId(path) {
   try {
-    await access(path);
-    return true;
+    const value = (await readFile(path, 'utf8')).trim();
+    return value || null;
   } catch {
-    return false;
+    return null;
   }
 }
