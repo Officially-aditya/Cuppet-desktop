@@ -272,9 +272,10 @@ test('malformed provider telemetry and host emit failures cannot fail a successf
 });
 
 test('renderer consumes one canonical transcript reducer and preload suppresses duplicate legacy activity', async () => {
-  const [preload, chat, transcript, database, runtime] = await Promise.all([
+  const [preload, chat, clientTranscript, transcript, database, runtime] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/database.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/journaled-tool-runtime.mjs', import.meta.url), 'utf8'),
@@ -283,15 +284,21 @@ test('renderer consumes one canonical transcript reducer and preload suppresses 
   assert.match(preload, /callback\(payload\)/);
   assert.doesNotMatch(preload, /projectActivityForLegacyUi/);
 
-  assert.match(chat, /hydrateTranscript\(session\?\.activities \?\? \[\]\)/);
-  assert.match(chat, /reduceTranscriptEvent\(current/);
-  assert.match(chat, /mergeTranscriptState\(current, durable\)/);
+  assert.match(chat, /useClientTranscript\(session\)/);
+  assert.doesNotMatch(chat, /hydrateTranscript\(/);
+  assert.doesNotMatch(chat, /reduceTranscriptEvent\(/);
+  assert.doesNotMatch(chat, /window\.cuppet\.onEvent/);
   assert.match(chat, /traceForMessage\(transcript/);
   assert.match(chat, /const \[traceOpen, setTraceOpen\] = useState\(live\)/);
   assert.match(chat, /hasTrace && traceOpen && <TraceView trace=\{trace\} \/>/);
   assert.doesNotMatch(chat, /TRACE_KEY_PREFIX/);
   assert.doesNotMatch(chat, /LEGACY_REASONING_KEY_PREFIX/);
   assert.doesNotMatch(chat, /event\.type === 'message\.reasoning'/);
+
+  assert.match(clientTranscript, /hydrateTranscript\(activities\)/);
+  assert.match(clientTranscript, /reduceTranscriptEvent\(current/);
+  assert.match(clientTranscript, /mergeTranscriptState\(current, durable\)/);
+  assert.match(clientTranscript, /window\.cuppet\.onEvent/);
 
   assert.match(transcript, /export function reduceTranscriptEvent/);
   assert.match(transcript, /export function hydrateTranscript/);
