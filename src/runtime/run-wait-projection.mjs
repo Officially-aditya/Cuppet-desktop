@@ -1,3 +1,5 @@
+import { normalizeRunPhase, statusForRunPhase } from './run-phase.mjs';
+
 const ACTIVE_WAITABLE_RUN_STATUSES = new Set(['starting', 'running', 'waiting']);
 const EVENT_SCHEMA_VERSION = 1;
 const DURABLE_RUNTIME_EVENT_TYPES = new Set([
@@ -45,10 +47,18 @@ export class RunWaitProjection {
     if (interaction?.phase === 'resolved') return this.endWait(interaction.requestId, now);
     if (event?.type === 'run.finished' && event.messageId) return this.clearRun(event.messageId);
 
+    const streaming = streamingSignal(event);
+    if (streaming) {
+      const runId = streaming.runId ?? this.#latestActiveRunId(streaming.sessionId);
+      return runId ? this.#transitionPhase(runId, 'streaming', now) : null;
+    }
+
     const durable = durableRuntimeProjection(event);
     if (!durable) return null;
     return this.#db.transaction(() => {
       const runId = durable.runId ?? this.#latestActiveRunId(durable.sessionId);
+      if (runId && durable.type === 'tool.started') this.#transitionPhase(runId, 'tool_running', now, { transactional: false });
+      if (runId && durable.type === 'tool.finished') this.#transitionPhase(runId, 'waiting_for_provider', now, { transactional: false });
       this.#appendEvent({
         sessionId: durable.sessionId,
         runId,
@@ -66,7 +76,7 @@ export class RunWaitProjection {
     const waitKind = boundedKind(kind);
     return this.#db.transaction(() => {
       const run = this.#db.prepare(`
-        SELECT run_id AS runId, session_id AS sessionId, status
+        SELECT run_id AS runId, session_id AS sessionId, status, phase
         FROM runs
         WHERE session_id=? AND status IN ('starting','running','waiting')
         ORDER BY updated_at DESC, created_at DESC, run_id DESC
@@ -81,7 +91,7 @@ export class RunWaitProjection {
       if (inserted.changes === 0) return this.#runSnapshot(run.runId);
 
       this.#db.prepare(`
-        UPDATE runs SET status='waiting', updated_at=?
+        UPDATE runs SET status='waiting', phase='waiting_for_user', updated_at=?
         WHERE run_id=? AND status IN ('starting','running','waiting')
       `).run(now, run.runId);
       const pending = this.#pendingCount(run.runId);
@@ -89,7 +99,7 @@ export class RunWaitProjection {
         sessionId: session,
         runId: run.runId,
         type: 'run.waiting',
-        payload: { status: 'waiting', requestId: request, kind: waitKind, pending },
+        payload: { status: 'waiting', phase: 'waiting_for_user', requestId: request, kind: waitKind, pending },
         createdAt: now,
       });
       return this.#runSnapshot(run.runId);
@@ -110,12 +120,15 @@ export class RunWaitProjection {
       if (!run) return null;
       const pending = this.#pendingCount(wait.runId);
       if (pending === 0 && run.status === 'waiting') {
-        this.#db.prepare(`UPDATE runs SET status='running', updated_at=? WHERE run_id=? AND status='waiting'`).run(now, wait.runId);
+        this.#db.prepare(`
+          UPDATE runs SET status='running', phase='waiting_for_provider', updated_at=?
+          WHERE run_id=? AND status='waiting'
+        `).run(now, wait.runId);
         this.#appendEvent({
           sessionId: wait.sessionId,
           runId: wait.runId,
           type: 'run.resumed',
-          payload: { status: 'running', requestId: request, kind: wait.kind, pending: 0 },
+          payload: { status: 'running', phase: 'waiting_for_provider', requestId: request, kind: wait.kind, pending: 0 },
           createdAt: now,
         });
       } else if (pending > 0) {
@@ -123,7 +136,7 @@ export class RunWaitProjection {
           sessionId: wait.sessionId,
           runId: wait.runId,
           type: 'run.wait.resolved',
-          payload: { status: run.status, requestId: request, kind: wait.kind, pending },
+          payload: { status: run.status, phase: run.phase, requestId: request, kind: wait.kind, pending },
           createdAt: now,
         });
       }
@@ -155,10 +168,36 @@ export class RunWaitProjection {
     return optionalText(row?.runId);
   }
 
+  #transitionPhase(runId, phase, now, { transactional = true } = {}) {
+    const apply = () => {
+      const run = this.#runSnapshot(runId);
+      if (!run || !ACTIVE_WAITABLE_RUN_STATUSES.has(run.status)) return run;
+      // Human interaction is authoritative while outstanding waits exist. Provider
+      // telemetry must not make the run appear resumed before the final wait resolves.
+      if (run.status === 'waiting' && phase !== 'waiting_for_user') return run;
+      const nextPhase = normalizeRunPhase(phase, run.status);
+      if (run.phase === nextPhase) return run;
+      const nextStatus = statusForRunPhase(nextPhase);
+      this.#db.prepare(`
+        UPDATE runs SET status=?, phase=?, updated_at=?
+        WHERE run_id=? AND status IN ('starting','running','waiting')
+      `).run(nextStatus, nextPhase, now, runId);
+      this.#appendEvent({
+        sessionId: run.sessionId,
+        runId,
+        type: 'run.phase',
+        payload: { status: nextStatus, phase: nextPhase, previousPhase: run.phase },
+        createdAt: now,
+      });
+      return this.#runSnapshot(runId);
+    };
+    return transactional ? this.#db.transaction(apply) : apply();
+  }
+
   #runSnapshot(runId) {
     const row = this.#db.prepare(`
       SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
-             project_id AS projectId, status, error, created_at AS createdAt, updated_at AS updatedAt
+             project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt
       FROM runs WHERE run_id=?
     `).get(runId);
     return row ? {
@@ -167,6 +206,7 @@ export class RunWaitProjection {
       sourceSessionId: optionalText(row.sourceSessionId),
       projectId: optionalText(row.projectId),
       status: String(row.status),
+      phase: normalizeRunPhase(row.phase, row.status),
       error: optionalText(row.error),
       createdAt: Number(row.createdAt) || 0,
       updatedAt: Number(row.updatedAt) || 0,
@@ -277,6 +317,20 @@ export function durableRuntimeProjection(event) {
       message: boundedText(event.message, 500),
     }),
   };
+}
+
+function streamingSignal(event) {
+  const type = String(event?.type ?? '');
+  const sessionId = optionalText(event?.sessionId);
+  if (!sessionId) return null;
+  if (type === 'message.delta') return { sessionId, runId: optionalText(event?.messageId) };
+  if (type === 'runtime.activity') {
+    const activityType = String(event?.activity?.type ?? '');
+    if (activityType === 'activity.text.delta' || activityType === 'activity.reasoning.delta') {
+      return { sessionId, runId: optionalText(event?.messageId) };
+    }
+  }
+  return null;
 }
 
 function compactPayload(value) {
