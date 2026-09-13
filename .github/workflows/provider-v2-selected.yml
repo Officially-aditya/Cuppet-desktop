@@ -32,7 +32,7 @@ jobs:
       - name: Validate credential boundary
         run: node --test --test-concurrency=1 test/provider-credential-boundary.test.mjs
       - name: Validate durable send idempotency and run-state authority
-        run: node --test --test-concurrency=1 test/command-receipts.test.mjs test/command-receipt-database.test.mjs test/queued-send.test.mjs test/runtime-queue-contract.test.mjs test/runtime-client-recovery.test.mjs test/run-state-projection.test.mjs test/c2-remote-commands.test.mjs test/c2-remote-bridge.test.mjs
+        run: node --test --test-concurrency=1 test/command-receipts.test.mjs test/command-receipt-database.test.mjs test/queued-send.test.mjs test/runtime-queue-contract.test.mjs test/runtime-client-recovery.test.mjs test/run-state-projection.test.mjs test/session-command-serializer.test.mjs test/c2-remote-commands.test.mjs test/c2-remote-bridge.test.mjs
       - name: Validate local CLI ownership identity
         run: node --test --test-concurrency=1 test/cli-agent-linking.test.mjs
       - name: Validate ACP runtime supervision
@@ -83,6 +83,7 @@ jobs:
           test/runtime-queue-contract.test.mjs
           test/turn-store.test.mjs
           test/run-state-projection.test.mjs
+          test/session-command-serializer.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/runtime-service.test.mjs
           test/session-retention.test.mjs
