@@ -8,13 +8,8 @@ import {
   readPermissionMode,
   readSendBehavior,
 } from './behavior-preferences';
-import {
-  hydrateTranscript,
-  mergeTranscriptState,
-  orderedTranscriptItems,
-  reduceTranscriptEvent,
-  type TranscriptState,
-} from './chat-transcript';
+import { orderedTranscriptItems, type TranscriptState } from './chat-transcript';
+import { useClientTranscript } from './client-transcript';
 
 export type DeliveryMode = 'queue' | 'steer';
 export type ComposerMode = 'build' | 'plan' | 'orchestrate';
@@ -61,8 +56,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptState>({});
-  const transcriptSession = useRef<string | null>(null);
+  const transcript = useClientTranscript(session);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -89,21 +83,6 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (fileInput.current) fileInput.current.value = '';
   }, [session?.id, draft?.projectId]);
 
-  // Canonical transcript state is hydrated from the runtime DB. Refreshes for
-  // the active session merge with newer live events so an IPC race cannot
-  // erase a tool/reasoning update that arrived just before session.get().
-  useEffect(() => {
-    const sessionId = session?.id ?? null;
-    const durable = hydrateTranscript(session?.activities ?? []);
-    setTranscript((current) => {
-      if (transcriptSession.current !== sessionId) {
-        transcriptSession.current = sessionId;
-        return durable;
-      }
-      return mergeTranscriptState(current, durable);
-    });
-  }, [session?.id, session?.activities]);
-
   useEffect(() => {
     void applyPermissionPreference(session);
   }, [session?.id, session?.projectId]);
@@ -124,16 +103,6 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   useEffect(() => {
     if (running) setDeliveryMode(readSendBehavior());
   }, [running]);
-
-  useEffect(() => window.cuppet.onEvent((event) => {
-    if (!session?.id) return;
-    const eventSessionId = String(event?.sessionId ?? event?.message?.sessionId ?? '');
-    if (eventSessionId && eventSessionId !== session.id) return;
-    const messageId = String(event?.messageId ?? event?.message?.id ?? '');
-    if (!messageId) return;
-    if (!['runtime.activity', 'message.preview', 'message.delta', 'message.completed'].includes(String(event.type ?? ''))) return;
-    setTranscript((current) => reduceTranscriptEvent(current, { ...event, messageId }));
-  }), [session?.id]);
 
   useEffect(() => {
     const node = messagesRef.current;
