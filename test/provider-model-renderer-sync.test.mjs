@@ -38,7 +38,7 @@ test('candidate model refresh crosses preload and main IPC into runtime authorit
   assert.match(main, /provider: settings\.runtimeValue\(\)/);
   assert.match(main, /model: value && typeof value === 'object'/);
   assert.doesNotMatch(main, /fetchProviderModelCatalog/);
-  assert.match(runtime, /case 'provider\.models': return providerControl\.models\(boundedProvider\(params\.provider\), \{ model: params\.model \}\)/);
+  assert.match(runtime, /case 'provider\.models': return providerControl\.models\(boundedProvider\(params\.provider\), \{ model: typeof params\.model === 'string' \? params\.model\.slice\(0, 1000\) : '' \}\)/);
   assert.match(types, /models: \(options\?: \{ model\?: string \}\) => Promise<ProviderModelCatalog>/);
   assert.match(types, /modelDependentSettings\?: boolean/);
 });
