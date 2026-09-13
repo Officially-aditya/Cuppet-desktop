@@ -21,7 +21,10 @@ test('durable run state blocks send admission without a live execution handle', 
   const provider = { calls: 0 };
   const runtime = new RuntimeService({
     databasePath: join(dir, 'db.sqlite3'),
-    runState: { isActive: (sessionId) => active.has(sessionId) },
+    runState: {
+      isActive: (sessionId) => active.has(sessionId),
+      activeCount: () => active.size,
+    },
     providerFactory: inertProvider(provider),
   });
 
@@ -34,7 +37,9 @@ test('durable run state blocks send admission without a live execution handle', 
       /already generating/,
     );
     assert.equal(provider.calls, 0);
-    assert.equal((await runtime.handle('health')).activeRuns, 0, 'durable activity must not fabricate a live controller');
+    const health = await runtime.handle('health');
+    assert.equal(health.activeRuns, 1, 'health must report durable active runs');
+    assert.equal(health.liveExecutions, 0, 'durable activity must not fabricate a live controller');
   } finally {
     await runtime.close();
     await rm(dir, { recursive: true, force: true });
@@ -77,7 +82,9 @@ test('standalone service owns a durable run projection instead of using live exe
       () => runtime.handle('session.send', { sessionId: session.id, text: 'second', provider: {} }),
       /already generating/,
     );
-    assert.equal((await runtime.handle('health')).activeRuns, 1);
+    const activeHealth = await runtime.handle('health');
+    assert.equal(activeHealth.activeRuns, 1);
+    assert.equal(activeHealth.liveExecutions, 1);
     assert.equal((await runtime.handle('session.stop', { sessionId: session.id })).stopped, true);
 
     await waitUntil(() => {
@@ -85,6 +92,9 @@ test('standalone service owns a durable run projection instead of using live exe
       return row?.status === 'stopped';
     });
     assert.equal(repository.prepare('SELECT status FROM runs WHERE run_id=?').get(first.messageId)?.status, 'stopped');
+    const stoppedHealth = await runtime.handle('health');
+    assert.equal(stoppedHealth.activeRuns, 0);
+    assert.equal(stoppedHealth.liveExecutions, 0);
   } finally {
     release?.();
     await runtime.close();
