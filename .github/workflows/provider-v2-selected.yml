@@ -31,14 +31,14 @@ jobs:
         run: node --test --test-concurrency=1 test/provider-control-plane.test.mjs test/provider-version-policy.test.mjs test/provider-status-presentation.test.mjs test/local-provider-version-check.test.mjs
       - name: Validate credential boundary
         run: node --test --test-concurrency=1 test/provider-credential-boundary.test.mjs
+      - name: Validate durable send idempotency and secret-free queues
+        run: node --test --test-concurrency=1 test/command-receipts.test.mjs test/queued-send.test.mjs test/runtime-queue-contract.test.mjs test/runtime-client-recovery.test.mjs
       - name: Validate local CLI ownership identity
         run: node --test --test-concurrency=1 test/cli-agent-linking.test.mjs
       - name: Validate ACP runtime supervision
         run: node --test --test-concurrency=1 test/acp-runtime-supervisor.test.mjs
       - name: Validate structured provider failures
         run: node --test --test-concurrency=1 test/provider-error.test.mjs
-      - name: Validate RuntimeClient recovery never replays sends
-        run: node --test --test-concurrency=1 test/runtime-client-recovery.test.mjs
       - name: Validate LaunchServices acceptance contract
         run: node --test --test-concurrency=1 test/gui-launchservices-path.test.mjs
       - name: Run provider architecture and ACP regressions
