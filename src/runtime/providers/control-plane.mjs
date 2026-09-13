@@ -6,6 +6,7 @@ import { providerRuntimeHealth } from './runtime-health-registry.mjs';
 import {
   assertLocalProviderVersionSupported,
   localProviderVersionCompatibility,
+  localProviderVersionPolicy,
   providerVersionUpgradeMessage,
 } from './version-policy.mjs';
 
@@ -96,6 +97,17 @@ export class ProviderControlPlane {
     const requestedModel = text(model);
     const configuredModel = requestedModel || text(configuration.primary?.modelID || configuration.model);
     if (!providerID) return unavailable('', 'none', 'No active provider is configured.');
+
+    if (localProviderVersionPolicy(providerID)) {
+      const detected = withVersionCompatibility(providerID, await this.#operations(providerID).detect());
+      if (detected.installed === true && versionBlocked(detected)) {
+        assertLocalProviderVersionSupported(
+          providerID,
+          detected.version || detected.installation?.version,
+          detected.label || providerID,
+        );
+      }
+    }
 
     const discoveryConfiguration = requestedModel
       ? configurationForCandidateModel(configuration, requestedModel)
