@@ -23,6 +23,12 @@ import { PermissionModal } from './PermissionModal';
 import { QuestionModal } from './QuestionModal';
 import { Toast } from './Toast';
 import { CUPPET_LOGO_URL } from './brand';
+import {
+  hydrateClientRunSession,
+  hydrateClientRunState,
+  markClientRunStarted,
+  useClientRunState,
+} from './client-run-state';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
@@ -37,7 +43,6 @@ export function App() {
   const [provider, setProvider] = useState<ProviderSettings | null>(null);
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
-  const [running, setRunning] = useState<Set<string>>(() => new Set());
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
   const [activities, setActivities] = useState<Record<string, ActivityEntry[]>>({});
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
@@ -46,6 +51,7 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState('account');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const running = useClientRunState();
 
   const activeProjectId = active?.projectId ?? draft?.projectId ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
@@ -63,6 +69,7 @@ export function App() {
     ]);
     setProjects(nextProjects);
     setSessions(nextSessions);
+    hydrateClientRunState(nextSessions);
     return { nextProjects, nextSessions };
   }, []);
 
@@ -76,12 +83,7 @@ export function App() {
     setMode(modeState.mode === 'plan' ? 'plan' : 'build');
     localStorage.setItem(LAST_SESSION_KEY, session.id);
     if (session.projectId) void window.cuppet.projects.open(session.projectId).catch(() => undefined);
-    setRunning((current) => {
-      const next = new Set(current);
-      if (session.messages.some((message) => message.status === 'streaming') || session.lastStatus === 'streaming') next.add(session.id);
-      else next.delete(session.id);
-      return next;
-    });
+    hydrateClientRunSession(session);
     if (session.toolExecutions?.length) {
       setActivities((current) => ({ ...current, [session.id]: hydrateToolActivity(session) }));
     }
@@ -103,6 +105,7 @@ export function App() {
     setActive(session);
     setDraft(null);
     setMode(draft?.mode ?? 'build');
+    hydrateClientRunSession(session);
     localStorage.setItem(LAST_SESSION_KEY, session.id);
     return session;
   }, [active, draft]);
@@ -115,6 +118,7 @@ export function App() {
       setSessions((current) => upsertSession(current, session));
       setActive((current) => current?.id === id ? session : current);
       setActivities((current) => ({ ...current, [id]: hydrateToolActivity(session) }));
+      hydrateClientRunSession(session);
     } catch {
       // Session may have been archived/deleted during the refresh.
     }
@@ -139,7 +143,7 @@ export function App() {
         setSessions(nextSessions);
         setCognitive(nextCognitive);
         setCommands(nextCommands);
-        setRunning(new Set(nextSessions.filter((session) => session.lastStatus === 'streaming').map((session) => session.id)));
+        hydrateClientRunState(nextSessions);
         const saved = localStorage.getItem(LAST_SESSION_KEY);
         const initial = (saved && nextSessions.find((session) => session.id === saved)) || nextSessions[0];
         if (initial) await openSession(initial.id);
@@ -167,21 +171,11 @@ export function App() {
     if (!event?.type) return;
     const sessionId = String(event.sessionId ?? event.message?.sessionId ?? '');
 
-    if (event.type === 'run.started' && sessionId) {
-      setRunning((current) => new Set(current).add(sessionId));
-    }
     if (event.type === 'run.finished' && sessionId) {
-      setRunning((current) => { const next = new Set(current); next.delete(sessionId); return next; });
       void refreshActive(sessionId);
     }
     if (event.type === 'pe3.routed' && event.targetSessionId) {
       const target = String(event.targetSessionId);
-      setRunning((current) => {
-        const next = new Set(current);
-        if (event.sourceSessionId) next.delete(String(event.sourceSessionId));
-        next.add(target);
-        return next;
-      });
       if (active?.id === event.sourceSessionId) void openSession(target).catch(showToast);
     }
     if (event.type === 'runtime.error') showToast(event.message || 'Runtime error');
@@ -279,7 +273,7 @@ export function App() {
 
       const result = await window.cuppet.sessions.send(session.id, value, attachments);
       const target = String(result?.sessionId || session.id);
-      setRunning((current) => new Set(current).add(target));
+      markClientRunStarted(target);
       if (target !== session.id) await openSession(target);
       return { clear: true };
     } catch (error) {
