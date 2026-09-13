@@ -11,6 +11,7 @@ import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.m
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
+import { ProviderControlPlane } from './providers/control-plane.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -23,6 +24,7 @@ const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
 const turnStore = new TurnStore(join(dataDir, 'turn-state.sqlite3'));
+const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
   if (event?.type === 'run.started' && event.sessionId) {
     activeSessions.add(event.sessionId);
@@ -78,6 +80,12 @@ async function handle(method, params = {}) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'usage.summary': return providerUsageSummary();
+    case 'provider.local.status': return providerControl.localStatus(boundedProviderID(params.providerID));
+    case 'provider.local.connect': return providerControl.localConnect(boundedProviderID(params.providerID));
+    case 'provider.local.detect': return providerControl.localDetect(boundedProviderID(params.providerID));
+    case 'provider.local.probe': return providerControl.localProbe(boundedProviderID(params.providerID));
+    case 'provider.local.update': return providerControl.localUpdate(boundedProviderID(params.providerID));
+    case 'provider.models': return providerControl.models(boundedProvider(params.provider), { model: typeof params.model === 'string' ? params.model.slice(0, 1000) : '' });
     case 'integration.browser.status': return browserControl.status();
     case 'integration.browser.connect': return browserControl.connect();
     case 'integration.browser.disconnect': return browserControl.disconnect();
@@ -299,6 +307,11 @@ function boundedProvider(value) {
   return normalized;
 }
 
+function boundedProviderID(value) {
+  const id = typeof value === 'string' ? value.trim().toLowerCase().slice(0, 80) : '';
+  if (!id || !/^[a-z0-9._-]+$/.test(id)) throw new Error('A valid provider id is required.');
+  return id;
+}
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function cleanError(error) {
   return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500);
