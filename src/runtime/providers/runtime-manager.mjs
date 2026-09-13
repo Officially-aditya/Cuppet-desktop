@@ -5,7 +5,7 @@ import { CodexSessionRuntime, codexSessionSelection } from '../codex-provider.mj
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { recordProviderUsage } from '../usage-ledger.mjs';
 import { ConversationBridge } from './conversation-bridge.mjs';
-import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
+import { SupervisedAcpSessionRuntime } from './transports/acp/supervised-acp-runtime.mjs';
 import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
 import { AcpTextStreamAssembler } from './transports/acp/acp-text-stream.mjs';
 import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
@@ -26,7 +26,7 @@ export class ProviderRuntimeManager {
   #closed = false;
 
   constructor({ acpRuntimeFactory, openCodeRuntimeFactory, codexRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, conversationBridge = new ConversationBridge(), idleMs = DEFAULT_IDLE_MS, maxWarmRuntimes = DEFAULT_MAX_WARM_RUNTIMES } = {}) {
-    this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new AcpSessionRuntime({
+    this.#acpRuntimeFactory = acpRuntimeFactory ?? openCodeRuntimeFactory ?? (({ descriptor, configuration, projectRoot }) => new SupervisedAcpSessionRuntime({
       descriptor,
       configuration,
       projectRoot,
