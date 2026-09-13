@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
+import { providerActivity } from '../src/runtime/providers/activity.mjs';
 
 function isProviderActivity(event, type) {
   return event?.type === 'runtime.activity'
@@ -131,12 +132,12 @@ test('Codex-style in-stream dynamic tool calls split the next paragraph from pre
   assert.ok(previews.includes('Here is the final summary after the tool.'));
 });
 
-test('legacy provider reasoning and tool telemetry are bridged into canonical chat Activity', async () => {
+test('canonical provider reasoning and tool telemetry remain distinct from execution lifecycle', async () => {
   const adapter = {
     async stream(_messages, options) {
-      await options.onProviderEvent({ type: 'reasoning', text: 'Inspecting the repository.' });
-      await options.onProviderEvent({ type: 'tool.started', callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}' });
-      await options.onProviderEvent({ type: 'tool.finished', callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}', success: true, message: '2 matches' });
+      await options.onActivity(providerActivity('activity.reasoning.delta', { text: 'Inspecting the repository.' }));
+      await options.onActivity(providerActivity('activity.tool.opened', { callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}' }));
+      await options.onActivity(providerActivity('activity.tool.closed', { callId: 'acp_tool_1', tool: 'search', argumentsJson: '{"query":"TODO"}', status: 'success', details: '2 matches' }));
       options.onDelta('Final answer.');
       return { text: 'Final answer.', toolCalls: [] };
     },
