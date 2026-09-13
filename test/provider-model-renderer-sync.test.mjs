@@ -28,13 +28,17 @@ test('ModelPicker refreshes model-dependent capabilities before deciding effort 
   assert.match(picker, /advertised\.reasoning\?\.options/);
 });
 
-test('candidate model refresh crosses preload and main IPC without persisting settings', async () => {
+test('candidate model refresh crosses preload and main IPC into runtime authority without persisting settings', async () => {
   const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8');
   const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
+  const runtime = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
   const types = await readFile(new URL('../src/renderer/types.ts', import.meta.url), 'utf8');
   assert.match(preload, /models: \(options = \{\}\) => ipcRenderer\.invoke\('cuppet:settings:models', options\)/);
-  assert.match(main, /ipcMain\.handle\('cuppet:settings:models',[\s\S]*fetchProviderModelCatalog\(settings\.runtimeValue\(\), \{/);
+  assert.match(main, /ipcMain\.handle\('cuppet:settings:models',[\s\S]*request\('provider\.models', \{/);
+  assert.match(main, /provider: settings\.runtimeValue\(\)/);
   assert.match(main, /model: value && typeof value === 'object'/);
+  assert.doesNotMatch(main, /fetchProviderModelCatalog/);
+  assert.match(runtime, /case 'provider\.models': return providerControl\.models\(boundedProvider\(params\.provider\), \{ model: params\.model \}\)/);
   assert.match(types, /models: \(options\?: \{ model\?: string \}\) => Promise<ProviderModelCatalog>/);
   assert.match(types, /modelDependentSettings\?: boolean/);
 });
