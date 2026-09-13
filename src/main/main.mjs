@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
+import { ProjectTerminalManager } from './project-terminal-manager.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -13,6 +14,7 @@ let runtime;
 let settings;
 let mainWindow;
 let runtimeDataDir;
+let terminals;
 
 async function bootstrap() {
   const userData = app.getPath('userData');
@@ -30,6 +32,7 @@ async function bootstrap() {
   runtime.on('recovered', () => { void syncProviderConfig().catch(() => undefined); });
   await runtime.start();
   await syncProviderConfig().catch(() => undefined);
+  terminals = new ProjectTerminalManager({ request: (method, params) => runtime.request(method, params) });
   registerIpc();
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON);
   createWindow();
@@ -104,6 +107,12 @@ function registerIpc() {
   ipcMain.handle('cuppet:project:github-clone', (_event, value) => request('project.github-clone', validateClonePayload(value, false)));
   ipcMain.handle('cuppet:project:relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
   ipcMain.handle('cuppet:project:remove', (_event, projectId) => request('project.remove', { projectId }));
+
+  ipcMain.handle('cuppet:terminal:start', (event, projectId) => terminals.start(event.sender, projectId));
+  ipcMain.handle('cuppet:terminal:write', (event, sessionId, input) => terminals.write(event.sender, sessionId, input));
+  ipcMain.handle('cuppet:terminal:interrupt', (event, sessionId) => terminals.interrupt(event.sender, sessionId));
+  ipcMain.handle('cuppet:terminal:stop', (event, sessionId) => terminals.stop(event.sender, sessionId));
+
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
   ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
@@ -328,4 +337,4 @@ function createWindow() {
 app.whenReady().then(bootstrap).catch((error) => { console.error(error); app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0 && runtime) createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { void runtime?.stop(); });
+app.on('before-quit', () => { terminals?.stopAll(); void runtime?.stop(); });
