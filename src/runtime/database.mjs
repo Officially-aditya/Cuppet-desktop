@@ -7,6 +7,8 @@ const TOOL_STATUSES = new Set(['running', 'complete', 'error', 'rejected']);
 
 export class ConversationDatabase {
   #db;
+  #transactionDepth = 0;
+  #savepointSequence = 0;
   constructor(path) {
     mkdirSync(dirname(path), { recursive: true });
     this.#db = new DatabaseSync(path);
@@ -122,15 +124,36 @@ export class ConversationDatabase {
     }
   }
   close(){ this.#db.close(); }
+  sqlRepository() {
+    const owner = this;
+    return Object.freeze({
+      exec(sql) { return owner.#db.exec(sql); },
+      prepare(sql) { return owner.#db.prepare(sql); },
+      transaction(callback) { return owner.transaction(callback); },
+    });
+  }
   transaction(callback) {
-    this.#db.exec('BEGIN IMMEDIATE');
+    if (typeof callback !== 'function') throw new TypeError('SQLite transaction callback is required');
+    const nested = this.#transactionDepth > 0;
+    const savepoint = nested ? `cuppet_tx_${++this.#savepointSequence}` : null;
+    if (nested) this.#db.exec(`SAVEPOINT ${savepoint}`);
+    else this.#db.exec('BEGIN IMMEDIATE');
+    this.#transactionDepth += 1;
     try {
       const result = callback();
       if (result && typeof result.then === 'function') throw new Error('SQLite transaction callback must be synchronous');
-      this.#db.exec('COMMIT');
+      this.#transactionDepth -= 1;
+      if (nested) this.#db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      else this.#db.exec('COMMIT');
       return result;
     } catch (error) {
-      try { this.#db.exec('ROLLBACK'); } catch {}
+      this.#transactionDepth = Math.max(0, this.#transactionDepth - 1);
+      if (nested) {
+        try { this.#db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
+        try { this.#db.exec(`RELEASE SAVEPOINT ${savepoint}`); } catch {}
+      } else {
+        try { this.#db.exec('ROLLBACK'); } catch {}
+      }
       throw error;
     }
   }
