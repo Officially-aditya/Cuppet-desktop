@@ -53,6 +53,31 @@ test('PE3 transactional create rolls back target writes and preserves the source
   } finally { db.close(); await rm(dir,{recursive:true,force:true}); }
 });
 
+test('PE3 accept reserves a target until the accepted handoff commits or aborts', async () => {
+  const dir = await mkdtemp(join(tmpdir(),'cuppet-pe3-reservation-'));
+  const db = new ConversationDatabase(join(dir,'db.sqlite3'));
+  try {
+    db.createProject({ id:'project-1', name:'P', canonicalPath:dir });
+    db.createSession({ id:'session-a', projectId:'project-1' });
+    const router = new Pe3ProjectRouter({ projectId:'project-1', projectRoot:dir, projectStore:join(dir,'pe3'), db, tst:{ configured:false }, semanticRouter:new NeverSemantic() });
+    await router.ready();
+
+    const first = await router.prepare({ sourceSessionId:'session-a', prompt:'first turn' });
+    const second = await router.prepare({ sourceSessionId:'session-a', prompt:'second turn' });
+    assert.equal(first.targetSessionId,'session-a');
+    assert.equal(second.targetSessionId,'session-a');
+
+    router.accept(first.token);
+    assert.throws(() => router.accept(second.token), /target session is busy/);
+
+    assert.equal(router.abort(first.token).aborted,true);
+    const accepted = router.accept(second.token);
+    assert.equal(accepted.state,'accepted');
+    assert.equal(accepted.targetSessionId,'session-a');
+    assert.equal(router.abort(second.token).aborted,true);
+  } finally { db.close(); await rm(dir,{recursive:true,force:true}); }
+});
+
 test('attachment routing envelope is bounded and rejects invalid MIME metadata', () => {
   const values = Array.from({length:20},(_,index)=>({name:`file-${index}.txt`,mime:'text/plain',path:`src/file-${index}.txt`,size:index}));
   values[1] = { name:'bad', mime:'not a mime', path:'src/bad' };
