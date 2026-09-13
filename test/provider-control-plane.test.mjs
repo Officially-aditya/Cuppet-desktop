@@ -14,10 +14,11 @@ test('control plane projects local provider readiness without flattening install
   assert.equal(needsAuth.control.installation.state, 'external');
   assert.equal(needsAuth.control.authentication.state, 'required');
 
-  const ready = withControlState({ providerID: 'opencode', installed: true, connected: true, available: true, version: '1.2.3', installation: { detected: true, executable: '/tmp/opencode', ownedByCuppet: true } });
+  const ready = withControlState({ providerID: 'opencode', installed: true, connected: true, available: true, version: '1.2.3', installation: { detected: true, executable: '/tmp/opencode', ownedByCuppet: true, identity: { resolvedPath: '/tmp/opencode', realPath: '/tmp/opencode' } } });
   assert.equal(ready.control.overall, 'ready');
   assert.equal(ready.control.installation.state, 'cuppet_managed');
   assert.equal(ready.control.authentication.state, 'authenticated');
+  assert.equal(ready.control.installation.identity.realPath, '/tmp/opencode');
 });
 
 test('runtime control plane owns lifecycle operations', async () => {
@@ -47,6 +48,7 @@ test('runtime control plane owns lifecycle operations', async () => {
 test('Electron main is a provider-control proxy, not a second lifecycle authority', async () => {
   const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
   const runtime = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
+  const controlPlane = await readFile(new URL('../src/runtime/providers/control-plane.mjs', import.meta.url), 'utf8');
 
   assert.doesNotMatch(main, /from '\.\/cli-agent-status\.mjs'/);
   assert.doesNotMatch(main, /from '\.\/provider-model-catalog\.mjs'/);
@@ -58,4 +60,6 @@ test('Electron main is a provider-control proxy, not a second lifecycle authorit
   assert.match(runtime, /new ProviderControlPlane\(\{ dataDir \}\)/);
   assert.match(runtime, /case 'provider\.local\.status'/);
   assert.match(runtime, /case 'provider\.models'/);
+  assert.doesNotMatch(controlPlane, /\.\.\/\.\.\/main\//);
+  assert.match(controlPlane, /from '\.\/local-provider-operations\.mjs'/);
 });
