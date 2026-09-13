@@ -85,7 +85,7 @@ process.stdin.on('end', () => process.exit(0));
     async calls() {
       try {
         const text = await readFile(logPath, 'utf8');
-        return text.trim().split(/\\r?\\n/).filter(Boolean).map((line) => JSON.parse(line));
+        return text.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
       } catch { return []; }
     },
     cleanup: () => rm(root, { recursive: true, force: true }),
