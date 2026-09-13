@@ -20,9 +20,10 @@ import { classifyProviderError } from './provider-error.mjs';
 import { generateChatTitle } from './title-generator.mjs';
 
 export class RuntimeService {
-  #db; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #ownsDatabase = false; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
+    database = null,
     databasePath,
     dataDir = dirname(databasePath),
     emit = () => {},
@@ -44,7 +45,8 @@ export class RuntimeService {
     browserControl = null,
   }) {
     this.#dataDir = dataDir;
-    this.#db = new ConversationDatabase(databasePath);
+    this.#ownsDatabase = !database;
+    this.#db = database ?? new ConversationDatabase(databasePath);
     this.#emit = emit;
     this.#providerFactory = providerFactory;
     this.#projects = projectManagerFactory(this.#db);
@@ -76,7 +78,7 @@ export class RuntimeService {
     this.#permissions.close?.();
     this.#questions.close?.();
     this.#tst.close?.();
-    this.#db.close();
+    if (this.#ownsDatabase) this.#db.close();
   }
 
   async handle(method, params = {}) {
