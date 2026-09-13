@@ -1,16 +1,16 @@
 import { useSyncExternalStore } from 'react';
 import type { RuntimeEvent, Session } from '../types';
 
-let sessions: readonly Session[] = Object.freeze([]);
-let refreshPromise: Promise<readonly Session[]> | null = null;
+let sessions: Session[] = frozenSessions([]);
+let refreshPromise: Promise<Session[]> | null = null;
 const listeners = new Set<() => void>();
 let unsubscribeRuntime: (() => void) | null = null;
 
-export function useClientSessions(): readonly Session[] {
+export function useClientSessions(): Session[] {
   return useSyncExternalStore(subscribeClientSessions, clientSessionsSnapshot, clientSessionsSnapshot);
 }
 
-export function clientSessionsSnapshot(): readonly Session[] {
+export function clientSessionsSnapshot(): Session[] {
   return sessions;
 }
 
@@ -53,7 +53,7 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
 
 export function resetClientSessionStateStore() {
   releaseRuntimeSubscription();
-  sessions = Object.freeze([]);
+  sessions = frozenSessions([]);
   refreshPromise = null;
   listeners.clear();
 }
@@ -82,7 +82,11 @@ function releaseRuntimeSubscription() {
 }
 
 function sortSessions(values: readonly Session[]) {
-  return Object.freeze([...values].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)));
+  return frozenSessions([...values].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)));
+}
+
+function frozenSessions(values: Session[]) {
+  return Object.freeze(values) as unknown as Session[];
 }
 
 function sameSessions(current: readonly Session[], next: readonly Session[]) {
