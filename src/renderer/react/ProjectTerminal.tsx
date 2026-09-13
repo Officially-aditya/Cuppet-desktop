@@ -1,5 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Project, TerminalEvent, TerminalSession } from '../types';
+import type { Project } from '../types';
+
+type TerminalSession = {
+  sessionId: string;
+  projectId: string;
+  cwd: string;
+  shell: string;
+  startedAt: number;
+};
+
+type TerminalEvent = {
+  sessionId: string;
+  projectId: string;
+  type: 'output' | 'exit' | 'error';
+  stream?: 'stdout' | 'stderr';
+  data?: string;
+  code?: number | null;
+  signal?: string | null;
+  message?: string;
+};
+
+type TerminalApi = {
+  start: (projectId: string) => Promise<TerminalSession>;
+  write: (sessionId: string, input: string) => Promise<{ written: boolean }>;
+  interrupt: (sessionId: string) => Promise<{ interrupted: boolean }>;
+  stop: (sessionId: string) => Promise<{ stopped: boolean }>;
+  onEvent: (handler: (event: TerminalEvent) => void) => () => void;
+};
 
 type Props = {
   project: Project | null;
@@ -15,6 +42,7 @@ const MAX_CHARS = 180_000;
 const MAX_HISTORY = 80;
 
 export function ProjectTerminal({ project }: Props) {
+  const terminal = (window.cuppet as typeof window.cuppet & { terminal: TerminalApi }).terminal;
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [output, setOutput] = useState<OutputChunk[]>([]);
@@ -27,40 +55,50 @@ export function ProjectTerminal({ project }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const nextId = useRef(1);
   const sessionRef = useRef<TerminalSession | null>(null);
+  const projectIdRef = useRef<string | null>(project?.id ?? null);
+  const startGeneration = useRef(0);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
 
   useEffect(() => {
+    projectIdRef.current = project?.id ?? null;
+    startGeneration.current += 1;
+    const active = sessionRef.current;
+    sessionRef.current = null;
     setOpen(false);
     setSession(null);
     setOutput([]);
     setInput('');
+    setHistory([]);
     setHistoryIndex(-1);
     setStatus('idle');
     setError(null);
-  }, [project?.id]);
+    if (active) void terminal.stop(active.sessionId).catch(() => undefined);
+  }, [project?.id, terminal]);
 
   useEffect(() => {
-    const unsubscribe = window.cuppet.terminal.onEvent((event) => {
+    const unsubscribe = terminal.onEvent((event) => {
       const active = sessionRef.current;
-      if (!active || event.sessionId !== active.sessionId) return;
+      if (!active || event.sessionId !== active.sessionId || event.projectId !== active.projectId) return;
       handleTerminalEvent(event);
     });
     return unsubscribe;
-  }, []);
+  }, [terminal]);
 
   useEffect(() => {
     return () => {
+      startGeneration.current += 1;
       const active = sessionRef.current;
-      if (active) void window.cuppet.terminal.stop(active.sessionId).catch(() => undefined);
+      sessionRef.current = null;
+      if (active) void terminal.stop(active.sessionId).catch(() => undefined);
     };
-  }, []);
+  }, [terminal]);
 
   useEffect(() => {
     if (!open || !project) return;
-    if (!session && status !== 'starting') void startTerminal();
+    if (!session && status !== 'starting') void startTerminal(project.id);
     window.setTimeout(() => inputRef.current?.focus(), 0);
-  }, [open, project?.id]);
+  }, [open, project?.id, session, status]);
 
   useEffect(() => {
     const node = outputRef.current;
@@ -82,16 +120,23 @@ export function ProjectTerminal({ project }: Props) {
   const prompt = useMemo(() => project?.name?.trim() || 'project', [project?.name]);
   if (!project) return null;
 
-  async function startTerminal() {
+  async function startTerminal(projectId: string) {
+    const generation = ++startGeneration.current;
     setStatus('starting');
     setError(null);
     try {
-      const next = await window.cuppet.terminal.start(project.id);
+      const next = await terminal.start(projectId);
+      const stale = generation !== startGeneration.current || projectIdRef.current !== projectId;
+      if (stale) {
+        await terminal.stop(next.sessionId).catch(() => undefined);
+        return;
+      }
       setSession(next);
       sessionRef.current = next;
       setStatus('ready');
       append('system', `Shell ready at ${next.cwd}\n`);
     } catch (reason) {
+      if (generation !== startGeneration.current || projectIdRef.current !== projectId) return;
       setStatus('error');
       setError(cleanError(reason));
     }
@@ -99,12 +144,13 @@ export function ProjectTerminal({ project }: Props) {
 
   async function restart() {
     const active = sessionRef.current;
-    if (active) await window.cuppet.terminal.stop(active.sessionId).catch(() => undefined);
+    startGeneration.current += 1;
+    if (active) await terminal.stop(active.sessionId).catch(() => undefined);
     setSession(null);
     sessionRef.current = null;
     setOutput([]);
     setStatus('idle');
-    await startTerminal();
+    await startTerminal(project.id);
   }
 
   async function submit() {
@@ -112,7 +158,7 @@ export function ProjectTerminal({ project }: Props) {
     const active = sessionRef.current;
     if (!active || status !== 'ready') return;
     if (!command.trim()) {
-      await window.cuppet.terminal.write(active.sessionId, '\n');
+      await terminal.write(active.sessionId, '\n');
       setInput('');
       return;
     }
@@ -121,7 +167,7 @@ export function ProjectTerminal({ project }: Props) {
     setHistoryIndex(-1);
     setInput('');
     try {
-      await window.cuppet.terminal.write(active.sessionId, `${command}\n`);
+      await terminal.write(active.sessionId, `${command}\n`);
     } catch (reason) {
       append('system', `${cleanError(reason)}\n`);
       setStatus('error');
@@ -184,7 +230,7 @@ export function ProjectTerminal({ project }: Props) {
       if (!active) return;
       event.preventDefault();
       append('command', '^C\n');
-      void window.cuppet.terminal.interrupt(active.sessionId).catch((reason) => append('system', `${cleanError(reason)}\n`));
+      void terminal.interrupt(active.sessionId).catch((reason) => append('system', `${cleanError(reason)}\n`));
     }
   }
 
@@ -202,7 +248,7 @@ export function ProjectTerminal({ project }: Props) {
       {open && (
         <div className="project-terminal-body">
           <div className="project-terminal-toolbar">
-            <span className="project-terminal-cwd" title={session?.cwd || project.path || ''}>{session?.cwd || project.path || project.name}</span>
+            <span className="project-terminal-cwd" title={session?.cwd || project.name}>{session?.cwd || project.name}</span>
             <div className="project-terminal-actions">
               <button type="button" onClick={() => setOutput([])}>Clear</button>
               <button type="button" onClick={() => void restart()}>Restart</button>
@@ -214,7 +260,7 @@ export function ProjectTerminal({ project }: Props) {
             {error && <span className="terminal-output-stderr">{error}\n</span>}
           </div>
           <div className="project-terminal-input-row">
-            <span className="project-terminal-prompt" title={session?.cwd || project.path || ''}>{prompt} ❯</span>
+            <span className="project-terminal-prompt" title={session?.cwd || project.name}>{prompt} ❯</span>
             <input
               ref={inputRef}
               value={input}
