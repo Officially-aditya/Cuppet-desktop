@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RuntimeClient } from '../src/main/runtime-client.mjs';
 
-test('RuntimeClient recovers process but never replays interrupted session.send', async () => {
+test('RuntimeClient retries interrupted durable session.send with the same command id only', async () => {
   const fixture = await createCrashFixture('session.send');
   const client = new RuntimeClient({
     entry: fixture.entry,
@@ -16,12 +16,12 @@ test('RuntimeClient recovers process but never replays interrupted session.send'
   });
   try {
     await client.start();
-    await assert.rejects(
-      () => client.request('session.send', { sessionId: 's1', text: 'do not duplicate' }, 2_000),
-      (error) => error?.code === 'CUPPET_RUNTIME_ACTION_INTERRUPTED' && /not retried to avoid duplicating work/i.test(error.message),
-    );
-    const calls = await fixture.calls();
-    assert.deepEqual(calls.filter((item) => item.method === 'session.send').map((item) => item.generation), [1]);
+    const result = await client.request('session.send', { sessionId: 's1', text: 'do not duplicate' }, 2_000);
+    assert.equal(result.ok, true);
+    assert.equal(result.generation, 2);
+    const calls = (await fixture.calls()).filter((item) => item.method === 'session.send');
+    assert.deepEqual(calls.map((item) => item.generation), [1, 2]);
+    assert.equal(calls[0].id, calls[1].id, 'durable retry must reuse one command id so the runtime receipt layer decides replay/unknown');
   } finally {
     await client.stop().catch(() => undefined);
     await fixture.cleanup();
@@ -69,7 +69,7 @@ process.stdout.write(JSON.stringify({ kind: 'event', event: { type: 'runtime.rea
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', (line) => {
   const request = JSON.parse(line);
-  appendFileSync(logPath, JSON.stringify({ method: request.method, generation }) + '\\n');
+  appendFileSync(logPath, JSON.stringify({ id: request.id, method: request.method, generation }) + '\\n');
   if (generation === 1 && request.method === ${JSON.stringify(crashMethod)}) {
     process.exit(42);
   }
