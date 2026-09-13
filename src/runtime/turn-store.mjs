@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { normalizeRunPhase, phaseFromRunStatus } from './run-phase.mjs';
 
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'running', 'waiting', 'settling']);
 const TERMINAL_RUN_STATUSES = new Set(['complete', 'stopped', 'interrupted', 'error']);
@@ -29,6 +30,7 @@ export class TurnStore {
         source_session_id TEXT,
         project_id TEXT,
         status TEXT NOT NULL,
+        phase TEXT,
         error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -69,6 +71,7 @@ export class TurnStore {
       );
     `);
 
+    this.#ensureRunPhaseColumn();
     this.#installConversationProjectionTriggers();
     if (legacyPath) this.#migrateLegacyFile(legacyPath);
     this.#recoverInterruptedState(Date.now());
@@ -87,27 +90,34 @@ export class TurnStore {
       if (existing) {
         if (existing.sessionId !== session) throw new Error(`runId ${id} already belongs to session ${existing.sessionId}`);
         // On the shared conversation database, the assistant-message INSERT trigger creates
-        // the run in `starting` inside the same transaction as the durable transcript row.
+        // the run in `starting/preparing` inside the same transaction as the durable transcript row.
         // The runtime callback only enriches that already-durable identity and advances it.
         if (existing.status === 'starting') {
           this.#db.prepare(`
             UPDATE runs
-            SET source_session_id=?, project_id=?, status='running', error=NULL, updated_at=?
+            SET source_session_id=?, project_id=?, status='running', phase='provider_starting', error=NULL, updated_at=?
             WHERE run_id=? AND status='starting'
           `).run(optionalText(sourceSessionId), optionalText(projectId), now, id);
+          this.#appendEvent({
+            sessionId: session,
+            runId: id,
+            type: 'run.phase',
+            payload: { status: 'running', phase: 'provider_starting', previousPhase: existing.phase },
+            createdAt: now,
+          });
           return this.getRun(id);
         }
         return existing;
       }
       this.#db.prepare(`
-        INSERT INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at)
-        VALUES (?,?,?,?, 'running', NULL, ?, ?)
+        INSERT INTO runs (run_id,session_id,source_session_id,project_id,status,phase,error,created_at,updated_at)
+        VALUES (?,?,?,?, 'running', 'provider_starting', NULL, ?, ?)
       `).run(id, session, optionalText(sourceSessionId), optionalText(projectId), now, now);
       this.#appendEvent({
         sessionId: session,
         runId: id,
         type: 'run.started',
-        payload: { status: 'running', sourceSessionId: optionalText(sourceSessionId), projectId: optionalText(projectId) },
+        payload: { status: 'running', phase: 'provider_starting', sourceSessionId: optionalText(sourceSessionId), projectId: optionalText(projectId) },
         createdAt: now,
       });
       return this.getRun(id);
@@ -123,13 +133,13 @@ export class TurnStore {
       if (TERMINAL_RUN_STATUSES.has(current.status)) return current;
       const normalizedError = optionalText(error);
       this.#db.prepare(`
-        UPDATE runs SET status=?, error=?, updated_at=? WHERE run_id=?
-      `).run(normalizedStatus, normalizedError, now, id);
+        UPDATE runs SET status=?, phase=?, error=?, updated_at=? WHERE run_id=?
+      `).run(normalizedStatus, normalizedStatus, normalizedError, now, id);
       this.#appendEvent({
         sessionId: current.sessionId,
         runId: id,
         type: 'run.finished',
-        payload: { status: normalizedStatus, error: normalizedError },
+        payload: { status: normalizedStatus, phase: normalizedStatus, error: normalizedError },
         createdAt: now,
       });
       return this.getRun(id);
@@ -137,19 +147,21 @@ export class TurnStore {
   }
 
   getRun(runId) {
-    return this.#db.prepare(`
+    const row = this.#db.prepare(`
       SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
-             project_id AS projectId, status, error, created_at AS createdAt, updated_at AS updatedAt
+             project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt
       FROM runs WHERE run_id=?
-    `).get(String(runId ?? '')) ?? null;
+    `).get(String(runId ?? ''));
+    return row ? runRow(row) : null;
   }
 
   latestRun(sessionId) {
-    return this.#db.prepare(`
+    const row = this.#db.prepare(`
       SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
-             project_id AS projectId, status, error, created_at AS createdAt, updated_at AS updatedAt
+             project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt
       FROM runs WHERE session_id=? ORDER BY updated_at DESC, created_at DESC LIMIT 1
-    `).get(String(sessionId ?? '')) ?? null;
+    `).get(String(sessionId ?? ''));
+    return row ? runRow(row) : null;
   }
 
   enqueue({ id, sessionId, params, queuedAt = Date.now() }) {
@@ -294,27 +306,50 @@ export class TurnStore {
     });
   }
 
+  #ensureRunPhaseColumn() {
+    const columns = this.#db.prepare('PRAGMA table_info(runs)').all();
+    if (!columns.some((column) => column.name === 'phase')) this.#db.exec('ALTER TABLE runs ADD COLUMN phase TEXT');
+    this.#db.prepare(`
+      UPDATE runs
+      SET phase=CASE status
+        WHEN 'starting' THEN 'preparing'
+        WHEN 'running' THEN 'streaming'
+        WHEN 'waiting' THEN 'waiting_for_user'
+        WHEN 'settling' THEN 'settling'
+        WHEN 'complete' THEN 'complete'
+        WHEN 'stopped' THEN 'stopped'
+        WHEN 'interrupted' THEN 'interrupted'
+        ELSE 'error'
+      END
+      WHERE phase IS NULL OR TRIM(phase)=''
+    `).run();
+  }
+
   #installConversationProjectionTriggers() {
     const hasMessages = Boolean(this.#db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get());
     if (!hasMessages) return;
-    // These triggers are deliberately projection-only. Provider/TST side effects stay out
-    // of SQLite, while the durable assistant message and durable run phase can never split
-    // across a crash because both changes are part of the caller's transaction.
+    // Recreate these projection-only triggers so schema upgrades are applied to
+    // existing databases as well as clean installs. Provider/TST side effects stay
+    // out of SQLite, while message + run transitions remain one transaction.
     this.#db.exec(`
-      CREATE TRIGGER IF NOT EXISTS cuppet_run_start_from_assistant_message
+      DROP TRIGGER IF EXISTS cuppet_run_start_from_assistant_message;
+      DROP TRIGGER IF EXISTS cuppet_run_settling_from_assistant_message;
+
+      CREATE TRIGGER cuppet_run_start_from_assistant_message
       AFTER INSERT ON messages
       WHEN NEW.role='assistant'
         AND NEW.status='streaming'
         AND NOT EXISTS (SELECT 1 FROM runs WHERE run_id=NEW.id)
       BEGIN
         INSERT INTO runs (
-          run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at
+          run_id,session_id,source_session_id,project_id,status,phase,error,created_at,updated_at
         ) VALUES (
           NEW.id,
           NEW.session_id,
           NULL,
           (SELECT project_id FROM sessions WHERE id=NEW.session_id),
           'starting',
+          'preparing',
           NULL,
           NEW.created_at,
           NEW.updated_at
@@ -327,13 +362,13 @@ export class TurnStore {
           NULL,
           (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
           'run.started',
-          '{"status":"starting","source":"assistant_message"}',
+          '{"status":"starting","phase":"preparing","source":"assistant_message"}',
           ${EVENT_SCHEMA_VERSION},
           NEW.created_at
         );
       END;
 
-      CREATE TRIGGER IF NOT EXISTS cuppet_run_settling_from_assistant_message
+      CREATE TRIGGER cuppet_run_settling_from_assistant_message
       AFTER UPDATE OF status ON messages
       WHEN OLD.role='assistant'
         AND OLD.status='streaming'
@@ -344,7 +379,7 @@ export class TurnStore {
         )
       BEGIN
         UPDATE runs
-        SET status='settling', updated_at=NEW.updated_at
+        SET status='settling', phase='settling', updated_at=NEW.updated_at
         WHERE run_id=NEW.id AND status IN ('starting','running','waiting');
         INSERT INTO runtime_events (
           session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
@@ -354,7 +389,7 @@ export class TurnStore {
           NULL,
           (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
           'run.settling',
-          '{"status":"settling","messageStatus":"' || NEW.status || '"}',
+          '{"status":"settling","phase":"settling","messageStatus":"' || NEW.status || '"}',
           ${EVENT_SCHEMA_VERSION},
           NEW.updated_at
         );
@@ -376,8 +411,8 @@ export class TurnStore {
       const queued = tableExists(legacy, 'queued_turns') ? legacy.prepare(`SELECT queue_id AS queueId,session_id AS sessionId,params_json AS paramsJson,status,error,queued_at AS queuedAt,updated_at AS updatedAt FROM queued_turns`).all() : [];
       const events = tableExists(legacy, 'runtime_events') ? legacy.prepare(`SELECT session_id AS sessionId,run_id AS runId,queue_id AS queueId,sequence,type,payload_json AS payloadJson,schema_version AS schemaVersion,created_at AS createdAt FROM runtime_events ORDER BY session_id,sequence`).all() : [];
       this.#transaction(() => {
-        const insertRun = this.#db.prepare(`INSERT OR IGNORE INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`);
-        for (const row of runs) insertRun.run(row.runId,row.sessionId,row.sourceSessionId,row.projectId,row.status,row.error,row.createdAt,row.updatedAt);
+        const insertRun = this.#db.prepare(`INSERT OR IGNORE INTO runs (run_id,session_id,source_session_id,project_id,status,phase,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`);
+        for (const row of runs) insertRun.run(row.runId,row.sessionId,row.sourceSessionId,row.projectId,row.status,phaseFromRunStatus(row.status),row.error,row.createdAt,row.updatedAt);
         const insertQueue = this.#db.prepare(`INSERT OR IGNORE INTO queued_turns (queue_id,session_id,params_json,status,error,queued_at,updated_at) VALUES (?,?,?,?,?,?,?)`);
         for (const row of queued) insertQueue.run(row.queueId,row.sessionId,row.paramsJson,row.status,row.error,row.queuedAt,row.updatedAt);
         const insertEvent = this.#db.prepare(`INSERT OR IGNORE INTO runtime_events (session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at) VALUES (?,?,?,?,?,?,?,?)`);
@@ -392,14 +427,14 @@ export class TurnStore {
   #recoverInterruptedState(now) {
     this.#transaction(() => {
       const activeRuns = this.#db.prepare(`
-        SELECT run_id AS runId, session_id AS sessionId, status
+        SELECT run_id AS runId, session_id AS sessionId, status, phase
         FROM runs WHERE status IN ('starting','running','waiting','settling')
       `).all();
       for (const run of activeRuns) {
         const message = 'Interrupted by runtime restart.';
         this.#db.prepare(`
           UPDATE runs
-          SET status='interrupted',
+          SET status='interrupted', phase='interrupted',
               error=CASE WHEN error IS NULL OR error='' THEN ? ELSE error END,
               updated_at=?
           WHERE run_id=?
@@ -411,8 +446,10 @@ export class TurnStore {
           type: 'run.finished',
           payload: {
             status: 'interrupted',
+            phase: 'interrupted',
             error: current?.error ?? message,
             previousStatus: String(run.status),
+            previousPhase: normalizeRunPhase(run.phase, run.status),
             recovery: 'runtime_restart',
           },
           createdAt: now,
@@ -494,6 +531,20 @@ export function normalizeRunStatus(status) {
 function normalizeTerminalRunStatus(status) {
   const value = normalizeRunStatus(status);
   return TERMINAL_RUN_STATUSES.has(value) ? value : 'error';
+}
+
+function runRow(row) {
+  return {
+    runId: String(row.runId),
+    sessionId: String(row.sessionId),
+    sourceSessionId: optionalText(row.sourceSessionId),
+    projectId: optionalText(row.projectId),
+    status: normalizeRunStatus(row.status),
+    phase: normalizeRunPhase(row.phase, row.status),
+    error: optionalText(row.error),
+    createdAt: Number(row.createdAt) || 0,
+    updatedAt: Number(row.updatedAt) || 0,
+  };
 }
 
 function queueRow(row) {
