@@ -123,7 +123,9 @@ async function handle(method, params = {}, context = {}) {
     }
     case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
-    case 'session.create': return runReceiptProtectedCommand('session.create', params, context.commandId, () => service.handle('session.create', params));
+    case 'session.create': return runReceiptProtectedCommand('session.create', params, context.commandId, () => context.commandId
+      ? receiptDatabase.run({ commandId: context.commandId, method: 'session.create' }, () => service.handle('session.create', params))
+      : service.handle('session.create', params));
     case 'session.send': {
       const sessionId = boundedId(params.sessionId);
       if (!sessionId) return sendOrQueue(params, context.commandId);
