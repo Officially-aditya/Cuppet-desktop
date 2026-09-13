@@ -65,39 +65,6 @@ export function activityFromToolRuntimeEvent(event) {
   });
 }
 
-export function activityFromLegacyProviderEvent(event) {
-  const source = record(event);
-  const type = text(source.type);
-
-  if (type === 'reasoning') {
-    const value = typeof source.text === 'string' ? source.text : '';
-    return value ? providerActivity('activity.reasoning.delta', { text: value }) : null;
-  }
-
-  if (type === 'tool.started') {
-    return providerActivity('activity.tool.opened', {
-      callId: source.callId,
-      tool: source.tool,
-      label: source.label,
-      argumentsJson: text(source.argumentsJson),
-      details: text(source.details || source.message),
-    });
-  }
-
-  if (type === 'tool.finished') {
-    return providerActivity('activity.tool.closed', {
-      callId: source.callId,
-      tool: source.tool,
-      label: source.label,
-      argumentsJson: text(source.argumentsJson),
-      details: text(source.details || source.message),
-      status: source.success === false ? 'error' : 'success',
-    });
-  }
-
-  return null;
-}
-
 function requiredDelta(value, label) {
   if (typeof value !== 'string' || value.length === 0) throw new TypeError(`${label} is required.`);
   return value;
