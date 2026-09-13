@@ -16,10 +16,12 @@ test('GUI smoke crosses hydrated bootstrap into the real runtime child', async (
   assert.doesNotMatch(smoke, /localProviderOperations|cliAgentStatus/);
 });
 
-test('LaunchServices acceptance does not launch the app executable directly', async () => {
+test('LaunchServices acceptance uses a deterministic launchd-style environment', async () => {
   const source = await readFile(new URL('../scripts/smoke-launchservices-cli-path.mjs', import.meta.url), 'utf8');
   assert.match(source, /'\/usr\/bin\/open'/);
-  assert.match(source, /'\/bin\/launchctl'/);
+  assert.match(source, /const launchdPath = '\/usr\/bin:\/bin:\/usr\/sbin:\/sbin'/);
+  assert.match(source, /env: launchEnvironment/);
+  assert.match(source, /SHELL: fakeShell/);
   assert.match(source, /CUPPET_INTERNAL_GUI_CLI_SMOKE/);
   assert.match(source, /__CUPPET_LOGIN_SHELL_PATH__/);
   assert.match(source, /provider control plane resolved authenticated OpenCode/);
