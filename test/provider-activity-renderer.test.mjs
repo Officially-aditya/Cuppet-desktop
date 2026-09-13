@@ -33,8 +33,7 @@ test('ToolRuntime events normalize to Cuppet execution Activity', () => {
   assert.equal(closed.details, 'failed');
 });
 
-test('managed ACP forwards canonical Activity without re-materializing legacy provider events', async () => {
-  const legacy = [];
+test('managed ACP forwards canonical Activity directly', async () => {
   const activities = [];
   const manager = new ProviderRuntimeManager({
     usageRecorder: async () => {},
@@ -52,10 +51,8 @@ test('managed ACP forwards canonical Activity without re-materializing legacy pr
   try {
     await manager.adapterFor({ sessionId: 'chat-activity', adapter: managedAdapter() }).stream([], {
       onActivity: async (activity) => activities.push(activity),
-      onProviderEvent: async (event) => legacy.push(event),
     });
     assert.deepEqual(activities.map((activity) => activity.type), ['activity.reasoning.delta']);
-    assert.deepEqual(legacy, []);
   } finally {
     await manager.close();
   }
@@ -65,7 +62,7 @@ test('JournaledToolRuntime emits canonical provider Activity and preserves execu
   const emitted = [];
   const adapter = {
     async stream(_messages, options) {
-      await options.onProviderEvent?.({ type: 'reasoning', text: 'Legacy provider thought.' });
+      await options.onActivity?.(providerActivity('activity.reasoning.delta', { text: 'Provider thought.' }));
       const result = await options.executeTool({ id: 'call-1', name: 'cuppet_plan', arguments: '{"action":"overview"}' });
       assert.equal(result.success, true);
       options.onDelta('Done.');
@@ -105,11 +102,11 @@ test('JournaledToolRuntime emits canonical provider Activity and preserves execu
   }
 });
 
-test('legacy provider tool telemetry is ingress-only and cannot leak as execution lifecycle', async () => {
+test('canonical provider tool telemetry cannot leak as execution lifecycle', async () => {
   const emitted = [];
   const adapter = {
     async stream(_messages, options) {
-      await options.onProviderEvent?.({ type: 'tool.started', callId: 'provider-call', tool: 'provider_tool', argumentsJson: '{}' });
+      await options.onActivity?.(providerActivity('activity.tool.opened', { callId: 'provider-call', tool: 'provider_tool', argumentsJson: '{}' }));
       options.onDelta('Done.');
       return { text: 'Done.', toolCalls: [] };
     },
@@ -276,10 +273,10 @@ test('aborting deferred provider text does not persist ambiguous pre-tool conten
   }
 });
 
-test('malformed provider telemetry and host emit failures cannot fail a successful turn', async () => {
+test('canonical provider activity and host emit failures cannot fail a successful turn', async () => {
   const adapter = {
     async stream(_messages, options) {
-      await options.onProviderEvent?.({ type: 'tool.started', tool: 'broken-without-call-id' });
+      await options.onActivity?.(providerActivity('activity.status', { message: 'Working.' }));
       options.onDelta('Done.');
       return { text: 'Done.', toolCalls: [] };
     },
@@ -312,13 +309,15 @@ test('malformed provider telemetry and host emit failures cannot fail a successf
 });
 
 test('renderer consumes one canonical transcript reducer without preload legacy suppression', async () => {
-  const [preload, chat, clientTranscript, transcript, database, runtime] = await Promise.all([
+  const [preload, chat, clientTranscript, transcript, database, runtime, activity, runtimeContract] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/database.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/journaled-tool-runtime.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/providers/activity.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/providers/runtime-contract.mjs', import.meta.url), 'utf8'),
   ]);
   assert.doesNotMatch(preload, /LEGACY_ACTIVITY_EVENTS/);
   assert.match(preload, /const listener = \(_event, payload\) => callback\(payload\)/);
@@ -351,5 +350,8 @@ test('renderer consumes one canonical transcript reducer without preload legacy 
   assert.match(database, /activities:this\.listMessageActivities\(id\)/);
   assert.match(runtime, /appendMessageActivity/);
   assert.doesNotMatch(runtime, /type:\s*'message\.reasoning'/);
+  assert.doesNotMatch(runtime, /onProviderEvent|activityFromLegacyProviderEvent/);
   assert.doesNotMatch(runtime, /Keep legacy runtime events|Temporary compatibility event/);
+  assert.doesNotMatch(activity, /activityFromLegacyProviderEvent/);
+  assert.doesNotMatch(runtimeContract, /legacyProviderRuntime|onProviderEvent/);
 });
