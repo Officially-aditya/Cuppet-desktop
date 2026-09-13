@@ -23,6 +23,7 @@ export async function buildRuntimeStatus({ call, providerConfig = {}, version = 
     version,
     ok: healthResult.ok && health.ok === true,
     activeRuns: integer(health.activeRuns),
+    liveExecutions: integer(health.liveExecutions),
     projects: { total: projects.length, missing: missingProjects.length },
     sessions: { total: sessions.length, interruptedOrError: interrupted.length },
     permissions: { pending: permissions.length },
