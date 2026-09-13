@@ -61,7 +61,10 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
   - files matching neither are preserved and reported as recovery conflicts.
 - Partially-created files are removed only when the durable preimage proves they did not exist.
 - Committed batches are never rolled back by stale pending-intent cleanup.
-- Crash-recovery regressions cover partial multi-file publication, created-file recovery, committed batches, and unknown external edits.
+- Undo persists a durable `undo-intent` before restoring workspace bytes.
+- Restart recovery can finish a partially-completed multi-file undo, remove a partially undone created file, and preserve unknown external edits as explicit recovery conflicts.
+- Undo and TST publication share project-level writer serialization so separate sessions cannot mutate the same workspace concurrently through those paths.
+- Crash-recovery regressions cover partial multi-file publication, created-file recovery, committed batches, unknown external edits, partial undo, created-file undo, and conflicted undo recovery.
 
 ### Canonical runtime event coverage — complete for current P0 scope
 
@@ -88,43 +91,26 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Lifecycle regressions cover normal streaming, tools, human waits, resume ordering, transactional rollback, terminalization, and legacy-schema restart migration.
 - Milestone 1.3 was validated on exact head `852344ea236fb592cdb65e40d59d5d55c82a8309` with Provider V2 Selected, full phase gates, live OpenCode ACP, macOS LaunchServices, and packaged-runtime smoke all green.
 
+### Command receipts / idempotency — complete for current P0 scope
+
+- Durable receipts protect externally retryable `session.create`, `session.steer`, and `session.undo` mutations in addition to `session.send`.
+- Remote envelopes provide stable command identity across adapter recreation and slash-command dispatch.
+- Retry of the same command ID replays the accepted result or stops at the receipt boundary instead of duplicating a mutation.
+- Reuse of a command ID for a different payload is rejected as a conflict.
+- A crash after a side effect but before receipt completion recovers conservatively as `unknown`; the runtime never redispatches the mutation merely to discover whether it happened.
+- Retry-sensitive remote mutation commands fail closed when no stable envelope command ID is available.
+- Runtime regressions cover duplicate create/steer/undo delivery, command-ID conflict, restart-to-unknown, stable remote IDs, and adapter recreation.
+
+### Transaction boundary cleanup — complete for current P0 scope
+
+- DB-only session creation and its accepted command receipt commit atomically in the shared SQLite transaction; a receipt write failure rolls back the session insert.
+- Transcript/run projection/event transitions already use shared `TurnStore` transactions where they belong to the same SQLite authority.
+- Filesystem/provider side effects are not incorrectly pulled into SQLite; they use durable processing/intent state before the external effect and recover to a known result, `unknown`, or explicit conflict.
+- Workspace undo now has a durable pre-side-effect intent and hash-safe restart completion.
+- Mutation publication remains after durable persistence; failed durability does not publish the mutation as committed.
+- Milestones 1.4 and 1.5 were validated on exact head `04bb70403800d682a0e768a4f3b26342a1c11d25` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, and packaged-runtime smoke green.
+
 ## Remaining milestones
-
-# Milestone 1 — Durable Runtime Core
-
-Priority: P0
-
-The next implementation milestone is command idempotency for dangerous externally issued mutations.
-
-### 1.4 Command receipts / idempotency
-
-Durable receipts already protect `session.send` and its queue admission path. Finish receipt/idempotency coverage for externally issued mutations where duplicate dispatch would be dangerous.
-
-Remaining initial targets:
-
-- mutation/apply commands;
-- remote mutation commands;
-- any queue/mutation transition that can still be retried outside an already-transactional receipt boundary.
-
-A command ID must resolve to one of: accepted, committed, terminally failed, or unknown. Retrying the same command ID must not duplicate a turn or tool side effect.
-
-### 1.5 Transaction boundary cleanup
-
-Move toward:
-
-```text
-command
-  -> validate/decide
-  -> one SQLite transaction
-       append runtime event(s)
-       update projection(s)
-       persist command receipt
-  -> commit
-  -> publish to renderer/remote
-  -> run external reactors/side effects where applicable
-```
-
-This should be introduced incrementally around existing working paths; do not rewrite the entire RuntimeService in one patch.
 
 ## Milestone 2 — Client Runtime Cleanup
 
@@ -210,12 +196,12 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Finish command receipts/idempotency for dangerous mutation and remote mutation commands.
-2. Tighten remaining command/event/projection transaction boundaries.
-3. Extract remaining renderer server-state ownership.
-4. Remove legacy provider event compatibility.
-5. Remote/PE3 projection parity and graph/history durability.
-6. Signing/notarization and final production supervisor hardening.
+1. Finish renderer/client-runtime view-state separation.
+2. Remove legacy provider event compatibility.
+3. Bring remote/mobile clients onto the same durable projections.
+4. Finish provider supervisor production policy.
+5. Finish graph/history and PE3 restart durability.
+6. Complete signing/notarization and production updater hardening.
 
 ## Release rule
 
