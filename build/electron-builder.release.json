@@ -1,0 +1,60 @@
+{
+  "appId": "com.cuppet.desktop",
+  "productName": "Cuppet",
+  "executableName": "cuppet",
+  "artifactName": "${productName}-${version}-${arch}.${ext}",
+  "asar": true,
+  "asarUnpack": [
+    "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs"
+  ],
+  "files": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/runtime/**/*",
+    "src/cli/**/*",
+    "dist-renderer/**/*",
+    "src/remote-app/**/*",
+    "build/icon.png",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "vendor/tst",
+      "to": "tst",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "vendor/codex",
+      "to": "codex",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "vendor/browsercontrol",
+      "to": "browsercontrol",
+      "filter": ["**/*"]
+    }
+  ],
+  "directories": {
+    "output": "dist"
+  },
+  "forceCodeSigning": true,
+  "mac": {
+    "icon": "build/icon-macos.png",
+    "category": "public.app-category.developer-tools",
+    "hardenedRuntime": true,
+    "notarize": true,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+    "target": ["dmg", "zip"]
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Officially-aditya",
+      "repo": "Cuppet-desktop",
+      "releaseType": "release",
+      "tagNamePrefix": "v",
+      "publishAutoUpdate": false
+    }
+  ]
+}

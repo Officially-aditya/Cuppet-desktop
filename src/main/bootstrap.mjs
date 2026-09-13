@@ -1,5 +1,6 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { installCodexAuthIpc } from './codex-auth.mjs';
+import { installMacAutoUpdater } from './auto-update.mjs';
 import { applyLocalCliEnvironment } from '../runtime/local-cli-environment.mjs';
 
 const singleInstance = app.requestSingleInstanceLock();
@@ -27,6 +28,7 @@ if (!singleInstance) {
       window.focus();
     });
     await import('./main.mjs');
+    app.whenReady().then(() => installMacAutoUpdater()).catch(() => undefined);
   }
 }
 
