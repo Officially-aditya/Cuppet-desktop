@@ -91,18 +91,18 @@ test('ACP v2 observer callbacks cannot fail an otherwise successful provider tur
   } finally { await runtime.close(); }
 });
 
-test('generic ACP adapter preserves current stream callbacks', async () => {
+test('generic ACP adapter preserves canonical stream callbacks', async () => {
   const provider = new AcpProviderAdapter({ providerID: 'claude-code', cliCommand: process.execPath, cliArgs: [configFixture], primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' }, { descriptor: acpDescriptor() });
   const events = [];
   let text = '';
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
     projectRoot: tmpdir(),
     onDelta: async (delta) => { text += delta; },
-    onProviderEvent: async (event) => events.push(event),
+    onActivity: async (activity) => events.push(activity),
   });
   assert.equal(result.text, 'Done.');
   assert.equal(text, 'Done.');
-  assert.deepEqual(events.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
+  assert.deepEqual(events.map((event) => event.type), ['activity.reasoning.delta', 'activity.tool.opened', 'activity.tool.closed', 'activity.text.delta']);
 });
 
 test('generic ACP adapter delegates ACP host operations through Cuppet', async () => {
