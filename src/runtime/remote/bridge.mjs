@@ -56,16 +56,23 @@ export class RemoteBridge {
       return;
     }
     let envelope;try{envelope=parseCommandFrame(data);}catch(error){return this.#resultError(typeof raw.id==='string'?raw.id:'unknown',`malformed command: ${cleanError(error)}`,deviceId);}
-    const dedupeKey=`${deviceId}:${envelope.id}`;
-    if(this.#seen.has(dedupeKey))return this.#send({version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,result:{duplicate:true},deviceId});
-    this.#remember(dedupeKey);
     const required=scopeForCommand(envelope.type);
     if(!required||!authorized.scopes.includes(required))return this.#resultError(envelope.id,`missing scope '${required??'none'}' for ${envelope.type}`,deviceId);
+
+    const dedupeKey=`${deviceId}:${envelope.id}`;
+    const existing=this.#seen.get(dedupeKey);
+    if(existing)return this.#send(await existing);
+
+    const response=this.#executeCommand(deviceId,authorized,envelope);
+    this.#remember(dedupeKey,response);
+    this.#send(await response);
+  }
+  async #executeCommand(deviceId,authorized,envelope){
     try{
       const actor={kind:'remote',deviceID:deviceId,deviceName:authorized.name,scopes:[...authorized.scopes]};
       const result=await this.#commands.execute(actor,envelope.type,envelope.payload??{},envelope);
-      this.#send({version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId});
-    }catch(error){this.#resultError(envelope.id,cleanError(error),deviceId,errorCode(error));}
+      return {version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId};
+    }catch(error){return this.#errorFrame(envelope.id,cleanError(error),deviceId,errorCode(error));}
   }
   async #reauthorize(deviceId,device){
     if(typeof device.reauthorize!=='function')return device;
@@ -107,8 +114,9 @@ export class RemoteBridge {
   #clearDevice(deviceId){const existed=this.#devices.has(deviceId);const timer=this.#timers.get(deviceId);if(timer)clearTimeout(timer);this.#timers.delete(deviceId);this.#devices.delete(deviceId);this.#commands.detachDevice?.(deviceId);if(existed)this.#notifyDeviceChange();}
   #clearDevices(){for(const id of [...this.#devices.keys()])this.#clearDevice(id);for(const timer of this.#timers.values())clearTimeout(timer);this.#timers.clear();}
   #notifyDeviceChange(){try{this.#onDeviceChange?.(this.activeDevices);}catch{}}
-  #remember(id){this.#seen.set(id,true);if(this.#seen.size>DEDUPE_CAPACITY)this.#seen.delete(this.#seen.keys().next().value);}
-  #resultError(replyTo,message,deviceId,code){this.#send({version:PROTOCOL_VERSION,replyTo,ok:false,error:String(message).slice(0,1000),...(code?{code}:{}),...(deviceId?{deviceId}:{})});}
+  #remember(id,response){this.#seen.set(id,response);if(this.#seen.size>DEDUPE_CAPACITY)this.#seen.delete(this.#seen.keys().next().value);}
+  #errorFrame(replyTo,message,deviceId,code){return{version:PROTOCOL_VERSION,replyTo,ok:false,error:String(message).slice(0,1000),...(code?{code}:{}),...(deviceId?{deviceId}:{})};}
+  #resultError(replyTo,message,deviceId,code){this.#send(this.#errorFrame(replyTo,message,deviceId,code));}
 }
 function errorCode(error){const code=typeof error?.code==='string'?error.code.trim().slice(0,120):'';return code||undefined;}
 function cleanError(error){return (error instanceof Error?error.message:String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [redacted]').slice(0,1000);}
