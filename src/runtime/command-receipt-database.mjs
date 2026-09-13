@@ -2,11 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 /**
  * Gives RuntimeService a database view that can atomically accept the current
- * session.send command when the transaction creating its durable user/assistant
- * turn commits. The underlying ConversationDatabase remains the only SQL owner.
+ * command when its durable SQLite mutation commits. The underlying
+ * ConversationDatabase remains the only SQL owner.
  *
- * This closes the crash window where the transcript/run could be durable while
- * the command receipt was still `processing` and would become `unknown` after a
+ * This closes crash windows where a durable mutation could commit while its
+ * command receipt remained `processing` and would become `unknown` after a
  * runtime restart.
  */
 export class CommandReceiptDatabaseFacade {
@@ -44,24 +44,32 @@ export class CommandReceiptDatabaseFacade {
     return this.#database.transaction(() => {
       const result = callback();
       if (result && typeof result.then === 'function') throw new Error('SQLite transaction callback must be synchronous');
-      this.#acceptCommittedTurn(result);
+      this.#acceptCommittedCommand(result);
       return result;
     });
   }
 
-  #acceptCommittedTurn(result) {
+  #acceptCommittedCommand(result) {
     const command = this.#context.getStore();
-    if (!command?.commandId || command.method !== 'session.send') return;
-    const delivery = committedTurnDelivery(result);
-    if (!delivery) return;
-    this.#receipts.accept(command.commandId, {
-      accepted: true,
-      sessionId: delivery.sessionId,
-      sourceSessionId: command.sourceSessionId,
-      messageId: delivery.messageId,
-      projectId: delivery.projectId,
-      committed: true,
-    });
+    if (!command?.commandId) return;
+    if (command.method === 'session.send') {
+      const delivery = committedTurnDelivery(result);
+      if (!delivery) return;
+      this.#receipts.accept(command.commandId, {
+        accepted: true,
+        sessionId: delivery.sessionId,
+        sourceSessionId: command.sourceSessionId,
+        messageId: delivery.messageId,
+        projectId: delivery.projectId,
+        committed: true,
+      });
+      return;
+    }
+    if (command.method === 'session.create') {
+      const session = committedSessionCreation(result);
+      if (!session) return;
+      this.#receipts.accept(command.commandId, session);
+    }
   }
 }
 
@@ -79,6 +87,14 @@ export function committedTurnDelivery(value) {
     messageId,
     projectId: nullableText(target.projectId),
   };
+}
+
+export function committedSessionCreation(value) {
+  const session = record(value);
+  const id = text(session.id);
+  if (!id || !id.startsWith('session_')) return null;
+  if (typeof session.title !== 'string' || !Number.isFinite(Number(session.createdAt)) || !Number.isFinite(Number(session.updatedAt))) return null;
+  return structuredClone(session);
 }
 
 function normalizeCommand(value) {
