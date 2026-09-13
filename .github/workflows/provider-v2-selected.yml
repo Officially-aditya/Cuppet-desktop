@@ -28,7 +28,7 @@ jobs:
       - name: Verify renderer compiles against runtime-owned queueing
         run: npm run renderer:verify
       - name: Validate provider control-plane boundary
-        run: node --test --test-concurrency=1 test/provider-control-plane.test.mjs test/provider-version-policy.test.mjs test/provider-status-presentation.test.mjs
+        run: node --test --test-concurrency=1 test/provider-control-plane.test.mjs test/provider-version-policy.test.mjs test/provider-status-presentation.test.mjs test/local-provider-version-check.test.mjs
       - name: Validate credential boundary
         run: node --test --test-concurrency=1 test/provider-credential-boundary.test.mjs
       - name: Validate local CLI ownership identity
