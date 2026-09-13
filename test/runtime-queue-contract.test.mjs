@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
+const runtimeService = await readFile(new URL('../src/runtime/service.mjs', import.meta.url), 'utf8');
 const desktopMain = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
 const runtimeClient = await readFile(new URL('../src/main/runtime-client.mjs', import.meta.url), 'utf8');
 const chatPane = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
@@ -35,6 +36,18 @@ test('durable runs are the only active-session authority in the runtime host', (
   assert.match(source, /runState\.isActive\(ownerSessionId\)/);
   assert.match(source, /runState\.isActive\(runSessionId\)/);
   assert.doesNotMatch(source, /activeSessions/, 'runtime main must not keep an in-memory active-session mirror of durable runs');
+});
+
+test('RuntimeService receives durable run state while live executions remain process-control handles only', () => {
+  assert.match(source, /new RuntimeService\(\{[^}]*runState[^}]*\}\)/);
+  assert.match(runtimeService, /runState = null/);
+  assert.match(runtimeService, /#runState/);
+  assert.match(runtimeService, /#liveExecutions = new Map\(\)/);
+  assert.match(runtimeService, /#isSessionActive\(sessionId\)/);
+  assert.match(runtimeService, /targetAvailable: \(targetSessionId\) => !this\.#isSessionActive\(targetSessionId\)/);
+  assert.match(runtimeService, /const execution = this\.#liveExecutions\.get\(sessionId\)/);
+  assert.match(runtimeService, /currentExecution\?\.assistantId === assistantId/);
+  assert.doesNotMatch(runtimeService, /#runs\b/, 'RuntimeService must not use a process-local map as semantic run authority');
 });
 
 test('rerouted queue continuation is derived from durable run source identity', () => {
