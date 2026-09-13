@@ -79,11 +79,12 @@ test('session creation and command acceptance commit atomically', async () => {
 
     const session = facade.run({ commandId: 'cmd-create', method: 'session.create' }, () =>
       facade.database.createSession({ id: 'session_atomic', now: 2 }));
+    const projection = { ...session };
 
     assert.ok(committedSessionCreation(session));
-    assert.deepEqual({ ...db.getSessionSummary('session_atomic') }, session);
+    assert.deepEqual({ ...db.getSessionSummary('session_atomic') }, projection);
     assert.equal(receipts.get('cmd-create')?.state, 'accepted');
-    assert.deepEqual(receipts.get('cmd-create')?.result, session);
+    assert.deepEqual(receipts.get('cmd-create')?.result, projection);
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });
