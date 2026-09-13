@@ -81,7 +81,7 @@ const service = {
   },
   async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close()]); },
 };
-remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, params), emit });
+remote = new RemoteManager({ dataDir, call: (method, params, context) => handle(method, params, context), emit });
 const purgeTimer = setInterval(() => { void purgeExpiredDeleted(); }, DELETED_CHAT_PURGE_INTERVAL_MS);
 purgeTimer.unref?.();
 
