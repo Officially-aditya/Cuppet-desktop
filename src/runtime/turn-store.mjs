@@ -67,16 +67,14 @@ export class TurnStore {
     const id = requiredText(runId, 'runId');
     const session = requiredText(sessionId, 'sessionId');
     return this.#transaction(() => {
+      const existing = this.getRun(id);
+      if (existing) {
+        if (existing.sessionId !== session) throw new Error(`runId ${id} already belongs to session ${existing.sessionId}`);
+        return existing;
+      }
       this.#db.prepare(`
         INSERT INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at)
         VALUES (?,?,?,?, 'running', NULL, ?, ?)
-        ON CONFLICT(run_id) DO UPDATE SET
-          session_id=excluded.session_id,
-          source_session_id=excluded.source_session_id,
-          project_id=excluded.project_id,
-          status='running',
-          error=NULL,
-          updated_at=excluded.updated_at
       `).run(id, session, optionalText(sourceSessionId), optionalText(projectId), now, now);
       this.#appendEvent({
         sessionId: session,
@@ -95,6 +93,7 @@ export class TurnStore {
     return this.#transaction(() => {
       const current = this.getRun(id);
       if (!current) return null;
+      if (TERMINAL_RUN_STATUSES.has(current.status)) return current;
       const normalizedError = optionalText(error);
       this.#db.prepare(`
         UPDATE runs SET status=?, error=?, updated_at=? WHERE run_id=?
