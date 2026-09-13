@@ -80,7 +80,7 @@ export function activityFromLegacyProviderEvent(event) {
       tool: source.tool,
       label: source.label,
       argumentsJson: text(source.argumentsJson),
-      details: text(source.details),
+      details: text(source.details || source.message),
     });
   }
 
@@ -90,7 +90,7 @@ export function activityFromLegacyProviderEvent(event) {
       tool: source.tool,
       label: source.label,
       argumentsJson: text(source.argumentsJson),
-      details: text(source.details),
+      details: text(source.details || source.message),
       status: source.success === false ? 'error' : 'success',
     });
   }
