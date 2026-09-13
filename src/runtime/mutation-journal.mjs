@@ -4,6 +4,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const SCHEMA_VERSION = 1;
 const PENDING_SCHEMA_VERSION = 1;
+const GRAPH_CHECKPOINT_SCHEMA_VERSION = 1;
+const GRAPH_CHECKPOINT_FILE = '.graph-invalidations.json';
 const MAX_ENTRIES = 256;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_BATCH_FILES = 64;
@@ -14,7 +16,7 @@ export class UndoConflictError extends Error {
 }
 
 export class MutationJournal {
-  #directory; #cache = new Map(); #writes = new Map(); #undoLocks = new Map(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
+  #directory; #cache = new Map(); #writes = new Map(); #undoLocks = new Map(); #graphCheckpoint = new Map(); #graphCheckpointWrite = Promise.resolve(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
   constructor(directory) {
     this.#directory = directory;
     this.#recoveryPromise = this.#recoverPendingMutations().catch((error) => {
@@ -113,7 +115,7 @@ export class MutationJournal {
   async graphInvalidations(projectRoot) {
     await this.#recoveryPromise;
     const root = await canonicalProjectRoot(projectRoot);
-    const paths = new Set();
+    const paths = new Set((await this.#graphCheckpointSnapshot()).get(root) ?? []);
     for (const entries of (await this.#allHistories()).values()) {
       for (const entry of entries) {
         if (entry.projectRoot !== root || entry.graph?.state !== 'pending') continue;
@@ -128,6 +130,13 @@ export class MutationJournal {
     const root = await canonicalProjectRoot(projectRoot);
     const acknowledged = new Set(sanitizeGraphPaths(paths));
     if (!acknowledged.size) return { projectRoot: root, acknowledged: [], remaining: await this.graphInvalidations(root) };
+
+    await this.#updateGraphCheckpoint((projects) => {
+      const current = new Set(projects.get(root) ?? []);
+      for (const path of acknowledged) current.delete(path);
+      if (current.size) projects.set(root, [...current].sort()); else projects.delete(root);
+    });
+
     const histories = await this.#allHistories();
     const refreshedAt = Date.now();
     for (const [sessionId, original] of histories) {
@@ -171,6 +180,8 @@ export class MutationJournal {
     if (pending) await pending.catch(() => undefined);
     const undo = this.#undoLocks.get(id);
     if (undo) await undo.catch(() => undefined);
+    const entries = await this.#load(id);
+    const preservedGraphInvalidations = await this.#checkpointEntries(entries);
     this.#writes.delete(id);
     this.#undoLocks.delete(id);
     const cached = this.#cache.delete(id);
@@ -178,7 +189,7 @@ export class MutationJournal {
     this.#recoveryReport.conflicts = this.#recoveryReport.conflicts.filter((item) => item.sessionId !== id);
     this.#recoveryReport.recovered = this.#recoveryReport.recovered.filter((item) => item.sessionId !== id);
     if (this.#directory) await rm(this.#path(id), { force: true });
-    return { sessionId: id, deleted: cached || Boolean(this.#directory) };
+    return { sessionId: id, deleted: cached || Boolean(this.#directory), preservedGraphInvalidations };
   }
 
   async undoLatest({ sessionId, projectRoot }) {
@@ -261,7 +272,6 @@ export class MutationJournal {
     const existing = entries.findIndex((item) => item.id === entry.id);
     if (existing >= 0) entries[existing] = entry;
     else entries.push(entry);
-    while (entries.length > MAX_ENTRIES) entries.shift();
     await this.#save(entry.sessionId, entries);
   }
 
@@ -298,6 +308,8 @@ export class MutationJournal {
   }
 
   async #save(sessionId, entries) {
+    const overflow = Math.max(0, entries.length - MAX_ENTRIES);
+    if (overflow) await this.#checkpointEntries(entries.slice(0, overflow));
     const snapshot = entries.slice(-MAX_ENTRIES).map((entry) => structuredClone(entry));
     if (!this.#directory) { this.#cache.set(sessionId, snapshot); return; }
     const previous = this.#writes.get(sessionId) ?? Promise.resolve();
@@ -312,6 +324,81 @@ export class MutationJournal {
     });
     this.#writes.set(sessionId, next);
     try { await next; } finally { if (this.#writes.get(sessionId) === next) this.#writes.delete(sessionId); }
+  }
+
+  async #checkpointEntries(entries) {
+    const additions = pendingGraphByProject(entries);
+    if (!additions.size) return 0;
+    let preserved = 0;
+    await this.#updateGraphCheckpoint((projects) => {
+      for (const [root, paths] of additions) {
+        const merged = new Set(projects.get(root) ?? []);
+        const before = merged.size;
+        for (const path of paths) merged.add(path);
+        const normalized = [...merged].sort();
+        projects.set(root, normalized);
+        preserved += Math.max(0, normalized.length - before);
+      }
+    });
+    return preserved;
+  }
+
+  async #graphCheckpointSnapshot() {
+    await this.#graphCheckpointWrite.catch(() => undefined);
+    if (!this.#directory) return cloneProjectPaths(this.#graphCheckpoint);
+    try {
+      const decoded = JSON.parse(await readFile(this.#graphCheckpointPath(), 'utf8'));
+      return decodeGraphCheckpoint(decoded);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      return new Map();
+    }
+  }
+
+  async #updateGraphCheckpoint(mutator) {
+    const previous = this.#graphCheckpointWrite;
+    const next = previous.catch(() => undefined).then(async () => {
+      const projects = await this.#readGraphCheckpointUnlocked();
+      await mutator(projects);
+      await this.#writeGraphCheckpointUnlocked(projects);
+    });
+    this.#graphCheckpointWrite = next;
+    await next;
+  }
+
+  async #readGraphCheckpointUnlocked() {
+    if (!this.#directory) return cloneProjectPaths(this.#graphCheckpoint);
+    try {
+      const decoded = JSON.parse(await readFile(this.#graphCheckpointPath(), 'utf8'));
+      return decodeGraphCheckpoint(decoded);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      return new Map();
+    }
+  }
+
+  async #writeGraphCheckpointUnlocked(projects) {
+    const normalized = cloneProjectPaths(projects);
+    if (!this.#directory) { this.#graphCheckpoint = normalized; return; }
+    await mkdir(this.#directory, { recursive: true, mode: 0o700 });
+    await chmod(this.#directory, 0o700);
+    const target = this.#graphCheckpointPath();
+    if (!normalized.size) {
+      await rm(target, { force: true });
+      return;
+    }
+    const temporary = join(this.#directory, `.${GRAPH_CHECKPOINT_FILE}.${randomBytes(5).toString('hex')}.tmp`);
+    const payload = {
+      schema: GRAPH_CHECKPOINT_SCHEMA_VERSION,
+      projects: Object.fromEntries([...normalized.entries()].map(([root, paths]) => [root, paths])),
+    };
+    try {
+      await writeFile(temporary, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
+      await rename(temporary, target);
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async #writePending(token) {
@@ -469,6 +556,7 @@ export class MutationJournal {
   #path(sessionId) { return join(this.#directory, `${hash(sessionId)}.json`); }
   #pendingDirectory() { return join(this.#directory, 'pending'); }
   #pendingPath(id) { return join(this.#pendingDirectory(), `${id}.json`); }
+  #graphCheckpointPath() { return join(this.#directory, GRAPH_CHECKPOINT_FILE); }
 }
 
 async function restoreSnapshot(path, snapshot) {
@@ -547,7 +635,41 @@ function validSnapshot(value, withContent) {
 }
 function pendingGraph(paths) { return { state: 'pending', paths: sanitizeGraphPaths(paths) }; }
 function graphPaths(value) { return value?.state === 'pending' ? sanitizeGraphPaths(value.paths) : []; }
-function sanitizeGraphPaths(paths) { return [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).replaceAll('\\', '/').slice(0, 512)).filter(Boolean))].slice(0, 128); }
+function sanitizeGraphPaths(paths) {
+  return [...new Set((Array.isArray(paths) ? paths : [])
+    .map((value) => String(value).replaceAll('\\', '/').slice(0, 512))
+    .filter(Boolean))];
+}
+function pendingGraphByProject(entries) {
+  const projects = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (typeof entry?.projectRoot !== 'string' || entry.graph?.state !== 'pending') continue;
+    const paths = graphPaths(entry.graph);
+    if (!paths.length) continue;
+    const merged = new Set(projects.get(entry.projectRoot) ?? []);
+    for (const path of paths) merged.add(path);
+    projects.set(entry.projectRoot, [...merged].sort());
+  }
+  return projects;
+}
+function decodeGraphCheckpoint(value) {
+  if (!value || value.schema !== GRAPH_CHECKPOINT_SCHEMA_VERSION || !value.projects || typeof value.projects !== 'object' || Array.isArray(value.projects)) {
+    throw new Error('Invalid graph invalidation checkpoint metadata');
+  }
+  const projects = new Map();
+  for (const [root, paths] of Object.entries(value.projects)) {
+    if (typeof root !== 'string' || !root || !isAbsolute(root) || !Array.isArray(paths)
+      || paths.some((path) => typeof path !== 'string' || !path || path.length > 512)) {
+      throw new Error('Invalid graph invalidation checkpoint entry');
+    }
+    const normalized = sanitizeGraphPaths(paths);
+    if (normalized.length) projects.set(root, normalized);
+  }
+  return projects;
+}
+function cloneProjectPaths(projects) {
+  return new Map([...projects.entries()].map(([root, paths]) => [root, sanitizeGraphPaths(paths)]).filter(([, paths]) => paths.length));
+}
 async function canonicalProjectRoot(projectRoot) { return realpath(projectRoot).catch(() => resolve(projectRoot)); }
 function publicEntry(entry) {
   const paths = entry.kind === 'batch' ? entry.files.map((item) => item.path) : entry.path ? [entry.path] : entry.paths ?? [];

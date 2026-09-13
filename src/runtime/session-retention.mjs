@@ -12,7 +12,6 @@ export async function purgeSessionArtifacts({ dataDir, sessionId }) {
 
   const results = await Promise.allSettled([
     rm(join(dataDir, 'lossless-plans', `${digest}.json`), { force: true }),
-    rm(join(dataDir, 'mutation-journal', `${digest}.json`), { force: true }),
     forgetCognitiveSession(join(dataDir, 'cognitive-state.json'), id),
     forgetPe3Session(join(dataDir, 'pe3'), id),
   ]);
@@ -26,7 +25,7 @@ export async function purgeSessionArtifacts({ dataDir, sessionId }) {
   return {
     sessionId: id,
     preserved: ['tst-memory', 'project-files'],
-    purged: ['lossless-plan', 'mutation-journal', 'cognitive-session-state', 'pe3-task-state'],
+    purged: ['lossless-plan', 'cognitive-session-state', 'pe3-task-state'],
   };
 }
 
