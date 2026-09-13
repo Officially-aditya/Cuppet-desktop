@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import type { RemoteInvite, RemoteStatus } from '../types';
+import type { RemoteInvite } from '../types';
+import {
+  hydrateClientRemoteStatus,
+  refreshClientRemoteStatus,
+  useClientRemoteStatus,
+} from './client-remote-state';
 
 export function RemoteModal({ onClose, onError }: { onClose: () => void; onError: (error: unknown) => void }) {
-  const [status, setStatus] = useState<RemoteStatus>({});
+  const status = useClientRemoteStatus();
   const [pairing, setPairing] = useState<RemoteInvite | null>(null);
   const [qrCode, setQrCode] = useState('');
   const [note, setNote] = useState('');
@@ -15,30 +20,10 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
     setNote('');
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const next = await window.cuppet.remote.status();
-      setStatus(next);
-      if (next.deviceConnected || next.activeDevice) {
-        setPairing(null);
-        setQrCode('');
-        setNote('');
-      } else if (next.setup?.url) {
-        applyPairing(next.setup);
-      }
-      return next;
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : String(error));
-      onError(error);
-      return null;
-    }
-  }, [applyPairing, onError]);
-
   const preparePairing = useCallback(async () => {
     setBusy(true);
     try {
-      const current = await window.cuppet.remote.status();
-      setStatus(current);
+      const current = await refreshClientRemoteStatus();
       if (current.deviceConnected || current.activeDevice) {
         setPairing(null);
         setQrCode('');
@@ -57,7 +42,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
         applyPairing(await window.cuppet.remote.invite('trusted'));
       } else {
         const result = await window.cuppet.remote.start({ setup: true, createInvite: true });
-        if (result?.status) setStatus(result.status);
+        if (result?.status) hydrateClientRemoteStatus(result.status);
         applyPairing(result?.invite);
       }
     } catch (error) {
@@ -76,9 +61,18 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
         if (typeof setup.url === 'string' && setup.url) applyPairing({ url: setup.url, code: setup.code, expiresAt: typeof setup.expiresAt === 'string' ? Date.parse(setup.expiresAt) : setup.expiresAt });
       }
       if (event?.type === 'remote.invite') applyPairing(event.invite ?? null);
-      if (event?.type === 'remote.started' || event?.type === 'remote.stopped' || event?.type === 'remote.device') void refresh();
     });
-  }, [applyPairing, preparePairing, refresh]);
+  }, [applyPairing, preparePairing]);
+
+  useEffect(() => {
+    if (status.deviceConnected || status.activeDevice) {
+      setPairing(null);
+      setQrCode('');
+      setNote('');
+    } else if (status.setup?.url) {
+      applyPairing(status.setup);
+    }
+  }, [applyPairing, status.activeDevice, status.deviceConnected, status.setup]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,8 +87,9 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
   const stop = async () => {
     setBusy(true);
     try {
-      await window.cuppet.remote.stop();
-      setStatus({});
+      const result = await window.cuppet.remote.stop();
+      if (result?.status) hydrateClientRemoteStatus(result.status);
+      else await refreshClientRemoteStatus();
       setPairing(null);
       setQrCode('');
       setNote('');
