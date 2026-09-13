@@ -13,6 +13,8 @@ import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
+import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
+import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -20,13 +22,16 @@ const MAX_QUEUED_TURNS = 16;
 
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remote;
+let currentProviderConfig = null;
 const activeSessions = new Set();
 const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
 const localState = new ConversationDatabase(databasePath);
-const turnStore = new TurnStore(localState.sqlRepository(), { legacyPath: join(dataDir, 'turn-state.sqlite3') });
-const runWaits = new RunWaitProjection(localState.sqlRepository());
+const repository = localState.sqlRepository();
+const turnStore = new TurnStore(repository, { legacyPath: join(dataDir, 'turn-state.sqlite3') });
+const runWaits = new RunWaitProjection(repository);
+const commandReceipts = new CommandReceiptStore(repository);
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
   runWaits.observe(event);
@@ -78,11 +83,12 @@ remote = new RemoteManager({ dataDir, call: (method, params) => handle(method, p
 const purgeTimer = setInterval(() => { void purgeExpiredDeleted(); }, DELETED_CHAT_PURGE_INTERVAL_MS);
 purgeTimer.unref?.();
 
-async function handle(method, params = {}) {
+async function handle(method, params = {}, context = {}) {
   switch (method) {
     case 'status': return buildRuntimeStatus({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'doctor': return buildRuntimeDoctor({ call: (name, value) => service.handle(name, value), providerConfig: boundedProvider(params.provider), version: '0.9.0-alpha.1' });
     case 'usage.summary': return providerUsageSummary();
+    case 'provider.config.sync': return syncProviderConfig(params.provider);
     case 'provider.local.status': return providerControl.localStatus(boundedProviderID(params.providerID));
     case 'provider.local.connect': return providerControl.localConnect(boundedProviderID(params.providerID));
     case 'provider.local.detect': return providerControl.localDetect(boundedProviderID(params.providerID));
@@ -102,7 +108,7 @@ async function handle(method, params = {}) {
     }
     case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
-    case 'session.send': return sendOrQueue(params);
+    case 'session.send': return sendOrQueue(params, context.commandId);
     case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
     case 'session.archive': return archiveSession(params, true);
@@ -115,9 +121,16 @@ async function handle(method, params = {}) {
     case 'remote.invite': return remote.createInvite({ role: params.role === 'viewer' ? 'viewer' : 'trusted', ...(Number.isFinite(params.ttlMs) ? { ttlMs: Math.max(1000, Math.min(Math.trunc(params.ttlMs), 10 * 60_000)) } : {}) });
     case 'remote.devices': return remote.devices();
     case 'remote.revoke': return remote.revoke(String(params.deviceId ?? '').slice(0, 128));
-    case 'remote.provider-config': return remote.setProviderConfig(boundedProvider(params.provider));
+    case 'remote.provider-config': return syncProviderConfig(params.provider);
     default: return service.handle(method, params);
   }
+}
+
+async function syncProviderConfig(value) {
+  currentProviderConfig = boundedProvider(value);
+  const result = await remote.setProviderConfig(currentProviderConfig);
+  for (const sessionId of turnStore.queuedSessions()) queueMicrotask(() => void drainQueued(sessionId));
+  return result;
 }
 
 function tstContext(method, params = {}) {
@@ -221,31 +234,65 @@ function assertSessionIdle(sessionId, action) {
   if (turnStore.hasQueued(sessionId)) throw new Error(`cannot ${action} a chat while it has queued messages`);
 }
 
-async function sendOrQueue(params = {}) {
+async function sendOrQueue(params = {}, commandId = null) {
   const sessionId = String(params.sessionId ?? '');
-  if (!sessionId) return service.handle('session.send', params);
-  if (!activeSessions.has(sessionId)) return service.handle('session.send', params);
+  const receiptId = typeof commandId === 'string' && commandId ? commandId : null;
+  if (receiptId) {
+    const replay = commandReceipts.resolve({ commandId: receiptId, method: 'session.send', params });
+    if (replay?.replay) return replay.result;
+  }
 
-  const queuedCount = turnStore.countQueued(sessionId);
-  if (queuedCount >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
-  const item = turnStore.enqueue({
-    id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    sessionId,
-    params: { ...params, sessionId },
-    queuedAt: Date.now(),
-  });
-  const position = turnStore.countQueued(sessionId);
-  emit({ type: 'queue.queued', sessionId, queueId: item.id, position, queuedAt: item.queuedAt });
-  return { accepted: true, queued: true, sessionId, queueId: item.id, position };
+  if (sessionId && activeSessions.has(sessionId)) {
+    let item;
+    let result;
+    try {
+      localState.transaction(() => {
+        if (receiptId) {
+          const begun = commandReceipts.begin({ commandId: receiptId, method: 'session.send', sessionId, params });
+          if (!begun.created) {
+            result = commandReceiptResult(begun.receipt);
+            return;
+          }
+        }
+        const queuedCount = turnStore.countQueued(sessionId);
+        if (queuedCount >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
+        item = turnStore.enqueue({
+          id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+          sessionId,
+          params: queueSafeSendParams({ ...params, sessionId }),
+          queuedAt: Date.now(),
+        });
+        const position = turnStore.countQueued(sessionId);
+        result = { accepted: true, queued: true, sessionId, queueId: item.id, position };
+        if (receiptId) commandReceipts.accept(receiptId, result);
+      });
+      if (item) emit({ type: 'queue.queued', sessionId, queueId: item.id, position: result.position, queuedAt: item.queuedAt });
+      return result;
+    } catch (error) {
+      if (receiptId) commandReceipts.fail(receiptId, error);
+      throw error;
+    }
+  }
+
+  if (receiptId) commandReceipts.begin({ commandId: receiptId, method: 'session.send', sessionId: sessionId || null, params });
+  try {
+    const result = await service.handle('session.send', params);
+    if (receiptId) commandReceipts.accept(receiptId, result);
+    return result;
+  } catch (error) {
+    if (receiptId) commandReceipts.fail(receiptId, error);
+    throw error;
+  }
 }
 
 async function drainQueued(ownerSessionId) {
-  if (!ownerSessionId || activeSessions.has(ownerSessionId)) return;
+  if (!ownerSessionId || activeSessions.has(ownerSessionId) || !currentProviderConfig) return;
   const item = turnStore.claimNext(ownerSessionId);
   if (!item) return;
   emit({ type: 'queue.started', sessionId: ownerSessionId, queueId: item.id, queuedAt: item.queuedAt });
   try {
-    const result = await service.handle('session.send', item.params);
+    const params = rehydrateQueuedSendParams(item.params, currentProviderConfig);
+    const result = await service.handle('session.send', params);
     turnStore.completeQueue(item.id);
     const runSessionId = result?.sessionId ?? ownerSessionId;
     queueOwnerByRun.set(runSessionId, ownerSessionId);
@@ -259,9 +306,6 @@ async function drainQueued(ownerSessionId) {
 }
 
 write({ kind: 'event', event: { type: 'runtime.ready', databasePath } });
-for (const sessionId of turnStore.queuedSessions()) {
-  queueMicrotask(() => void drainQueued(sessionId));
-}
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', async (line) => {
@@ -275,10 +319,10 @@ input.on('line', async (line) => {
     return;
   }
   try {
-    const result = await handle(request.method, request.params ?? {});
+    const result = await handle(request.method, request.params ?? {}, { commandId: request.id });
     write({ kind: 'response', id: request.id, ok: true, result });
   } catch (error) {
-    write({ kind: 'response', id: request.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+    write({ kind: 'response', id: request.id, ok: false, error: error instanceof Error ? error.message : String(error), code: typeof error?.code === 'string' ? error.code : undefined });
   }
 });
 
