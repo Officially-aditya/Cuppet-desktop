@@ -73,36 +73,44 @@ test('shared conversation transactions atomically project assistant run phases',
       db.appendMessage({ id: 'u1', sessionId: 's1', role: 'user', content: 'hello', now: 2 });
       db.appendMessage({ id: 'm1', sessionId: 's1', role: 'assistant', content: '', status: 'streaming', now: 3 });
       assert.equal(store.getRun('m1')?.status, 'starting');
+      assert.equal(store.getRun('m1')?.phase, 'preparing');
       assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started']);
     });
 
     const running = store.startRun({ runId: 'm1', sessionId: 's1', sourceSessionId: 'source-s1', projectId: 'p1', now: 4 });
     assert.equal(running.status, 'running');
+    assert.equal(running.phase, 'provider_starting');
     assert.equal(running.sourceSessionId, 'source-s1');
     assert.equal(running.projectId, 'p1');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.phase']);
 
     assert.throws(() => db.transaction(() => {
       db.updateMessage('m1', { status: 'complete', content: 'rolled back', now: 5 });
       assert.equal(store.getRun('m1')?.status, 'settling');
-      assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling']);
+      assert.equal(store.getRun('m1')?.phase, 'settling');
+      assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.phase', 'run.settling']);
       throw new Error('rollback projection');
     }), /rollback projection/);
 
     assert.equal(db.getMessage('m1')?.status, 'streaming');
     assert.equal(db.getMessage('m1')?.content, '');
     assert.equal(store.getRun('m1')?.status, 'running');
-    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started']);
+    assert.equal(store.getRun('m1')?.phase, 'provider_starting');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.phase']);
 
     db.transaction(() => {
       db.updateMessage('m1', { status: 'complete', content: 'done', now: 6 });
       assert.equal(store.getRun('m1')?.status, 'settling');
+      assert.equal(store.getRun('m1')?.phase, 'settling');
     });
-    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling']);
-    assert.equal(store.listEvents('s1')[1].payload.messageStatus, 'complete');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.phase', 'run.settling']);
+    assert.equal(store.listEvents('s1')[2].payload.messageStatus, 'complete');
+    assert.equal(store.listEvents('s1')[2].payload.phase, 'settling');
 
     store.finishRun('m1', { status: 'complete', now: 7 });
     assert.equal(store.getRun('m1')?.status, 'complete');
-    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling', 'run.finished']);
+    assert.equal(store.getRun('m1')?.phase, 'complete');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.phase', 'run.settling', 'run.finished']);
   } finally {
     store.close();
     db.close();
