@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -6,14 +6,22 @@ const ACTIVE_RUN_STATUSES = new Set(['starting', 'running', 'waiting', 'settling
 const TERMINAL_RUN_STATUSES = new Set(['complete', 'stopped', 'interrupted', 'error']);
 const QUEUE_STATES = new Set(['queued', 'dispatching', 'failed']);
 const EVENT_SCHEMA_VERSION = 1;
+const LEGACY_MIGRATION_ID = 'turn-state-v1-to-shared-db';
 
 export class TurnStore {
   #db;
+  #ownedDatabase = null;
 
-  constructor(path) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.#db = new DatabaseSync(path);
-    this.#db.exec('PRAGMA journal_mode = WAL;');
+  constructor(source, { legacyPath = null } = {}) {
+    if (typeof source === 'string') {
+      mkdirSync(dirname(source), { recursive: true });
+      const sqlite = new DatabaseSync(source);
+      sqlite.exec('PRAGMA journal_mode = WAL;');
+      this.#ownedDatabase = sqlite;
+      this.#db = sqliteRepository(sqlite);
+    } else {
+      this.#db = requireSqlRepository(source);
+    }
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS runs (
         run_id TEXT PRIMARY KEY,
@@ -54,13 +62,20 @@ export class TurnStore {
       );
       CREATE INDEX IF NOT EXISTS idx_runtime_events_session_sequence
         ON runtime_events(session_id, sequence ASC);
+
+      CREATE TABLE IF NOT EXISTS runtime_store_migrations (
+        id TEXT PRIMARY KEY,
+        migrated_at INTEGER NOT NULL
+      );
     `);
 
+    if (legacyPath) this.#migrateLegacyFile(legacyPath);
     this.#recoverInterruptedState(Date.now());
   }
 
   close() {
-    this.#db.close();
+    this.#ownedDatabase?.close();
+    this.#ownedDatabase = null;
   }
 
   startRun({ runId, sessionId, sourceSessionId = null, projectId = null, now = Date.now() }) {
@@ -263,6 +278,33 @@ export class TurnStore {
     });
   }
 
+  #migrateLegacyFile(path) {
+    if (this.#db.prepare('SELECT 1 FROM runtime_store_migrations WHERE id=?').get(LEGACY_MIGRATION_ID)) return;
+    if (!existsSync(path)) {
+      this.#transaction(() => this.#db.prepare('INSERT INTO runtime_store_migrations (id,migrated_at) VALUES (?,?)').run(LEGACY_MIGRATION_ID, Date.now()));
+      return;
+    }
+
+    let legacy = null;
+    try {
+      legacy = new DatabaseSync(path);
+      const runs = tableExists(legacy, 'runs') ? legacy.prepare(`SELECT run_id AS runId,session_id AS sessionId,source_session_id AS sourceSessionId,project_id AS projectId,status,error,created_at AS createdAt,updated_at AS updatedAt FROM runs`).all() : [];
+      const queued = tableExists(legacy, 'queued_turns') ? legacy.prepare(`SELECT queue_id AS queueId,session_id AS sessionId,params_json AS paramsJson,status,error,queued_at AS queuedAt,updated_at AS updatedAt FROM queued_turns`).all() : [];
+      const events = tableExists(legacy, 'runtime_events') ? legacy.prepare(`SELECT session_id AS sessionId,run_id AS runId,queue_id AS queueId,sequence,type,payload_json AS payloadJson,schema_version AS schemaVersion,created_at AS createdAt FROM runtime_events ORDER BY session_id,sequence`).all() : [];
+      this.#transaction(() => {
+        const insertRun = this.#db.prepare(`INSERT OR IGNORE INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`);
+        for (const row of runs) insertRun.run(row.runId,row.sessionId,row.sourceSessionId,row.projectId,row.status,row.error,row.createdAt,row.updatedAt);
+        const insertQueue = this.#db.prepare(`INSERT OR IGNORE INTO queued_turns (queue_id,session_id,params_json,status,error,queued_at,updated_at) VALUES (?,?,?,?,?,?,?)`);
+        for (const row of queued) insertQueue.run(row.queueId,row.sessionId,row.paramsJson,row.status,row.error,row.queuedAt,row.updatedAt);
+        const insertEvent = this.#db.prepare(`INSERT OR IGNORE INTO runtime_events (session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at) VALUES (?,?,?,?,?,?,?,?)`);
+        for (const row of events) insertEvent.run(row.sessionId,row.runId,row.queueId,row.sequence,row.type,row.payloadJson,row.schemaVersion,row.createdAt);
+        this.#db.prepare('INSERT INTO runtime_store_migrations (id,migrated_at) VALUES (?,?)').run(LEGACY_MIGRATION_ID, Date.now());
+      });
+    } finally {
+      try { legacy?.close(); } catch {}
+    }
+  }
+
   #recoverInterruptedState(now) {
     this.#transaction(() => {
       const activeRuns = this.#db.prepare(`
@@ -344,16 +386,7 @@ export class TurnStore {
   }
 
   #transaction(callback) {
-    this.#db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = callback();
-      if (result && typeof result.then === 'function') throw new Error('TurnStore transaction callback must be synchronous');
-      this.#db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      try { this.#db.exec('ROLLBACK'); } catch {}
-      throw error;
-    }
+    return this.#db.transaction(callback);
   }
 
   #pruneFailedQueueRows(limit = 500) {
@@ -427,4 +460,34 @@ function optionalText(value) {
 function cleanError(error) {
   const value = error instanceof Error ? error.message : String(error ?? 'Queue dispatch failed.');
   return value.replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 1000);
+}
+
+function requireSqlRepository(value) {
+  if (!value || typeof value !== 'object' || typeof value.exec !== 'function' || typeof value.prepare !== 'function' || typeof value.transaction !== 'function') {
+    throw new TypeError('TurnStore requires a SQLite path or shared SQL repository');
+  }
+  return value;
+}
+
+function sqliteRepository(sqlite) {
+  return {
+    exec(sql) { return sqlite.exec(sql); },
+    prepare(sql) { return sqlite.prepare(sql); },
+    transaction(callback) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const result = callback();
+        if (result && typeof result.then === 'function') throw new Error('TurnStore transaction callback must be synchronous');
+        sqlite.exec('COMMIT');
+        return result;
+      } catch (error) {
+        try { sqlite.exec('ROLLBACK'); } catch {}
+        throw error;
+      }
+    },
+  };
+}
+
+function tableExists(sqlite, name) {
+  return Boolean(sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
 }
