@@ -23,6 +23,14 @@ test('runtime host serializes queued turns through the shared durable turn store
   assert.match(source, /type: 'queue\.failed'/);
 });
 
+test('durable runs are the only active-session authority in the runtime host', () => {
+  assert.match(source, /new RunStateProjection\(repository\)/);
+  assert.match(source, /runState\.isActive\(sessionId\)/);
+  assert.match(source, /runState\.isActive\(ownerSessionId\)/);
+  assert.match(source, /runState\.isActive\(runSessionId\)/);
+  assert.doesNotMatch(source, /activeSessions/, 'runtime main must not keep an in-memory active-session mirror of durable runs');
+});
+
 test('session.send uses durable command receipts and secret-free queue persistence', () => {
   assert.match(source, /new CommandReceiptStore\(repository\)/);
   assert.match(source, /commandReceipts\.resolve\(\{ commandId: receiptId, method: 'session\.send', params \}\)/);
