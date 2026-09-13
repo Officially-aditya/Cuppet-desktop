@@ -11,16 +11,23 @@ if (!singleInstance) {
   // only the user's login-shell PATH before importing the desktop runtime so the
   // runtime child and Settings probes resolve the same local CLIs as Terminal.
   applyLocalCliEnvironment();
-  installSecurityGuards();
-  installCodexAuthIpc();
-  app.on('second-instance', () => {
-    const window = BrowserWindow.getAllWindows()[0];
-    if (!window) return;
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  });
-  await import('./main.mjs');
+
+  if (process.env.CUPPET_INTERNAL_GUI_CLI_SMOKE === '1') {
+    // Acceptance mode intentionally crosses the same bootstrap -> runtime-child
+    // boundary as the real app, but does not construct renderer/Settings state.
+    await import('./gui-cli-smoke-entry.mjs');
+  } else {
+    installSecurityGuards();
+    installCodexAuthIpc();
+    app.on('second-instance', () => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    });
+    await import('./main.mjs');
+  }
 }
 
 function installSecurityGuards() {
