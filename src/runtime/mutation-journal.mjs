@@ -41,7 +41,7 @@ export class MutationJournal {
     const entry = {
       id: mutationId(), schema: SCHEMA_VERSION, sessionId: token.sessionId, executionId: token.executionId,
       tool: token.tool, kind: 'file', projectRoot: token.projectRoot, path: token.path,
-      before: token.before, after, state: 'applied', createdAt: Date.now(),
+      before: token.before, after, state: 'applied', createdAt: Date.now(), graph: pendingGraph([token.path]),
     };
     await this.#append(entry);
     return structuredClone(entry);
@@ -83,7 +83,7 @@ export class MutationJournal {
     const entry = {
       id: validMutationId(token.id) ? token.id : mutationId(), schema: SCHEMA_VERSION, sessionId: token.sessionId, executionId: token.executionId,
       tool: token.tool, kind: 'batch', projectRoot: token.projectRoot, files,
-      state: 'applied', createdAt: Date.now(),
+      state: 'applied', createdAt: Date.now(), graph: pendingGraph(files.map((item) => item.path)),
     };
     await this.#append(entry);
     if (validMutationId(token.id)) await this.#deletePending(token.id);
@@ -105,6 +105,46 @@ export class MutationJournal {
     };
     await this.#append(entry);
     return structuredClone(entry);
+  }
+
+  async graphInvalidations(projectRoot) {
+    await this.#recoveryPromise;
+    const root = await canonicalProjectRoot(projectRoot);
+    const paths = new Set();
+    for (const entries of (await this.#allHistories()).values()) {
+      for (const entry of entries) {
+        if (entry.projectRoot !== root || entry.graph?.state !== 'pending') continue;
+        for (const path of graphPaths(entry.graph)) paths.add(path);
+      }
+    }
+    return [...paths].sort();
+  }
+
+  async acknowledgeGraphRefresh({ projectRoot, paths }) {
+    await this.#recoveryPromise;
+    const root = await canonicalProjectRoot(projectRoot);
+    const acknowledged = new Set(sanitizeGraphPaths(paths));
+    if (!acknowledged.size) return { projectRoot: root, acknowledged: [], remaining: await this.graphInvalidations(root) };
+    const histories = await this.#allHistories();
+    const refreshedAt = Date.now();
+    for (const [sessionId, original] of histories) {
+      let changed = false;
+      const entries = original.map((entry) => {
+        if (entry.projectRoot !== root || entry.graph?.state !== 'pending') return entry;
+        const before = graphPaths(entry.graph);
+        const remaining = before.filter((path) => !acknowledged.has(path));
+        if (remaining.length === before.length) return entry;
+        changed = true;
+        return {
+          ...entry,
+          graph: remaining.length
+            ? { state: 'pending', paths: remaining }
+            : { state: 'refreshed', paths: [], refreshedAt },
+        };
+      });
+      if (changed) await this.#save(sessionId, entries);
+    }
+    return { projectRoot: root, acknowledged: [...acknowledged].sort(), remaining: await this.graphInvalidations(root) };
   }
 
   async status(sessionId) {
@@ -203,10 +243,10 @@ export class MutationJournal {
       throw error;
     }
 
-    entries[index] = { ...entry, state: 'undone', undoneAt: Date.now() };
+    const paths = files.map((item) => item.path);
+    entries[index] = { ...entry, state: 'undone', undoneAt: Date.now(), graph: pendingGraph(paths) };
     await this.#save(sessionId, entries);
     await this.#deletePending(entry.id);
-    const paths = files.map((item) => item.path);
     return {
       undone: true, sessionId, mutationId: entry.id, executionId: entry.executionId, tool: entry.tool,
       path: paths.length === 1 ? paths[0] : null, paths,
@@ -232,6 +272,26 @@ export class MutationJournal {
       this.#cache.set(key, entries);
       return structuredClone(entries);
     } catch { this.#cache.set(key, []); return []; }
+  }
+
+  async #allHistories() {
+    for (const pending of [...this.#writes.values()]) await pending.catch(() => undefined);
+    const histories = new Map([...this.#cache.entries()].map(([sessionId, entries]) => [sessionId, structuredClone(entries)]));
+    if (!this.#directory) return histories;
+    let names;
+    try { names = await readdir(this.#directory); }
+    catch (error) { if (error?.code === 'ENOENT') return histories; throw error; }
+    for (const name of names) {
+      if (!name.endsWith('.json') || name.startsWith('.')) continue;
+      try {
+        const decoded = JSON.parse(await readFile(join(this.#directory, name), 'utf8'));
+        const sessionId = typeof decoded?.sessionId === 'string' ? decoded.sessionId : '';
+        if (!sessionId || decoded?.schema !== SCHEMA_VERSION || !Array.isArray(decoded.entries)) continue;
+        const entries = decoded.entries.filter(validEntry);
+        if (!histories.has(sessionId)) histories.set(sessionId, entries);
+      } catch {}
+    }
+    return histories;
   }
 
   async #save(sessionId, entries) {
@@ -263,8 +323,8 @@ export class MutationJournal {
 
   async #deletePending(id) {
     if (!this.#directory || !validMutationId(id)) return false;
-    try { await rm(this.#pendingPath(id), { force: true }); return true; }
-    catch { return false; }
+    try { await rm(this.#pendingPath(id), { force: true }); return true;
+    } catch { return false; }
   }
 
   async #deletePendingForSession(sessionId) {
@@ -380,7 +440,8 @@ export class MutationJournal {
     }
     if (undoConflict) return;
 
-    history[index] = { ...entry, state: 'undone', undoneAt: Date.now(), recoveredUndo: true };
+    const paths = token.files.map((item) => item.path);
+    history[index] = { ...entry, state: 'undone', undoneAt: Date.now(), recoveredUndo: true, graph: pendingGraph(paths) };
     await this.#save(token.sessionId, history);
     report.recoveredBatches += 1;
     report.recovered.push({ sessionId: token.sessionId, mutationId: token.id, restoredFiles, operation: 'undo' });
@@ -396,8 +457,8 @@ export class MutationJournal {
     for (const name of names) {
       if (!name.endsWith('.json')) continue;
       const path = join(this.#pendingDirectory(), name);
-      try { output.push({ path, token: JSON.parse(await readFile(path, 'utf8')) }); }
-      catch { output.push({ path, token: null }); }
+      try { output.push({ path, token: JSON.parse(await readFile(path, 'utf8')) });
+      } catch { output.push({ path, token: null }); }
     }
     return output;
   }
@@ -481,6 +542,10 @@ function validSnapshot(value, withContent) {
   if (typeof value.hash !== 'string' || !SHA256_HEX.test(value.hash)) return false;
   return !withContent || typeof value.contentBase64 === 'string';
 }
+function pendingGraph(paths) { return { state: 'pending', paths: sanitizeGraphPaths(paths) }; }
+function graphPaths(value) { return value?.state === 'pending' ? sanitizeGraphPaths(value.paths) : []; }
+function sanitizeGraphPaths(paths) { return [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).replaceAll('\\', '/').slice(0, 512)).filter(Boolean))].slice(0, 128); }
+async function canonicalProjectRoot(projectRoot) { return realpath(projectRoot).catch(() => resolve(projectRoot)); }
 function publicEntry(entry) {
   const paths = entry.kind === 'batch' ? entry.files.map((item) => item.path) : entry.path ? [entry.path] : entry.paths ?? [];
   return { id: entry.id, executionId: entry.executionId, tool: entry.tool, kind: entry.kind, state: entry.state, path: paths.length === 1 ? paths[0] : null, paths, createdAt: entry.createdAt };
