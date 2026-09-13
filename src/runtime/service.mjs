@@ -18,9 +18,11 @@ import { ProjectWriter } from './project-writer.mjs';
 import { parseSlashCommand } from './commands.mjs';
 import { classifyProviderError } from './provider-error.mjs';
 import { generateChatTitle } from './title-generator.mjs';
+import { TurnStore } from './turn-store.mjs';
+import { RunStateProjection } from './run-state-projection.mjs';
 
 export class RuntimeService {
-  #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #liveExecutions = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #ownedTurnStore = null; #liveExecutions = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     database = null,
@@ -48,9 +50,20 @@ export class RuntimeService {
     this.#dataDir = dataDir;
     this.#ownsDatabase = !database;
     this.#db = database ?? new ConversationDatabase(databasePath);
-    this.#emit = emit;
     this.#providerFactory = providerFactory;
-    this.#runState = runState;
+    if (runState) {
+      this.#runState = requireRunState(runState);
+      this.#emit = emit;
+    } else {
+      if (typeof this.#db.sqlRepository !== 'function') throw new TypeError('RuntimeService requires a durable run-state authority or a ConversationDatabase SQL repository');
+      const repository = this.#db.sqlRepository();
+      this.#ownedTurnStore = new TurnStore(repository);
+      this.#runState = new RunStateProjection(repository);
+      this.#emit = (event) => {
+        this.#projectOwnedRunEvent(event);
+        emit(event);
+      };
+    }
     this.#projects = projectManagerFactory(this.#db);
     this.#tst = tst;
     this.#plans = planStore ?? new LosslessPlanStore(join(dataDir, 'lossless-plans'));
@@ -80,6 +93,7 @@ export class RuntimeService {
     this.#permissions.close?.();
     this.#questions.close?.();
     this.#tst.close?.();
+    this.#ownedTurnStore?.close();
     if (this.#ownsDatabase) this.#db.close();
   }
 
@@ -172,9 +186,27 @@ export class RuntimeService {
       roles: { foreground: 'primary', plan: 'primary', background: 'secondary', orchestratorMaster: 'primary', worker: 'secondary' },
     };
   }
+  #projectOwnedRunEvent(event) {
+    if (!this.#ownedTurnStore || !event || typeof event !== 'object') return;
+    if (event.type === 'run.started' && event.sessionId && event.messageId) {
+      this.#ownedTurnStore.startRun({
+        runId: event.messageId,
+        sessionId: event.sessionId,
+        sourceSessionId: event.sourceSessionId ?? null,
+        projectId: event.projectId ?? null,
+      });
+      return;
+    }
+    if (event.type === 'run.finished' && event.messageId) {
+      const message = this.#db.getMessage?.(event.messageId);
+      this.#ownedTurnStore.finishRun(event.messageId, {
+        status: message?.status ?? 'complete',
+        ...(message?.status === 'error' ? { error: 'Generation failed.' } : {}),
+      });
+    }
+  }
   #isSessionActive(sessionId) {
-    if (this.#runState?.isActive) return this.#runState.isActive(sessionId);
-    return this.#liveExecutions.has(sessionId);
+    return this.#runState.isActive(sessionId);
   }
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
@@ -561,3 +593,7 @@ function contextWindow(provider) { const value = Number(provider?.contextWindow 
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }
 function safeStoreName(value) { return String(value ?? 'general').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 160) || 'general'; }
 function memoryScope(value) { const scope = String(value ?? 'session').toLowerCase(); return ['session', 'project', 'global'].includes(scope) ? scope : 'session'; }
+function requireRunState(value) {
+  if (!value || typeof value !== 'object' || typeof value.isActive !== 'function') throw new TypeError('RuntimeService runState must expose isActive(sessionId)');
+  return value;
+}
