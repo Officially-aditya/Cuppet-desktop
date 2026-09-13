@@ -62,8 +62,8 @@ test('stateless ACP adapter emits one normalized Copilot reasoning phase', async
   const reasoning = [];
   const result = await adapter.stream([{ role: 'user', content: 'Inspect sitemap.' }], {
     onDelta: async (delta) => { streamed += delta; },
-    onProviderEvent: async (event) => {
-      if (event?.type === 'reasoning') reasoning.push(event.text);
+    onActivity: async (activity) => {
+      if (activity?.type === 'activity.reasoning.delta') reasoning.push(activity.text);
     },
   });
   assert.equal(result.text, expected);
