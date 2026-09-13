@@ -4,7 +4,6 @@ import type {
   CognitiveStatus,
   CommandDefinition,
   CommandResult,
-  Message,
   PermissionRequest,
   Project,
   QuestionRequest,
@@ -34,6 +33,7 @@ import {
   useClientProviderSettings,
 } from './client-provider-state';
 import {
+  refreshClientSession,
   refreshClientSessions,
   upsertClientSession,
   useClientSessions,
@@ -46,7 +46,7 @@ type ModalName = 'new-chat' | 'add-project' | 'search' | 'remote' | 'settings' |
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [active, setActive] = useState<Session | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>({ projectId: null, mode: 'build' });
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
@@ -60,10 +60,11 @@ export function App() {
   const sessions = useClientSessions();
   const running = useClientRunState();
   const provider = useClientProviderSettings();
+  const active = useMemo(() => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null, [activeSessionId, sessions]);
 
   const activeProjectId = active?.projectId ?? draft?.projectId ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
-  const activeRunning = Boolean(active?.id && running.has(active.id));
+  const activeRunning = Boolean(activeSessionId && running.has(activeSessionId));
   const activeComposerMode: ComposerMode = cognitive.orchestratorEnabled ? 'orchestrate' : mode;
 
   const showToast = useCallback((message: unknown) => {
@@ -82,11 +83,10 @@ export function App() {
 
   const openSession = useCallback(async (sessionId: string) => {
     const [session, modeState] = await Promise.all([
-      window.cuppet.sessions.get(sessionId),
+      refreshClientSession(sessionId),
       window.cuppet.cognitive.modeGet(sessionId),
     ]);
-    upsertClientSession(session);
-    setActive(session);
+    setActiveSessionId(session.id);
     setDraft(null);
     setMode(modeState.mode === 'plan' ? 'plan' : 'build');
     localStorage.setItem(LAST_SESSION_KEY, session.id);
@@ -95,7 +95,7 @@ export function App() {
   }, []);
 
   const startDraft = useCallback((projectId: string | null = null) => {
-    setActive(null);
+    setActiveSessionId(null);
     setDraft({ projectId, mode: 'build' });
     setMode('build');
   }, []);
@@ -107,26 +107,13 @@ export function App() {
     if (draft?.mode === 'plan') await window.cuppet.cognitive.modeSet(created.id, 'plan');
     const session = { ...created, messages: created.messages ?? [] };
     upsertClientSession(session);
-    setActive(session);
+    setActiveSessionId(session.id);
     setDraft(null);
     setMode(draft?.mode ?? 'build');
     hydrateClientRunSession(session);
     localStorage.setItem(LAST_SESSION_KEY, session.id);
     return session;
   }, [active, draft]);
-
-  const refreshActive = useCallback(async (sessionId?: string | null) => {
-    const id = sessionId ?? active?.id;
-    if (!id) return;
-    try {
-      const session = await window.cuppet.sessions.get(id);
-      upsertClientSession(session);
-      setActive((current) => current?.id === id ? session : current);
-      hydrateClientRunSession(session);
-    } catch {
-      // Session may have been archived/deleted during the refresh.
-    }
-  }, [active?.id]);
 
   useEffect(() => {
     let disposed = false;
@@ -165,20 +152,12 @@ export function App() {
     return () => { disposed = true; };
   }, [openSession, showToast, startDraft]);
 
-  useEffect(() => window.cuppet.onEvent((event) => {
-    void handleEvent(event);
-  }), [active?.id, refreshActive]);
-
   const handleEvent = useCallback(async (event: RuntimeEvent) => {
     if (!event?.type) return;
-    const sessionId = String(event.sessionId ?? event.message?.sessionId ?? '');
 
-    if (event.type === 'run.finished' && sessionId) {
-      void refreshActive(sessionId);
-    }
     if (event.type === 'pe3.routed' && event.targetSessionId) {
       const target = String(event.targetSessionId);
-      if (active?.id === event.sourceSessionId) void openSession(target).catch(showToast);
+      if (activeSessionId === event.sourceSessionId) void openSession(target).catch(showToast);
     }
     if (event.type === 'runtime.error') showToast(event.message || 'Runtime error');
     if (event.type === 'cognitive.updated' && event.cognitive) setCognitive(event.cognitive);
@@ -189,29 +168,15 @@ export function App() {
       void refreshLists();
     }
 
-    if (event.message && active?.id === event.message.sessionId) {
-      setActive((current) => current ? { ...current, messages: upsertMessage(current.messages ?? [], event.message) } : current);
-    }
-    if (event.type === 'message.delta' && active?.id === sessionId && event.messageId) {
-      setActive((current) => {
-        if (!current) return current;
-        const messages = [...(current.messages ?? [])];
-        const index = messages.findIndex((message) => message.id === event.messageId);
-        if (index >= 0) messages[index] = { ...messages[index], content: String(event.content ?? ''), status: 'streaming' };
-        return { ...current, messages };
-      });
-    }
-    if ((event.type === 'message.created' || event.type === 'message.completed') && sessionId) void refreshActive(sessionId);
-
     if (event.type === 'permission.requested' && event.request) setPermission(event.request);
     if (event.type === 'permission.resolved' && permission?.id === event.requestId) setPermission(null);
     if (event.type === 'question.requested' && event.request) setQuestion(event.request);
     if (event.type === 'question.resolved' && question?.id === event.requestId) setQuestion(null);
+  }, [activeSessionId, openSession, permission?.id, question?.id, refreshLists, showToast]);
 
-    if (sessionId && (event.type === 'tool.started' || event.type === 'tool.finished')) {
-      void refreshActive(sessionId);
-    }
-  }, [active?.id, openSession, permission?.id, question?.id, refreshActive, refreshLists, showToast]);
+  useEffect(() => window.cuppet.onEvent((event) => {
+    void handleEvent(event);
+  }), [handleEvent]);
 
   const selectProject = useCallback(async (projectId: string) => {
     const project = projects.find((item) => item.id === projectId);
@@ -226,7 +191,7 @@ export function App() {
 
   const executeCommand = useCallback(async (raw: string, definition?: CommandDefinition) => {
     const def = definition ?? commandForRaw(commands, raw);
-    let sessionId = active?.id ?? null;
+    let sessionId = activeSessionId;
     if (def?.requiresSession && !sessionId) sessionId = (await ensureActiveSession()).id;
     const result = await window.cuppet.commands.execute(sessionId, raw);
     if ((result.id === 'plan' || result.id === 'cuppet.plan.agent') && result.result && typeof result.result === 'object') {
@@ -234,7 +199,7 @@ export function App() {
       if (nextMode === 'plan' || nextMode === 'build') setMode(nextMode);
     }
     return result;
-  }, [active?.id, commands, ensureActiveSession]);
+  }, [activeSessionId, commands, ensureActiveSession]);
 
   const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue', attachments: Attachment[] = []) => {
     const trimmed = text.trim();
@@ -285,10 +250,10 @@ export function App() {
   }, [commands, ensureActiveSession, executeCommand, openSession, projects, provider, running, showToast]);
 
   const stop = useCallback(async () => {
-    if (!active?.id || !running.has(active.id)) return;
-    try { await window.cuppet.sessions.stop(active.id); }
+    if (!activeSessionId || !running.has(activeSessionId)) return;
+    try { await window.cuppet.sessions.stop(activeSessionId); }
     catch (error) { showToast(error); }
-  }, [active?.id, running, showToast]);
+  }, [activeSessionId, running, showToast]);
 
   const removeProject = useCallback(async (project: Project) => {
     if (!window.confirm(`Remove ${project.name} from Cuppet? Files stay on disk and chats remain local.`)) return;
@@ -313,45 +278,45 @@ export function App() {
   const renameSession = useCallback(async (session: Session) => {
     const value = window.prompt('Rename chat', session.title || 'New chat')?.trim();
     if (!value || value === session.title) return;
-    try { await window.cuppet.sessions.rename(session.id, value); await refreshClientSessions(); if (active?.id === session.id) await refreshActive(session.id); }
+    try { await window.cuppet.sessions.rename(session.id, value); await refreshClientSessions(); }
     catch (error) { showToast(error); }
-  }, [active?.id, refreshActive, showToast]);
+  }, [showToast]);
 
   const archiveSession = useCallback(async (session: Session) => {
     if (!window.confirm(`Archive “${session.title || 'New chat'}”?`)) return;
     try {
       await window.cuppet.sessions.archive(session.id);
       const nextSessions = await refreshClientSessions();
-      if (active?.id === session.id) {
+      if (activeSessionId === session.id) {
         const next = nextSessions.find((item) => item.id !== session.id);
         if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
       }
     } catch (error) { showToast(error); }
-  }, [active?.id, openSession, showToast, startDraft]);
+  }, [activeSessionId, openSession, showToast, startDraft]);
 
   const deleteSession = useCallback(async (session: Session) => {
     if (!window.confirm(`Delete “${session.title || 'New chat'}” permanently?`)) return;
     try {
       await window.cuppet.sessions.delete(session.id);
       const nextSessions = await refreshClientSessions();
-      if (active?.id === session.id) {
+      if (activeSessionId === session.id) {
         const next = nextSessions.find((item) => item.id !== session.id);
         if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
       }
     } catch (error) { showToast(error); }
-  }, [active?.id, openSession, showToast, startDraft]);
+  }, [activeSessionId, openSession, showToast, startDraft]);
 
   const changeMode = useCallback(async (next: ComposerMode) => {
     const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';
     const orchestratorEnabled = next === 'orchestrate';
     try {
-      if (active) await window.cuppet.cognitive.modeSet(active.id, sessionMode);
+      if (activeSessionId) await window.cuppet.cognitive.modeSet(activeSessionId, sessionMode);
       else setDraft((current) => current ? { ...current, mode: sessionMode } : current);
       setMode(sessionMode);
       await window.cuppet.cognitive.orchestratorSet(orchestratorEnabled);
       setCognitive((current) => ({ ...current, orchestratorEnabled }));
     } catch (error) { showToast(error); }
-  }, [active, showToast]);
+  }, [activeSessionId, showToast]);
 
   const resolvePermission = useCallback(async (reply: 'once' | 'always' | 'reject', enableAuto = false) => {
     if (!permission) return;
@@ -383,7 +348,7 @@ export function App() {
         projects={projects}
         sessions={sessions.filter((session) => !session.archivedAt)}
         generalSessions={generalSessions}
-        activeSessionId={active?.id ?? null}
+        activeSessionId={activeSessionId}
         selectedProjectId={activeProjectId}
         onNewChat={() => setModal('new-chat')}
         onNewProjectChat={(projectId) => startDraft(projectId)}
@@ -436,12 +401,4 @@ function upsertProject(values: Project[], value: Project) {
   if (index >= 0) next[index] = { ...next[index], ...value };
   else next.unshift(value);
   return next.sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0));
-}
-
-function upsertMessage(values: Message[], value: Message) {
-  const next = [...values];
-  const index = next.findIndex((item) => item.id === value.id);
-  if (index >= 0) next[index] = value;
-  else next.push(value);
-  return next.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
 }
