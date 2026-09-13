@@ -28,7 +28,40 @@ test('queued turns survive runtime restart in FIFO order', async () => {
   }
 });
 
-test('a queue item interrupted during dispatch is not replayed after restart', async () => {
+test('run and queue projections are journaled as ordered durable runtime events', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-events-'));
+  const path = join(dir, 'turns.sqlite3');
+  try {
+    let store = new TurnStore(path);
+    store.startRun({ runId: 'm1', sessionId: 's1', projectId: 'p1', now: 10 });
+    store.finishRun('m1', { status: 'complete', now: 20 });
+    store.enqueue({ id: 'q1', sessionId: 's1', params: { text: 'secret queued prompt', attachments: [{ name: 'x' }] }, queuedAt: 30 });
+    store.claimNext('s1', 40);
+    store.completeQueue('q1', 50);
+
+    const beforeRestart = store.listEvents('s1');
+    assert.deepEqual(beforeRestart.map((event) => event.type), [
+      'run.started',
+      'run.finished',
+      'queue.queued',
+      'queue.started',
+      'queue.dispatched',
+    ]);
+    assert.deepEqual(beforeRestart.map((event) => event.sequence), [1, 2, 3, 4, 5]);
+    assert.ok(beforeRestart.every((event) => event.schemaVersion === 1));
+    assert.equal(JSON.stringify(beforeRestart).includes('secret queued prompt'), false, 'event log must not duplicate queued prompt content');
+    store.close();
+
+    store = new TurnStore(path);
+    assert.deepEqual(store.listEvents('s1'), beforeRestart);
+    assert.deepEqual(store.listEvents('s1', { afterSequence: 3 }).map((event) => event.sequence), [4, 5]);
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a queue item interrupted during dispatch is not replayed and records recovery failure', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-store-'));
   const path = join(dir, 'turns.sqlite3');
   try {
@@ -41,13 +74,17 @@ test('a queue item interrupted during dispatch is not replayed after restart', a
     store = new TurnStore(path);
     assert.equal(store.hasQueued('s1'), false);
     assert.deepEqual(store.queuedSessions(), []);
+    const recovery = store.listEvents('s1').at(-1);
+    assert.equal(recovery.type, 'queue.failed');
+    assert.equal(recovery.payload.recovery, 'runtime_restart');
+    assert.match(recovery.payload.error, /not replayed/i);
     store.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test('active runs become interrupted after runtime restart', async () => {
+test('active runs become interrupted after runtime restart and recovery is journaled', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-store-'));
   const path = join(dir, 'turns.sqlite3');
   try {
@@ -60,6 +97,10 @@ test('active runs become interrupted after runtime restart', async () => {
     const run = store.getRun('m1');
     assert.equal(run.status, 'interrupted');
     assert.match(run.error, /runtime restart/i);
+    const events = store.listEvents('s1');
+    assert.deepEqual(events.map((event) => event.type), ['run.started', 'run.finished']);
+    assert.equal(events[1].payload.status, 'interrupted');
+    assert.equal(events[1].payload.recovery, 'runtime_restart');
     store.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
