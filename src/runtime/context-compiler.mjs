@@ -6,7 +6,7 @@ export const COMPILED_CONTEXT_MAX_TOKENS = 8_192;
 const MAX_EPOCHS = 256;
 
 export class ContextCompiler {
-  #tst; #planStore; #state; #epochs = new Map(); #lastMessage = new Map();
+  #tst; #planStore; #state; #epochs = new Map();
   constructor({ tst, planStore, cognitiveState }) { this.#tst = tst; this.#planStore = planStore; this.#state = cognitiveState; }
 
   async compile({ sessionId, messages, usableTokens = 128_000, estimatedTokens, userMessageId }) {
@@ -16,10 +16,6 @@ export class ContextCompiler {
     const user = [...source].reverse().find((message) => message.role === 'user');
     const prompt = String(user?.content ?? '').trim();
     if (!prompt) return { messages: source, mode, injected: false, trimmed: false, tst: this.#tst?.status ?? null };
-
-    const previous = this.#lastMessage.get(sessionId);
-    if (previous && previous !== userMessageId && this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
-    this.#lastMessage.set(sessionId, userMessageId);
 
     if (orchestrator) return { messages: source, mode: 'orchestrator', injected: false, trimmed: false, tst: this.#tst?.status ?? null };
 
@@ -54,7 +50,6 @@ export class ContextCompiler {
   }
 
   clearSession(sessionId) {
-    this.#lastMessage.delete(sessionId);
     for (const key of this.#epochs.keys()) if (key.startsWith(`${sessionId}\0`)) this.#epochs.delete(key);
   }
 
