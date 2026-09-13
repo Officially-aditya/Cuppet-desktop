@@ -276,6 +276,9 @@ function normalizeRuntimeHealth(value) {
     busyProcesses: nonnegativeInteger(source.busyProcesses),
     generation: nonnegativeInteger(source.generation),
     restarts: nonnegativeInteger(source.restarts),
+    preTurnRetries: nonnegativeInteger(source.preTurnRetries),
+    retryPolicy: cloneRetryPolicy(source.retryPolicy),
+    lastRetry: cloneRetry(source.lastRetry),
     lastFailure: cloneFailure(source.lastFailure),
   };
 }
@@ -318,6 +321,28 @@ function cloneFailure(value) {
     category: text(value.category).slice(0, 120) || 'unknown',
     retryable: value.retryable === true,
     at: nonnegativeInteger(value.at),
+  };
+}
+function cloneRetryPolicy(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const maxAttempts = nonnegativeInteger(value.maxAttempts);
+  if (!maxAttempts) return null;
+  return {
+    maxAttempts,
+    baseDelayMs: nonnegativeInteger(value.baseDelayMs),
+    maxDelayMs: nonnegativeInteger(value.maxDelayMs),
+  };
+}
+function cloneRetry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const retry = nonnegativeInteger(value.retry);
+  const at = nonnegativeInteger(value.at);
+  if (!retry || !at) return null;
+  return {
+    retry,
+    delayMs: nonnegativeInteger(value.delayMs),
+    at,
+    failure: cloneFailure(value.failure),
   };
 }
 function nonnegativeInteger(value) {
