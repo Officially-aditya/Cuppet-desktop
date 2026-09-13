@@ -76,8 +76,6 @@ export class JournaledToolRuntime {
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment }));
-        // Temporary compatibility event for remote/older non-renderer consumers.
-        this.#safeEmit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
       },
       onPreview: (content) => {
         if (!messageId) return;
@@ -94,15 +92,6 @@ export class JournaledToolRuntime {
             code: 'malformed_provider_event',
             message: 'Provider telemetry was ignored because it did not match the Cuppet Activity contract.',
           }));
-        }
-        // Keep legacy runtime events for remote/older consumers during migration.
-        if (event.type === 'reasoning') {
-          const segment = typeof event.text === 'string' ? event.text.trim() : '';
-          if (segment) this.#safeEmit({ type: 'message.reasoning', sessionId: options.sessionId, messageId, segment });
-          return;
-        }
-        if (event.type === 'tool.started' || event.type === 'tool.finished') {
-          this.#safeEmit({ ...event, sessionId: options.sessionId, messageId });
         }
       },
     });
