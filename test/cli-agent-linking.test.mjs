@@ -96,6 +96,59 @@ test('Cuppet records ownership only after its explicit installer succeeds', asyn
   }
 });
 
+test('Cuppet revokes ownership when PATH resolves to a different executable identity', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'cuppet-provider-identity-'));
+  let installed = false;
+  let identity = {
+    resolvedPath: '/managed/opencode',
+    realPath: '/managed/opencode',
+    dev: 1,
+    ino: 10,
+    size: 100,
+    mtimeMs: 1000,
+  };
+  const runImpl = async (command) => {
+    if (command === '/bin/bash') {
+      installed = true;
+      return { stdout: '', stderr: '' };
+    }
+    if (!installed) {
+      const error = new Error('ENOENT');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return { stdout: 'opencode 9.9.9\n', stderr: '' };
+  };
+  try {
+    const operations = localProviderOperations('opencode', {
+      userData,
+      runImpl,
+      platform: 'darwin',
+      now: () => 1234,
+      executableIdentityImpl: async () => identity,
+    });
+    const installedState = await operations.install();
+    assert.equal(installedState.installation.ownedByCuppet, true);
+    assert.equal(installedState.installation.identity.realPath, '/managed/opencode');
+
+    identity = {
+      resolvedPath: '/external/opencode',
+      realPath: '/external/opencode',
+      dev: 2,
+      ino: 20,
+      size: 200,
+      mtimeMs: 2000,
+    };
+    const replaced = await operations.detect();
+    assert.equal(replaced.installation.ownedByCuppet, false);
+    assert.equal(replaced.installation.source, 'unknown');
+    assert.equal(replaced.installation.canUpdate, false);
+    await assert.rejects(() => operations.update(), /does not own this OpenCode installation/);
+  } finally {
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test('discovered external installs never inherit update authority', async () => {
   const calls = [];
   const runImpl = async (command, args) => {
