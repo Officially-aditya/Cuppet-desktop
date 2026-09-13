@@ -38,14 +38,16 @@ if (!app.includes('window.cuppet.sessions.send') || !chat.includes('onSend')) th
 // modules. Runtime integration tests mutate process-wide env and depend on brief
 // permission/abort lifecycle windows, so serialize the suite instead of allowing
 // unrelated files to interfere with those contracts under CI load. Keep force-exit
-// for tests that intentionally leave runtime handles alive, and capture reporter
-// output off the GitHub Actions stdout pipe to avoid the post-success EPIPE race.
+// for tests that intentionally leave runtime handles alive. Capture reporter output
+// off the GitHub Actions stdout pipe, but wait for the child `close` event: unlike
+// `exit`, `close` is emitted only after stdout/stderr have fully drained. This keeps
+// a nonzero exit diagnostic instead of truncating the failing TAP record/summary.
 const testFiles = (await walk(join(root, 'test')))
   .filter((path) => /\.test\.(?:mjs|js|cjs)$/.test(path))
   .map((path) => relative(root, path))
   .sort();
 if (!testFiles.length) throw new Error('No Phase 1 test files found');
-await runCaptured(process.execPath, ['--test', '--test-concurrency=1', '--test-force-exit', '--test-timeout=120000', ...testFiles], { timeoutMs: 240000, drainMs: 150 });
+await runCaptured(process.execPath, ['--test', '--test-concurrency=1', '--test-force-exit', '--test-timeout=120000', ...testFiles], { timeoutMs: 240000 });
 console.log(`Phase 1 gate passed: ${productionFiles.length} production files, ${testFiles.length} serialized test files, provider-independent core runtime, provider integrations isolated at the driver/host boundary, React/Vite renderer, SQLite persistence, provider streaming, and Stop.`);
 
 function hasOpenCodeModuleDependency(text) {
@@ -68,11 +70,12 @@ async function walk(dir) {
   }
   return output;
 }
-function runCaptured(command, args, { timeoutMs = 0, drainMs = 100 } = {}) {
+function runCaptured(command, args, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
     let settled = false;
+    let timedOut = false;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => chunks.push(chunk));
@@ -83,32 +86,27 @@ function runCaptured(command, args, { timeoutMs = 0, drainMs = 100 } = {}) {
       process.stdout.write(chunks.join(''));
       chunks.length = 0;
     };
-    const stopCapture = () => {
-      child.stdout.destroy();
-      child.stderr.destroy();
-    };
     const finish = (fn) => {
       if (settled) return false;
       settled = true;
       if (timer) clearTimeout(timer);
       replay();
-      stopCapture();
       fn();
       return true;
     };
     const timer = timeoutMs > 0 ? setTimeout(() => {
       if (settled) return;
+      timedOut = true;
       child.kill('SIGTERM');
-      finish(() => reject(new Error(`${command} exceeded ${timeoutMs}ms`)));
     }, timeoutMs) : undefined;
     timer?.unref?.();
 
-    child.on('exit', (code, signal) => {
-      if (settled) return;
-      if (timer) clearTimeout(timer);
-      setTimeout(() => finish(() => code === 0
-        ? resolve()
-        : reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`))), drainMs);
+    child.on('close', (code, signal) => {
+      finish(() => {
+        if (timedOut) reject(new Error(`${command} exceeded ${timeoutMs}ms`));
+        else if (code === 0) resolve();
+        else reject(new Error(`${command} exited ${code ?? `via ${signal ?? 'unknown signal'}`}`));
+      });
     });
     child.on('error', (error) => finish(() => reject(error)));
   });
