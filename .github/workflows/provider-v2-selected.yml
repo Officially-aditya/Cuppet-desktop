@@ -42,6 +42,7 @@ jobs:
           test/opencode-provider.test.mjs
           test/opencode-auth-status.test.mjs
           test/cli-agent-linking.test.mjs
+          test/local-cli-environment.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/runtime-c1.test.mjs
           test/provider-activity-renderer.test.mjs
