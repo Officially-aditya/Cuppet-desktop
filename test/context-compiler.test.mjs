@@ -8,12 +8,14 @@ function state({ mode = 'build', orchestrator = false } = {}) {
 
 function fakeTst(prepared) {
   const calls = [];
+  let completions = 0;
   return {
     configured: true,
     status: { configured: true, connected: true, protocol: 'cuppet.tst.v3' },
     calls,
+    get completions() { return completions; },
     async prepareContext(...args) { calls.push(args); return structuredClone(prepared); },
-    async turnCompleted() {},
+    async turnCompleted() { completions += 1; },
     async refreshStm() { return { records: [{ key: 'goal', value: 'keep context deterministic' }] }; },
   };
 }
@@ -30,7 +32,17 @@ test('compiler injects detached cache-stable context without mutating durable me
   assert.equal(first.budgetTokens, 2048);
   assert.equal(first.messages.find((m) => m.role === 'system')?.content, second.messages.find((m) => m.role === 'system')?.content);
   assert.equal(tst.calls.length, 1, 'same user epoch must not rebuild context');
+  assert.equal(tst.completions, 0, 'context compilation must never own terminal turn completion');
   assert.match(first.messages.find((m) => m.role === 'system').content, /trust="untrusted"/);
+});
+
+test('a later user epoch does not complete the previous TST turn', async () => {
+  const tst = fakeTst({ observation_complete: true, stm: [{ key: 'goal', value: 'preserve terminal ownership' }] });
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  await compiler.compile({ sessionId: 's-terminal', messages: [{ id: 'u1', role: 'user', content: 'First turn' }], userMessageId: 'u1' });
+  await compiler.compile({ sessionId: 's-terminal', messages: [{ id: 'u1', role: 'user', content: 'First turn' }, { id: 'a1', role: 'assistant', content: 'done' }, { id: 'u2', role: 'user', content: 'Second turn' }], userMessageId: 'u2' });
+  assert.equal(tst.completions, 0, 'the next prompt must not be used as a proxy for the previous terminal boundary');
+  assert.equal(tst.calls.length, 2);
 });
 
 test('reliable Context Memory always bounds foreground history to the last two user turns', async () => {
