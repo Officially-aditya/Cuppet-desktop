@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -56,14 +56,18 @@ try {
   assert.equal(result.ok, true, `runtime-owned provider probe failed: ${JSON.stringify(result)}`);
   assert.equal(result.installed, true);
   assert.equal(result.connected, true);
-  assert.equal(resolve(String(result.executable || '')), resolve(fakeOpenCode), 'runtime resolved a CLI outside recovered login PATH');
+  const [actualExecutable, expectedExecutable] = await Promise.all([
+    realpath(String(result.executable || '')),
+    realpath(fakeOpenCode),
+  ]);
+  assert.equal(actualExecutable, expectedExecutable, 'runtime resolved a CLI outside recovered login PATH');
   const recoveredPath = String(result.path || '').split(':');
-  assert.equal(recoveredPath[0], fakeBin, 'recovered login-shell PATH was not preferred');
+  assert.equal(await realpath(recoveredPath[0]), await realpath(fakeBin), 'recovered login-shell PATH was not preferred');
   assert.ok(!launchdPath.split(':').includes(fakeBin), 'test setup accidentally put fake CLI in launchd PATH');
 
   console.log(`[launchservices-smoke] app=${appPath}`);
   console.log(`[launchservices-smoke] launchdPath=${launchdPath}`);
-  console.log(`[launchservices-smoke] executable=${result.executable}`);
+  console.log(`[launchservices-smoke] executable=${actualExecutable}`);
   console.log('[launchservices-smoke] PASS: LaunchServices with launchd-style env -> bootstrap login PATH recovery -> runtime child -> runtime provider control plane resolved authenticated OpenCode.');
 } finally {
   await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
