@@ -147,13 +147,13 @@ test('shared ACP provider applies advertised model and reasoning effort and surf
   const result = await provider.stream([{ role: 'user', content: 'Inspect.' }], {
     projectRoot: tmpdir(),
     onDelta: async (delta) => { streamed += delta; },
-    onProviderEvent: async (event) => { activity.push(event); },
+    onActivity: async (event) => { activity.push(event); },
   });
   assert.equal(result.text, 'Done.');
   assert.equal(streamed, 'Done.');
-  assert.deepEqual(activity.map((event) => event.type), ['reasoning', 'tool.started', 'tool.finished']);
+  assert.deepEqual(activity.map((event) => event.type), ['activity.reasoning.delta', 'activity.tool.opened', 'activity.tool.closed', 'activity.text.delta']);
   assert.equal(activity[0].text, 'Inspecting project.');
   assert.equal(activity[1].callId, 'tool-1');
   assert.equal(activity[1].tool, 'Search files');
-  assert.equal(activity[2].success, true);
+  assert.equal(activity[2].status, 'success');
 });
