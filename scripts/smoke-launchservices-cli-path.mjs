@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const requestedApp = appArgument(process.argv.slice(2));
-const appPath = requestedApp || join(root, 'node_modules', 'electron', 'dist', 'Electron.app');
+const appPath = requestedApp || installedElectronApp();
 const tempRoot = await mkdtemp(join(tmpdir(), 'cuppet-launchservices-path-'));
 const fakeBin = join(tempRoot, 'login-bin');
 const fakeHome = join(tempRoot, 'home');
@@ -29,8 +31,8 @@ const previous = new Map();
 if (process.platform !== 'darwin') throw new Error('LaunchServices CLI PATH smoke is macOS-only.');
 await access(appPath);
 await Promise.all([
-  import('node:fs/promises').then(({ mkdir }) => mkdir(fakeBin, { recursive: true })),
-  import('node:fs/promises').then(({ mkdir }) => mkdir(fakeHome, { recursive: true })),
+  mkdir(fakeBin, { recursive: true }),
+  mkdir(fakeHome, { recursive: true }),
 ]);
 
 await writeFile(fakeShell, `#!/bin/sh\nprintf '%s\\n' '__CUPPET_LOGIN_SHELL_PATH__=${fakeBin}:/usr/bin:/bin'\n`, { mode: 0o700 });
@@ -73,6 +75,22 @@ try {
     }
   }
   await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+}
+
+function installedElectronApp() {
+  let executable;
+  try {
+    executable = require('electron');
+  } catch (error) {
+    throw new Error(`Electron executable is unavailable after dependency installation: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof executable !== 'string' || !executable.trim()) throw new Error('Electron package did not return its executable path.');
+  let current = resolve(executable);
+  while (current !== dirname(current)) {
+    if (current.endsWith('.app')) return current;
+    current = dirname(current);
+  }
+  throw new Error(`Could not derive Electron.app from installed executable: ${executable}`);
 }
 
 function appArgument(args) {
