@@ -40,15 +40,16 @@ export async function refreshClientSessions() {
 }
 
 export function reduceClientSessionEvent(event: RuntimeEvent) {
+  let handled = false;
   if (event?.session?.id) {
     upsertClientSession(event.session);
-    return true;
+    handled = true;
   }
   if (SESSION_COLLECTION_REFRESH_EVENTS.has(String(event?.type ?? ''))) {
     void refreshClientSessions().catch(() => undefined);
-    return true;
+    handled = true;
   }
-  return false;
+  return handled;
 }
 
 export function resetClientSessionStateStore() {
