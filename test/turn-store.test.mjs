@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { ConversationDatabase } from '../src/runtime/database.mjs';
 import { TurnStore } from '../src/runtime/turn-store.mjs';
 
 test('queued turns survive runtime restart in FIFO order', async () => {
@@ -57,6 +58,54 @@ test('run and queue projections are journaled as ordered durable runtime events'
     assert.deepEqual(store.listEvents('s1', { afterSequence: 3 }).map((event) => event.sequence), [4, 5]);
     store.close();
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('shared conversation transactions atomically project assistant run phases', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-atomic-'));
+  const path = join(dir, 'conversations.sqlite3');
+  const db = new ConversationDatabase(path);
+  const store = new TurnStore(db.sqlRepository());
+  try {
+    db.createSession({ id: 's1', now: 1 });
+    db.transaction(() => {
+      db.appendMessage({ id: 'u1', sessionId: 's1', role: 'user', content: 'hello', now: 2 });
+      db.appendMessage({ id: 'm1', sessionId: 's1', role: 'assistant', content: '', status: 'streaming', now: 3 });
+      assert.equal(store.getRun('m1')?.status, 'starting');
+      assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started']);
+    });
+
+    const running = store.startRun({ runId: 'm1', sessionId: 's1', sourceSessionId: 'source-s1', projectId: 'p1', now: 4 });
+    assert.equal(running.status, 'running');
+    assert.equal(running.sourceSessionId, 'source-s1');
+    assert.equal(running.projectId, 'p1');
+
+    assert.throws(() => db.transaction(() => {
+      db.updateMessage('m1', { status: 'complete', content: 'rolled back', now: 5 });
+      assert.equal(store.getRun('m1')?.status, 'settling');
+      assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling']);
+      throw new Error('rollback projection');
+    }), /rollback projection/);
+
+    assert.equal(db.getMessage('m1')?.status, 'streaming');
+    assert.equal(db.getMessage('m1')?.content, '');
+    assert.equal(store.getRun('m1')?.status, 'running');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started']);
+
+    db.transaction(() => {
+      db.updateMessage('m1', { status: 'complete', content: 'done', now: 6 });
+      assert.equal(store.getRun('m1')?.status, 'settling');
+    });
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling']);
+    assert.equal(store.listEvents('s1')[1].payload.messageStatus, 'complete');
+
+    store.finishRun('m1', { status: 'complete', now: 7 });
+    assert.equal(store.getRun('m1')?.status, 'complete');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.settling', 'run.finished']);
+  } finally {
+    store.close();
+    db.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
