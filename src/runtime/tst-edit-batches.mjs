@@ -13,7 +13,13 @@ const STRUCTURAL_OPS = new Set(['replace_node', 'insert_before_node', 'insert_af
 
 export class TstBatchEditManager {
   #tst; #journal; #emit; #writer; #batches = new Map(); #graphStale = new Map();
-  constructor({ tst, journal, writer = null, emit = () => {} }) { this.#tst = tst; this.#journal = journal; this.#writer = writer; this.#emit = emit; }
+  constructor({ tst, journal, writer = null, emit = () => {} }) {
+    this.#tst = tst; this.#journal = journal; this.#writer = writer; this.#emit = emit;
+    const recovery = this.#journal?.ready?.();
+    if (recovery && typeof recovery.then === 'function') {
+      void recovery.then((report) => this.#emitRecovery(report)).catch(() => undefined);
+    }
+  }
 
   async resolveTargets({ path, query, expectedHash, limit = 12 }) {
     return this.#tst.resolveEditTargets(path, query, expectedHash, limit);
@@ -191,6 +197,28 @@ export class TstBatchEditManager {
   #remember(batch) { this.#prune(); this.#batches.set(batch.id, batch); while (this.#batches.size > MAX_BATCHES) this.#batches.delete(this.#batches.keys().next().value); }
   #prune() { const now = Date.now(); for (const [id, batch] of this.#batches) if (batch.expiresAt < now) this.#batches.delete(id); }
   async #withWriter(root, fn) { return this.#writer?.withProject ? this.#writer.withProject(root, fn) : fn(); }
+
+  #emitRecovery(report = {}) {
+    for (const item of Array.isArray(report.recovered) ? report.recovered : []) {
+      if (!item?.sessionId || !item?.mutationId) continue;
+      this.#emit({
+        type: 'mutation.recovered',
+        sessionId: item.sessionId,
+        mutationId: item.mutationId,
+        restoredFiles: Number(item.restoredFiles) || 0,
+      });
+    }
+    for (const item of Array.isArray(report.conflicts) ? report.conflicts : []) {
+      if (!item?.sessionId || !item?.mutationId) continue;
+      this.#emit({
+        type: 'mutation.recovery.conflict',
+        sessionId: item.sessionId,
+        mutationId: item.mutationId,
+        path: item.path ?? null,
+        message: cleanError(item.error || 'Mutation recovery conflict'),
+      });
+    }
+  }
 }
 
 async function stageOperation({ root, operation, index, files }) {
