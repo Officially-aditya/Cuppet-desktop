@@ -12,6 +12,20 @@ import { discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/a
 const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
 const kiroFixture = fileURLToPath(new URL('./fixtures/fake-kiro-acp-agent.mjs', import.meta.url));
 
+function fixtureHandlers(calls = [], permissions = []) {
+  return {
+    requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
+    executeTool: async (call) => {
+      calls.push(call);
+      const args = JSON.parse(call.arguments);
+      if (call.name === 'workspace_read') return { success: true, output: 'hello', paths: ['sample.txt'], mutation: false };
+      if (call.name === 'workspace_write') return { success: true, output: `Wrote ${args.path}`, paths: ['sample.txt'], mutation: true };
+      if (call.name === 'bash') return { success: true, output: 'stdout:\nok\nexit code: 0', paths: [], mutation: false };
+      return { success: false, output: `unexpected ${call.name}`, paths: [], mutation: false };
+    },
+  };
+}
+
 test('shared ACP provider delegates filesystem and terminal operations through Cuppet', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-acp-'));
   await writeFile(join(root, 'sample.txt'), 'hello');
@@ -23,15 +37,7 @@ test('shared ACP provider delegates filesystem and terminal operations through C
     const result = await provider.stream([{ role: 'user', content: 'Update the sample.' }], {
       projectRoot: root,
       onDelta: async (delta) => { streamed += delta; },
-      requestAgentPermission: async (request) => { permissions.push(request); return 'once'; },
-      executeTool: async (call) => {
-        calls.push(call);
-        const args = JSON.parse(call.arguments);
-        if (call.name === 'workspace_read') return { success: true, output: 'hello', paths: ['sample.txt'], mutation: false };
-        if (call.name === 'workspace_write') return { success: true, output: `Wrote ${args.path}`, paths: ['sample.txt'], mutation: true };
-        if (call.name === 'bash') return { success: true, output: 'stdout:\nok\nexit code: 0', paths: [], mutation: false };
-        return { success: false, output: `unexpected ${call.name}`, paths: [], mutation: false };
-      },
+      ...fixtureHandlers(calls, permissions),
     });
     assert.equal(result.text, 'Working. Done.');
     assert.equal(streamed, 'Working. Done.');
@@ -59,6 +65,45 @@ test('provider descriptors use their current official transport entrypoints', ()
   assert.equal(localCliDescriptor('opencode')?.transport, 'acp');
   assert.deepEqual(localCliDescriptor('opencode')?.args, ['acp']);
   assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
+});
+
+test('OpenCode ACP preserves user inline config instead of forcing a synthetic Cuppet mode', () => {
+  const descriptor = localCliDescriptor('opencode');
+  const originalConfig = '{"provider":{"anthropic":{"options":{"baseURL":"https://example.invalid"}}}}';
+  const environment = descriptor.environment({
+    HOME: '/Users/example',
+    PATH: '/usr/bin:/bin',
+    OPENCODE_CONFIG_CONTENT: originalConfig,
+  });
+  assert.equal(environment.OPENCODE_CONFIG_CONTENT, originalConfig);
+  assert.equal(environment.CUPPET_OPENCODE_AGENT_ID, undefined);
+  assert.equal(descriptor.requiredSessionSettings, undefined);
+  assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
+  const permission = JSON.parse(environment.OPENCODE_PERMISSION);
+  assert.equal(permission['*'], 'deny');
+  assert.equal(permission['cuppet-runtime_*'], 'allow');
+  assert.equal(permission['cuppet_runtime_*'], 'allow');
+});
+
+test('stale persisted ACP model and effort fall back to provider defaults instead of bricking startup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-acp-stale-selection-'));
+  await writeFile(join(root, 'sample.txt'), 'hello');
+  const provider = new AcpProviderAdapter({
+    providerID: 'claude-code',
+    cliCommand: process.execPath,
+    cliArgs: [fixture],
+    primary: { providerID: 'claude-code', modelID: 'provider/model-removed' },
+    primaryEffort: 'removed-effort',
+  }, { descriptor: localCliDescriptor('claude-code') });
+  try {
+    const result = await provider.stream([{ role: 'user', content: 'Use the provider default.' }], {
+      projectRoot: root,
+      ...fixtureHandlers(),
+    });
+    assert.equal(result.text, 'Working. Done.');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('shared ACP capability parser accepts grouped config options and legacy model state', () => {

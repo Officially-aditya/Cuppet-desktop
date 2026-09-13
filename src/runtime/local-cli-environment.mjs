@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -34,6 +35,40 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
   ]);
   if (merged.length) environment.PATH = merged.join(pathDelimiter);
   return environment;
+}
+
+/**
+ * Resolve a bare provider command to the exact executable Cuppet will spawn.
+ *
+ * GUI apps should not rely on child_process repeating shell lookup semantics after
+ * packaging. Resolve once from the recovered CLI environment and pass the absolute
+ * path into the provider transport. Explicit absolute/custom paths are preserved.
+ */
+export function resolveLocalCliExecutable(command, inherited = process.env, options = {}) {
+  const value = typeof command === 'string' ? command.trim() : '';
+  if (!value || value.includes('\0')) return value;
+  if (isAbsolute(value) || value.includes('/') || value.includes('\\')) return value;
+
+  const platform = typeof options.platform === 'string' ? options.platform : process.platform;
+  const environment = options.environment && typeof options.environment === 'object'
+    ? options.environment
+    : localCliEnvironment(inherited, options);
+  const pathDelimiter = platform === 'win32' ? ';' : ':';
+  const pathEntries = splitPath(environment.PATH, pathDelimiter);
+  const extensions = platform === 'win32'
+    ? executableExtensions(environment.PATHEXT)
+    : [''];
+
+  for (const directory of pathEntries) {
+    for (const extension of extensions) {
+      const candidate = join(directory, `${value}${extension}`);
+      try {
+        accessSync(candidate, fsConstants.X_OK);
+        return candidate;
+      } catch {}
+    }
+  }
+  return value;
 }
 
 /** Apply the local-CLI PATH to the current process for main-process probes. */
@@ -113,6 +148,14 @@ function fallbackCliPaths(environment, home, platform) {
   ];
   if (platform === 'darwin') candidates.push('/opt/homebrew/bin', '/usr/local/bin');
   return candidates.filter((value) => typeof value === 'string' && value.trim());
+}
+
+function executableExtensions(value) {
+  const extensions = String(value || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return ['', ...extensions.filter((item) => item.startsWith('.'))];
 }
 
 function splitPath(value, delimiter) {

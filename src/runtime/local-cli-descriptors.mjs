@@ -1,20 +1,13 @@
-import { randomUUID } from 'node:crypto';
-
-const OPENCODE_GUARD_AGENT_ENV = 'CUPPET_OPENCODE_AGENT_ID';
-
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
     mcpToolBridge: true,
-    // OpenCode merges per-agent permissions after global permissions. A global
-    // OPENCODE_PERMISSION deny is therefore defense-in-depth, not a sufficient
-    // execution boundary by itself. Inject one process-unique primary agent whose
-    // own permission rules deny native tools and allow only Cuppet's session MCP,
-    // then force every fresh ACP logical session onto that advertised mode.
-    requiredSessionSettings: [
-      { category: 'mode', valueFromEnv: OPENCODE_GUARD_AGENT_ENV, label: 'Cuppet execution mode' },
-    ],
+    // OpenCode ACP is documented to use the credentials/configuration already
+    // available to the normal CLI process. Preserve that authority verbatim.
+    // Cuppet constrains native execution through the dedicated permission overlay
+    // and supplies its own tools through the session-scoped MCP bridge; it must not
+    // rewrite OPENCODE_CONFIG_CONTENT or force a synthetic agent/mode.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
@@ -142,36 +135,10 @@ function freezeValue(value) {
 }
 
 function openCodeAcpEnvironment(inherited = process.env) {
-  const agentId = `cuppet-runtime-${randomUUID()}`;
-  const permission = openCodeCuppetPermissions();
-  const config = parseOpenCodeConfigContent(inherited.OPENCODE_CONFIG_CONTENT);
-  const agents = record(config.agent);
-  const previousAgent = record(agents[agentId]);
-
   return {
     ...inherited,
     OPENCODE_DISABLE_AUTOUPDATE: '1',
-    [OPENCODE_GUARD_AGENT_ENV]: agentId,
-    // Preserve every user-supplied provider/model/config field, but add a random
-    // primary agent after normal global/project agent discovery. Because the id is
-    // process-unique, user agent configuration cannot accidentally collide with it.
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({
-      ...config,
-      agent: {
-        ...agents,
-        [agentId]: {
-          ...previousAgent,
-          description: 'Cuppet-managed execution boundary. Native OpenCode tools are disabled; use Cuppet MCP tools.',
-          mode: 'primary',
-          hidden: false,
-          permission,
-        },
-      },
-    }),
-    // Defense in depth for built-in/default agents. The forced random agent above
-    // is the actual boundary because OpenCode intentionally allows agent-specific
-    // rules to override this global permission layer.
-    OPENCODE_PERMISSION: JSON.stringify(permission),
+    OPENCODE_PERMISSION: JSON.stringify(openCodeCuppetPermissions()),
   };
 }
 
@@ -196,76 +163,3 @@ function openCodeCuppetPermissions() {
     'cuppet_runtime_*': 'allow',
   };
 }
-
-function parseOpenCodeConfigContent(value) {
-  const source = typeof value === 'string' ? value.trim() : '';
-  if (!source) return {};
-  try {
-    const parsed = JSON.parse(stripJsoncTrailingCommas(stripJsoncComments(source)));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('root must be an object');
-    return parsed;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error ?? 'invalid JSONC');
-    throw new Error(`OpenCode OPENCODE_CONFIG_CONTENT could not be safely merged with Cuppet's execution guard: ${detail}`);
-  }
-}
-
-function stripJsoncComments(source) {
-  let output = '';
-  let string = false;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    const next = source[index + 1];
-    if (lineComment) {
-      if (char === '\n' || char === '\r') { lineComment = false; output += char; }
-      continue;
-    }
-    if (blockComment) {
-      if (char === '*' && next === '/') { blockComment = false; index += 1; }
-      else if (char === '\n' || char === '\r') output += char;
-      continue;
-    }
-    if (string) {
-      output += char;
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') string = false;
-      continue;
-    }
-    if (char === '"') { string = true; output += char; continue; }
-    if (char === '/' && next === '/') { lineComment = true; index += 1; continue; }
-    if (char === '/' && next === '*') { blockComment = true; index += 1; continue; }
-    output += char;
-  }
-  if (blockComment) throw new Error('unterminated block comment');
-  return output;
-}
-
-function stripJsoncTrailingCommas(source) {
-  let output = '';
-  let string = false;
-  let escaped = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    if (string) {
-      output += char;
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') string = false;
-      continue;
-    }
-    if (char === '"') { string = true; output += char; continue; }
-    if (char === ',') {
-      let cursor = index + 1;
-      while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1;
-      if (source[cursor] === '}' || source[cursor] === ']') continue;
-    }
-    output += char;
-  }
-  return output;
-}
-
-function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }

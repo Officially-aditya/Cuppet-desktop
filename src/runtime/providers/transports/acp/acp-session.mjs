@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-cli-environment.mjs';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
 import { providerFailureMetadata } from '../../provider-failure.mjs';
@@ -46,11 +47,12 @@ export class AcpSessionRuntime {
     this.#inactivityTimeoutMs = positiveMs(liveness.inactivityMs, DEFAULT_INACTIVITY_TIMEOUT_MS);
     this.#cancelGraceMs = positiveMs(liveness.cancelGraceMs, DEFAULT_CANCEL_GRACE_MS);
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
-    const command = text(configuration.cliCommand) || text(process.env[descriptor.envOverride]) || descriptor.command;
+    this.#environment = providerEnvironment(descriptor, configuration);
+    const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
+    const command = resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment });
     const args = Array.isArray(configuration.cliArgs) && configuration.cliArgs.length
       ? configuration.cliArgs.map((value) => String(value))
       : [...descriptor.args];
-    this.#environment = providerEnvironment(descriptor, configuration);
     this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: this.#environment, label: descriptor.label });
     this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label });
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
@@ -270,27 +272,36 @@ export class AcpSessionRuntime {
   }
 
   async #applyConfiguredSettings(selection) {
-    const configured = selection === undefined ? sessionSelection(this.#configuration) : normalizeSessionSelection(selection);
+    const explicitSelection = selection !== undefined;
+    const configured = explicitSelection ? normalizeSessionSelection(selection) : sessionSelection(this.#configuration);
     const configuredModel = text(configured.model);
     if (configuredModel && configuredModel !== 'cli-default') {
       const modelSetting = modelRuntimeSetting(this.#capabilities);
-      await this.#applySelectSetting(modelSetting, configuredModel, 'model');
-      // Model-dependent command settings (for example reasoning effort) must be
-      // re-read after the provider accepts a model change.
-      await this.#refreshCommandSettings();
-      this.#refreshCapabilities();
+      const appliedModel = await this.#applySelectSetting(modelSetting, configuredModel, 'model', { strict: explicitSelection });
+      if (appliedModel) {
+        // Model-dependent command settings (for example reasoning effort) must be
+        // re-read after the provider accepts a model change.
+        await this.#refreshCommandSettings();
+        this.#refreshCapabilities();
+      }
     }
     const configuredEffort = text(configured.effort);
     if (configuredEffort) {
       const reasoningSetting = reasoningRuntimeSetting(this.#capabilities);
-      await this.#applySelectSetting(reasoningSetting, configuredEffort, 'reasoning effort');
+      await this.#applySelectSetting(reasoningSetting, configuredEffort, 'reasoning effort', { strict: explicitSelection });
     }
   }
 
-  async #applySelectSetting(setting, requested, label) {
-    if (!setting) throw new Error(`${this.#descriptor.label} does not advertise a switchable ${label}; leaving its provider default unchanged.`);
-    if (!settingAdvertisesValue(setting, requested)) throw new Error(`${this.#descriptor.label} no longer advertises ${label} '${requested}'. Refresh provider capabilities.`);
-    if (setting.value === requested) return;
+  async #applySelectSetting(setting, requested, label, { strict = true } = {}) {
+    if (!setting) {
+      if (!strict) return false;
+      throw new Error(`${this.#descriptor.label} does not advertise a switchable ${label}; leaving its provider default unchanged.`);
+    }
+    if (!settingAdvertisesValue(setting, requested)) {
+      if (!strict) return false;
+      throw new Error(`${this.#descriptor.label} no longer advertises ${label} '${requested}'. Refresh provider capabilities.`);
+    }
+    if (setting.value === requested) return true;
 
     const sessionId = text(this.#session?.sessionId);
     if (hasNativeAcpConfigOption(this.#session, setting.id)) {
@@ -301,14 +312,14 @@ export class AcpSessionRuntime {
       }, REQUEST_TIMEOUT_MS);
       this.#session = withAcpConfigOptions(this.#session, result);
       this.#refreshCapabilities();
-      return;
+      return true;
     }
 
     if (isModelSetting(setting) && legacyAcpAdvertisesModel(this.#session, requested)) {
       await this.#rpc.request('session/set_model', { sessionId, modelId: requested }, REQUEST_TIMEOUT_MS);
       this.#session = withLegacyAcpModel(this.#session, requested);
       this.#refreshCapabilities();
-      return;
+      return true;
     }
 
     const commandSetting = descriptorCommandSetting(this.#descriptor, setting);
@@ -322,7 +333,7 @@ export class AcpSessionRuntime {
       }, REQUEST_TIMEOUT_MS);
       await this.#refreshCommandSettings({ [setting.id]: requested });
       this.#refreshCapabilities();
-      return;
+      return true;
     }
 
     // Stable Config Options remain the generic fallback for agents that advertise
@@ -334,6 +345,7 @@ export class AcpSessionRuntime {
     }, REQUEST_TIMEOUT_MS);
     this.#session = withAcpConfigOptions(this.#session, result);
     this.#refreshCapabilities();
+    return true;
   }
 
   async #refreshCommandSettings(currentOverrides = {}) {
@@ -450,7 +462,7 @@ function normalizeMcpServers(value) {
   });
 }
 function providerEnvironment(descriptor, configuration) {
-  let environment = { ...process.env };
+  let environment = localCliEnvironment(process.env);
   const overrides = record(configuration?.cliEnv);
   for (const [key, value] of Object.entries(overrides).slice(0, 128)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;

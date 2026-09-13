@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { localCliEnvironment } from '../src/runtime/local-cli-environment.mjs';
+import { localCliEnvironment, resolveLocalCliExecutable } from '../src/runtime/local-cli-environment.mjs';
 
 const bootstrapPath = fileURLToPath(new URL('../src/main/bootstrap.mjs', import.meta.url));
 
@@ -76,6 +78,27 @@ test('non-macOS environments never invoke login-shell recovery', () => {
   assert.equal(probes, 0);
   assert.ok(!environment.PATH.includes('/should/not/be/used'));
   assert.ok(environment.PATH.includes('/home/cuppet/.local/bin'));
+});
+
+test('local CLI resolver returns an absolute executable from recovered GUI PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-provider-bin-'));
+  const command = join(root, 'opencode');
+  try {
+    await writeFile(command, '#!/bin/sh\nexit 0\n');
+    await chmod(command, 0o755);
+    const environment = localCliEnvironment({ HOME: root, PATH: '/usr/bin:/bin' }, {
+      platform: 'darwin',
+      home: root,
+      loginPathProbe: () => `${root}:/usr/bin:/bin`,
+    });
+    assert.equal(resolveLocalCliExecutable('opencode', environment, { platform: 'darwin', environment }), command);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('local CLI resolver preserves explicit absolute provider commands', () => {
+  assert.equal(resolveLocalCliExecutable('/custom/bin/provider', { PATH: '/usr/bin' }, { platform: 'darwin' }), '/custom/bin/provider');
 });
 
 test('desktop bootstrap hydrates CLI PATH before importing the runtime', async () => {
