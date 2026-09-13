@@ -10,6 +10,7 @@ import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
+import { TurnStore } from './turn-store.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
 const databasePath = join(dataDir, 'conversations.sqlite3');
@@ -18,14 +19,31 @@ const MAX_QUEUED_TURNS = 16;
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remote;
 const activeSessions = new Set();
-const queuedTurns = new Map();
 const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
+const turnStore = new TurnStore(join(dataDir, 'turn-state.sqlite3'));
 const emit = (event) => {
-  if (event?.type === 'run.started' && event.sessionId) activeSessions.add(event.sessionId);
+  if (event?.type === 'run.started' && event.sessionId) {
+    activeSessions.add(event.sessionId);
+    if (event.messageId) {
+      turnStore.startRun({
+        runId: event.messageId,
+        sessionId: event.sessionId,
+        sourceSessionId: event.sourceSessionId ?? null,
+        projectId: event.projectId ?? null,
+      });
+    }
+  }
   if (event?.type === 'run.finished' && event.sessionId) {
     activeSessions.delete(event.sessionId);
+    if (event.messageId) {
+      const message = localState?.getMessage?.(event.messageId);
+      turnStore.finishRun(event.messageId, {
+        status: message?.status ?? 'complete',
+        ...(message?.status === 'error' ? { error: 'Generation failed.' } : {}),
+      });
+    }
     const owner = queueOwnerByRun.get(event.sessionId) ?? event.sessionId;
     queueOwnerByRun.delete(event.sessionId);
     queueMicrotask(() => void drainQueued(owner));
@@ -71,6 +89,8 @@ async function handle(method, params = {}) {
         .filter((session) => Number(session.deletedAt) > 0 && now - Number(session.deletedAt) < DELETED_CHAT_RETENTION_MS)
         .map((session) => ({ ...session, purgeAt: Number(session.deletedAt) + DELETED_CHAT_RETENTION_MS }));
     }
+    case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
+    case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
     case 'session.send': return sendOrQueue(params);
     case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
@@ -145,7 +165,7 @@ async function purgeExpiredDeleted(now = Date.now()) {
     let purged = 0;
     for (const candidate of localState.listExpiredDeleted(cutoff, 100)) {
       const sessionId = boundedId(candidate.id);
-      if (!sessionId || activeSessions.has(sessionId) || queuedTurns.get(sessionId)?.length || purgingSessions.has(sessionId)) continue;
+      if (!sessionId || activeSessions.has(sessionId) || turnStore.hasQueued(sessionId) || purgingSessions.has(sessionId)) continue;
       const current = localState.getSession(sessionId);
       if (!current?.deletedAt || current.deletedAt > cutoff) continue;
       purgingSessions.add(sessionId);
@@ -187,7 +207,7 @@ function renameProject(params = {}) {
 
 function assertSessionIdle(sessionId, action) {
   if (activeSessions.has(sessionId)) throw new Error(`cannot ${action} a chat while it is generating`);
-  if (queuedTurns.get(sessionId)?.length) throw new Error(`cannot ${action} a chat while it has queued messages`);
+  if (turnStore.hasQueued(sessionId)) throw new Error(`cannot ${action} a chat while it has queued messages`);
 }
 
 async function sendOrQueue(params = {}) {
@@ -195,39 +215,42 @@ async function sendOrQueue(params = {}) {
   if (!sessionId) return service.handle('session.send', params);
   if (!activeSessions.has(sessionId)) return service.handle('session.send', params);
 
-  const queue = queuedTurns.get(sessionId) ?? [];
-  if (queue.length >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
-  const item = {
+  const queuedCount = turnStore.countQueued(sessionId);
+  if (queuedCount >= MAX_QUEUED_TURNS) throw new Error(`session queue is full (${MAX_QUEUED_TURNS} messages)`);
+  const item = turnStore.enqueue({
     id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    sessionId,
     params: { ...params, sessionId },
     queuedAt: Date.now(),
-  };
-  queue.push(item);
-  queuedTurns.set(sessionId, queue);
-  emit({ type: 'queue.queued', sessionId, queueId: item.id, position: queue.length, queuedAt: item.queuedAt });
-  return { accepted: true, queued: true, sessionId, queueId: item.id, position: queue.length };
+  });
+  const position = turnStore.countQueued(sessionId);
+  emit({ type: 'queue.queued', sessionId, queueId: item.id, position, queuedAt: item.queuedAt });
+  return { accepted: true, queued: true, sessionId, queueId: item.id, position };
 }
 
 async function drainQueued(ownerSessionId) {
   if (!ownerSessionId || activeSessions.has(ownerSessionId)) return;
-  const queue = queuedTurns.get(ownerSessionId);
-  if (!queue?.length) return;
-  const item = queue.shift();
-  if (!queue.length) queuedTurns.delete(ownerSessionId);
+  const item = turnStore.claimNext(ownerSessionId);
+  if (!item) return;
   emit({ type: 'queue.started', sessionId: ownerSessionId, queueId: item.id, queuedAt: item.queuedAt });
   try {
     const result = await service.handle('session.send', item.params);
+    turnStore.completeQueue(item.id);
     const runSessionId = result?.sessionId ?? ownerSessionId;
     queueOwnerByRun.set(runSessionId, ownerSessionId);
     emit({ type: 'queue.dispatched', sessionId: ownerSessionId, runSessionId, queueId: item.id });
     if (!activeSessions.has(runSessionId)) queueMicrotask(() => void drainQueued(ownerSessionId));
   } catch (error) {
+    turnStore.failQueue(item.id, error);
     emit({ type: 'queue.failed', sessionId: ownerSessionId, queueId: item.id, message: cleanError(error) });
     queueMicrotask(() => void drainQueued(ownerSessionId));
   }
 }
 
 write({ kind: 'event', event: { type: 'runtime.ready', databasePath } });
+for (const sessionId of turnStore.queuedSessions()) {
+  queueMicrotask(() => void drainQueued(sessionId));
+}
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', async (line) => {
@@ -255,6 +278,7 @@ async function shutdown() {
   closing = remote.close().catch(() => undefined)
     .then(() => service.close()).catch(() => undefined)
     .then(() => closeProviderUsageLedger()).catch(() => undefined)
+    .then(() => turnStore.close()).catch(() => undefined)
     .then(() => localState.close()).catch(() => undefined)
     .finally(() => process.exit(0));
   return closing;
