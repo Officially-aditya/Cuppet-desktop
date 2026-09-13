@@ -30,13 +30,13 @@ export class RemoteCommandAdapter {
       case 'session.list': return this.#call('session.list',state.projectId?{projectId:state.projectId}:{});
       case 'session.snapshot': return this.#sessionSnapshot(state,explicitSession);
       case 'session.messages': return this.#sessionMessages(state,explicitSession);
-      case 'session.new': return this.#sessionNew(state,params);
+      case 'session.new': return this.#sessionNew(actor,state,params,envelope);
       case 'session.resume': return this.#sessionResume(state,explicitSession);
       case 'session.submit': return this.#sessionSubmit(actor,state,explicitSession,params,envelope);
-      case 'session.steer': return this.#sessionSteer(state,explicitSession,params);
+      case 'session.steer': return this.#sessionSteer(actor,state,explicitSession,params,envelope);
       case 'session.abort': return this.#call('session.stop',{sessionId:this.#requireSession(state,explicitSession)});
       case 'session.compact': return this.#call('context.compact',{sessionId:this.#requireSession(state,explicitSession),provider:this.#selectedProvider(state)});
-      case 'session.undo': return this.#call('session.undo',{sessionId:this.#requireSession(state,explicitSession)});
+      case 'session.undo': return this.#call('session.undo',{sessionId:this.#requireSession(state,explicitSession)},remoteCommandContext(actor,envelope));
       case 'permission.list': return this.#call('permission.list',{...(explicitSession?{sessionId:explicitSession}:{})});
       case 'permission.reply': return this.#permissionReply(params);
       case 'question.list': return this.#call('question.list',{...(explicitSession?{sessionId:explicitSession}:{})});
@@ -73,12 +73,13 @@ export class RemoteCommandAdapter {
     return {session:{...session,messages:undefined,toolExecutions:undefined},mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
   async #sessionMessages(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return session.messages??[];}
-  async #sessionNew(state,params){
-    const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId}); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
+  async #sessionNew(actor,state,params,envelope){
+    const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId},remoteCommandContext(actor,envelope)); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
   }
   async #sessionResume(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});state.sessionId=session.id;state.projectId=session.projectId??state.projectId;return session;}
   async #sessionSubmit(actor,state,explicit,params,envelope){
     const sessionId=this.#requireSession(state,explicit); const prompt=String(params.prompt??params.text??'').trim(); if(!prompt)throw new Error('prompt is required');
+    const commandId=remoteCommandId(actor,envelope);
     const parsed=parseSlashCommand(prompt);
     if(parsed.kind==='unknown')throw new Error(`Unknown Cuppet command: /${parsed.name}`);
     if(parsed.kind==='command'){
@@ -86,7 +87,7 @@ export class RemoteCommandAdapter {
       if(required&&!actor.scopes?.includes?.(required))throw new Error(`missing scope '${required}' for /${parsed.name}`);
       return executeCommand(parsed,{
         sessionId,
-        call:(method,value={})=>this.#call(method,value),
+        call:(method,value={})=>this.#call(method,value,{commandId}),
         providerRequest:()=>this.#selectedProvider(state),
         host:{
           status:()=>buildRuntimeStatus({call:(method,value)=>this.#call(method,value),providerConfig:this.#provider,version:'0.9.0-alpha.1'}),
@@ -95,18 +96,18 @@ export class RemoteCommandAdapter {
         provider:this.#slashProviderAuthority(state),
       });
     }
-    if(params.delivery==='steer')return this.#sessionSteer(state,sessionId,{instruction:prompt});
+    if(params.delivery==='steer')return this.#sessionSteer(actor,state,sessionId,{instruction:prompt},envelope);
     const result=await this.#call(
       'session.send',
       {sessionId,text:prompt,attachments:boundedAttachments(params.attachments),provider:this.#selectedProvider(state)},
-      {commandId:remoteCommandId(actor,envelope)},
+      {commandId},
     );
     state.sessionId=result.sessionId;
     return result;
   }
-  async #sessionSteer(state,explicit,params){
+  async #sessionSteer(actor,state,explicit,params,envelope){
     const sessionId=this.#requireSession(state,explicit); const instruction=String(params.instruction??params.prompt??'').trim(); if(!instruction)throw new Error('instruction is required');
-    const result=await this.#call('session.steer',{sessionId,text:instruction,provider:this.#selectedProvider(state)}); state.sessionId=result.sessionId; return {...result,steered:true};
+    const result=await this.#call('session.steer',{sessionId,text:instruction,provider:this.#selectedProvider(state)},remoteCommandContext(actor,envelope)); state.sessionId=result.sessionId; return {...result,steered:true};
   }
   async #permissionReply(params){
     const request=record(params.request); const requestId=stringOr(params.requestId)??stringOr(params.requestID)??stringOr(request.id); const reply=String(params.reply??'reject');
@@ -231,6 +232,12 @@ function remoteCommandId(actor,envelope){
   if(!deviceID||!envelopeID)throw new Error('remote session.submit requires a command envelope id');
   const digest=createHash('sha256').update(deviceID).update('\0').update(envelopeID).digest('hex');
   return `remote:${digest}`;
+}
+function remoteCommandContext(actor,envelope){
+  const deviceID=String(actor?.deviceID??'');
+  const envelopeID=String(envelope?.id??'');
+  if(!deviceID||!envelopeID)return undefined;
+  return {commandId:remoteCommandId(actor,envelope)};
 }
 function sameSelection(left,right){return String(left?.providerID??'').toLowerCase()===String(right?.providerID??'').toLowerCase()&&String(left?.modelID??'')===String(right?.modelID??'');}
 function displayPath(path,name){if(typeof path!=='string'||!path)return name??'Project';return `…/${basename(path)}`;}
