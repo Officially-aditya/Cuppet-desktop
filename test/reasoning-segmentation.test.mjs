@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 
+function isProviderActivity(event, type) {
+  return event?.type === 'runtime.activity'
+    && event?.source === 'provider'
+    && event?.activity?.type === type;
+}
+
 function harness(adapter) {
   const events = [];
   const final = [];
@@ -48,7 +54,10 @@ test('generic tool-loop text before a tool is reasoning and only the final pass 
   const h = harness(adapter);
   await h.run();
   assert.deepEqual(h.final, ['Final summary.']);
-  assert.equal(h.events.find((event) => event.type === 'message.reasoning')?.segment, 'I should inspect the plan first.');
+  assert.equal(
+    h.events.find((event) => isProviderActivity(event, 'activity.reasoning.delta'))?.activity?.text,
+    'I should inspect the plan first.',
+  );
   assert.ok(h.events.some((event) => event.type === 'message.preview' && event.content === 'I should inspect the plan first.'));
   assert.ok(h.events.some((event) => event.type === 'message.preview' && event.content === ''));
   const tool = h.events.find((event) => event.type === 'tool.started');
@@ -78,8 +87,10 @@ test('two tool rounds preserve reasoning -> tool -> reasoning -> tool -> final o
   await h.run();
 
   const chain = h.events
-    .filter((event) => event.type === 'message.reasoning' || event.type === 'tool.started')
-    .map((event) => event.type === 'message.reasoning' ? `reason:${event.segment}` : `tool:${event.callId}`);
+    .filter((event) => isProviderActivity(event, 'activity.reasoning.delta') || event.type === 'tool.started')
+    .map((event) => isProviderActivity(event, 'activity.reasoning.delta')
+      ? `reason:${event.activity.text}`
+      : `tool:${event.callId}`);
   assert.deepEqual(chain, [
     'reason:First I will inspect the plan.',
     'tool:tool_a',
@@ -107,10 +118,10 @@ test('Codex-style in-stream dynamic tool calls split the next paragraph from pre
   const h = harness(adapter);
   await h.run();
   assert.deepEqual(h.final, ['Here is the final summary after the tool.']);
-  const reasoning = h.events.filter((event) => event.type === 'message.reasoning');
+  const reasoning = h.events.filter((event) => isProviderActivity(event, 'activity.reasoning.delta'));
   assert.equal(reasoning.length, 1);
   assert.equal(reasoning[0].messageId, 'msg_assistant');
-  assert.equal(reasoning[0].segment, 'I will read the workspace.');
+  assert.equal(reasoning[0].activity.text, 'I will read the workspace.');
   const tool = h.events.find((event) => event.type === 'tool.started');
   assert.equal(tool?.messageId, 'msg_assistant');
   assert.equal(tool?.tool, 'cuppet_plan');
@@ -120,8 +131,7 @@ test('Codex-style in-stream dynamic tool calls split the next paragraph from pre
   assert.ok(previews.includes('Here is the final summary after the tool.'));
 });
 
-
-test('provider-native ACP reasoning and tool lifecycle are bridged into the chat trace', async () => {
+test('legacy provider reasoning and tool telemetry are bridged into canonical chat Activity', async () => {
   const adapter = {
     async stream(_messages, options) {
       await options.onProviderEvent({ type: 'reasoning', text: 'Inspecting the repository.' });
@@ -134,11 +144,21 @@ test('provider-native ACP reasoning and tool lifecycle are bridged into the chat
   const h = harness(adapter);
   await h.run();
   assert.deepEqual(h.final, ['Final answer.']);
-  assert.ok(h.events.some((event) => event.type === 'message.reasoning' && event.messageId === 'msg_assistant' && event.segment === 'Inspecting the repository.'));
-  const started = h.events.find((event) => event.type === 'tool.started' && event.callId === 'acp_tool_1');
-  const finished = h.events.find((event) => event.type === 'tool.finished' && event.callId === 'acp_tool_1');
-  assert.equal(started?.messageId, 'msg_assistant');
-  assert.equal(started?.tool, 'search');
-  assert.equal(finished?.success, true);
-  assert.equal(finished?.message, '2 matches');
+
+  const reasoning = h.events.find((event) => isProviderActivity(event, 'activity.reasoning.delta'));
+  assert.equal(reasoning?.messageId, 'msg_assistant');
+  assert.equal(reasoning?.activity?.text, 'Inspecting the repository.');
+
+  const opened = h.events.find((event) => isProviderActivity(event, 'activity.tool.opened') && event.activity?.callId === 'acp_tool_1');
+  const closed = h.events.find((event) => isProviderActivity(event, 'activity.tool.closed') && event.activity?.callId === 'acp_tool_1');
+  assert.equal(opened?.messageId, 'msg_assistant');
+  assert.equal(opened?.activity?.tool, 'search');
+  assert.equal(opened?.activity?.argumentsJson, '{"query":"TODO"}');
+  assert.equal(closed?.messageId, 'msg_assistant');
+  assert.equal(closed?.activity?.status, 'success');
+  assert.equal(closed?.activity?.details, '2 matches');
+  assert.equal(
+    h.events.some((event) => (event.type === 'tool.started' || event.type === 'tool.finished') && event.callId === 'acp_tool_1'),
+    false,
+  );
 });
