@@ -29,13 +29,13 @@ test('same-session commands execute strictly in submission order', async () => {
 
   await Promise.resolve();
   assert.deepEqual(started, ['first']);
-  assert.equal(serializer.activeSessions, 1);
+  assert.equal(serializer.activeLanes, 1);
 
   firstGate.resolve();
   assert.equal(await first, 'one');
   assert.equal(await second, 'two');
   assert.deepEqual(started, ['first', 'second']);
-  assert.equal(serializer.activeSessions, 0);
+  assert.equal(serializer.activeLanes, 0);
 });
 
 test('different sessions remain concurrent', async () => {
@@ -55,12 +55,12 @@ test('different sessions remain concurrent', async () => {
 
   await Promise.resolve();
   assert.deepEqual(new Set(started), new Set(['a', 'b']));
-  assert.equal(serializer.activeSessions, 2);
+  assert.equal(serializer.activeLanes, 2);
 
   gateA.resolve();
   gateB.resolve();
   await Promise.all([a, b]);
-  assert.equal(serializer.activeSessions, 0);
+  assert.equal(serializer.activeLanes, 0);
 });
 
 test('a rejected command releases the lane and does not poison the next command', async () => {
@@ -80,12 +80,12 @@ test('a rejected command releases the lane and does not poison the next command'
   await assert.rejects(first, /first failed/);
   assert.equal(await second, 'recovered');
   assert.deepEqual(order, ['first', 'second']);
-  assert.equal(serializer.activeSessions, 0);
+  assert.equal(serializer.activeLanes, 0);
 });
 
 test('invalid session ids fail closed without creating a lane', async () => {
   const serializer = new SessionCommandSerializer();
   assert.throws(() => serializer.run('', async () => undefined), /sessionId is required/);
   assert.throws(() => serializer.run('s1', null), /work function/);
-  assert.equal(serializer.activeSessions, 0);
+  assert.equal(serializer.activeLanes, 0);
 });
