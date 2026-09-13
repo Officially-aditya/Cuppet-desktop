@@ -23,7 +23,8 @@ const activeSessions = new Set();
 const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
-const turnStore = new TurnStore(join(dataDir, 'turn-state.sqlite3'));
+const localState = new ConversationDatabase(databasePath);
+const turnStore = new TurnStore(localState.sqlRepository(), { legacyPath: join(dataDir, 'turn-state.sqlite3') });
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
   if (event?.type === 'run.started' && event.sessionId) {
@@ -53,7 +54,6 @@ const emit = (event) => {
   write({ kind: 'event', event });
   remote?.handleRuntimeEvent(event);
 };
-const localState = new ConversationDatabase(databasePath);
 const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
 const browserControl = new BrowserControlManager({ emit });
 const runtimeService = new RuntimeService({ database: localState, databasePath, dataDir, emit, tst, browserControl });
@@ -309,7 +309,7 @@ function boundedProvider(value) {
 
 function boundedProviderID(value) {
   const id = typeof value === 'string' ? value.trim().toLowerCase().slice(0, 80) : '';
-  if (!id || !/^[a-z0-9._-]+$/.test(id)) throw new Error('A valid local provider id is required.');
+  if (!id || !/^[a-z0-9._-]+$/.test(id)) throw new Error('A valid provider id is required.');
   return id;
 }
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
