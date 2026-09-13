@@ -1,7 +1,7 @@
 export class SessionCommandSerializer {
   #tails = new Map();
 
-  get activeSessions() {
+  get activeLanes() {
     return this.#tails.size;
   }
 
