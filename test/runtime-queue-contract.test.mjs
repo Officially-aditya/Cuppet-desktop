@@ -8,7 +8,7 @@ const runtimeClient = await readFile(new URL('../src/main/runtime-client.mjs', i
 const chatPane = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
 
 test('runtime host serializes queued turns through the shared durable turn store', () => {
-  assert.match(source, /case 'session\.send': return sendOrQueue\(params, context\.commandId\)/);
+  assert.match(source, /case 'session\.send': \{/);
   assert.match(source, /const localState = new ConversationDatabase\(databasePath\)/);
   assert.match(source, /const repository = localState\.sqlRepository\(\)/);
   assert.match(source, /new TurnStore\(repository, \{ legacyPath: join\(dataDir, 'turn-state\.sqlite3'\) \}\)/);
@@ -21,6 +21,12 @@ test('runtime host serializes queued turns through the shared durable turn store
   assert.match(source, /type: 'queue\.started'/);
   assert.match(source, /type: 'queue\.dispatched'/);
   assert.match(source, /type: 'queue\.failed'/);
+});
+
+test('external session sends are serialized per source session before durable run-state is rechecked', () => {
+  assert.match(source, /import \{ SessionCommandSerializer \} from '\.\/session-command-serializer\.mjs'/);
+  assert.match(source, /const sendCommands = new SessionCommandSerializer\(\)/);
+  assert.match(source, /case 'session\.send': \{[\s\S]*?const sessionId = boundedId\(params\.sessionId\);[\s\S]*?sendCommands\.run\(sessionId, \(\) => sendOrQueue\(params, context\.commandId\)\)/);
 });
 
 test('durable runs are the only active-session authority in the runtime host', () => {
