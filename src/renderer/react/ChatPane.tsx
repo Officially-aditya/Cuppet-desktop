@@ -581,6 +581,7 @@ function friendlyActivityLabel(entry: ActivityEntry) {
 
 function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceTool['status']) {
   const args = parseToolArguments(argumentsJson);
+  const normalizedTool = toolName.toLowerCase();
   const failed = status === 'error';
   const complete = status === 'complete';
   const phrase = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
@@ -589,31 +590,31 @@ function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceToo
   const focus = toolExploreFocus(args);
   const command = toolCommand(args);
 
-  if (toolName === 'workspace_read' || toolName === 'tst_read' || /(^|[_-])read($|[_-])/.test(toolName)) return target
+  if (normalizedTool === 'workspace_read' || normalizedTool === 'tst_read' || /(^|[_-])read($|[_-])/.test(normalizedTool)) return target
     ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
     : phrase('Reading file…', 'Read file', 'Couldn’t read file');
-  if (toolName === 'tst_explore' || /search|grep|find|explore|locate/.test(toolName)) return focus
+  if (normalizedTool === 'tst_explore' || /search|grep|find|explore|locate/.test(normalizedTool)) return focus
     ? phrase(`Searching ${focus}…`, `Searched ${focus}`, `Search failed for ${focus}`)
     : phrase('Searching workspace…', 'Searched workspace', 'Workspace search failed');
-  if (toolName === 'tst_edit_batch') {
+  if (normalizedTool === 'tst_edit_batch') {
     if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edit batch…', 'Applied edit batch', 'Edit batch failed');
     return target ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`) : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
   }
-  if (toolName === 'workspace_edit' || /(^|[_-])(edit|patch)($|[_-])/.test(toolName)) return target
+  if (normalizedTool === 'workspace_edit' || /(^|[_-])(edit|patch)($|[_-])/.test(normalizedTool)) return target
     ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
     : phrase('Editing file…', 'Edited file', 'Couldn’t edit file');
-  if (toolName === 'workspace_write' || /(^|[_-])(write|create)($|[_-])/.test(toolName)) return target
+  if (normalizedTool === 'workspace_write' || /(^|[_-])(write|create)($|[_-])/.test(normalizedTool)) return target
     ? phrase(`Writing ${target}…`, `Wrote ${target}`, `Couldn’t write ${target}`)
     : phrase('Writing file…', 'Wrote file', 'Couldn’t write file');
-  if (toolName === 'tst_validate' || /test|verify|validate|lint|check/.test(toolName)) return target
+  if (normalizedTool === 'tst_validate' || /test|verify|validate|lint|check/.test(normalizedTool)) return target
     ? phrase(`Validating ${target}…`, `Validated ${target}`, `Validation failed for ${target}`)
     : phrase('Running validation…', `${humanToolLabel(toolName)} passed`, `${humanToolLabel(toolName)} failed`);
-  if (toolName === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Memory search failed');
-  if (toolName === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
-  if (toolName === 'bash' || /shell|terminal|command|exec/.test(toolName)) return command
+  if (normalizedTool === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Memory search failed');
+  if (normalizedTool === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
+  if (normalizedTool === 'bash' || /shell|terminal|command|exec/.test(normalizedTool)) return command
     ? phrase(`Running ${command}…`, `Ran ${command}`, `Command failed: ${command}`)
     : phrase('Running command…', 'Ran command', 'Command failed');
-  if (toolName === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
+  if (normalizedTool === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
 
   const name = humanToolLabel(toolName);
   return phrase(`${name}…`, `${name} completed`, `${name} failed`);
@@ -639,7 +640,11 @@ function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDeta
 
 function describeTargets(targets: string[], args: Record<string, unknown>) {
   if (!targets.length) return '';
-  if (targets.length > 1) return `${targets.length} files`;
+  if (targets.length > 1) {
+    const names = targets.slice(0, 3).map(targetName);
+    if (targets.length <= 3) return names.join(', ');
+    return `${targets.length} files · ${names.slice(0, 2).join(', ')} +${targets.length - 2}`;
+  }
   const base = targetName(targets[0]);
   const range = toolLineRange(args);
   return range ? `${base} · ${range}` : base;
@@ -656,9 +661,10 @@ function toolLineRange(args: Record<string, unknown>) {
 }
 
 function toolCommand(args: Record<string, unknown>, compact = true) {
-  const value = [args.command, args.cmd, args.script].find((item) => typeof item === 'string' && item.trim());
-  if (typeof value !== 'string') return '';
-  const normalized = value.replace(/[\r\n\t]+/g, ' ').trim();
+  const value = [args.command, args.cmd, args.script].find((item) => (typeof item === 'string' && item.trim()) || (Array.isArray(item) && item.length));
+  if (value === undefined) return '';
+  const raw = Array.isArray(value) ? value.map(String).join(' ') : String(value);
+  const normalized = raw.replace(/[\r\n\t]+/g, ' ').trim();
   if (!compact) return normalized.length > 180 ? `${normalized.slice(0, 177)}…` : normalized;
   return normalized.length > 54 ? `${normalized.slice(0, 51)}…` : normalized;
 }
@@ -684,8 +690,13 @@ function toolTargets(toolName: string, args: Record<string, unknown>) {
   add(args.path);
   add(args.file);
   add(args.filename);
+  add(args.file_path);
+  add(args.filePath);
+  add(args.filepath);
+  add(args.target);
   if (Array.isArray(args.paths)) for (const value of args.paths) add(value);
   if (Array.isArray(args.files)) for (const value of args.files) add(typeof value === 'string' ? value : (value as Record<string, unknown>)?.path);
+  if (Array.isArray(args.targets)) for (const value of args.targets) add(typeof value === 'string' ? value : (value as Record<string, unknown>)?.path);
 
   if (toolName === 'tst_read' || toolName === 'workspace_read') {
     add(args.path);
@@ -707,8 +718,8 @@ function toolTargets(toolName: string, args: Record<string, unknown>) {
 function toolExploreFocus(args: Record<string, unknown>) {
   const prefix = typeof args.prefix === 'string' ? args.prefix.trim() : '';
   if (prefix) return targetName(prefix);
-  const query = typeof args.query === 'string' ? args.query.trim() : '';
-  if (query) return compactActivityText(query);
+  const query = [args.query, args.pattern, args.search, args.needle].find((value) => typeof value === 'string' && value.trim());
+  if (typeof query === 'string') return compactActivityText(query);
   return '';
 }
 

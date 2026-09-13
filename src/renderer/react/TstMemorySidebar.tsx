@@ -62,14 +62,8 @@ export function TstMemorySidebar({ sessionId, projectName, running = false }: Pr
     if (!quiet) setLoading(true);
     try {
       const api = window.cuppet as any;
-      const [graph, editedFiles] = await Promise.all([
-        api.cognitive.memoryGraph(sessionId).catch((error: unknown) => ({ available: false, reason: cleanError(error) })),
-        api.sessions.editedFiles(sessionId).catch(() => []),
-      ]);
-      setSnapshot({
-        ...(graph && typeof graph === 'object' ? graph : {}),
-        editedFiles: Array.isArray(editedFiles) ? editedFiles : [],
-      });
+      const graph = await api.cognitive.memoryGraph(sessionId).catch((error: unknown) => ({ available: false, reason: cleanError(error), files: [], editedFiles: [] }));
+      setSnapshot(graph && typeof graph === 'object' ? graph : { available: false, reason: 'TST graph returned an invalid snapshot', files: [], editedFiles: [] });
     } finally {
       if (!quiet) setLoading(false);
     }
