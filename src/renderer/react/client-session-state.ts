@@ -50,7 +50,9 @@ export function upsertClientMessage(message: Message | null | undefined) {
   messages.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
   const next = [...sessions];
   next[index] = { ...session, messages };
-  return replaceSessions(next) !== sessions;
+  const previous = sessions;
+  replaceSessions(next);
+  return sessions !== previous;
 }
 
 export async function refreshClientSessions() {
@@ -96,7 +98,7 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
       handled = true;
     }
   }
-  if ((type === 'message.created' || type === 'message.completed' || type === 'run.finished') && sessionId && !event?.message?.id) {
+  if (SESSION_DETAIL_REFRESH_EVENTS.has(type) && sessionId && !event?.message?.id) {
     void refreshClientSession(sessionId).catch(() => undefined);
     handled = true;
   }
@@ -184,6 +186,14 @@ function notify() {
 function text(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
+
+const SESSION_DETAIL_REFRESH_EVENTS = new Set([
+  'message.created',
+  'message.completed',
+  'run.finished',
+  'tool.started',
+  'tool.finished',
+]);
 
 const SESSION_COLLECTION_REFRESH_EVENTS = new Set([
   'session.archived',
