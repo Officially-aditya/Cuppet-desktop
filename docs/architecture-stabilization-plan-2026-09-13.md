@@ -124,25 +124,21 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Renderer ownership regressions forbid session/run/provider/remote workflow state from drifting back into view components while allowing intentionally ephemeral composer, modal, form, and navigation state.
 - Milestone 2.1 was validated on exact head `a1e9958e45ebe3e672b02632874319bad0ef0ce1` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, and packaged-runtime smoke green.
 
+### Provider compatibility event removal — complete for current provider/runtime scope
+
+- Managed ACP and stateless ACP emit canonical `Activity` directly through `onActivity`; neither path downgrades canonical activity into provider-specific legacy events.
+- `ProviderRuntimeManager` no longer contains the canonical-to-legacy fallback or legacy activity state machine.
+- `JournaledToolRuntime` no longer accepts `onProviderEvent` ingress and persists/publishes only canonical provider Activity plus genuine execution lifecycle events.
+- `activityFromLegacyProviderEvent`, `legacyProviderRuntime`, and `runtime-manager-legacy.mjs` have been removed from production/exported provider surfaces.
+- Provider reasoning/tool telemetry remains distinct from real Cuppet execution lifecycle; genuine execution `tool.started` / `tool.finished` events remain available for durable runtime and remote semantics.
+- Provider/renderer regressions prohibit reintroducing legacy provider event conversion while preserving canonical Activity ordering and execution lifecycle behavior.
+- Milestone 2.2 was validated on exact head `2c354dc623289bb10248f9846c196f91270d0f3e` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, released OpenCode ACP smoke, and packaged-runtime smoke green.
+
 ## Remaining milestones
 
 ## Milestone 2 — Client Runtime Cleanup
 
 Priority: P1
-
-### 2.2 Remove compatibility event paths
-
-Desired boundary:
-
-```text
-ACP / Codex / HTTP / future provider
-            -> ProviderAdapter
-            -> canonical Cuppet Activity / ProviderFailure
-            -> Runtime
-            -> client projection
-```
-
-Remove legacy provider event compatibility once all consumers use canonical Activity/Failure types.
 
 ### 2.3 Remote parity
 
@@ -196,11 +192,10 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Remove legacy provider event compatibility.
-2. Bring remote/mobile clients onto the same durable projections.
-3. Finish provider supervisor production policy.
-4. Finish graph/history and PE3 restart durability.
-5. Complete signing/notarization and production updater hardening.
+1. Bring remote/mobile clients onto the same durable projections.
+2. Finish provider supervisor production policy.
+3. Finish graph/history and PE3 restart durability.
+4. Complete signing/notarization and production updater hardening.
 
 ## Release rule
 
