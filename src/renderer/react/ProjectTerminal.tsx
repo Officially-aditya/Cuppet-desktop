@@ -143,6 +143,8 @@ export function ProjectTerminal({ project }: Props) {
   }
 
   async function restart() {
+    const activeProjectId = projectIdRef.current;
+    if (!activeProjectId) return;
     const active = sessionRef.current;
     startGeneration.current += 1;
     if (active) await terminal.stop(active.sessionId).catch(() => undefined);
@@ -150,7 +152,7 @@ export function ProjectTerminal({ project }: Props) {
     sessionRef.current = null;
     setOutput([]);
     setStatus('idle');
-    await startTerminal(project.id);
+    await startTerminal(activeProjectId);
   }
 
   async function submit() {
