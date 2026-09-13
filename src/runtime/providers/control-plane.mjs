@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { localProviderOperations } from '../../main/local-provider-operations.mjs';
+import { localProviderOperations } from './local-provider-operations.mjs';
 import { discoverProviderCapabilitySnapshot } from './default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from './capability-snapshot.mjs';
 
@@ -99,6 +99,7 @@ export function withControlState(status = {}) {
         source: text(status.installation?.source) || null,
         ownedByCuppet: status.installation?.ownedByCuppet === true,
         canUpdate: status.installation?.canUpdate === true,
+        identity: cloneIdentity(status.installation?.identity),
       },
       authentication: {
         state: authenticationState,
@@ -144,10 +145,12 @@ function requiredProviderID(value) {
   return id;
 }
 
+function cloneIdentity(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? structuredClone(value) : null;
+}
 function text(value) {
   return typeof value === 'string' ? value.trim().slice(0, 1000) : '';
 }
-
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
