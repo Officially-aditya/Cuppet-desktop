@@ -4,6 +4,7 @@ import {
   recordProviderRuntimeFailure,
   registerProviderRuntime,
 } from '../../runtime-health-registry.mjs';
+import { verifyLocalProviderExecutableVersion } from '../../local-provider-version-check.mjs';
 import { AcpSessionRuntime } from './acp-session.mjs';
 
 /**
@@ -17,6 +18,8 @@ import { AcpSessionRuntime } from './acp-session.mjs';
 export class SupervisedAcpSessionRuntime {
   #factory;
   #runtime;
+  #versionPreflight = null;
+  #versionVerified = false;
   #closed = false;
   #generation = 1;
   #restarts = 0;
@@ -24,10 +27,16 @@ export class SupervisedAcpSessionRuntime {
   #providerID = '';
   #unregisterHealth = null;
 
-  constructor(options = {}, { runtimeFactory } = {}) {
+  constructor(options = {}, { runtimeFactory, versionPreflight } = {}) {
     this.#providerID = providerID(options?.descriptor?.id);
+    const injectedRuntimeFactory = typeof runtimeFactory === 'function';
     this.#factory = runtimeFactory ?? (() => new AcpSessionRuntime(options));
     this.#runtime = this.#factory();
+    this.#versionPreflight = typeof versionPreflight === 'function'
+      ? versionPreflight
+      : injectedRuntimeFactory
+        ? null
+        : () => verifyLocalProviderExecutableVersion(options?.descriptor, options?.configuration);
     this.#unregisterHealth = registerProviderRuntime(this.#providerID, () => this.snapshot());
   }
 
@@ -88,6 +97,7 @@ export class SupervisedAcpSessionRuntime {
 
   async #beforeTurn(method, options) {
     if (this.#closed) throw new Error('ACP runtime supervisor is closed.');
+    await this.#verifyVersion();
     try {
       const result = await this.#runtime[method](options);
       clearProviderRuntimeFailure(this.#providerID);
@@ -106,6 +116,7 @@ export class SupervisedAcpSessionRuntime {
       // A replacement process has no ACP initialization/session state, so even if
       // the caller requested newSession(), its first safe operation must be start().
       try {
+        await this.#verifyVersion();
         const result = await this.#runtime.start(options);
         clearProviderRuntimeFailure(this.#providerID);
         return result;
@@ -119,10 +130,17 @@ export class SupervisedAcpSessionRuntime {
     }
   }
 
+  async #verifyVersion() {
+    if (this.#versionVerified || !this.#versionPreflight) return;
+    await this.#versionPreflight();
+    this.#versionVerified = true;
+  }
+
   async #replaceRuntime() {
     const previous = this.#runtime;
     await Promise.resolve(previous?.close?.()).catch(() => undefined);
     this.#runtime = this.#factory();
+    this.#versionVerified = false;
     this.#generation += 1;
     this.#restarts += 1;
   }
