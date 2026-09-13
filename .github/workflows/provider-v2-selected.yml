@@ -105,7 +105,7 @@ jobs:
           node -e "const fs=require('node:fs'); const schema=JSON.parse(fs.readFileSync('benchmarks/provider-v2.schema.json','utf8')); const example=JSON.parse(fs.readFileSync('benchmarks/provider-v2.example.json','utf8')); if(schema.properties.schemaVersion.const!==1 || example.schemaVersion!==1 || !Array.isArray(example.tasks) || !example.tasks.length) process.exit(1)"
           node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-authenticated-opencode-acp.mjs','utf8'); if(!smoke.includes('totalCompletedTurns, 2') || !smoke.includes('warmRuntimeCount, 1') || !smoke.includes('previousMarker') || !smoke.includes('MIN_OPENCODE_VERSION')) process.exit(1)"
           node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-authenticated-opencode-desktop-path.mjs','utf8'); if(!smoke.includes('session.send') || !smoke.includes('providerError?.diagnostic') || !smoke.includes('CUPPET_RESOURCES_PATH')) process.exit(1)"
-          node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-launchservices-cli-path.mjs','utf8'); if(!smoke.includes('/usr/bin/open') || !smoke.includes('/bin/launchctl') || smoke.includes('Contents/MacOS/cuppet')) process.exit(1)"
+          node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-launchservices-cli-path.mjs','utf8'); if(!smoke.includes('/usr/bin/open') || !smoke.includes('env: launchEnvironment') || !smoke.includes('/usr/bin:/bin:/usr/sbin:/sbin') || smoke.includes('Contents/MacOS/cuppet')) process.exit(1)"
 
           GITHUB_REF_NAME=feat/provider-architecture-v2 \
           GITHUB_EVENT_NAME=workflow_dispatch \
