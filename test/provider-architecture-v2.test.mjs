@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { ProviderBackendRegistry } from '../src/runtime/providers/backend-registry.mjs';
 import { normalizeProviderCapabilities, reasoningRuntimeSetting, settingAdvertisesValue } from '../src/runtime/providers/capabilities.mjs';
 import { normalizeProviderConnection, patchProviderConnection } from '../src/runtime/providers/connection.mjs';
@@ -102,4 +103,10 @@ test('installation ownership never grants update authority to unknown external i
   assert.equal(managed.source, 'managed');
   assert.equal(managed.ownedByCuppet, true);
   assert.equal(managed.canUpdate, true);
+});
+
+test('shell mutation journal ownership carries canonical project root into durable graph barrier', async () => {
+  const source = await readFile(new URL('../src/runtime/journaled-tool-runtime.mjs', import.meta.url), 'utf8');
+  assert.match(source, /recordBarrier\(\{[\s\S]*projectRoot: this\.#projectRoot,[\s\S]*paths,/);
+  assert.doesNotMatch(source, /recordBarrier\(\{[\s\S]*tool: 'bash',\s*paths,\s*reason:/);
 });

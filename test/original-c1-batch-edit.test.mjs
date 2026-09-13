@@ -24,7 +24,13 @@ class FakeTst {
   }
   async refreshGraphPaths(paths) {
     if (this.failRefresh) throw new Error('graph offline');
-    return { paths: await Promise.all(paths.map(async (path) => ({ path, content_hash: sha(await readFile(join(this.root, path))) }))), graph: { files: paths.length } };
+    return {
+      paths: await Promise.all(paths.map(async (path) => {
+        try { return { path, content_hash: sha(await readFile(join(this.root, path))) }; }
+        catch (error) { if (error?.code === 'ENOENT') return { path, content_hash: null }; throw error; }
+      })),
+      graph: { files: paths.length },
+    };
   }
   async resolveEditTargets(path, query) { return { path, query, matches: [] }; }
 }
@@ -137,6 +143,26 @@ test('graph refresh failure remains a durable structural barrier across process 
   const recovered = await restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] });
   assert.equal(recovered.state, 'prepared');
   assert.deepEqual(await restartedJournal.graphInvalidations(root), []);
+});
+
+test('graph barrier acknowledges a deleted file after undo of a created batch file', async () => {
+  const { root, journal, manager } = await fixture();
+  const prepared = await manager.prepare({ sessionId: 's-create', projectRoot: root, operations: [
+    { op: 'create_file', path: 'created.ts', content: 'export const created = true;\n' },
+  ] });
+  const applied = await manager.apply({ batchId: prepared.id, sessionId: 's-create', projectRoot: root, executionId: 'tool-create', authorize: async () => ({ allowed: true }) });
+  assert.equal(applied.graphReady, true);
+  assert.deepEqual(await journal.graphInvalidations(root), []);
+
+  const undone = await journal.undoLatest({ sessionId: 's-create', projectRoot: root });
+  assert.equal(undone.undone, true);
+  await assert.rejects(() => readFile(join(root, 'created.ts'), 'utf8'), (error) => error?.code === 'ENOENT');
+  assert.deepEqual(await journal.graphInvalidations(root), ['created.ts']);
+
+  const freshness = await manager.ensureGraphFresh(root);
+  assert.equal(freshness.ready, true);
+  assert.equal(freshness.recovered, true);
+  assert.deepEqual(await journal.graphInvalidations(root), []);
 });
 
 test('batch undo refuses to overwrite any externally modified file', async () => {

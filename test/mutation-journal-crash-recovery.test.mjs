@@ -143,6 +143,27 @@ test('committed graph invalidations survive restart and aggregate across session
   }
 });
 
+test('opaque shell barrier carries durable project graph invalidation across restart', async () => {
+  const { dir, projectRoot, journalDir } = await fixture('cuppet-graph-shell-barrier-');
+  try {
+    const first = new MutationJournal(journalDir);
+    await first.ready();
+    await first.recordBarrier({
+      sessionId: 's-shell', executionId: 'exec-shell', tool: 'bash', projectRoot,
+      paths: ['src/generated.ts'], reason: 'opaque shell mutation',
+    });
+    assert.deepEqual(await first.graphInvalidations(projectRoot), ['src/generated.ts']);
+
+    const restarted = new MutationJournal(journalDir);
+    await restarted.ready();
+    assert.deepEqual(await restarted.graphInvalidations(projectRoot), ['src/generated.ts']);
+    const acknowledged = await restarted.acknowledgeGraphRefresh({ projectRoot, paths: ['src/generated.ts'] });
+    assert.deepEqual(acknowledged.remaining, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('undo durably reopens graph invalidation after an earlier refresh was acknowledged', async () => {
   const { dir, projectRoot, journalDir } = await fixture('cuppet-graph-invalidation-undo-');
   try {

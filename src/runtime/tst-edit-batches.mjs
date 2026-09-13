@@ -32,12 +32,9 @@ export class TstBatchEditManager {
     try {
       const expected = new Map();
       for (const path of stale) {
-        const target = await resolveWorkspacePath(root, path, true);
+        const target = await resolveWorkspacePath(root, path, false);
         const current = await snapshotBytes(target.absolute);
-        if (!current.exists || !current.hash) {
-          return { ready: false, reason: `TST graph refresh is required before another structural operation: current file is unavailable for ${path}` };
-        }
-        expected.set(path, current.hash);
+        expected.set(path, current.exists ? current.hash : null);
       }
       const refresh = await this.#tst.refreshGraphPaths(stale);
       const returned = new Map((refresh?.paths ?? []).map((item) => [String(item.path), item.content_hash ?? null]));

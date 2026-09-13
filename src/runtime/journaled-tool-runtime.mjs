@@ -305,7 +305,7 @@ class ToolMutationCapture {
         finished.pending.token.executionId = String(finished.event.executionId || finished.pending.token.executionId || finished.callId);
         await this.#journal.commitFile(finished.pending.token);
       } else if (finished.pending.kind === 'barrier' && mutation) {
-        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: 'bash', paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
+        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: 'bash', projectRoot: this.#projectRoot, paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
       }
     } catch (error) { this.#failure = error instanceof Error ? error : new Error(String(error)); throw this.#failure; }
   }

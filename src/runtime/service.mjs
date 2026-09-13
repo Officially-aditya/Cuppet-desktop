@@ -282,10 +282,19 @@ export class RuntimeService {
     }
     return { recorded: true, memoryId };
   }
-  async #refreshMutationGraph(paths) {
-    if (!this.#tst.configured || !paths?.length) return { refreshed: false, reason: 'TST unavailable or no paths' };
-    try { return { refreshed: true, result: await this.#tst.refreshGraphPaths(paths) }; }
-    catch (error) { this.#emit({ type: 'graph.refresh.failed', paths, message: cleanError(error) }); return { refreshed: false, reason: cleanError(error) }; }
+  async #refreshMutationGraph(projectRoot, paths) {
+    if (!this.#tst.configured || !projectRoot || !paths?.length) return { refreshed: false, reason: 'TST unavailable, project missing, or no paths' };
+    try {
+      const freshness = await this.#batchEdits.ensureGraphFresh(projectRoot);
+      if (!freshness.ready) {
+        this.#emit({ type: 'graph.refresh.failed', paths, message: freshness.reason });
+        return { refreshed: false, reason: freshness.reason };
+      }
+      return { refreshed: freshness.recovered === true, result: freshness.refresh ?? null };
+    } catch (error) {
+      this.#emit({ type: 'graph.refresh.failed', paths, message: cleanError(error) });
+      return { refreshed: false, reason: cleanError(error) };
+    }
   }
   async #undo(sessionId) {
     const session = this.requireSession(sessionId);
@@ -296,7 +305,7 @@ export class RuntimeService {
     const result = await this.#writer.withProject(project.canonicalPath, () => this.#journal.undoLatest({ sessionId: session.id, projectRoot: project.canonicalPath }));
     const paths = Array.isArray(result.paths) ? result.paths : result.path ? [result.path] : [];
     if (result.undone && paths.length) {
-      await this.#refreshMutationGraph(paths);
+      await this.#refreshMutationGraph(project.canonicalPath, paths);
       if (process.env.CUPPET_PE3 !== '0') await this.#pe3Observe(session.id, paths, true).catch(() => undefined);
       this.#emit({ type: 'mutation.undone', sessionId: session.id, projectId: session.projectId, mutationId: result.mutationId, path: result.path ?? null, paths, tool: result.tool });
       this.#emit({ type: 'session.updated', session: this.#db.getSessionSummary(session.id) });
@@ -495,7 +504,7 @@ export class RuntimeService {
           this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
         },
         onPaths: async (paths, mutation, details = null) => {
-          if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(paths);
+          if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(projectRoot, paths);
           if (!projectId || process.env.CUPPET_PE3 === '0') return;
           await this.#pe3Observe(sessionId, paths, mutation);
         },

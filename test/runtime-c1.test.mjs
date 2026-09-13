@@ -1,11 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RuntimeService } from '../src/runtime/service.mjs';
+import { MutationJournal } from '../src/runtime/mutation-journal.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sha = (value) => createHash('sha256').update(value).digest('hex');
+
+class GraphTst {
+  configured = true;
+  status = { configured: true, connected: true };
+  refreshes = [];
+  constructor(root) { this.root = root; }
+  async prepareContext() { return {}; }
+  async turnCompleted() {}
+  close() {}
+  async refreshGraphPaths(paths) {
+    const response = await Promise.all(paths.map(async (path) => {
+      try { return { path, content_hash: sha(await readFile(join(this.root, path))) }; }
+      catch (error) { if (error?.code === 'ENOENT') return { path, content_hash: null }; throw error; }
+    }));
+    this.refreshes.push(response);
+    return { paths: response };
+  }
+}
 
 function providerFactory() {
   return () => {
@@ -69,12 +90,16 @@ test('runtime blocks a raw mutation fallback on permission, resumes after approv
   const projectRoot = join(dir, 'project');
   await mkdir(join(projectRoot, 'src'), { recursive: true });
   const events = [];
+  const journal = new MutationJournal(join(dir, 'runtime', 'mutation-journal'));
+  const tst = new GraphTst(projectRoot);
   const service = new RuntimeService({
     databasePath: join(dir, 'db.sqlite3'),
     dataDir: join(dir, 'runtime'),
     emit: (event) => events.push(event),
     providerFactory: providerFactory(),
     backgroundFactory: backgroundFactory(),
+    mutationJournal: journal,
+    tst,
   });
 
   try {
@@ -109,6 +134,8 @@ test('runtime blocks a raw mutation fallback on permission, resumes after approv
     }, 'generation did not finish after permission approval');
 
     assert.equal(await readFile(join(projectRoot, 'src', 'generated.txt'), 'utf8'), 'created by C1\n');
+    assert.deepEqual(await journal.graphInvalidations(projectRoot), []);
+    assert.equal(tst.refreshes.some((items) => items.some((item) => item.path === 'src/generated.txt' && typeof item.content_hash === 'string')), true);
     assert.equal(completed.messages.find((message) => message.role === 'assistant')?.content, 'tool completed');
     assert.equal(completed.messages.some((message) => message.content.includes('Wrote 14 bytes')), false);
     const batchExecution = completed.toolExecutions.find((item) => item.toolName === 'tst_edit_batch');
@@ -119,6 +146,12 @@ test('runtime blocks a raw mutation fallback on permission, resumes after approv
     assert.match(writeExecution?.output ?? '', /Wrote \d+ bytes to src\/generated\.txt/);
     assert.equal(events.some((event) => event.type === 'permission.resolved' && event.requestId === permission.id && event.allowed === true), true);
     assert.equal(events.some((event) => event.type === 'tool.finished' && event.tool === 'workspace_write' && event.success === true), true);
+
+    const undone = await service.handle('session.undo', { sessionId: session.id });
+    assert.equal(undone.undone, true);
+    await assert.rejects(() => readFile(join(projectRoot, 'src', 'generated.txt'), 'utf8'), (error) => error?.code === 'ENOENT');
+    assert.deepEqual(await journal.graphInvalidations(projectRoot), []);
+    assert.equal(tst.refreshes.some((items) => items.some((item) => item.path === 'src/generated.txt' && item.content_hash === null)), true);
   } finally {
     await service.close();
     await rm(dir, { recursive: true, force: true });

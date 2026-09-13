@@ -96,11 +96,14 @@ export class MutationJournal {
     return this.#deletePending(token.id);
   }
 
-  async recordBarrier({ sessionId, executionId, tool = 'bash', paths = [], reason = 'opaque workspace mutation' }) {
+  async recordBarrier({ sessionId, executionId, tool = 'bash', projectRoot = null, paths = [], reason = 'opaque workspace mutation' }) {
     await this.#recoveryPromise;
+    const graphPaths = sanitizeGraphPaths(paths);
+    const root = projectRoot ? await canonicalProjectRoot(projectRoot) : null;
     const entry = {
       id: mutationId(), schema: SCHEMA_VERSION, sessionId, executionId, tool, kind: 'barrier',
-      paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 512)))].slice(0, 128),
+      paths: graphPaths,
+      ...(root ? { projectRoot: root, graph: pendingGraph(graphPaths) } : {}),
       reason: String(reason).slice(0, 500), state: 'applied', createdAt: Date.now(),
     };
     await this.#append(entry);
