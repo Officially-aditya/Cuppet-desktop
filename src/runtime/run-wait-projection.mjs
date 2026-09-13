@@ -1,5 +1,13 @@
 const ACTIVE_WAITABLE_RUN_STATUSES = new Set(['starting', 'running', 'waiting']);
 const EVENT_SCHEMA_VERSION = 1;
+const DURABLE_RUNTIME_EVENT_TYPES = new Set([
+  'tool.started',
+  'tool.finished',
+  'edit.batch.prepared',
+  'edit.batch.applied',
+  'mutation.recovered',
+  'mutation.recovery.conflict',
+]);
 
 export class RunWaitProjection {
   #db;
@@ -36,7 +44,20 @@ export class RunWaitProjection {
     }
     if (interaction?.phase === 'resolved') return this.endWait(interaction.requestId, now);
     if (event?.type === 'run.finished' && event.messageId) return this.clearRun(event.messageId);
-    return null;
+
+    const durable = durableRuntimeProjection(event);
+    if (!durable) return null;
+    return this.#db.transaction(() => {
+      const runId = durable.runId ?? this.#latestActiveRunId(durable.sessionId);
+      this.#appendEvent({
+        sessionId: durable.sessionId,
+        runId,
+        type: durable.type,
+        payload: durable.payload,
+        createdAt: now,
+      });
+      return { sessionId: durable.sessionId, runId, type: durable.type };
+    });
   }
 
   beginWait({ sessionId, requestId, kind = 'interaction', now = Date.now() } = {}) {
@@ -123,6 +144,17 @@ export class RunWaitProjection {
     return Number(this.#db.prepare('SELECT COUNT(*) AS count FROM run_waits WHERE run_id=?').get(runId)?.count ?? 0);
   }
 
+  #latestActiveRunId(sessionId) {
+    const row = this.#db.prepare(`
+      SELECT run_id AS runId
+      FROM runs
+      WHERE session_id=? AND status IN ('starting','running','waiting','settling')
+      ORDER BY updated_at DESC, created_at DESC, run_id DESC
+      LIMIT 1
+    `).get(sessionId);
+    return optionalText(row?.runId);
+  }
+
   #runSnapshot(runId) {
     const row = this.#db.prepare(`
       SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
@@ -181,6 +213,85 @@ export function interactionEvent(event) {
   return null;
 }
 
+export function durableRuntimeProjection(event) {
+  const type = String(event?.type ?? '');
+  if (!DURABLE_RUNTIME_EVENT_TYPES.has(type)) return null;
+  const sessionId = optionalText(event?.sessionId);
+  if (!sessionId) return null;
+  const runId = optionalText(event?.messageId);
+
+  if (type === 'tool.started') {
+    return {
+      type,
+      sessionId,
+      runId,
+      payload: compactPayload({
+        executionId: event.executionId,
+        callId: event.callId,
+        tool: event.tool,
+        status: 'running',
+      }),
+    };
+  }
+  if (type === 'tool.finished') {
+    return {
+      type,
+      sessionId,
+      runId,
+      payload: compactPayload({
+        executionId: event.executionId,
+        callId: event.callId,
+        tool: event.tool,
+        status: event.success === true ? 'complete' : event.rejected === true ? 'rejected' : 'error',
+        success: event.success === true,
+        rejected: event.rejected === true,
+        mutation: event.mutation === true,
+        paths: boundedPaths(event.paths),
+      }),
+    };
+  }
+  if (type === 'edit.batch.prepared' || type === 'edit.batch.applied') {
+    return {
+      type,
+      sessionId,
+      runId,
+      payload: compactPayload({
+        batchId: event.batchId,
+        paths: boundedPaths(event.paths),
+        diffDigest: event.diffDigest,
+        ...(type === 'edit.batch.applied' ? {
+          graphReady: event.graphReady === true,
+          graphError: boundedText(event.graphError, 500),
+        } : {}),
+      }),
+    };
+  }
+  return {
+    type,
+    sessionId,
+    runId,
+    payload: compactPayload({
+      mutationId: event.mutationId,
+      restoredFiles: finiteInteger(event.restoredFiles),
+      path: boundedText(event.path, 512),
+      message: boundedText(event.message, 500),
+    }),
+  };
+}
+
+function compactPayload(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined && item !== '' && !(Array.isArray(item) && item.length === 0)));
+}
+function boundedPaths(value) {
+  return [...new Set((Array.isArray(value) ? value : []).map((item) => boundedText(item, 512)).filter(Boolean))].slice(0, 64);
+}
+function boundedText(value, limit) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, limit) : null;
+}
+function finiteInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : null;
+}
 function boundedKind(value) {
   const kind = String(value ?? '').trim().toLowerCase();
   return ['permission', 'question', 'interaction'].includes(kind) ? kind : 'interaction';
