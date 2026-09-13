@@ -5,8 +5,8 @@ import { RemoteCommandAdapter } from '../src/runtime/remote/commands.mjs';
 function fixture() {
   const calls = [];
   const session = { id: 's1', projectId: 'p1', title: 'One', messages: [] };
-  const call = async (method, params = {}) => {
-    calls.push({ method, params });
+  const call = async (method, params = {}, context) => {
+    calls.push({ method, params, ...(context ? { context } : {}) });
     switch (method) {
       case 'project.list': return [{ id: 'p1', name: 'Project', canonicalPath: '/tmp/project' }];
       case 'project.get': return { id: 'p1', name: 'Project', canonicalPath: '/tmp/project', missing: false };
@@ -48,7 +48,12 @@ test('Remote lists sanitized host variants and lowers only the selected advertis
   assert.deepEqual(await adapter.execute(actor, 'model.select', { providerID: 'future-provider', modelID: 'coder', variant: 'HIGH', requestBody: { injected: true } }), {
     providerID: 'future-provider', modelID: 'coder', variant: 'high',
   });
-  await adapter.execute(actor, 'session.submit', { prompt: 'Implement it', requestBody: { injected: true }, baseUrl: 'https://attacker.invalid', apiKey: 'attacker-key' });
+  await adapter.execute(
+    actor,
+    'session.submit',
+    { prompt: 'Implement it', requestBody: { injected: true }, baseUrl: 'https://attacker.invalid', apiKey: 'attacker-key' },
+    { id: 'model-policy-submit' },
+  );
   const send = calls.findLast((entry) => entry.method === 'session.send');
   assert.equal(send.params.provider.model, 'transport-coder');
   assert.equal(send.params.provider.variant, 'high');
@@ -58,6 +63,8 @@ test('Remote lists sanitized host variants and lowers only the selected advertis
   assert.equal(send.params.provider.requestHeaders.authorization, undefined);
   assert.equal(send.params.provider.baseUrl, 'https://private-provider.example/v1');
   assert.equal(send.params.provider.apiKey, 'private-key');
+  assert.match(send.context.commandId, /^remote:[a-f0-9]{64}$/);
+  assert.doesNotMatch(send.context.commandId, /phone|model-policy-submit|private-key/);
 });
 
 test('Remote refuses unknown host effort rather than falling back or forwarding metadata', async () => {
