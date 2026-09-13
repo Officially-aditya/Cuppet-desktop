@@ -14,10 +14,10 @@ export class UndoConflictError extends Error {
 }
 
 export class MutationJournal {
-  #directory; #cache = new Map(); #writes = new Map(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
+  #directory; #cache = new Map(); #writes = new Map(); #undoLocks = new Map(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
   constructor(directory) {
     this.#directory = directory;
-    this.#recoveryPromise = this.#recoverPendingBatches().catch((error) => {
+    this.#recoveryPromise = this.#recoverPendingMutations().catch((error) => {
       const conflict = { sessionId: null, mutationId: null, path: null, error: cleanError(error) };
       this.#recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [conflict] };
       return structuredClone(this.#recoveryReport);
@@ -126,7 +126,10 @@ export class MutationJournal {
     if (!id) return { sessionId: id, deleted: false };
     const pending = this.#writes.get(id);
     if (pending) await pending.catch(() => undefined);
+    const undo = this.#undoLocks.get(id);
+    if (undo) await undo.catch(() => undefined);
     this.#writes.delete(id);
+    this.#undoLocks.delete(id);
     const cached = this.#cache.delete(id);
     await this.#deletePendingForSession(id);
     this.#recoveryReport.conflicts = this.#recoveryReport.conflicts.filter((item) => item.sessionId !== id);
@@ -137,6 +140,18 @@ export class MutationJournal {
 
   async undoLatest({ sessionId, projectRoot }) {
     await this.#recoveryPromise;
+    const key = String(sessionId ?? '');
+    const previous = this.#undoLocks.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.#undoLatestSerialized({ sessionId: key, projectRoot }));
+    this.#undoLocks.set(key, next);
+    try { return await next; }
+    finally { if (this.#undoLocks.get(key) === next) this.#undoLocks.delete(key); }
+  }
+
+  async #undoLatestSerialized({ sessionId, projectRoot }) {
+    const unresolved = (await this.#pendingEntries()).find((pending) => validPendingUndo(pending.token) && pending.token.sessionId === sessionId);
+    if (unresolved) throw new UndoConflictError('A previous undo did not finish cleanly and still has a durable recovery intent. Resolve the reported recovery conflict before undoing another mutation.');
+
     const entries = await this.#load(sessionId);
     const index = findLatestApplied(entries);
     if (index < 0) return { undone: false, sessionId, reason: 'No reversible workspace mutation is recorded for this session.' };
@@ -154,6 +169,19 @@ export class MutationJournal {
       checked.push({ item, target, current });
     }
 
+    const undoIntent = {
+      id: entry.id,
+      schema: PENDING_SCHEMA_VERSION,
+      kind: 'undo-intent',
+      sessionId,
+      executionId: entry.executionId,
+      tool: entry.tool,
+      projectRoot: currentRoot,
+      files: files.map((item) => ({ path: item.path, before: item.before, after: item.after })),
+      createdAt: Date.now(),
+    };
+    await this.#writePending(undoIntent);
+
     const restored = [];
     try {
       for (const record of checked) {
@@ -163,14 +191,21 @@ export class MutationJournal {
         restored.push(record);
       }
     } catch (error) {
+      let rollbackClean = true;
       for (const record of restored.reverse()) {
-        try { await restoreSnapshot(record.target.absolute, record.item.after); } catch { /* best-effort recovery; original failure remains authoritative */ }
+        try {
+          await restoreSnapshot(record.target.absolute, record.item.after);
+          const verified = await snapshotFile(record.target.absolute);
+          if (!snapshotMatches(verified, record.item.after)) rollbackClean = false;
+        } catch { rollbackClean = false; }
       }
+      if (rollbackClean) await this.#deletePending(entry.id);
       throw error;
     }
 
     entries[index] = { ...entry, state: 'undone', undoneAt: Date.now() };
     await this.#save(sessionId, entries);
+    await this.#deletePending(entry.id);
     const paths = files.map((item) => item.path);
     return {
       undone: true, sessionId, mutationId: entry.id, executionId: entry.executionId, tool: entry.tool,
@@ -239,56 +274,117 @@ export class MutationJournal {
     }
   }
 
-  async #recoverPendingBatches() {
+  async #recoverPendingMutations() {
     if (!this.#directory) return structuredClone(this.#recoveryReport);
     const report = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
     for (const pending of await this.#pendingEntries()) {
       const token = pending.token;
-      if (!validPendingBatch(token)) {
-        report.conflicts.push({ sessionId: token?.sessionId ?? null, mutationId: token?.id ?? null, path: null, error: 'Invalid pending mutation intent; recovery refused.' });
+      if (validPendingBatch(token)) {
+        await this.#recoverPendingBatch(pending, token, report);
         continue;
       }
-      const history = await this.#load(token.sessionId);
-      if (history.some((entry) => entry.id === token.id && ['applied', 'undone'].includes(entry.state))) {
-        await rm(pending.path, { force: true }).catch(() => undefined);
+      if (validPendingUndo(token)) {
+        await this.#recoverPendingUndo(pending, token, report);
         continue;
       }
-
-      let batchConflict = false;
-      let batchRestoredFiles = 0;
-      for (const item of token.files) {
-        try {
-          const target = await resolveWorkspacePath(token.projectRoot, item.path, false);
-          const current = await snapshotFile(target.absolute);
-          if (snapshotMatches(current, item.before)) continue;
-          if (item.expectedAfter && snapshotMatches(current, item.expectedAfter)) {
-            await restoreSnapshot(target.absolute, item.before);
-            const restored = await snapshotFile(target.absolute);
-            if (!snapshotMatches(restored, item.before)) throw new Error('restored bytes did not match the durable preimage');
-            report.restoredFiles += 1;
-            batchRestoredFiles += 1;
-            continue;
-          }
-          batchConflict = true;
-          report.conflicts.push({
-            sessionId: token.sessionId,
-            mutationId: token.id,
-            path: item.path,
-            error: 'Workspace file matches neither the durable preimage nor the expected Cuppet postimage; recovery preserved the current file.',
-          });
-        } catch (error) {
-          batchConflict = true;
-          report.conflicts.push({ sessionId: token.sessionId, mutationId: token.id, path: item.path, error: cleanError(error) });
-        }
-      }
-      if (!batchConflict) {
-        report.recoveredBatches += 1;
-        report.recovered.push({ sessionId: token.sessionId, mutationId: token.id, restoredFiles: batchRestoredFiles });
-        await rm(pending.path, { force: true }).catch(() => undefined);
-      }
+      report.conflicts.push({ sessionId: token?.sessionId ?? null, mutationId: token?.id ?? null, path: null, error: 'Invalid pending mutation intent; recovery refused.' });
     }
     this.#recoveryReport = report;
     return structuredClone(report);
+  }
+
+  async #recoverPendingBatch(pending, token, report) {
+    const history = await this.#load(token.sessionId);
+    if (history.some((entry) => entry.id === token.id && ['applied', 'undone'].includes(entry.state))) {
+      await rm(pending.path, { force: true }).catch(() => undefined);
+      return;
+    }
+
+    let batchConflict = false;
+    let batchRestoredFiles = 0;
+    for (const item of token.files) {
+      try {
+        const target = await resolveWorkspacePath(token.projectRoot, item.path, false);
+        const current = await snapshotFile(target.absolute);
+        if (snapshotMatches(current, item.before)) continue;
+        if (item.expectedAfter && snapshotMatches(current, item.expectedAfter)) {
+          await restoreSnapshot(target.absolute, item.before);
+          const restored = await snapshotFile(target.absolute);
+          if (!snapshotMatches(restored, item.before)) throw new Error('restored bytes did not match the durable preimage');
+          report.restoredFiles += 1;
+          batchRestoredFiles += 1;
+          continue;
+        }
+        batchConflict = true;
+        report.conflicts.push({
+          sessionId: token.sessionId,
+          mutationId: token.id,
+          path: item.path,
+          error: 'Workspace file matches neither the durable preimage nor the expected Cuppet postimage; recovery preserved the current file.',
+        });
+      } catch (error) {
+        batchConflict = true;
+        report.conflicts.push({ sessionId: token.sessionId, mutationId: token.id, path: item.path, error: cleanError(error) });
+      }
+    }
+    if (!batchConflict) {
+      report.recoveredBatches += 1;
+      report.recovered.push({ sessionId: token.sessionId, mutationId: token.id, restoredFiles: batchRestoredFiles });
+      await rm(pending.path, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async #recoverPendingUndo(pending, token, report) {
+    const history = await this.#load(token.sessionId);
+    const index = history.findIndex((entry) => entry.id === token.id);
+    if (index < 0) {
+      report.conflicts.push({ sessionId: token.sessionId, mutationId: token.id, path: null, error: 'Pending undo has no matching durable mutation entry; recovery refused.' });
+      return;
+    }
+    const entry = history[index];
+    if (entry.state === 'undone') {
+      await rm(pending.path, { force: true }).catch(() => undefined);
+      return;
+    }
+    if (entry.state !== 'applied') {
+      report.conflicts.push({ sessionId: token.sessionId, mutationId: token.id, path: null, error: 'Pending undo does not reference an applied mutation; recovery refused.' });
+      return;
+    }
+
+    let undoConflict = false;
+    let restoredFiles = 0;
+    for (const item of token.files) {
+      try {
+        const target = await resolveWorkspacePath(token.projectRoot, item.path, false);
+        const current = await snapshotFile(target.absolute);
+        if (snapshotMatches(current, item.before)) continue;
+        if (snapshotMatches(current, item.after)) {
+          await restoreSnapshot(target.absolute, item.before);
+          const restored = await snapshotFile(target.absolute);
+          if (!snapshotMatches(restored, item.before)) throw new Error('undo recovery restored bytes that did not match the durable pre-mutation snapshot');
+          restoredFiles += 1;
+          report.restoredFiles += 1;
+          continue;
+        }
+        undoConflict = true;
+        report.conflicts.push({
+          sessionId: token.sessionId,
+          mutationId: token.id,
+          path: item.path,
+          error: 'Workspace file matches neither the durable pre-undo postimage nor the intended pre-mutation snapshot; recovery preserved the current file.',
+        });
+      } catch (error) {
+        undoConflict = true;
+        report.conflicts.push({ sessionId: token.sessionId, mutationId: token.id, path: item.path, error: cleanError(error) });
+      }
+    }
+    if (undoConflict) return;
+
+    history[index] = { ...entry, state: 'undone', undoneAt: Date.now(), recoveredUndo: true };
+    await this.#save(token.sessionId, history);
+    report.recoveredBatches += 1;
+    report.recovered.push({ sessionId: token.sessionId, mutationId: token.id, restoredFiles, operation: 'undo' });
+    await rm(pending.path, { force: true }).catch(() => undefined);
   }
 
   async #pendingEntries() {
@@ -369,6 +465,14 @@ function validPendingBatch(entry) {
     && Array.isArray(entry.files) && entry.files.length > 0 && entry.files.length <= MAX_BATCH_FILES
     && entry.files.every((item) => typeof item?.path === 'string' && item.path.length > 0 && validSnapshot(item.before, true)
       && (item.expectedAfter === null || validSnapshot(item.expectedAfter, false))));
+}
+function validPendingUndo(entry) {
+  return Boolean(entry && entry.schema === PENDING_SCHEMA_VERSION && entry.kind === 'undo-intent' && validMutationId(entry.id)
+    && typeof entry.sessionId === 'string' && entry.sessionId.length > 0
+    && typeof entry.executionId === 'string' && entry.executionId.length > 0
+    && typeof entry.projectRoot === 'string' && entry.projectRoot.length > 0
+    && Array.isArray(entry.files) && entry.files.length > 0 && entry.files.length <= MAX_BATCH_FILES
+    && entry.files.every(validJournalFile));
 }
 function validJournalFile(item) { return typeof item?.path === 'string' && item.path.length > 0 && validSnapshot(item.before, true) && validSnapshot(item.after, false); }
 function validSnapshot(value, withContent) {
