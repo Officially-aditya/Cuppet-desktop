@@ -69,8 +69,14 @@ export class RemoteCommandAdapter {
     return {workspaceId:project.id,name:project.name,pathDisplay:displayPath(project.canonicalPath,project.name),activeSessionId:state.sessionId??null,attached:true};
   }
   async #sessionSnapshot(state,explicit){
-    const sessionId=this.#requireSession(state,explicit); const session=await this.#call('session.get',{sessionId}); const mode=await this.#call('session.mode.get',{sessionId}); const auto=await this.#call('session.auto.get',{sessionId});
-    return {projectionVersion:1,session,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
+    const sessionId=this.#requireSession(state,explicit);
+    const [session,mode,auto,run]=await Promise.all([
+      this.#call('session.get',{sessionId}),
+      this.#call('session.mode.get',{sessionId}),
+      this.#call('session.auto.get',{sessionId}),
+      this.#call('session.run.latest',{sessionId}),
+    ]);
+    return {projectionVersion:1,session,run,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
   async #sessionMessages(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return session.messages??[];}
   async #sessionNew(actor,state,params,envelope){
