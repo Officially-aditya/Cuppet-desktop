@@ -13,7 +13,7 @@ import type {
   Session,
 } from '../types';
 import { Sidebar } from './Sidebar';
-import { ChatPane, type ActivityEntry, type ComposerMode, type DeliveryMode } from './ChatPane';
+import { ChatPane, type ComposerMode, type DeliveryMode } from './ChatPane';
 import { NewChatModal } from './NewChatModal';
 import { AddProjectModal } from './AddProjectModal';
 import { SearchModal } from './SearchModal';
@@ -44,7 +44,6 @@ export function App() {
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
-  const [activities, setActivities] = useState<Record<string, ActivityEntry[]>>({});
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
   const [modal, setModal] = useState<ModalName>(null);
@@ -84,9 +83,6 @@ export function App() {
     localStorage.setItem(LAST_SESSION_KEY, session.id);
     if (session.projectId) void window.cuppet.projects.open(session.projectId).catch(() => undefined);
     hydrateClientRunSession(session);
-    if (session.toolExecutions?.length) {
-      setActivities((current) => ({ ...current, [session.id]: hydrateToolActivity(session) }));
-    }
   }, []);
 
   const startDraft = useCallback((projectId: string | null = null) => {
@@ -117,7 +113,6 @@ export function App() {
       const session = await window.cuppet.sessions.get(id);
       setSessions((current) => upsertSession(current, session));
       setActive((current) => current?.id === id ? session : current);
-      setActivities((current) => ({ ...current, [id]: hydrateToolActivity(session) }));
       hydrateClientRunSession(session);
     } catch {
       // Session may have been archived/deleted during the refresh.
@@ -210,8 +205,6 @@ export function App() {
 
     if (sessionId && (event.type === 'tool.started' || event.type === 'tool.finished')) {
       void refreshActive(sessionId);
-    } else if (sessionId) {
-      setActivities((current) => reduceActivity(current, sessionId, event));
     }
   }, [active?.id, openSession, permission?.id, question?.id, refreshActive, refreshLists, showToast]);
 
@@ -409,7 +402,6 @@ export function App() {
         activeMode={activeComposerMode}
         running={activeRunning}
         commands={commands}
-        activity={active?.id ? activities[active.id] ?? [] : []}
         onSend={send}
         onStop={stop}
         onModeChange={changeMode}
@@ -422,7 +414,7 @@ export function App() {
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={(value) => setProvider(value)} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
       {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
-      <Toast message={toast} onClear={() => setToast(null)} />
+      <Toast message={toast} onClear={() => setToast(null)} />}
     </div>
   );
 }
@@ -454,132 +446,4 @@ function upsertMessage(values: Message[], value: Message) {
   if (index >= 0) next[index] = value;
   else next.push(value);
   return next.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
-}
-
-function hydrateToolActivity(session: Session): ActivityEntry[] {
-  return (session.toolExecutions ?? []).slice(-20).map((execution) => {
-    const status = execution.status === 'running' ? 'running' : execution.status === 'complete' ? 'complete' : 'error';
-    return {
-      id: execution.id,
-      kind: 'tool',
-      status,
-      label: toolActivityLabel(execution.toolName, execution.argumentsJson, status),
-      details: execution.output,
-    };
-  });
-}
-
-function toolActivityLabel(toolName = '', argumentsJson = '{}', status: string) {
-  const args = parseToolArguments(argumentsJson);
-  const failed = status === 'error';
-  const complete = status === 'complete';
-  const phrase = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
-  const targets = toolTargets(toolName, args);
-  const one = targets.length === 1 ? targetName(targets[0]) : '';
-  const many = targets.length > 1 ? `${targets.length} files` : '';
-  const target = one || many;
-
-  if (toolName === 'tst_read') return target
-    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
-    : phrase('Reading…', 'Read files', 'Couldn’t read files');
-  if (toolName === 'tst_explore') {
-    const focus = toolExploreFocus(args);
-    return focus
-      ? phrase(`Exploring ${focus}…`, `Explored ${focus}`, `Couldn’t explore ${focus}`)
-      : phrase('Exploring…', 'Explored', 'Couldn’t explore');
-  }
-  if (toolName === 'tst_edit_batch') {
-    if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edits…', 'Applied edits', 'Couldn’t apply edits');
-    return target
-      ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
-      : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
-  }
-  if (toolName === 'workspace_edit') return target
-    ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
-    : phrase('Editing…', 'Edited file', 'Couldn’t edit file');
-  if (toolName === 'workspace_write') return target
-    ? phrase(`Writing ${target}…`, `Wrote ${target}`, `Couldn’t write ${target}`)
-    : phrase('Writing…', 'Wrote file', 'Couldn’t write file');
-  if (toolName === 'tst_validate') return target
-    ? phrase(`Validating ${target}…`, `Validated ${target}`, `Validation failed for ${target}`)
-    : phrase('Validating…', 'Validated', 'Validation failed');
-  if (toolName === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Couldn’t search memory');
-  if (toolName === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
-  if (toolName === 'bash') return phrase('Running command…', 'Ran command', 'Command failed');
-  if (toolName === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
-  return phrase('Working…', 'Completed', 'Failed');
-}
-
-function toolTargets(toolName: string, args: Record<string, unknown>) {
-  const values: string[] = [];
-  const add = (value: unknown) => {
-    if (typeof value !== 'string') return;
-    const path = value.trim();
-    if (path && !values.includes(path)) values.push(path);
-  };
-
-  if (toolName === 'tst_read') {
-    add(args.path);
-    for (const item of arrayRecords(args.reads)) add(item.path);
-    for (const item of arrayRecords(args.targets)) add(item.path);
-  } else if (toolName === 'tst_edit_batch') {
-    for (const item of arrayRecords(args.operations)) {
-      add(item.path);
-      if (item.target && typeof item.target === 'object' && !Array.isArray(item.target)) add((item.target as Record<string, unknown>).path);
-    }
-  } else if (toolName === 'tst_validate') {
-    for (const value of Array.isArray(args.paths) ? args.paths : []) add(value);
-  } else if (toolName === 'workspace_edit' || toolName === 'workspace_write') {
-    add(args.path);
-  }
-  return values.slice(0, 64);
-}
-
-function toolExploreFocus(args: Record<string, unknown>) {
-  const prefix = typeof args.prefix === 'string' ? args.prefix.trim() : '';
-  if (prefix) return targetName(prefix);
-  const query = typeof args.query === 'string' ? args.query.trim() : '';
-  if (query) return compactActivityText(query);
-  return '';
-}
-
-function parseToolArguments(value: string) {
-  try {
-    const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-function arrayRecords(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)));
-}
-
-function targetName(path: string) {
-  const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');
-  const name = normalized.split('/').filter(Boolean).at(-1) || normalized;
-  return compactActivityText(name);
-}
-
-function compactActivityText(value: string) {
-  const text = value.replace(/[\r\n\t]+/g, ' ').trim();
-  return text.length > 72 ? `${text.slice(0, 69)}…` : text;
-}
-
-function reduceActivity(current: Record<string, ActivityEntry[]>, sessionId: string, event: RuntimeEvent) {
-  const list = [...(current[sessionId] ?? [])];
-  const id = String(event.executionId ?? event.queueId ?? event.validation?.id ?? `${event.type}-${Date.now()}`);
-  let patch: ActivityEntry | null = null;
-  if (event.type === 'queue.queued') patch = { id, kind: 'queue', status: 'queued', label: `Queued message${event.position ? ` #${event.position}` : ''}` };
-  if (event.type === 'queue.started') patch = { id, kind: 'queue', status: 'running', label: 'Starting queued message' };
-  if (event.type === 'queue.dispatched') patch = { id, kind: 'queue', status: 'complete', label: 'Queued message started' };
-  if (event.type === 'queue.failed') patch = { id, kind: 'queue', status: 'error', label: 'Queued message failed', details: event.message };
-  if (event.type === 'validation.completed') patch = { id, kind: 'validation', status: event.validation?.success === false ? 'error' : 'complete', label: event.validation?.success === false ? 'Validation failed' : 'Validation passed', details: JSON.stringify(event.validation ?? {}, null, 2) };
-  if (!patch) return current;
-  const index = list.findIndex((item) => item.id === patch!.id);
-  if (index >= 0) list[index] = { ...list[index], ...patch };
-  else list.push(patch);
-  return { ...current, [sessionId]: list.slice(-30) };
 }
