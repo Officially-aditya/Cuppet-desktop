@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { classifyProviderError } from '../src/runtime/provider-error.mjs';
+import { providerFailureError } from '../src/runtime/providers/provider-failure.mjs';
 
 const classify=(message, providerID='grok-build')=>classifyProviderError(new Error(message),{provider:{providerID}});
 
@@ -15,6 +16,22 @@ test('provider errors produce specific user-facing categories',()=>{
   assert.equal(classify('maximum context length exceeded').category,'context_limit');
   assert.equal(classify('model not found').category,'model_unavailable');
   assert.equal(classify('streaming failed: unexpected end of stream').category,'streaming');
+});
+
+test('structured process failures do not incorrectly tell users to repair installation',()=>{
+  const exited=providerFailureError('OpenCode ACP exited',{code:'PROVIDER_PROCESS_EXITED',category:'process_exited',retryable:true,action:'retry'});
+  const value=classifyProviderError(exited,{provider:{providerID:'opencode'}});
+  assert.equal(value.category,'streaming');
+  assert.equal(value.action,'retry');
+  assert.equal(value.title,'Provider process stopped');
+  assert.match(value.message,/fresh provider process automatically/);
+});
+
+test('structured missing executable failures still require provider repair',()=>{
+  const missing=providerFailureError('OpenCode missing',{code:'PROVIDER_EXECUTABLE_MISSING',category:'executable_missing',retryable:false,action:'reconnect_provider'});
+  const value=classifyProviderError(missing,{provider:{providerID:'opencode'}});
+  assert.equal(value.category,'local_agent_unavailable');
+  assert.equal(value.action,'reconnect_provider');
 });
 
 test('OpenCode ACP errors remain actionable instead of becoming unknown',()=>{
