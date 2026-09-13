@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { RemoteCommandAdapter } from '../src/runtime/remote/commands.mjs';
 
 function fixture(){
   const sessions=new Map([['s1',{id:'s1',projectId:'p1',title:'One',messages:[{role:'assistant',status:'complete',content:'ok'}]}]]);const calls=[];
-  const call=async(method,params={})=>{calls.push({method,params});switch(method){
+  const call=async(method,params={},context)=>{calls.push({method,params,...(context?{context}:{})});switch(method){
     case 'project.list':return[{id:'p1',name:'Project',canonicalPath:'/tmp/project'}];
     case 'project.get':return params.projectId==='p1'?{id:'p1',name:'Project',canonicalPath:'/tmp/project',missing:false}:null;
     case 'session.list':return[...sessions.values()].map(({messages,...rest})=>rest).filter((s)=>params.projectId===undefined||s.projectId===params.projectId);
@@ -29,6 +30,10 @@ function fixture(){
 }
 const actor={deviceID:'dev_1'};
 
+function expectedRemoteCommandId(deviceID,envelopeID){
+  return `remote:${createHash('sha256').update(deviceID).update('\0').update(envelopeID).digest('hex')}`;
+}
+
 test('remote command adapter keeps provider secret local and binds device workspace/session state',async()=>{
   const {adapter,calls}=fixture();
   const host=await adapter.execute(actor,'host.get');assert.equal(host.provider.configured,true);assert.equal(JSON.stringify(host).includes('super-secret'),false);
@@ -38,10 +43,31 @@ test('remote command adapter keeps provider secret local and binds device worksp
   const workspaces=await adapter.execute(actor,'workspace.list');assert.deepEqual(workspaces.map((w)=>w.workspaceId),['p1']);
   await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
   const created=await adapter.execute(actor,'session.new',{});assert.equal(created.projectId,'p1');
-  await adapter.execute(actor,'session.submit',{prompt:'Implement it'});
+  await adapter.execute(actor,'session.submit',{prompt:'Implement it'},{id:'submit_1'});
   const send=calls.findLast((entry)=>entry.method==='session.send');assert.equal(send.params.sessionId,'s2');assert.equal(send.params.provider.apiKey,'super-secret');
   assert.equal(send.params.provider.baseUrl,'https://api.example.test/v1');
+  assert.deepEqual(send.context,{commandId:expectedRemoteCommandId('dev_1','submit_1')});
   assert.equal(JSON.stringify(await adapter.execute(actor,'session.snapshot')).includes('super-secret'),false);
+});
+
+test('ordinary remote submits derive stable device-scoped durable command ids',async()=>{
+  const {adapter,calls}=fixture();
+  await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+  await adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  await adapter.execute(actor,'session.submit',{prompt:'same request'},{id:'envelope-A'});
+  await adapter.execute(actor,'session.submit',{prompt:'same request'},{id:'envelope-A'});
+  const dev1Sends=calls.filter((entry)=>entry.method==='session.send');
+  assert.equal(dev1Sends.length,2);
+  assert.equal(dev1Sends[0].context.commandId,dev1Sends[1].context.commandId);
+  assert.equal(dev1Sends[0].context.commandId,expectedRemoteCommandId('dev_1','envelope-A'));
+
+  const actor2={deviceID:'dev_2'};
+  await adapter.execute(actor2,'workspace.attach',{workspaceId:'p1'});
+  await adapter.execute(actor2,'session.resume',{sessionID:'s1'});
+  await adapter.execute(actor2,'session.submit',{prompt:'same request'},{id:'envelope-A'});
+  const dev2Send=calls.findLast((entry)=>entry.method==='session.send');
+  assert.equal(dev2Send.context.commandId,expectedRemoteCommandId('dev_2','envelope-A'));
+  assert.notEqual(dev2Send.context.commandId,dev1Sends[0].context.commandId);
 });
 
 test('remote model selection stays host constrained while undo and questions delegate to runtime authorities',async()=>{
