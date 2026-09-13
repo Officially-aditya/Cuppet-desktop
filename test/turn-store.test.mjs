@@ -61,6 +61,31 @@ test('run and queue projections are journaled as ordered durable runtime events'
   }
 });
 
+test('run start and finish are idempotent and terminal history is immutable', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-events-'));
+  const path = join(dir, 'turns.sqlite3');
+  try {
+    const store = new TurnStore(path);
+    const first = store.startRun({ runId: 'm1', sessionId: 's1', projectId: 'p1', now: 10 });
+    const duplicateStart = store.startRun({ runId: 'm1', sessionId: 's1', projectId: 'changed', now: 20 });
+    assert.deepEqual(duplicateStart, first);
+
+    const completed = store.finishRun('m1', { status: 'complete', now: 30 });
+    const lateFailure = store.finishRun('m1', { status: 'error', error: 'late transport close', now: 40 });
+    assert.deepEqual(lateFailure, completed);
+    assert.equal(store.getRun('m1').status, 'complete');
+    assert.deepEqual(store.listEvents('s1').map((event) => event.type), ['run.started', 'run.finished']);
+    assert.equal(store.listEvents('s1')[1].payload.status, 'complete');
+    assert.throws(
+      () => store.startRun({ runId: 'm1', sessionId: 's2', now: 50 }),
+      /already belongs to session s1/,
+    );
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a queue item interrupted during dispatch is not replayed and records recovery failure', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-store-'));
   const path = join(dir, 'turns.sqlite3');
