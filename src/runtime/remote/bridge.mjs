@@ -21,6 +21,13 @@ export class RemoteBridge {
   stop(){if(!this.#started)return;this.#started=false;for(const off of this.#off.splice(0)){try{off?.();}catch{}}this.#clearDevices();this.#offline.length=0;try{this.#transport.close();}catch{}}
   onRuntimeEvent(event){const mapped=publicEventFor(event);if(mapped)this.#publish(mapped.type,mapped.payload,mapped.sessionId);}
   publish(type,payload,sessionId){this.#publish(type,payload,sessionId);}
+  revokeDevice(deviceId,message='remote credential revoked'){
+    const id=String(deviceId??'');
+    if(!id||!this.#devices.has(id))return false;
+    this.#clearDevice(id);
+    this.#rejectSession(id,message);
+    return true;
+  }
 
   async #onConnected(){
     try{
@@ -40,17 +47,37 @@ export class RemoteBridge {
     if(kind==='device.pair')return this.#pair(raw,deviceId);
     const device=deviceId?this.#devices.get(deviceId):undefined;
     if(!device){if(deviceId)this.#rejectDevice(deviceId,'not authenticated');const id=typeof raw.id==='string'?raw.id:'';if(id)this.#resultError(id,'not authenticated',deviceId);return;}
+    const authorized=await this.#reauthorize(deviceId,device);
+    if(!authorized){
+      const id=typeof raw.id==='string'?raw.id:'';
+      this.#clearDevice(deviceId);
+      this.#rejectSession(deviceId,'remote authorization is no longer valid');
+      if(id)this.#resultError(id,'remote authorization is no longer valid',deviceId);
+      return;
+    }
     let envelope;try{envelope=parseCommandFrame(data);}catch(error){return this.#resultError(typeof raw.id==='string'?raw.id:'unknown',`malformed command: ${cleanError(error)}`,deviceId);}
     const dedupeKey=`${deviceId}:${envelope.id}`;
     if(this.#seen.has(dedupeKey))return this.#send({version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,result:{duplicate:true},deviceId});
     this.#remember(dedupeKey);
     const required=scopeForCommand(envelope.type);
-    if(!required||!device.scopes.includes(required))return this.#resultError(envelope.id,`missing scope '${required??'none'}' for ${envelope.type}`,deviceId);
+    if(!required||!authorized.scopes.includes(required))return this.#resultError(envelope.id,`missing scope '${required??'none'}' for ${envelope.type}`,deviceId);
     try{
-      const actor={kind:'remote',deviceID:deviceId,deviceName:device.name,scopes:[...device.scopes]};
+      const actor={kind:'remote',deviceID:deviceId,deviceName:authorized.name,scopes:[...authorized.scopes]};
       const result=await this.#commands.execute(actor,envelope.type,envelope.payload??{},envelope);
       this.#send({version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId});
     }catch(error){this.#resultError(envelope.id,cleanError(error),deviceId);}
+  }
+  async #reauthorize(deviceId,device){
+    if(typeof device.reauthorize!=='function')return device;
+    const refreshed=await device.reauthorize().catch(()=>undefined);
+    if(!refreshed)return undefined;
+    const scopes=Array.isArray(refreshed.scopes)?refreshed.scopes.filter((scope)=>typeof scope==='string'):[];
+    const expiresAt=Number.isFinite(refreshed.expiresAt)?refreshed.expiresAt:undefined;
+    const next={...device,scopes,name:typeof refreshed.name==='string'?refreshed.name:device.name,...(expiresAt!==undefined?{expiresAt}:{}),reauthorize:device.reauthorize};
+    if(expiresAt===undefined)delete next.expiresAt;
+    this.#devices.set(deviceId,next);
+    if(device.expiresAt!==next.expiresAt)this.#scheduleExpiry(deviceId,next.expiresAt);
+    return next;
   }
   async #pair(raw,deviceId){
     const fail=(message)=>this.#send({version:PROTOCOL_VERSION,replyTo:'device-pair',ok:false,error:message,...(deviceId?{deviceId}:{})});
@@ -63,12 +90,20 @@ export class RemoteBridge {
   async #hello(raw,deviceId){
     const secret=String(raw.payload?.secret??'');if(!this.#authenticateDevice||!deviceId||!secret){this.#clearDevice(deviceId);return this.#rejectDevice(deviceId,'authentication unavailable');}
     const device=await this.#authenticateDevice(deviceId,secret).catch(()=>undefined);if(!device){this.#clearDevice(deviceId);return this.#rejectDevice(deviceId,'unknown device credentials');}
-    this.#clearDevice(deviceId);this.#devices.set(deviceId,{scopes:[...device.scopes],name:device.name??'device',...(device.expiresAt!==undefined?{expiresAt:device.expiresAt}:{})});this.#scheduleExpiry(deviceId,device.expiresAt);this.#notifyDeviceChange();
+    this.#clearDevice(deviceId);
+    const expiresAt=Number.isFinite(device.expiresAt)?device.expiresAt:undefined;
+    this.#devices.set(deviceId,{scopes:[...device.scopes],name:device.name??'device',...(expiresAt!==undefined?{expiresAt}:{}),...(typeof device.reauthorize==='function'?{reauthorize:device.reauthorize}:{})});
+    this.#scheduleExpiry(deviceId,expiresAt);this.#notifyDeviceChange();
     this.#send({version:PROTOCOL_VERSION,seq:0,hostId:this.#hostId,ts:Date.now(),type:'client.accept',payload:{},deviceId});
     this.#send({version:PROTOCOL_VERSION,replyTo:'device-hello',ok:true,result:{deviceId,name:device.name??'',scopes:[...device.scopes]},deviceId});
   }
-  #rejectDevice(deviceId,message){if(deviceId)this.#send({version:PROTOCOL_VERSION,seq:0,hostId:this.#hostId,ts:Date.now(),type:'client.reject',payload:{},deviceId});this.#send({version:PROTOCOL_VERSION,replyTo:'device-hello',ok:false,error:message,...(deviceId?{deviceId}:{})});}
-  #scheduleExpiry(deviceId,expiresAt){if(expiresAt===undefined||!Number.isFinite(expiresAt))return;const timer=setTimeout(()=>{const current=this.#devices.get(deviceId);if(!current||current.expiresAt!==expiresAt)return;this.#clearDevice(deviceId);this.#rejectDevice(deviceId,'remote credential expired');},Math.max(0,expiresAt*1000-Date.now()));timer.unref?.();this.#timers.set(deviceId,timer);}
+  #rejectDevice(deviceId,message){if(deviceId)this.#rejectSession(deviceId,message);this.#send({version:PROTOCOL_VERSION,replyTo:'device-hello',ok:false,error:message,...(deviceId?{deviceId}:{})});}
+  #rejectSession(deviceId,message){if(deviceId)this.#send({version:PROTOCOL_VERSION,seq:0,hostId:this.#hostId,ts:Date.now(),type:'client.reject',payload:{reason:String(message).slice(0,240)},deviceId});}
+  #scheduleExpiry(deviceId,expiresAt){
+    const previous=this.#timers.get(deviceId);if(previous)clearTimeout(previous);this.#timers.delete(deviceId);
+    if(expiresAt===undefined||!Number.isFinite(expiresAt))return;
+    const timer=setTimeout(()=>{const current=this.#devices.get(deviceId);if(!current||current.expiresAt!==expiresAt)return;this.#clearDevice(deviceId);this.#rejectSession(deviceId,'remote credential expired');},Math.max(0,expiresAt*1000-Date.now()));timer.unref?.();this.#timers.set(deviceId,timer);
+  }
   #clearDevice(deviceId){const existed=this.#devices.has(deviceId);const timer=this.#timers.get(deviceId);if(timer)clearTimeout(timer);this.#timers.delete(deviceId);this.#devices.delete(deviceId);this.#commands.detachDevice?.(deviceId);if(existed)this.#notifyDeviceChange();}
   #clearDevices(){for(const id of [...this.#devices.keys()])this.#clearDevice(id);for(const timer of this.#timers.values())clearTimeout(timer);this.#timers.clear();}
   #notifyDeviceChange(){try{this.#onDeviceChange?.(this.activeDevices);}catch{}}
