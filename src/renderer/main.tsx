@@ -22,6 +22,7 @@ import './project-terminal.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { ProjectTerminalMount } from './react/ProjectTerminalMount';
+import { CommandResultEnhancement } from './react/CommandResultEnhancement';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -35,5 +36,6 @@ createRoot(root).render(
     <App />
     <WorkspaceEnhancements />
     <ProjectTerminalMount />
+    <CommandResultEnhancement />
   </React.StrictMode>,
 );
