@@ -1,3 +1,5 @@
+import { providerFailureMetadata } from './providers/provider-failure.mjs';
+
 const ACCOUNT_PROVIDERS = new Set(['codex','opencode','grok-build','github-copilot','mistral-vibe','kiro','antigravity']);
 
 const LABELS = Object.freeze({
@@ -21,6 +23,12 @@ export function classifyProviderError(error, context = {}) {
   const raw = cleanError(error);
   const providerID = providerId(context);
   const provider = providerLabel(providerID, context.providerLabel);
+  const structured = providerFailureMetadata(error);
+  if (structured) {
+    const projected = structuredProviderFailure(structured, raw, providerID, provider);
+    if (projected) return projected;
+  }
+
   const lower = raw.toLowerCase();
   const status = statusCode(error, raw);
 
@@ -67,8 +75,12 @@ export function classifyProviderError(error, context = {}) {
 
   if (matches(lower, [
     'enoent', 'cli was not found', 'command not found', 'could not find the cli', 'executable not found',
-    'app-server is unavailable', 'agent stdio exited', 'acp exited',
-  ])) return failure('local_agent_unavailable', 'Provider connection needs repair', `${provider}'s local agent is missing or stopped unexpectedly. Reconnect ${provider} in Settings → Platform; Cuppet will repair the local setup automatically.`, 'reconnect_provider', raw, providerID, provider);
+    'app-server is unavailable', 'agent stdio exited',
+  ])) return failure('local_agent_unavailable', 'Provider connection needs repair', `${provider}'s local agent is missing or cannot be launched. Reconnect ${provider} in Settings → Platform so Cuppet can repair the local setup.`, 'reconnect_provider', raw, providerID, provider);
+
+  if (matches(lower, ['acp exited', 'provider process exited', 'transport is unavailable'])) {
+    return failure('streaming', 'Provider process stopped', `${provider}'s local process stopped unexpectedly. Retry the request; Cuppet will start a fresh provider process automatically.`, 'retry', raw, providerID, provider);
+  }
 
   if (matches(lower, ['timed out', 'timeout', 'deadline exceeded', 'etimedout'])) return failure('timeout', 'Provider timed out', `${provider} took too long to respond. Retry the request; if it keeps happening, switch providers or try again later.`, 'retry', raw, providerID, provider);
 
@@ -93,6 +105,27 @@ export function classifyProviderError(error, context = {}) {
   if (matches(lower, ['api key is required', 'model is required', 'provider settings', 'providerconfigurationerror'])) return failure('configuration', 'Provider setup is incomplete', `${provider} is not fully configured. Open Settings → Platform and finish the provider setup.`, 'open_settings', raw, providerID, provider);
 
   return failure('unknown', `${provider} failed`, `${provider} returned an unexpected error. Retry once; if it continues, reconnect or switch providers.`, 'retry', raw, providerID, provider);
+}
+
+function structuredProviderFailure(metadata, raw, providerID, provider) {
+  const diagnostic = metadata.diagnostic || raw;
+  switch (metadata.category) {
+    case 'executable_missing':
+      return failure('local_agent_unavailable', 'Provider connection needs repair', `${provider}'s local agent cannot be found. Reconnect ${provider} in Settings → Platform so Cuppet can repair the local setup.`, 'reconnect_provider', diagnostic, providerID, provider);
+    case 'process_exited':
+    case 'transport_closed':
+    case 'transport_write':
+    case 'protocol_transport':
+      return failure('streaming', 'Provider process stopped', `${provider}'s local process stopped unexpectedly. Retry the request; Cuppet will start a fresh provider process automatically.`, 'retry', diagnostic, providerID, provider);
+    case 'timeout':
+      return failure('timeout', 'Provider timed out', `${provider} took too long to respond. Retry the request; if it keeps happening, switch providers or try again later.`, 'retry', diagnostic, providerID, provider);
+    case 'authentication':
+      return failure('authentication', 'Sign-in required', `${provider}'s login is missing or expired. Reconnect ${provider} in Settings → Platform and complete the provider's sign-in again.`, 'reauthenticate', diagnostic, providerID, provider);
+    case 'model_unavailable':
+      return failure('model_unavailable', 'Model unavailable', `${provider} cannot use the selected model/provider for this account. Choose another model in Settings → Platform and retry.`, 'change_model', diagnostic, providerID, provider);
+    default:
+      return null;
+  }
 }
 
 function failure(category, title, message, action, diagnostic, providerID, provider) {
