@@ -21,7 +21,7 @@ export {
   resolveProviderBackend,
 } from './default-registry.mjs';
 export { normalizeProviderConnection, patchProviderConnection } from './connection.mjs';
-export { activityFromLegacyProviderEvent, isProviderActivity, providerActivity } from './activity.mjs';
+export { isProviderActivity, providerActivity } from './activity.mjs';
 export { ConversationBridge, fingerprintConversationMessages } from './conversation-bridge.mjs';
 export {
   PROVIDER_OPERATION_NAMES,
@@ -32,4 +32,4 @@ export {
   providerOperationSupport,
   unsupportedProviderOperation,
 } from './operations.mjs';
-export { assertProviderRuntime, legacyProviderRuntime } from './runtime-contract.mjs';
+export { assertProviderRuntime } from './runtime-contract.mjs';
