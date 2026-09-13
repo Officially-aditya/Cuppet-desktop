@@ -31,6 +31,13 @@ test('durable runs are the only active-session authority in the runtime host', (
   assert.doesNotMatch(source, /activeSessions/, 'runtime main must not keep an in-memory active-session mirror of durable runs');
 });
 
+test('rerouted queue continuation is derived from durable run source identity', () => {
+  assert.match(source, /const durableRun = turnStore\.getRun\(event\.messageId\)/);
+  assert.match(source, /queueOwnerSessionId = durableRun\?\.sourceSessionId \?\? durableRun\?\.sessionId \?\? event\.sessionId/);
+  assert.match(source, /drainQueued\(queueOwnerSessionId\)/);
+  assert.doesNotMatch(source, /queueOwnerByRun/, 'queue ownership must survive restart through runs.source_session_id rather than an in-memory map');
+});
+
 test('session.send uses durable command receipts and secret-free queue persistence', () => {
   assert.match(source, /new CommandReceiptStore\(repository\)/);
   assert.match(source, /commandReceipts\.resolve\(\{ commandId: receiptId, method: 'session\.send', params \}\)/);
