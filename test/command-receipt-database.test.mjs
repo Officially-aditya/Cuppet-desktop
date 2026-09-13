@@ -81,7 +81,7 @@ test('session creation and command acceptance commit atomically', async () => {
       facade.database.createSession({ id: 'session_atomic', now: 2 }));
 
     assert.ok(committedSessionCreation(session));
-    assert.deepEqual(db.getSessionSummary('session_atomic'), session);
+    assert.deepEqual({ ...db.getSessionSummary('session_atomic') }, session);
     assert.equal(receipts.get('cmd-create')?.state, 'accepted');
     assert.deepEqual(receipts.get('cmd-create')?.result, session);
   } finally {
