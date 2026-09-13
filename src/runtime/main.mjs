@@ -13,6 +13,7 @@ import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
+import { SessionCommandSerializer } from './session-command-serializer.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
 import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
@@ -32,6 +33,7 @@ const repository = localState.sqlRepository();
 const turnStore = new TurnStore(repository, { legacyPath: join(dataDir, 'turn-state.sqlite3') });
 const runState = new RunStateProjection(repository);
 const runWaits = new RunWaitProjection(repository);
+const sendCommands = new SessionCommandSerializer();
 const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerControl = new ProviderControlPlane({ dataDir });
@@ -107,7 +109,11 @@ async function handle(method, params = {}, context = {}) {
     }
     case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
-    case 'session.send': return sendOrQueue(params, context.commandId);
+    case 'session.send': {
+      const sessionId = boundedId(params.sessionId);
+      if (!sessionId) return sendOrQueue(params, context.commandId);
+      return sendCommands.run(sessionId, () => sendOrQueue(params, context.commandId));
+    }
     case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
     case 'session.archive': return archiveSession(params, true);
