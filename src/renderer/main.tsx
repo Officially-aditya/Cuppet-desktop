@@ -18,8 +18,10 @@ import './general-settings.css';
 import './permission-inline.css';
 import './workspace-enhancements.css';
 import './tst-memory-sidebar.css';
+import './project-terminal.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
+import { ProjectTerminalMount } from './react/ProjectTerminalMount';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -32,5 +34,6 @@ createRoot(root).render(
   <React.StrictMode>
     <App />
     <WorkspaceEnhancements />
+    <ProjectTerminalMount />
   </React.StrictMode>,
 );
