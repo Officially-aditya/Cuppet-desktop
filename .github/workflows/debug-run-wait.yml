@@ -1,0 +1,31 @@
+name: Debug Run Wait
+on:
+  push:
+    branches:
+      - feat/provider-architecture-v2
+    paths:
+      - '.github/workflows/debug-run-wait.yml'
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Capture focused test
+        shell: bash
+        run: |
+          set +e
+          node --test test/run-wait-projection.test.mjs > run-wait.log 2>&1
+          code=$?
+          cat run-wait.log
+          printf '%s\n' "$code" > run-wait-exit-code.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: run-wait-debug
+          path: |
+            run-wait.log
+            run-wait-exit-code.txt
