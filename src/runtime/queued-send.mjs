@@ -50,19 +50,19 @@ export function containsPersistedCredential(value) {
 }
 
 function sanitizeProvider(value) {
-  return sanitizeValue(record(value), 0, true);
+  return sanitizeValue(record(value), 0);
 }
 
-function sanitizeValue(value, depth = 0, provider = false) {
+function sanitizeValue(value, depth = 0) {
   if (depth > 8) return null;
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
-  if (typeof value === 'string') return value.slice(0, provider ? 4000 : 100_000);
-  if (Array.isArray(value)) return value.slice(0, 256).map((item) => sanitizeValue(item, depth + 1, provider));
+  if (typeof value === 'string') return value.slice(0, 100_000);
+  if (Array.isArray(value)) return value.slice(0, 256).map((item) => sanitizeValue(item, depth + 1));
   if (!value || typeof value !== 'object') return null;
   const output = {};
   for (const [key, item] of Object.entries(value)) {
-    if (provider && SECRET_KEY.test(key)) continue;
-    output[key] = sanitizeValue(item, depth + 1, provider);
+    if (SECRET_KEY.test(key)) continue;
+    output[key] = sanitizeValue(item, depth + 1);
   }
   return output;
 }
