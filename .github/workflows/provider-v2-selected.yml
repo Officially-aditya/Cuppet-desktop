@@ -32,6 +32,7 @@ jobs:
           node --test --test-concurrency=1
           test/provider-architecture-v2.test.mjs
           test/provider-driver-registry.test.mjs
+          test/provider-control-plane.test.mjs
           test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-runtime-manager-real-acp.test.mjs
