@@ -100,7 +100,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#liveExecutions.size, activeProjectWriters: this.#writer.activeProjects, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runState.activeCount(), liveExecutions: this.#liveExecutions.size, activeProjectWriters: this.#writer.activeProjects, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -594,6 +594,6 @@ function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, mes
 function safeStoreName(value) { return String(value ?? 'general').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 160) || 'general'; }
 function memoryScope(value) { const scope = String(value ?? 'session').toLowerCase(); return ['session', 'project', 'global'].includes(scope) ? scope : 'session'; }
 function requireRunState(value) {
-  if (!value || typeof value !== 'object' || typeof value.isActive !== 'function') throw new TypeError('RuntimeService runState must expose isActive(sessionId)');
+  if (!value || typeof value !== 'object' || typeof value.isActive !== 'function' || typeof value.activeCount !== 'function') throw new TypeError('RuntimeService runState must expose isActive(sessionId) and activeCount()');
   return value;
 }
