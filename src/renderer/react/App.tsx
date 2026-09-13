@@ -402,6 +402,7 @@ export function App() {
         activeMode={activeComposerMode}
         running={activeRunning}
         commands={commands}
+        activity={[]}
         onSend={send}
         onStop={stop}
         onModeChange={changeMode}
@@ -414,7 +415,7 @@ export function App() {
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={(value) => setProvider(value)} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
       {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
-      <Toast message={toast} onClear={() => setToast(null)} />}
+      <Toast message={toast} onClear={() => setToast(null)} />
     </div>
   );
 }
