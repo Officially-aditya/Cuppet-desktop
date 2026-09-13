@@ -8,9 +8,9 @@ import { promisify } from 'node:util';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
+import { assertLocalProviderVersionSupported } from '../src/runtime/providers/version-policy.mjs';
 
 const execFileAsync = promisify(execFile);
-const MIN_OPENCODE_VERSION = [1, 18, 30];
 const TURN2_FINAL_MARKER = 'CUPPET_OPENCODE_AUTH_SMOKE_TURN2_OK';
 const TURN2_TOOL_MARKER = 'CUPPET_SMOKE_TOOL_TURN2_OK';
 const TOOL_NAME = 'cuppet_smoke_echo';
@@ -34,7 +34,7 @@ let toolCalls = 0;
 
 try {
   const version = await readVersion(cliCommand);
-  assertSupportedVersion(version.semver, version.label);
+  assertLocalProviderVersionSupported('opencode', version.label, 'OpenCode');
   console.log(`[authenticated-smoke] OpenCode=${version.label}`);
   console.log(`[authenticated-smoke] turn1 model=${safeLabel(selectedModel)} effort=${safeLabel(selectedEffort || 'provider-default')}`);
   console.log(`[authenticated-smoke] turn2 model=${safeLabel(secondModel)} effort=${safeLabel(secondEffort || 'provider-default')}`);
@@ -143,23 +143,9 @@ async function readVersion(command) {
       maxBuffer: 64 * 1024,
       env: process.env,
     });
-    const label = safeLabel(String(stdout || stderr || 'unknown').trim().split(/\r?\n/, 1)[0] || 'unknown');
-    const match = label.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
-    return { label, semver: match ? match.slice(1, 4).map(Number) : null };
+    return { label: safeLabel(String(stdout || stderr || 'unknown').trim().split(/\r?\n/, 1)[0] || 'unknown') };
   } catch (error) {
     throw new Error(`OpenCode CLI is unavailable: ${redact(error instanceof Error ? error.message : String(error))}`);
-  }
-}
-
-function assertSupportedVersion(version, label) {
-  if (!Array.isArray(version) || version.length !== 3) {
-    throw new Error(`Could not verify OpenCode version '${safeLabel(label)}'. Provider V2 release acceptance requires OpenCode >= ${MIN_OPENCODE_VERSION.join('.')}.`);
-  }
-  for (let index = 0; index < 3; index += 1) {
-    if (version[index] > MIN_OPENCODE_VERSION[index]) return;
-    if (version[index] < MIN_OPENCODE_VERSION[index]) {
-      throw new Error(`OpenCode ${safeLabel(label)} is older than the Provider V2 tested minimum ${MIN_OPENCODE_VERSION.join('.')}. Upgrade OpenCode before release acceptance.`);
-    }
   }
 }
 
