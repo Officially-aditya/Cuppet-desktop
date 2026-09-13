@@ -17,6 +17,7 @@ export class RemoteManager {
   setProviderConfig(config={}){
     this.#provider={...config};
     this.#commands?.setProviderConfig(this.#provider);
+    this.#bridge?.publish('provider.projection.invalidated',{});
     // Provider configuration is pushed at ordinary desktop startup. Updating
     // it must not call status()/ready() and create remote identity/state until
     // the user actually opens or starts Remote.
