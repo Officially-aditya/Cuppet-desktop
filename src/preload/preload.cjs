@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const LEGACY_ACTIVITY_EVENTS = new Set(['message.reasoning', 'tool.started', 'tool.finished']);
-
 contextBridge.exposeInMainWorld('cuppet', {
   health: () => ipcRenderer.invoke('cuppet:health'),
   usage: {
@@ -105,13 +103,7 @@ contextBridge.exposeInMainWorld('cuppet', {
   },
   onEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
-    const listener = (_event, payload) => {
-      // runtime.activity is the renderer authority. Legacy activity-shaped runtime
-      // events remain available outside Electron while React consumes only the
-      // canonical Cuppet Activity envelope.
-      if (LEGACY_ACTIVITY_EVENTS.has(String(payload?.type ?? ''))) return;
-      callback(payload);
-    };
+    const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('cuppet:event', listener);
     return () => ipcRenderer.removeListener('cuppet:event', listener);
   },
