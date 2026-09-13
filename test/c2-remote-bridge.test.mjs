@@ -17,7 +17,12 @@ const settle=()=>new Promise((resolve)=>setTimeout(resolve,15));
 
 function command(id,type,payload={},deviceId='dev_1'){return{version:1,id,type,ts:Date.now(),payload,deviceId};}
 
-test('bridge requires host authentication, reports the active device, checks scopes and executes replayed command ids once', async () => {
+async function authenticate(transport,bridge,deviceId='dev_1',secret='secret'){
+  bridge.start();transport.connect();await settle();
+  transport.receive({version:1,type:'device.hello',deviceId,ts:Date.now(),payload:{deviceId,secret}});await settle();
+}
+
+test('bridge requires host authentication, reports the active device, checks scopes and replays exact command results once', async () => {
   const transport=new FakeTransport();let calls=0;const deviceChanges=[];
   const adapter={detachDevice(){},async execute(_actor,type){calls++;return{type,calls};}};
   const bridge=new RemoteBridge({hostId:'host_1',transport,commandAdapter:adapter,authenticateDevice:async(id,secret)=>id==='dev_1'&&secret==='secret'?{scopes:['session.read'],name:'viewer'}:undefined,buildAttachSnapshot:async()=>({snapshot:{ready:true}}),onDeviceChange:(devices)=>deviceChanges.push(devices)});
@@ -30,12 +35,51 @@ test('bridge requires host authentication, reports the active device, checks sco
   assert.deepEqual(bridge.activeDevices,[{deviceId:'dev_1',name:'viewer',scopes:['session.read']}]);
   assert.deepEqual(deviceChanges.at(-1),bridge.activeDevices);
 
-  transport.receive(command('read','session.list'));await settle();assert.equal(calls,1);assert.ok(transport.sent.some((frame)=>frame.replyTo==='read'&&frame.ok===true));
-  transport.receive(command('read','session.list'));await settle();assert.equal(calls,1);assert.ok(transport.sent.some((frame)=>frame.replyTo==='read'&&frame.result?.duplicate===true));
+  transport.receive(command('read','session.list'));await settle();assert.equal(calls,1);
+  const first=transport.sent.find((frame)=>frame.replyTo==='read'&&frame.ok===true);assert.deepEqual(first.result,{type:'session.list',calls:1});
+  transport.receive(command('read','session.list'));await settle();assert.equal(calls,1);
+  const readReplies=transport.sent.filter((frame)=>frame.replyTo==='read'&&frame.ok===true);assert.equal(readReplies.length,2);assert.deepEqual(readReplies[1].result,first.result);
   transport.receive(command('write','session.abort'));await settle();assert.equal(calls,1);assert.match(String(transport.sent.find((frame)=>frame.replyTo==='write')?.error),/missing scope/);
   bridge.stop();
   assert.deepEqual(bridge.activeDevices,[]);
   assert.deepEqual(deviceChanges.at(-1),[]);
+});
+
+test('concurrent duplicate waits for and replays the original result instead of claiming success early', async () => {
+  const transport=new FakeTransport();let calls=0;let release;
+  const gate=new Promise((resolve)=>{release=resolve;});
+  const adapter={detachDevice(){},async execute(){calls++;await gate;return{accepted:true,calls};}};
+  const bridge=new RemoteBridge({hostId:'host_dedupe',transport,commandAdapter:adapter,authenticateDevice:async()=>({scopes:['session.read'],name:'phone'})});
+  await authenticate(transport,bridge);
+
+  transport.receive(command('same','session.list'));
+  transport.receive(command('same','session.list'));
+  await new Promise((resolve)=>setTimeout(resolve,5));
+  assert.equal(calls,1);
+  assert.equal(transport.sent.filter((frame)=>frame.replyTo==='same').length,0,'duplicate must not receive speculative success before the original resolves');
+  release();await settle();
+  const replies=transport.sent.filter((frame)=>frame.replyTo==='same');
+  assert.equal(replies.length,2);
+  assert.deepEqual(replies[0],replies[1]);
+  assert.deepEqual(replies[0].result,{accepted:true,calls:1});
+  bridge.stop();
+});
+
+test('bridge preserves structured receipt error codes and replays the exact failure', async () => {
+  const transport=new FakeTransport();let calls=0;
+  const adapter={detachDevice(){},async execute(){calls++;const error=new Error('Command outcome is unknown after restart.');error.code='COMMAND_OUTCOME_UNKNOWN';throw error;}};
+  const bridge=new RemoteBridge({hostId:'host_error',transport,commandAdapter:adapter,authenticateDevice:async()=>({scopes:['session.read'],name:'phone'})});
+  await authenticate(transport,bridge);
+
+  transport.receive(command('unknown','session.list'));await settle();
+  transport.receive(command('unknown','session.list'));await settle();
+  assert.equal(calls,1);
+  const replies=transport.sent.filter((frame)=>frame.replyTo==='unknown');
+  assert.equal(replies.length,2);
+  assert.equal(replies[0].ok,false);
+  assert.equal(replies[0].code,'COMMAND_OUTCOME_UNKNOWN');
+  assert.deepEqual(replies[1],replies[0]);
+  bridge.stop();
 });
 
 test('bridge buffers semantic runtime events while offline and preserves sequence after attach snapshot', async () => {
