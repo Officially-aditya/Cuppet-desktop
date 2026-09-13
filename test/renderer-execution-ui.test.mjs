@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [app, chat, clientTranscript, transcript, runtimeMain] = await Promise.all([
+const [app, chat, clientSessionState, clientTranscript, transcript, runtimeMain] = await Promise.all([
   readFile(new URL('../src/renderer/react/App.tsx', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/renderer/react/client-session-state.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
@@ -31,12 +32,17 @@ test('React composer selects queue or steer intent while durable queue ownership
   assert.match(runtimeMain, /turnStore\.queuedSessions\(\)/);
 });
 
-test('React transcript consumes canonical runtime events through the client transcript store', () => {
-  // App may refresh the durable session snapshot at tool boundaries, but it no longer
-  // owns a parallel activity/validation/queue trace projection.
-  assert.match(app, /tool\.started/);
-  assert.match(app, /tool\.finished/);
-  assert.doesNotMatch(app, /validation\.completed|setActivities\(|hydrateToolActivity\(|reduceActivity\(/);
+test('React transcript consumes canonical runtime events through client projections', () => {
+  // App owns navigation and dispatch only. Durable session detail refreshes at tool/run
+  // boundaries belong to the shared session projection, while live Activity reduction
+  // belongs to the shared transcript projection.
+  assert.doesNotMatch(app, /tool\.started|tool\.finished|validation\.completed|setActivities\(|hydrateToolActivity\(|reduceActivity\(/);
+
+  assert.match(clientSessionState, /SESSION_DETAIL_REFRESH_EVENTS/);
+  assert.match(clientSessionState, /'tool\.started'/);
+  assert.match(clientSessionState, /'tool\.finished'/);
+  assert.match(clientSessionState, /'run\.finished'/);
+  assert.match(clientSessionState, /refreshClientSession\(sessionId\)/);
 
   assert.match(chat, /useClientTranscript\(session\)/);
   assert.doesNotMatch(chat, /runtime\.activity/);
