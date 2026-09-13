@@ -134,15 +134,18 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Provider/renderer regressions prohibit reintroducing legacy provider event conversion while preserving canonical Activity ordering and execution lifecycle behavior.
 - Milestone 2.2 was validated on exact head `2c354dc623289bb10248f9846c196f91270d0f3e` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, released OpenCode ACP smoke, and packaged-runtime smoke green.
 
+### Remote/mobile projection parity — complete for current scope
+
+- `session.snapshot` reuses the durable `session.get` projection so remote clients receive the same messages, canonical Activities, and tool-execution history as desktop clients.
+- The remote snapshot includes the canonical durable run row from `session.run.latest`, including detailed phase/status rather than inferring run state from transient events.
+- Runtime message/activity/tool/run/session events invalidate the remote session projection instead of creating a parallel `assistant.text.delta` / raw-tool interpretation in the browser client.
+- The remote browser rehydrates the durable snapshot after invalidation; its Stop availability is derived from durable run status (`starting / running / waiting / settling`).
+- Host provider-configuration changes invalidate the connected remote provider projection; per-device provider/model/effort choices are reconciled through `resolveAdvertisedSelection`, preserving valid selections and dropping stale ones.
+- Provider synchronization remains lazy for unused Remote: config updates do not create remote identity/state unless a bridge already exists.
+- Remote parity regressions forbid live transcript reducers from returning and cover transcript/tool/run hydration, provider invalidation, and stale-effort reconciliation.
+- Milestone 2.3 was validated on exact head `c489d97d4eb64b940b00d9e2afda2738bcf2c510` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, released OpenCode ACP smoke, and packaged-runtime smoke green.
+
 ## Remaining milestones
-
-## Milestone 2 — Client Runtime Cleanup
-
-Priority: P1
-
-### 2.3 Remote parity
-
-Remote/mobile clients should consume the same durable session/run/transcript/provider projections instead of maintaining a parallel interpretation of runtime events.
 
 ## Milestone 3 — Production Hardening
 
@@ -192,10 +195,9 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Bring remote/mobile clients onto the same durable projections.
-2. Finish provider supervisor production policy.
-3. Finish graph/history and PE3 restart durability.
-4. Complete signing/notarization and production updater hardening.
+1. Finish provider supervisor production policy.
+2. Finish graph/history and PE3 restart durability.
+3. Complete signing/notarization and production updater hardening.
 
 ## Release rule
 
