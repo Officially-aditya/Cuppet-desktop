@@ -62,6 +62,7 @@ test('prepare is write-free; apply mutates multiple files behind one undo bounda
   assert.equal(await readFile(join(root, 'b.ts'), 'utf8'), 'export const b = 20;\n');
   assert.equal(permissions.length, 1);
   assert.match(permissions[0].fingerprintKey, new RegExp(`^tst-batch:${prepared.id}:`));
+  assert.deepEqual(await journal.graphInvalidations(root), []);
 
   const status = await journal.status('s1');
   assert.equal(status.latest.kind, 'batch');
@@ -71,6 +72,7 @@ test('prepare is write-free; apply mutates multiple files behind one undo bounda
   assert.deepEqual(undone.paths, ['a.ts', 'b.ts']);
   assert.equal(await readFile(join(root, 'a.ts'), 'utf8'), 'export const a = 1;\n');
   assert.equal(await readFile(join(root, 'b.ts'), 'utf8'), 'export const b = 2;\n');
+  assert.deepEqual(await journal.graphInvalidations(root), ['a.ts', 'b.ts']);
 });
 
 test('stale file between prepare/apply rejects the whole batch without touching other files', async () => {
@@ -113,8 +115,8 @@ test('introduced staged parse errors block prepare and preserve the workspace', 
   assert.equal(await readFile(join(root, 'a.ts'), 'utf8'), 'export const a = 1;\n');
 });
 
-test('graph refresh failure is reported after an applied edit and blocks later structural work until recovery', async () => {
-  const { root, manager, tst } = await fixture();
+test('graph refresh failure remains a durable structural barrier across process restart until recovery', async () => {
+  const { root, journal, manager, tst } = await fixture();
   await writeFile(join(root, 'a.ts'), 'export const a = 1;\n');
   const prepared = await manager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '1', new_text: '2' }] });
   tst.failRefresh = true;
@@ -122,10 +124,19 @@ test('graph refresh failure is reported after an applied edit and blocks later s
   assert.equal(applied.applied, true);
   assert.equal(applied.graphReady, false);
   assert.equal(await readFile(join(root, 'a.ts'), 'utf8'), 'export const a = 2;\n');
+  assert.deepEqual(await journal.graphInvalidations(root), ['a.ts']);
   await assert.rejects(() => manager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] }), /graph refresh is required/);
+
+  const restartedJournal = new MutationJournal(join(root, '.cuppet', 'journal'));
+  await restartedJournal.ready();
+  const restartedManager = new TstBatchEditManager({ tst, journal: restartedJournal });
+  assert.deepEqual(await restartedJournal.graphInvalidations(root), ['a.ts']);
+  await assert.rejects(() => restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] }), /graph refresh is required/);
+
   tst.failRefresh = false;
-  const recovered = await manager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] });
+  const recovered = await restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] });
   assert.equal(recovered.state, 'prepared');
+  assert.deepEqual(await restartedJournal.graphInvalidations(root), []);
 });
 
 test('batch undo refuses to overwrite any externally modified file', async () => {
