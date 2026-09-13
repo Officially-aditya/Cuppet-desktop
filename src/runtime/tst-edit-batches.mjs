@@ -122,26 +122,36 @@ export class TstBatchEditManager {
       }
       if (conflicts.length) throw batchConflict('Batch became stale before apply; nothing was written.', conflicts);
 
-      const journalToken = await this.#journal.beginBatch({ sessionId, executionId, tool: 'tst_edit_batch', projectRoot: freshBatch.projectRoot, paths });
+      const journalToken = await this.#journal.beginBatch({
+        sessionId,
+        executionId,
+        tool: 'tst_edit_batch',
+        projectRoot: freshBatch.projectRoot,
+        paths,
+        expectedAfter: freshBatch.files.map((file) => ({ path: file.path, exists: true, hash: file.afterHash })),
+      });
       const published = [];
       try {
         for (const file of freshBatch.files) {
           const target = await resolveWorkspacePath(freshBatch.projectRoot, file.path, false);
           await atomicPublish(target.absolute, Buffer.from(file.afterBase64, 'base64'), file.mode);
+          published.push({ file, target });
           const after = await snapshotBytes(target.absolute);
           if (!after.exists || after.hash !== file.afterHash) throw new Error(`post-write hash mismatch for ${file.path}`);
-          published.push({ file, target });
         }
+        await this.#journal.commitBatch(journalToken);
       } catch (error) {
+        let rollbackClean = true;
         for (const record of published.reverse()) {
           const before = journalToken.files.find((item) => item.path === record.file.path)?.before;
           if (!before) continue;
-          try { await restoreSnapshot(record.target.absolute, before); } catch { /* preserve original publication error */ }
+          try { await restoreSnapshot(record.target.absolute, before); }
+          catch { rollbackClean = false; }
         }
+        if (rollbackClean) await this.#journal.abortBatch?.(journalToken).catch(() => undefined);
         throw new Error(`Batch publish failed and was recovered where hash-safe: ${cleanError(error)}`);
       }
 
-      await this.#journal.commitBatch(journalToken);
       freshBatch.state = 'applied'; freshBatch.appliedAt = Date.now();
       this.#batches.set(freshBatch.id, freshBatch);
 
