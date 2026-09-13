@@ -37,7 +37,7 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Provider failures are structured rather than being inferred only from strings.
 - Real macOS LaunchServices/Finder PATH recovery is covered end-to-end in CI.
 
-### Runtime/client ownership — partially complete
+### Runtime/client ownership — complete for current desktop-renderer scope
 
 - Runtime-owned durable queue replaces renderer-owned dispatch queues.
 - Runs and queue state share `conversations.sqlite3` with messages and tool history.
@@ -110,25 +110,25 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Mutation publication remains after durable persistence; failed durability does not publish the mutation as committed.
 - Milestones 1.4 and 1.5 were validated on exact head `04bb70403800d682a0e768a4f3b26342a1c11d25` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, and packaged-runtime smoke green.
 
+### Client runtime view/state separation — complete for current desktop scope
+
+- `client-session-state.ts` owns the shared session collection and detailed active-session projection; summary-list refreshes preserve already-fetched messages, activities, and tool history.
+- `App` owns only the selected `activeSessionId` for navigation and derives the active server projection from the shared session store.
+- Message deltas and message/run/tool detail refreshes are reduced in the session store rather than in `App`.
+- `client-transcript.ts` owns durable/live transcript merge and canonical Activity reduction; `ChatPane` renders the projection instead of interpreting runtime events.
+- `client-run-state.ts` owns the renderer run-state projection; queue ordering and dispatch remain runtime-owned and durable.
+- `client-provider-state.ts` owns provider settings synchronization; both `App` and `ModelPicker` consume the shared snapshot instead of keeping independent canonical settings copies.
+- `ModelPicker` keeps only model-catalog/capability and menu interaction state local; provider settings reads are routed through the shared provider projection.
+- `client-remote-state.ts` owns user-visible Remote connection/status projection and reconciles runtime lifecycle events; pairing QR/invite/note/busy state remains intentionally view-local.
+- Local runtime child-process/socket connection and recovery remain owned by main-process `RuntimeClient`; the renderer does not maintain a competing local-runtime process authority.
+- Renderer ownership regressions forbid session/run/provider/remote workflow state from drifting back into view components while allowing intentionally ephemeral composer, modal, form, and navigation state.
+- Milestone 2.1 was validated on exact head `a1e9958e45ebe3e672b02632874319bad0ef0ce1` with Provider V2 Selected, all phase gates, real macOS LaunchServices/Finder PATH acceptance, and packaged-runtime smoke green.
+
 ## Remaining milestones
 
 ## Milestone 2 — Client Runtime Cleanup
 
 Priority: P1
-
-### 2.1 Finish view/state separation
-
-Renderer client runtime should own shared projections for:
-
-- session state;
-- transcript state;
-- provider state;
-- runtime/connection state;
-- queue/run state.
-
-`ChatPane` should primarily render and dispatch commands.
-
-Composer draft/attachment state may remain view-local where it is intentionally ephemeral, but it must not own server workflow state.
 
 ### 2.2 Remove compatibility event paths
 
@@ -196,12 +196,11 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Finish renderer/client-runtime view-state separation.
-2. Remove legacy provider event compatibility.
-3. Bring remote/mobile clients onto the same durable projections.
-4. Finish provider supervisor production policy.
-5. Finish graph/history and PE3 restart durability.
-6. Complete signing/notarization and production updater hardening.
+1. Remove legacy provider event compatibility.
+2. Bring remote/mobile clients onto the same durable projections.
+3. Finish provider supervisor production policy.
+4. Finish graph/history and PE3 restart durability.
+5. Complete signing/notarization and production updater hardening.
 
 ## Release rule
 
