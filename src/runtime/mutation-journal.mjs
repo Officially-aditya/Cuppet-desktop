@@ -14,12 +14,12 @@ export class UndoConflictError extends Error {
 }
 
 export class MutationJournal {
-  #directory; #cache = new Map(); #writes = new Map(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, conflicts: [] };
+  #directory; #cache = new Map(); #writes = new Map(); #recoveryPromise; #recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
   constructor(directory) {
     this.#directory = directory;
     this.#recoveryPromise = this.#recoverPendingBatches().catch((error) => {
       const conflict = { sessionId: null, mutationId: null, path: null, error: cleanError(error) };
-      this.#recoveryReport = { recoveredBatches: 0, restoredFiles: 0, conflicts: [conflict] };
+      this.#recoveryReport = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [conflict] };
       return structuredClone(this.#recoveryReport);
     });
   }
@@ -112,10 +112,11 @@ export class MutationJournal {
     const entries = await this.#load(sessionId);
     const latest = [...entries].reverse().find((entry) => entry.state === 'applied') ?? null;
     const conflicts = this.#recoveryReport.conflicts.filter((item) => item.sessionId === sessionId);
+    const recovered = this.#recoveryReport.recovered.filter((item) => item.sessionId === sessionId);
     return {
       available: Boolean(latest),
       latest: latest ? publicEntry(latest) : null,
-      recovery: { conflicted: conflicts.length > 0, conflicts: structuredClone(conflicts) },
+      recovery: { conflicted: conflicts.length > 0, recovered: structuredClone(recovered), conflicts: structuredClone(conflicts) },
     };
   }
 
@@ -129,6 +130,7 @@ export class MutationJournal {
     const cached = this.#cache.delete(id);
     await this.#deletePendingForSession(id);
     this.#recoveryReport.conflicts = this.#recoveryReport.conflicts.filter((item) => item.sessionId !== id);
+    this.#recoveryReport.recovered = this.#recoveryReport.recovered.filter((item) => item.sessionId !== id);
     if (this.#directory) await rm(this.#path(id), { force: true });
     return { sessionId: id, deleted: cached || Boolean(this.#directory) };
   }
@@ -239,7 +241,7 @@ export class MutationJournal {
 
   async #recoverPendingBatches() {
     if (!this.#directory) return structuredClone(this.#recoveryReport);
-    const report = { recoveredBatches: 0, restoredFiles: 0, conflicts: [] };
+    const report = { recoveredBatches: 0, restoredFiles: 0, recovered: [], conflicts: [] };
     for (const pending of await this.#pendingEntries()) {
       const token = pending.token;
       if (!validPendingBatch(token)) {
@@ -253,6 +255,7 @@ export class MutationJournal {
       }
 
       let batchConflict = false;
+      let batchRestoredFiles = 0;
       for (const item of token.files) {
         try {
           const target = await resolveWorkspacePath(token.projectRoot, item.path, false);
@@ -263,6 +266,7 @@ export class MutationJournal {
             const restored = await snapshotFile(target.absolute);
             if (!snapshotMatches(restored, item.before)) throw new Error('restored bytes did not match the durable preimage');
             report.restoredFiles += 1;
+            batchRestoredFiles += 1;
             continue;
           }
           batchConflict = true;
@@ -279,6 +283,7 @@ export class MutationJournal {
       }
       if (!batchConflict) {
         report.recoveredBatches += 1;
+        report.recovered.push({ sessionId: token.sessionId, mutationId: token.id, restoredFiles: batchRestoredFiles });
         await rm(pending.path, { force: true }).catch(() => undefined);
       }
     }
