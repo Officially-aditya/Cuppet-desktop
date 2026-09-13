@@ -15,6 +15,7 @@ function fixture(){
     case 'session.mode.set':return{sessionId:params.sessionId,mode:params.mode};
     case 'session.auto.get':return{sessionId:params.sessionId,enabled:false};
     case 'session.send':return{accepted:true,sessionId:params.sessionId,messageId:'m1'};
+    case 'session.steer':return{accepted:true,sessionId:params.sessionId,messageId:'m-steer'};
     case 'session.stop':return{stopped:true,sessionId:params.sessionId};
     case 'session.undo':return{undone:true,sessionId:params.sessionId,path:'src/a.js'};
     case 'context.compact':return{abort:false};
@@ -68,6 +69,43 @@ test('ordinary remote submits derive stable device-scoped durable command ids',a
   const dev2Send=calls.findLast((entry)=>entry.method==='session.send');
   assert.equal(dev2Send.context.commandId,expectedRemoteCommandId('dev_2','envelope-A'));
   assert.notEqual(dev2Send.context.commandId,dev1Sends[0].context.commandId);
+});
+
+test('retry-sensitive remote mutations forward stable envelope command ids',async()=>{
+  const {adapter,calls}=fixture();
+  await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+
+  await adapter.execute(actor,'session.new',{},{id:'new-A'});
+  await adapter.execute(actor,'session.new',{},{id:'new-A'});
+  const creates=calls.filter((entry)=>entry.method==='session.create');
+  assert.equal(creates.length,2);
+  assert.equal(creates[0].context.commandId,expectedRemoteCommandId('dev_1','new-A'));
+  assert.equal(creates[1].context.commandId,creates[0].context.commandId);
+
+  await adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  await adapter.execute(actor,'session.steer',{instruction:'redirect it'},{id:'steer-A'});
+  await adapter.execute(actor,'session.steer',{instruction:'redirect it'},{id:'steer-A'});
+  const steers=calls.filter((entry)=>entry.method==='session.steer');
+  assert.equal(steers.length,2);
+  assert.equal(steers[0].context.commandId,expectedRemoteCommandId('dev_1','steer-A'));
+  assert.equal(steers[1].context.commandId,steers[0].context.commandId);
+
+  await adapter.execute(actor,'session.undo',{}, {id:'undo-A'});
+  await adapter.execute(actor,'session.undo',{}, {id:'undo-A'});
+  const undos=calls.filter((entry)=>entry.method==='session.undo');
+  assert.equal(undos.length,2);
+  assert.equal(undos[0].context.commandId,expectedRemoteCommandId('dev_1','undo-A'));
+  assert.equal(undos[1].context.commandId,undos[0].context.commandId);
+});
+
+test('slash mutations inherit the enclosing remote envelope command id',async()=>{
+  const {adapter,calls}=fixture();
+  const trusted={deviceID:'dev_1',scopes:['session.write']};
+  await adapter.execute(trusted,'workspace.attach',{workspaceId:'p1'});
+  await adapter.execute(trusted,'session.resume',{sessionID:'s1'});
+  await adapter.execute(trusted,'session.submit',{prompt:'/undo'},{id:'slash-undo'});
+  const undo=calls.findLast((entry)=>entry.method==='session.undo');
+  assert.deepEqual(undo.context,{commandId:expectedRemoteCommandId('dev_1','slash-undo')});
 });
 
 test('remote submit command identity survives adapter recreation',async()=>{
