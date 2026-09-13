@@ -755,7 +755,7 @@ function resize(node: HTMLTextAreaElement | null) {
 }
 
 function summarize(value: CommandResult['result']) {
-  if (value == null) return 'Completed.';
+  if (value == null) return 'Command completed.';
   if (typeof value === 'string') return value.slice(0, 600);
   if (typeof value === 'boolean') return value ? 'Enabled.' : 'Disabled.';
   if (typeof value === 'object') {
@@ -764,7 +764,7 @@ function summarize(value: CommandResult['result']) {
     if (typeof record.message === 'string') return record.message.slice(0, 600);
     if (typeof record.mode === 'string') return `Mode: ${record.mode}`;
     if (typeof record.enabled === 'boolean') return record.enabled ? 'Enabled.' : 'Disabled.';
-    return 'Completed.';
+    return 'Command completed.';
   }
   return String(value).slice(0, 600);
 }

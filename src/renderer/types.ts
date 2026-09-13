@@ -292,6 +292,14 @@ export type CuppetApi = {
     backgroundFlush: (sessionId: string) => Promise<any>;
     planGet: (sessionId: string, request?: any) => Promise<any>;
     memoryQuery: (sessionId: string, query: any) => Promise<any>;
+    memoryGraph: (sessionId: string) => Promise<{
+      available?: boolean;
+      reason?: string;
+      root?: string;
+      graph?: { files?: number; modules?: number; symbols?: number; edges?: number; progress?: { discovered?: number; indexed?: number; skipped?: number; complete?: boolean } };
+      files?: string[];
+      editedFiles?: Array<{ path: string; tool?: string; updatedAt?: number; mutationId?: string | null; executionId?: string | null }>;
+    }>;
   };
   commands: {
     list: () => Promise<CommandDefinition[]>;
