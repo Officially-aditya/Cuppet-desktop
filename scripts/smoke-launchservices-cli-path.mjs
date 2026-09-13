@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const requestedApp = appArgument(process.argv.slice(2));
+const appPath = requestedApp || join(root, 'node_modules', 'electron', 'dist', 'Electron.app');
+const tempRoot = await mkdtemp(join(tmpdir(), 'cuppet-launchservices-path-'));
+const fakeBin = join(tempRoot, 'login-bin');
+const fakeHome = join(tempRoot, 'home');
+const fakeShell = join(tempRoot, 'login-shell');
+const fakeOpenCode = join(fakeBin, 'opencode');
+const resultPath = join(tempRoot, 'result.json');
+const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+const envPatch = {
+  PATH: launchdPath,
+  SHELL: fakeShell,
+  HOME: fakeHome,
+  CUPPET_INTERNAL_GUI_CLI_SMOKE: '1',
+  CUPPET_INTERNAL_GUI_CLI_SMOKE_RESULT: resultPath,
+};
+const previous = new Map();
+
+if (process.platform !== 'darwin') throw new Error('LaunchServices CLI PATH smoke is macOS-only.');
+await access(appPath);
+await Promise.all([
+  import('node:fs/promises').then(({ mkdir }) => mkdir(fakeBin, { recursive: true })),
+  import('node:fs/promises').then(({ mkdir }) => mkdir(fakeHome, { recursive: true })),
+]);
+
+await writeFile(fakeShell, `#!/bin/sh\nprintf '%s\\n' '__CUPPET_LOGIN_SHELL_PATH__=${fakeBin}:/usr/bin:/bin'\n`, { mode: 0o700 });
+await writeFile(fakeOpenCode, `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'opencode 99.0.0-cuppet-gui-smoke'; exit 0 ;;\n  auth)\n    if [ "$2" = 'list' ]; then\n      printf '%s\\n' 'Credentials' '● cuppet-gui-smoke'; exit 0\n    fi\n    ;;\nesac\nprintf '%s\\n' "unexpected fake opencode invocation: $*" >&2\nexit 64\n`, { mode: 0o700 });
+await chmod(fakeShell, 0o700);
+await chmod(fakeOpenCode, 0o700);
+
+try {
+  for (const [name, value] of Object.entries(envPatch)) {
+    previous.set(name, await launchctlGet(name));
+    await launchctlSet(name, value);
+  }
+
+  const args = ['-W', '-n', appPath];
+  if (!requestedApp) args.push('--args', root);
+  await execFileAsync('/usr/bin/open', args, {
+    timeout: 45_000,
+    maxBuffer: 256 * 1024,
+  });
+
+  const result = JSON.parse(await readFile(resultPath, 'utf8'));
+  assert.equal(result.ok, true, `runtime-owned provider probe failed: ${JSON.stringify(result)}`);
+  assert.equal(result.installed, true);
+  assert.equal(result.connected, true);
+  assert.equal(resolve(String(result.executable || '')), resolve(fakeOpenCode), 'runtime resolved a CLI outside recovered login PATH');
+  const recoveredPath = String(result.path || '').split(':');
+  assert.equal(recoveredPath[0], fakeBin, 'recovered login-shell PATH was not preferred');
+  assert.ok(!launchdPath.split(':').includes(fakeBin), 'test setup accidentally put fake CLI in launchd PATH');
+
+  console.log(`[launchservices-smoke] app=${appPath}`);
+  console.log(`[launchservices-smoke] executable=${result.executable}`);
+  console.log('[launchservices-smoke] PASS: LaunchServices -> bootstrap login PATH recovery -> runtime child -> runtime provider control plane resolved authenticated OpenCode.');
+} finally {
+  for (const [name, oldValue] of [...previous.entries()].reverse()) {
+    try {
+      if (oldValue === null) await launchctlUnset(name);
+      else await launchctlSet(name, oldValue);
+    } catch (error) {
+      console.error(`[launchservices-smoke] failed to restore ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+}
+
+function appArgument(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === '--app') return normalizeApp(args[index + 1]);
+    if (value?.startsWith('--app=')) return normalizeApp(value.slice('--app='.length));
+  }
+  return '';
+}
+
+function normalizeApp(value) {
+  const app = typeof value === 'string' ? value.trim() : '';
+  if (!app) throw new Error('--app requires a .app bundle path.');
+  const resolved = resolve(app);
+  if (!resolved.endsWith('.app')) throw new Error(`Expected a .app bundle, received ${resolved}`);
+  return resolved;
+}
+
+async function launchctlGet(name) {
+  try {
+    const { stdout } = await execFileAsync('/bin/launchctl', ['getenv', name], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    const value = String(stdout ?? '').replace(/\r?\n$/, '');
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+async function launchctlSet(name, value) {
+  await execFileAsync('/bin/launchctl', ['setenv', name, String(value)], { timeout: 5_000, maxBuffer: 64 * 1024 });
+}
+
+async function launchctlUnset(name) {
+  await execFileAsync('/bin/launchctl', ['unsetenv', name], { timeout: 5_000, maxBuffer: 64 * 1024 });
+}
