@@ -62,11 +62,18 @@ export function providerRuntimeHealth(providerID, now = Date.now()) {
 
   let restarts = 0;
   let generation = 0;
+  let preTurnRetries = 0;
+  let retryPolicy = null;
+  let lastRetry = null;
   let lastFailure = failure;
   for (const snapshot of snapshots) {
     const supervisor = snapshot?.supervisor && typeof snapshot.supervisor === 'object' ? snapshot.supervisor : {};
-    restarts += Math.max(0, Number(supervisor.restarts) || 0);
-    generation = Math.max(generation, Math.max(0, Number(supervisor.generation) || 0));
+    restarts += nonnegativeInteger(supervisor.restarts);
+    generation = Math.max(generation, nonnegativeInteger(supervisor.generation));
+    preTurnRetries += nonnegativeInteger(supervisor.preTurnRetries);
+    retryPolicy ??= sanitizeRetryPolicy(supervisor.retryPolicy);
+    const retry = sanitizeRetry(supervisor.lastRetry);
+    if (retry && (!lastRetry || retry.at > lastRetry.at)) lastRetry = retry;
     if (supervisor.lastFailure && (!lastFailure || Number(supervisor.lastFailure.at || 0) > Number(lastFailure.at || 0))) {
       lastFailure = sanitizeFailure(supervisor.lastFailure);
     }
@@ -79,6 +86,9 @@ export function providerRuntimeHealth(providerID, now = Date.now()) {
     busyProcesses: states.filter((value) => value === 'running').length,
     generation,
     restarts,
+    preTurnRetries,
+    retryPolicy: retryPolicy ? Object.freeze(retryPolicy) : null,
+    lastRetry: lastRetry ? Object.freeze(lastRetry) : null,
     lastFailure: lastFailure ? Object.freeze(sanitizeFailure(lastFailure)) : null,
   });
 }
@@ -100,7 +110,31 @@ function sanitizeFailure(value) {
     code: cleanText(value?.code, 120) || null,
     category: cleanText(value?.category, 120) || 'unknown',
     retryable: value?.retryable === true,
-    at: Math.max(0, Number(value?.at) || 0),
+    at: nonnegativeInteger(value?.at),
+  };
+}
+
+function sanitizeRetryPolicy(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const maxAttempts = nonnegativeInteger(value.maxAttempts);
+  if (!maxAttempts) return null;
+  return {
+    maxAttempts,
+    baseDelayMs: nonnegativeInteger(value.baseDelayMs),
+    maxDelayMs: nonnegativeInteger(value.maxDelayMs),
+  };
+}
+
+function sanitizeRetry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const retry = nonnegativeInteger(value.retry);
+  const at = nonnegativeInteger(value.at);
+  if (!retry || !at) return null;
+  return {
+    retry,
+    delayMs: nonnegativeInteger(value.delayMs),
+    at,
+    failure: value.failure ? Object.freeze(sanitizeFailure(value.failure)) : null,
   };
 }
 
@@ -112,6 +146,9 @@ function stoppedHealth() {
     busyProcesses: 0,
     generation: 0,
     restarts: 0,
+    preTurnRetries: 0,
+    retryPolicy: null,
+    lastRetry: null,
     lastFailure: null,
   });
 }
@@ -119,6 +156,11 @@ function stoppedHealth() {
 function normalizeProviderID(value) {
   const id = String(value ?? '').trim().toLowerCase();
   return /^[a-z0-9._-]+$/.test(id) ? id : '';
+}
+
+function nonnegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 
 function cleanText(value, limit) {
