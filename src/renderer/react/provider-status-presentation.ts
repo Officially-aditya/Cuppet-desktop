@@ -16,7 +16,9 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
   const overall = text(control.overall);
   const runtimeState = text(runtime.state) || 'stopped';
   const capabilityState = text(capabilities.state) || 'unknown';
-  const installed = source.installed === true || record(source.installation).detected === true;
+  const installation = record(source.installation);
+  const installationKnown = typeof source.installed === 'boolean' || typeof installation.detected === 'boolean' || Boolean(overall);
+  const installed = source.installed === true || installation.detected === true;
   const authenticated = record(control.authentication).state === 'authenticated'
     || source.connected === true
     || source.available === true;
@@ -35,12 +37,12 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
     };
   }
 
-  if (!status || !Object.keys(source).length) {
+  if (!status || !Object.keys(source).length || !installationKnown) {
     return {
       credentialReady: false,
       badge: 'Checking…',
       tone: 'muted',
-      detail: `Checking ${providerLabel}…`,
+      detail: fallback || `Checking ${providerLabel}…`,
       runtimeState,
       capabilityState,
       canConnect: false,
