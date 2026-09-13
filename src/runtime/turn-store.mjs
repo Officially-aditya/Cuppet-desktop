@@ -69,6 +69,7 @@ export class TurnStore {
       );
     `);
 
+    this.#installConversationProjectionTriggers();
     if (legacyPath) this.#migrateLegacyFile(legacyPath);
     this.#recoverInterruptedState(Date.now());
   }
@@ -85,6 +86,17 @@ export class TurnStore {
       const existing = this.getRun(id);
       if (existing) {
         if (existing.sessionId !== session) throw new Error(`runId ${id} already belongs to session ${existing.sessionId}`);
+        // On the shared conversation database, the assistant-message INSERT trigger creates
+        // the run in `starting` inside the same transaction as the durable transcript row.
+        // The runtime callback only enriches that already-durable identity and advances it.
+        if (existing.status === 'starting') {
+          this.#db.prepare(`
+            UPDATE runs
+            SET source_session_id=?, project_id=?, status='running', error=NULL, updated_at=?
+            WHERE run_id=? AND status='starting'
+          `).run(optionalText(sourceSessionId), optionalText(projectId), now, id);
+          return this.getRun(id);
+        }
         return existing;
       }
       this.#db.prepare(`
@@ -276,6 +288,74 @@ export class TurnStore {
       this.#pruneFailedQueueRows();
       return true;
     });
+  }
+
+  #installConversationProjectionTriggers() {
+    const hasMessages = Boolean(this.#db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get());
+    if (!hasMessages) return;
+    // These triggers are deliberately projection-only. Provider/TST side effects stay out
+    // of SQLite, while the durable assistant message and durable run phase can never split
+    // across a crash because both changes are part of the caller's transaction.
+    this.#db.exec(`
+      CREATE TRIGGER IF NOT EXISTS cuppet_run_start_from_assistant_message
+      AFTER INSERT ON messages
+      WHEN NEW.role='assistant'
+        AND NEW.status='streaming'
+        AND NOT EXISTS (SELECT 1 FROM runs WHERE run_id=NEW.id)
+      BEGIN
+        INSERT INTO runs (
+          run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at
+        ) VALUES (
+          NEW.id,
+          NEW.session_id,
+          NULL,
+          (SELECT project_id FROM sessions WHERE id=NEW.session_id),
+          'starting',
+          NULL,
+          NEW.created_at,
+          NEW.updated_at
+        );
+        INSERT INTO runtime_events (
+          session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
+        ) VALUES (
+          NEW.session_id,
+          NEW.id,
+          NULL,
+          (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
+          'run.started',
+          '{"status":"starting","source":"assistant_message"}',
+          ${EVENT_SCHEMA_VERSION},
+          NEW.created_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS cuppet_run_settling_from_assistant_message
+      AFTER UPDATE OF status ON messages
+      WHEN OLD.role='assistant'
+        AND OLD.status='streaming'
+        AND NEW.status IN ('complete','stopped','interrupted','error')
+        AND EXISTS (
+          SELECT 1 FROM runs
+          WHERE run_id=NEW.id AND status IN ('starting','running','waiting')
+        )
+      BEGIN
+        UPDATE runs
+        SET status='settling', updated_at=NEW.updated_at
+        WHERE run_id=NEW.id AND status IN ('starting','running','waiting');
+        INSERT INTO runtime_events (
+          session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
+        ) VALUES (
+          NEW.session_id,
+          NEW.id,
+          NULL,
+          (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
+          'run.settling',
+          '{"status":"settling","messageStatus":"' || NEW.status || '"}',
+          ${EVENT_SCHEMA_VERSION},
+          NEW.updated_at
+        );
+      END;
+    `);
   }
 
   #migrateLegacyFile(path) {
