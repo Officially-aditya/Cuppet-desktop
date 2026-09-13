@@ -19,8 +19,7 @@ test('React composer selects queue or steer intent while durable queue ownership
   assert.match(app, /deliveryMode === 'steer'/);
   assert.match(app, /cuppet\.steer\.interrupt/);
   assert.match(app, /window\.cuppet\.sessions\.send/);
-  assert.match(app, /queue\.queued/);
-  assert.match(app, /queue\.dispatched/);
+  assert.doesNotMatch(app, /queue\.queued|queue\.dispatched|setActivities\(|reduceActivity\(/);
 
   assert.match(runtimeMain, /case 'session\.send': \{/);
   assert.match(runtimeMain, /new SessionCommandSerializer\(\)/);
@@ -33,9 +32,11 @@ test('React composer selects queue or steer intent while durable queue ownership
 });
 
 test('React transcript consumes canonical runtime events through the client transcript store', () => {
+  // App may refresh the durable session snapshot at tool boundaries, but it no longer
+  // owns a parallel activity/validation/queue trace projection.
   assert.match(app, /tool\.started/);
   assert.match(app, /tool\.finished/);
-  assert.match(app, /validation\.completed/);
+  assert.doesNotMatch(app, /validation\.completed|setActivities\(|hydrateToolActivity\(|reduceActivity\(/);
 
   assert.match(chat, /useClientTranscript\(session\)/);
   assert.doesNotMatch(chat, /runtime\.activity/);
