@@ -1,4 +1,9 @@
 import { isProviderTransportFailure, providerFailureMetadata } from '../../provider-failure.mjs';
+import {
+  clearProviderRuntimeFailure,
+  recordProviderRuntimeFailure,
+  registerProviderRuntime,
+} from '../../runtime-health-registry.mjs';
 import { AcpSessionRuntime } from './acp-session.mjs';
 
 /**
@@ -16,10 +21,14 @@ export class SupervisedAcpSessionRuntime {
   #generation = 1;
   #restarts = 0;
   #lastFailure = null;
+  #providerID = '';
+  #unregisterHealth = null;
 
   constructor(options = {}, { runtimeFactory } = {}) {
+    this.#providerID = providerID(options?.descriptor?.id);
     this.#factory = runtimeFactory ?? (() => new AcpSessionRuntime(options));
     this.#runtime = this.#factory();
+    this.#unregisterHealth = registerProviderRuntime(this.#providerID, () => this.snapshot());
   }
 
   async start(options = {}) {
@@ -40,9 +49,14 @@ export class SupervisedAcpSessionRuntime {
 
   async runTurn(input = {}, hooks = {}) {
     try {
-      return await this.#runtime.runTurn(input, hooks);
+      const result = await this.#runtime.runTurn(input, hooks);
+      clearProviderRuntimeFailure(this.#providerID);
+      return result;
     } catch (error) {
-      if (isProviderTransportFailure(error)) this.#lastFailure = failureSnapshot(error);
+      if (isProviderTransportFailure(error)) {
+        this.#lastFailure = failureSnapshot(error);
+        recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
+      }
       throw error;
     }
   }
@@ -67,20 +81,41 @@ export class SupervisedAcpSessionRuntime {
   async close() {
     if (this.#closed) return;
     this.#closed = true;
+    this.#unregisterHealth?.();
+    this.#unregisterHealth = null;
     await Promise.resolve(this.#runtime.close?.()).catch(() => undefined);
   }
 
   async #beforeTurn(method, options) {
     if (this.#closed) throw new Error('ACP runtime supervisor is closed.');
     try {
-      return await this.#runtime[method](options);
+      const result = await this.#runtime[method](options);
+      clearProviderRuntimeFailure(this.#providerID);
+      return result;
     } catch (error) {
-      if (!canRebuildBeforeTurn(error)) throw error;
+      if (!canRebuildBeforeTurn(error)) {
+        if (isProviderTransportFailure(error)) {
+          this.#lastFailure = failureSnapshot(error);
+          recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
+        }
+        throw error;
+      }
       this.#lastFailure = failureSnapshot(error);
+      recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
       await this.#replaceRuntime();
       // A replacement process has no ACP initialization/session state, so even if
       // the caller requested newSession(), its first safe operation must be start().
-      return this.#runtime.start(options);
+      try {
+        const result = await this.#runtime.start(options);
+        clearProviderRuntimeFailure(this.#providerID);
+        return result;
+      } catch (replacementError) {
+        if (isProviderTransportFailure(replacementError)) {
+          this.#lastFailure = failureSnapshot(replacementError);
+          recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
+        }
+        throw replacementError;
+      }
     }
   }
 
@@ -109,4 +144,9 @@ function failureSnapshot(error) {
     retryable: metadata?.retryable === true,
     at: Date.now(),
   });
+}
+
+function providerID(value) {
+  const id = String(value ?? '').trim().toLowerCase();
+  return /^[a-z0-9._-]+$/.test(id) ? id : '';
 }
