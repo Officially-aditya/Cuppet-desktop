@@ -4,7 +4,7 @@
   const params = new URLSearchParams(location.search);
   let hostId = params.get('host') || localStorage.getItem('cuppet.remote.host') || '';
   let creds = hostId ? readCreds(hostId) : null;
-  let ws; let authed = false; let reconnectTimer; let reconnectAttempt = 0; let commandCounter = 0; let activeSession = null; let currentMode = 'build'; let liveAssistant; let remoteModels = [];
+  let ws; let authed = false; let reconnectTimer; let reconnectAttempt = 0; let commandCounter = 0; let activeSession = null; let currentMode = 'build'; let remoteModels = []; let projectionRefreshTimer;
   const pendingCommands = new Map();
 
   const pairScreen = $('pair'); const appScreen = $('app');
@@ -69,15 +69,11 @@
     }
     switch(frame.type){
       case 'host.attach': applyAttach(frame.payload); break;
-      case 'assistant.text.delta': ensureAssistant().textContent += String(frame.payload?.text ?? ''); scrollEnd(); break;
-      case 'tool.started': addTool(`Tool: ${frame.payload?.name ?? 'tool'}`); break;
-      case 'tool.completed': addTool(`${frame.payload?.success ? '✓' : '✕'} ${frame.payload?.name ?? 'tool'}${frame.payload?.paths?.length ? ` · ${frame.payload.paths.join(', ')}` : ''}`); break;
+      case 'session.projection.invalidated': scheduleSessionProjectionRefresh(frame.sessionId); break;
       case 'permission.requested': renderPermission(frame.payload?.request); break;
       case 'permission.resolved': document.querySelector(`[data-permission="${cssEscape(frame.payload?.requestID)}"]`)?.remove(); break;
       case 'question.requested': renderQuestion(frame.payload?.request); break;
       case 'question.resolved': document.querySelector(`[data-question="${cssEscape(frame.payload?.requestID)}"]`)?.remove(); break;
-      case 'session.idle': liveAssistant=null; await refreshSession(); break;
-      case 'session.updated': if (frame.payload?.sessionID) activeSession=frame.payload.sessionID; await refreshSessions(); break;
       case 'agent.error': addBubble('system', `Error: ${frame.payload?.message ?? 'runtime error'}`); break;
       default: break;
     }
@@ -99,13 +95,21 @@
     if (Array.isArray(payload?.workspaces)) renderWorkspaces(payload.workspaces);
     if (Array.isArray(payload?.permissions)) { for (const request of payload.permissions) renderPermission(request); }
   }
+  function scheduleSessionProjectionRefresh(sessionId) {
+    clearTimeout(projectionRefreshTimer);
+    projectionRefreshTimer=setTimeout(()=>{projectionRefreshTimer=undefined;void refreshInvalidatedSession(sessionId);},40);
+  }
+  async function refreshInvalidatedSession(sessionId) {
+    await refreshSessions();
+    if (!sessionId || !activeSession || sessionId===activeSession) await refreshSession();
+  }
   async function refreshWorkspaces(){renderWorkspaces(await command('workspace.list').catch(()=>[]));}
   function renderWorkspaces(values){const select=$('workspace');const before=select.value;select.replaceChildren();for(const workspace of values){const option=document.createElement('option');option.value=workspace.workspaceId;option.textContent=workspace.name+(workspace.missing?' (missing)':'');select.append(option);}if(before&&[...select.options].some((o)=>o.value===before))select.value=before;else if(select.value)void attachWorkspace(select.value);}
   async function attachWorkspace(id){if(!id)return;await command('workspace.attach',{workspaceId:id});activeSession=null;await refreshSessions();await refreshSession();await refreshInteractive();}
   async function refreshSessions(){const list=await command('session.list').catch(()=>[]);const select=$('session');select.replaceChildren();for(const session of list){const option=document.createElement('option');option.value=session.id;option.textContent=session.title||session.id;select.append(option);}if(activeSession&&[...select.options].some((o)=>o.value===activeSession))select.value=activeSession;else if(select.value){activeSession=select.value;await command('session.resume',{sessionID:activeSession}).catch(()=>undefined);} }
   async function resumeSession(id){if(!id)return;await command('session.resume',{sessionID:id});activeSession=id;await refreshSession();await refreshInteractive();}
   async function newSession(){const result=await command('session.new');activeSession=result.id;await refreshSessions();await refreshSession();await refreshInteractive();}
-  async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();return;}try{const [snap,messages]=await Promise.all([command('session.snapshot'),command('session.messages')]);currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderMessages(messages||[]);}catch{} }
+  async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();return;}try{const snap=await command('session.snapshot');currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderSessionProjection(snap);}catch{} }
 
   async function refreshModels(){
     remoteModels=await command('model.list').catch(()=>[]);
@@ -125,7 +129,7 @@
 
   async function togglePlan(){if(!activeSession)return;const next=currentMode==='plan'?'build':'plan';await command('agent.mode.set',{mode:next});currentMode=next;$('plan').textContent=next==='plan'?'Plan':'Build';}
   async function undoSession(){if(!activeSession)return;try{const result=await command('session.undo');addBubble('system',result?.undone?`Undid ${result.path || 'latest Cuppet mutation'}.`:(result?.reason||'Nothing to undo.'));await refreshSession();}catch(error){showError(error);}}
-  async function sendPrompt(){let text=$('prompt').value.trim();if(!text)return;if(!activeSession)await newSession();$('prompt').value='';addBubble('user',text);liveAssistant=null;try{const result=await command('session.submit',{prompt:text});if(result?.sessionId&&result.sessionId!==activeSession){activeSession=result.sessionId;await refreshSessions();}}catch(error){showError(error);}}
+  async function sendPrompt(){let text=$('prompt').value.trim();if(!text)return;if(!activeSession)await newSession();$('prompt').value='';try{const result=await command('session.submit',{prompt:text});if(result?.sessionId&&result.sessionId!==activeSession){activeSession=result.sessionId;await refreshSessions();}await refreshSession();}catch(error){showError(error);}}
 
   async function refreshInteractive(){
     const [permissions,questions]=await Promise.all([command('permission.list').catch(()=>[]),command('question.list').catch(()=>[])]);
@@ -151,9 +155,19 @@
     actions.append(answer,reject);row.append(note,actions);$('pending').append(row);
   }
   function setQuestionBusy(row,busy){for(const input of row.querySelectorAll('input,textarea,button'))input.disabled=busy;}
-  function renderMessages(messages){$('transcript').replaceChildren();liveAssistant=null;for(const message of messages){if(message.role==='system')continue;addBubble(message.role==='user'?'user':'assistant',message.content||'');}}
+  function renderSessionProjection(snapshot){const session=snapshot?.session||{};renderMessages(session.messages||[],session.activities||[]);}
+  function renderMessages(messages,activities){
+    $('transcript').replaceChildren();
+    const byMessage=new Map();
+    for(const entry of activities){const id=String(entry?.messageId||'');if(!id)continue;const list=byMessage.get(id)||[];list.push(entry);byMessage.set(id,list);}
+    for(const message of messages){if(message.role==='system')continue;addBubble(message.role==='user'?'user':'assistant',message.content||'');if(message.role==='assistant')renderActivities(byMessage.get(String(message.id))||[]);}
+  }
+  function renderActivities(entries){
+    const tools=new Map();
+    for(const entry of entries){const activity=entry?.activity||{};if(!String(activity.type||'').startsWith('activity.tool.'))continue;const id=String(activity.callId||`${entry.sequence||tools.size}`);tools.set(id,activity);}
+    for(const activity of tools.values()){const label=activity.label||activity.tool||'tool';if(activity.type==='activity.tool.closed'){const ok=activity.status==='success';const suffix=Array.isArray(activity.paths)&&activity.paths.length?` · ${activity.paths.join(', ')}`:'';addTool(`${ok?'✓':'✕'} ${label}${suffix}`);}else addTool(`Tool: ${label}`);}
+  }
   function addBubble(kind,text){const node=document.createElement('div');node.className=`bubble ${kind}`;node.textContent=text;$('transcript').append(node);scrollEnd();return node;}
-  function ensureAssistant(){if(!liveAssistant||!liveAssistant.isConnected)liveAssistant=addBubble('assistant','');return liveAssistant;}
   function addTool(text){const node=document.createElement('div');node.className='tool';node.textContent=text;$('transcript').append(node);scrollEnd();}
   function scrollEnd(){const transcript=$('transcript');transcript.scrollTop=transcript.scrollHeight;}
   function cssEscape(value){return String(value ?? '').replace(/[^A-Za-z0-9_-]/g,'_');}
