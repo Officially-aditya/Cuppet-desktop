@@ -5,6 +5,7 @@ import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
 import { CUPPET_LOGO_URL } from './brand';
 import { notifyProviderSettingsChanged } from './provider-settings-events';
+import { providerStatusPresentation } from './provider-status-presentation';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -289,8 +290,8 @@ function AccountPanel({ codex, busy, onConnect, onDisconnect, onError }: { codex
 
 function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex, isLocalCli, cliStatus, codex, note, busy, onProvider, onApiKey, onApiKeyCommit, onReset, onModelSaved, onConnect, onDisconnect, onConnectCli }: { current: ProviderSettings | null; presets: ProviderPreset[]; selected: ProviderPreset | null; providerID: string; apiKey: string; isCodex: boolean; isLocalCli: boolean; cliStatus: CliAgentStatus | null; codex: any; note: string; busy: boolean; onProvider: (id: string) => void | Promise<void>; onApiKey: (value: string) => void; onApiKeyCommit: () => void | Promise<void>; onReset: () => void | Promise<void>; onModelSaved: (settings: ProviderSettings) => void; onConnect: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onConnectCli: () => void | Promise<void> }) {
   const activeProviderID = current?.providerID || current?.primary?.providerID || '';
-  const cliConnected = Boolean(cliStatus?.connected ?? cliStatus?.available);
-  const credentialReady = isCodex ? Boolean(codex.loggedIn) : isLocalCli ? cliConnected : Boolean(current?.apiKeyConfigured);
+  const cliPresentation = providerStatusPresentation(cliStatus, selected?.label || providerID || 'Provider', busy);
+  const credentialReady = isCodex ? Boolean(codex.loggedIn) : isLocalCli ? cliPresentation.credentialReady : Boolean(current?.apiKeyConfigured);
   const modelsReady = Boolean(selected && activeProviderID === providerID && credentialReady && !apiKey.trim());
   const modelHint = activeProviderID !== providerID
     ? `Selecting ${selected?.label || providerID}…`
@@ -319,11 +320,11 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
         ) : isLocalCli ? (
           <div className="provider-auth-card">
             <div className="provider-auth-copy">
-              <div className="provider-auth-title-row"><strong>Provider connection</strong><span className={`settings-status-pill compact${cliConnected ? '' : ' muted'}`}>{cliConnected ? 'Connected' : busy ? 'Connecting…' : cliStatus ? 'Not connected' : 'Checking…'}</span></div>
-              <span>{cliStatus?.message || `Checking ${selected?.label || providerID}…`}</span>
-              {!cliConnected && <span>Cuppet installs the official CLI when needed and opens the provider's own sign-in flow automatically. No Terminal setup is required.</span>}
+              <div className="provider-auth-title-row"><strong>Provider connection</strong><span className={`settings-status-pill compact${cliPresentation.tone === 'muted' ? ' muted' : ''}`}>{cliPresentation.badge}</span></div>
+              <span>{cliPresentation.detail}</span>
+              {cliPresentation.canConnect && <span>Cuppet installs the official CLI when needed and opens the provider's own sign-in flow automatically. No Terminal setup is required.</span>}
             </div>
-            <div className="provider-auth-actions">{cliConnected ? <span className="settings-status-pill compact">Ready</span> : <button type="button" className="primary-button settings-action-button" disabled={busy || cliStatus === null} onClick={() => void onConnectCli()}>{busy ? 'Connecting…' : `Connect ${selected?.label || 'provider'}`}</button>}</div>
+            <div className="provider-auth-actions">{cliPresentation.canConnect ? <button type="button" className="primary-button settings-action-button" disabled={busy || cliStatus === null} onClick={() => void onConnectCli()}>{busy ? 'Connecting…' : `Connect ${selected?.label || 'provider'}`}</button> : <span className="settings-status-pill compact">{cliPresentation.runtimeState === 'stopped' ? 'Starts on demand' : cliPresentation.runtimeState === 'crashed' || cliPresentation.runtimeState === 'unhealthy' ? 'Retry next request' : cliPresentation.runtimeState === 'busy' ? 'Working' : 'Runtime ready'}</span>}</div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} onBlur={() => void onApiKeyCommit()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void onApiKeyCommit(); } }} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
         {selected && <div className="platform-model-section">
