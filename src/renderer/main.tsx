@@ -19,10 +19,12 @@ import './permission-inline.css';
 import './workspace-enhancements.css';
 import './tst-memory-sidebar.css';
 import './project-terminal.css';
+import './shell-panel-controls.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { ProjectTerminalMount } from './react/ProjectTerminalMount';
 import { CommandResultEnhancement } from './react/CommandResultEnhancement';
+import { ShellPanelControls } from './react/ShellPanelControls';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -37,5 +39,6 @@ createRoot(root).render(
     <WorkspaceEnhancements />
     <ProjectTerminalMount />
     <CommandResultEnhancement />
+    <ShellPanelControls />
   </React.StrictMode>,
 );
