@@ -38,13 +38,16 @@ test('edited file events preserve repeated edits across turns while excluding un
   }
 });
 
-test('workspace links, turn-scoped edited files, dynamic user messages, working state, and reasoning surfaces stay separated', async () => {
-  const [host, runtime, preload, markdown, enhancements, styles] = await Promise.all([
+test('workspace links, edited files, working state, and reasoning stay on canonical ownership paths', async () => {
+  const [host, runtime, preload, markdown, enhancements, chatPane, clientTranscript, chatTranscript, styles] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/markdown.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/WorkspaceEnhancements.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/workspace-enhancements.css', import.meta.url), 'utf8'),
   ]);
 
@@ -66,15 +69,20 @@ test('workspace links, turn-scoped edited files, dynamic user messages, working 
   assert.match(enhancements, /groupEditedFilesByTurn/);
   assert.match(enhancements, /owner\.status === 'streaming'/);
   assert.match(enhancements, /data-cuppet-edited-files-summary/);
-  assert.doesNotMatch(enhancements, /react-composer-wrap|workspace-edited-files-mount|createPortal/);
   assert.match(enhancements, /CODE_FILE/);
-  assert.match(enhancements, /event\?\.type === 'message\.reasoning'/);
-  assert.match(enhancements, /data-cuppet-visible-reasoning/);
-  assert.match(enhancements, /readStoredReasoning/);
+  assert.doesNotMatch(enhancements, /react-composer-wrap|workspace-edited-files-mount|createPortal/);
+  assert.doesNotMatch(enhancements, /message\.reasoning|data-cuppet-visible-reasoning|readStoredReasoning|TRACE_KEY_PREFIX|LEGACY_REASONING_KEY_PREFIX|liveReasoning|message-visible-reasoning/);
+  assert.match(clientTranscript, /SUPPORTED_EVENT_TYPES[\s\S]*runtime\.activity/);
+  assert.match(clientTranscript, /reduceTranscriptEvent\(current, \{ \.\.\.event, messageId \}\)/);
+  assert.match(chatTranscript, /event\.type !== 'runtime\.activity'/);
+  assert.match(chatTranscript, /activityType === 'activity\.reasoning\.delta'/);
+  assert.match(chatPane, /const transcript = useClientTranscript\(session\)/);
+  assert.match(chatPane, /message-trace-reasoning markdown-rendered/);
+  assert.match(chatPane, /traceForMessage\(transcript, message\.id\)/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
   assert.match(styles, /content:'Working…'/);
   assert.match(styles, /:has\(\.composer-pause-button\)/);
-  assert.match(styles, /\.message-trace \.message-trace-reasoning\{display:none!important\}/);
-  assert.match(styles, /\.message-visible-reasoning/);
+  assert.match(styles, /\.message-trace-reasoning\{/);
+  assert.doesNotMatch(styles, /message-trace-reasoning\{display:none|message-visible-reasoning/);
   assert.doesNotMatch(styles, /workspace-edited-files-mount/);
 });
