@@ -27,17 +27,15 @@ test('main-process runtime client observes ready and serves requests', async () 
   }
 });
 
-test('runtime client restarts after an unexpected exit without replaying session.send', async () => {
+test('runtime client retries interrupted session.send only under the original durable command id', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-runtime-recovery-'));
   const client = recoveryClient(dir);
   try {
     await client.start();
     const recovered = once(client, 'recovered');
-    await assert.rejects(
-      client.request('session.send', { sessionId: 'session-1', text: 'do work' }),
-      /was not retried to avoid duplicating work/,
-    );
+    const result = await client.request('session.send', { sessionId: 'session-1', text: 'do work' });
     await recovered;
+    assert.deepEqual(result, { replayed: true, sameCommandId: true });
 
     const health = await client.request('health');
     assert.deepEqual(health, { ok: true, runtime: 'recovery-fixture' });
