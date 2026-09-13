@@ -23,20 +23,24 @@ test('durable run projection is the active-session authority across starting, ru
     });
 
     assert.equal(state.isActive('s1'), true);
+    assert.equal(state.activeCount(), 1);
     assert.equal(state.activeRun('s1')?.status, 'starting');
 
     store.startRun({ runId: 'm1', sessionId: 's1', projectId: 'p1', now: 4 });
     assert.equal(state.isActive('s1'), true);
+    assert.equal(state.activeCount(), 1);
     assert.equal(state.activeRun('s1')?.status, 'running');
 
     db.transaction(() => {
       db.updateMessage('m1', { status: 'complete', content: 'done', now: 5 });
     });
     assert.equal(state.isActive('s1'), true);
+    assert.equal(state.activeCount(), 1);
     assert.equal(state.activeRun('s1')?.status, 'settling');
 
     store.finishRun('m1', { status: 'complete', now: 6 });
     assert.equal(state.isActive('s1'), false);
+    assert.equal(state.activeCount(), 0);
     assert.equal(state.activeRun('s1'), null);
   } finally {
     store.close();
@@ -80,6 +84,7 @@ test('run projection fails closed for missing or invalid session ids', async () 
   try {
     assert.equal(state.isActive(''), false);
     assert.equal(state.isActive(null), false);
+    assert.equal(state.activeCount(), 0);
     assert.equal(state.activeRun('missing'), null);
   } finally {
     store.close();
