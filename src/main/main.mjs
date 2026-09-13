@@ -25,10 +25,12 @@ async function bootstrap() {
     dataDir: runtimeDataDir,
     environment: { CUPPET_USER_DATA_DIR: userData },
   });
+  const syncProviderConfig = () => runtime.request('provider.config.sync', { provider: settings.runtimeValue() });
   runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
+  runtime.on('recovered', () => { void syncProviderConfig().catch(() => undefined); });
   await runtime.start();
-  await runtime.request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+  await syncProviderConfig().catch(() => undefined);
   registerIpc();
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON);
   createWindow();
@@ -139,7 +141,7 @@ function registerIpc() {
       ? { ...source, model: defaultModel, backgroundModel: defaultModel, secondaryAuto: true }
       : source;
     const result = await settings.save(saveSource);
-    await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+    await request('provider.config.sync', { provider: settings.runtimeValue() }).catch(() => undefined);
     return result;
   });
 }
@@ -220,7 +222,7 @@ function desktopProviderAuthority(request) {
         primaryEffort: requested === 'default' ? '' : requested,
         secondaryEffort: value.secondary?.variant ?? '',
       });
-      await request('remote.provider-config', { provider: settings.runtimeValue() }).catch(() => undefined);
+      await request('provider.config.sync', { provider: settings.runtimeValue() }).catch(() => undefined);
       return { providerID: saved.primary?.providerID ?? null, modelID: saved.primary?.modelID ?? null, variant: saved.primary?.variant ?? null };
     },
   };
