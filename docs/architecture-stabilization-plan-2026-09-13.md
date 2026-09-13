@@ -29,13 +29,22 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 - Cuppet-managed incompatible installs can be repaired only through an explicit connect/update action.
 - Secure storage is lazy for local CLI / OAuth providers.
 
-### Provider process safety — substantially complete
+### Provider process safety — complete for current production-hardening scope
 
 - Managed ACP runtime supervision has explicit health and generation/restart state.
-- Dead idle ACP processes can be rebuilt before the next turn.
-- A turn that may already have caused side effects is never automatically replayed.
-- Provider failures are structured rather than being inferred only from strings.
-- Real macOS LaunchServices/Finder PATH recovery is covered end-to-end in CI.
+- A provider runtime is not considered ready until process spawn, ACP initialization/authentication, logical-session creation, required isolation settings, and configured model/effort application have completed.
+- Structured ACP process/transport failures retain their provider-failure metadata through the session runtime so the supervisor can distinguish safe recovery from configuration/installation failures.
+- Safe pre-turn recovery is bounded: initial attempt plus at most two fresh-process retries with capped exponential backoff by default.
+- Only structured retryable transport failures can trigger automatic pre-turn rebuild; missing executables and non-retryable failures fail closed through the control plane.
+- Replacement processes always perform a fresh `start()` handshake even when the caller originally requested `newSession()`.
+- `runTurn()` is never automatically replayed after a transport failure because provider/tool side effects may already have happened.
+- Idle warm ACP processes are evicted by `ProviderRuntimeManager`; shorter sleep/wake/process disruptions are recovered on the next safe pre-turn boundary, while active turns remain non-replayable.
+- `RuntimeClient` remains the sole owner for restarting the independent Cuppet runtime process; `SupervisedAcpSessionRuntime` remains the sole owner for replacing ACP provider processes.
+- Supervisor diagnostics expose generation, restart count, bounded pre-turn retry count/policy, latest retry, and sanitized last failure through the shared runtime-health projection.
+- `/status`, `/doctor`, and local provider control state consume that same projection; support diagnostics exclude credentials, raw provider diagnostics, and provider-internal session IDs.
+- Provider-runtime health is advisory to independent runtime health: stopped lazy providers are healthy, while crashed/unhealthy provider processes produce a doctor warning rather than redefining runtime availability.
+- Real macOS LaunchServices/Finder PATH recovery remains covered end-to-end in CI.
+- Bounded pre-turn recovery was validated on exact head `99599bca634f783c6e710d9500aeb4986a74094c`; supervisor diagnostics were validated on exact head `4869e547f17598044614ec3c716aab4c1bbeb765`. Both heads passed Provider V2 Selected, all phase gates, real macOS acceptance, released OpenCode ACP smoke, and packaged-runtime smoke.
 
 ### Runtime/client ownership — complete for current desktop-renderer scope
 
@@ -151,18 +160,6 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 
 Priority: P1/P2
 
-### 3.1 Complete provider supervisor policy
-
-Add only the missing production behavior around the existing ACP supervisor:
-
-- explicit startup/handshake health gates;
-- bounded retry/backoff for safe pre-turn failures;
-- sleep/wake/network recovery where applicable;
-- one restart owner;
-- diagnostic snapshots suitable for support bundles.
-
-Never auto-replay a side-effecting turn.
-
 ### 3.2 Graph/history durability
 
 - make graph-cache invalidation deterministic after workspace mutation;
@@ -195,9 +192,8 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Finish provider supervisor production policy.
-2. Finish graph/history and PE3 restart durability.
-3. Complete signing/notarization and production updater hardening.
+1. Finish graph/history and PE3 restart durability.
+2. Complete signing/notarization and production updater hardening.
 
 ## Release rule
 
