@@ -22,8 +22,11 @@ export class ProjectTerminalManager {
     const id = boundedId(projectId);
     if (!id) throw new Error('A project is required to open the terminal');
 
-    const existing = [...this.#sessions.values()].find((session) => session.ownerId === sender.id && session.projectId === id && !session.closed);
-    if (existing) return terminalDescriptor(existing);
+    for (const session of [...this.#sessions.values()]) {
+      if (session.ownerId !== sender.id || session.closed) continue;
+      if (session.projectId === id) return terminalDescriptor(session);
+      this.#stopSession(session);
+    }
 
     const root = await resolveProjectTerminalRoot(this.#request, id);
     const shell = await resolveTerminalShell();
@@ -123,7 +126,7 @@ export class ProjectTerminalManager {
   #emitOutput(session, stream, chunk) {
     const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk ?? '');
     if (!text) return;
-    this.#emit(session, { type: 'output', stream, data: text.slice(0, MAX_EVENT_BYTES) });
+    this.#emit(session, { type: 'output', stream, data: truncateUtf8(text, MAX_EVENT_BYTES) });
   }
 
   #emit(session, payload) {
@@ -143,10 +146,8 @@ export async function resolveProjectTerminalRoot(request, projectId) {
   if (!id) throw new Error('A project is required to open the terminal');
   const project = await request('project.get', { projectId: id });
   if (!project || project.missing) throw new Error('The project folder is unavailable');
-  const configured = typeof project.canonicalPath === 'string' && project.canonicalPath.trim()
-    ? project.canonicalPath.trim()
-    : typeof project.path === 'string' ? project.path.trim() : '';
-  if (!configured || !isAbsolute(configured) || configured.includes('\0')) throw new Error('The project root is invalid');
+  const configured = typeof project.canonicalPath === 'string' ? project.canonicalPath.trim() : '';
+  if (!configured || !isAbsolute(configured) || configured.includes('\0')) throw new Error('The canonical project root is invalid');
   const root = await realpath(configured);
   const metadata = await stat(root);
   if (!metadata.isDirectory()) throw new Error('The project root is not a directory');
@@ -177,6 +178,12 @@ function terminalDescriptor(session) {
 
 function boundedId(value) {
   return typeof value === 'string' ? value.trim().slice(0, 256) : '';
+}
+
+function truncateUtf8(value, maxBytes) {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+  const buffer = Buffer.from(value, 'utf8').subarray(0, maxBytes);
+  return buffer.toString('utf8').replace(/\uFFFD$/u, '');
 }
 
 function cleanError(error) {
