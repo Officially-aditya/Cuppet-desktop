@@ -14,7 +14,22 @@ import { executeCommand, parseSlashCommand } from '../commands.mjs';
 export class RemoteCommandAdapter {
   #call; #identity; #provider=normalizeProviderConfiguration({}); #states=new Map();
   constructor({ call, identity, providerConfig={} }) { this.#call=call; this.#identity=identity; this.setProviderConfig(providerConfig); }
-  setProviderConfig(config={}) { this.#provider=normalizeProviderConfiguration(config); }
+  setProviderConfig(config={}) {
+    this.#provider=normalizeProviderConfiguration(config);
+    const projection=providerProjection(this.#provider);
+    for(const state of this.#states.values()){
+      if(state.providerID){
+        const provider=projection.catalog.find((item)=>item.id===state.providerID||item.integrationIds.includes(state.providerID));
+        state.providerID=provider?.id??null;
+      }
+      if(state.selection){
+        try{
+          const selected=resolveAdvertisedSelection(this.#provider,state.selection);
+          state.selection=state.providerID&&!this.#selectionMatchesProvider(state.providerID,selected)?null:selected;
+        }catch{state.selection=null;}
+      }
+    }
+  }
   detachDevice(deviceId){ this.#states.delete(deviceId); }
 
   async execute(actor,type,payload={},envelope={}) {
