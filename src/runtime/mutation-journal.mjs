@@ -186,9 +186,9 @@ export class MutationJournal {
     try {
       for (const record of checked) {
         await restoreSnapshot(record.target.absolute, record.item.before);
+        restored.push(record);
         const verified = await snapshotFile(record.target.absolute);
         if (!snapshotMatches(verified, record.item.before)) throw new UndoConflictError(`Undo verification failed for ${record.item.path}; the restored bytes do not match the recorded pre-mutation snapshot.`);
-        restored.push(record);
       }
     } catch (error) {
       let rollbackClean = true;
