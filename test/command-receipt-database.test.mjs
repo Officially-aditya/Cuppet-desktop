@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
 import { CommandReceiptStore } from '../src/runtime/command-receipts.mjs';
-import { CommandReceiptDatabaseFacade, committedTurnDelivery } from '../src/runtime/command-receipt-database.mjs';
+import { CommandReceiptDatabaseFacade, committedSessionCreation, committedTurnDelivery } from '../src/runtime/command-receipt-database.mjs';
 
 test('direct turn creation and command acceptance commit atomically', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-command-db-'));
@@ -63,6 +63,45 @@ test('receipt acceptance rolls back with the turn transaction', async () => {
     assert.equal(db.getMessage('u-rb'), null);
     assert.equal(db.getMessage('a-rb'), null);
     assert.equal(receipts.get('cmd-rb')?.state, 'processing');
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('session creation and command acceptance commit atomically', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-command-create-'));
+  const db = new ConversationDatabase(join(dir, 'conversations.sqlite3'));
+  try {
+    const receipts = new CommandReceiptStore(db.sqlRepository());
+    receipts.begin({ commandId: 'cmd-create', method: 'session.create', params: {}, now: 1 });
+    const facade = new CommandReceiptDatabaseFacade(db, receipts);
+
+    const session = facade.run({ commandId: 'cmd-create', method: 'session.create' }, () =>
+      facade.database.createSession({ id: 'session_atomic', now: 2 }));
+
+    assert.ok(committedSessionCreation(session));
+    assert.deepEqual(db.getSessionSummary('session_atomic'), session);
+    assert.equal(receipts.get('cmd-create')?.state, 'accepted');
+    assert.deepEqual(receipts.get('cmd-create')?.result, session);
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('session creation rolls back when receipt acceptance cannot commit', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-command-create-rollback-'));
+  const db = new ConversationDatabase(join(dir, 'conversations.sqlite3'));
+  try {
+    const facade = new CommandReceiptDatabaseFacade(db, {
+      accept() { throw new Error('receipt write failed'); },
+    });
+
+    assert.throws(() => facade.run({ commandId: 'cmd-create-fail', method: 'session.create' }, () =>
+      facade.database.createSession({ id: 'session_rollback', now: 3 })), /receipt write failed/);
+
+    assert.equal(db.getSessionSummary('session_rollback'), null);
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });
