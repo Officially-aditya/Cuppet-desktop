@@ -5,9 +5,11 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
 const chatPane = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
 
-test('runtime host serializes queued turns through the durable turn store', () => {
+test('runtime host serializes queued turns through the shared durable turn store', () => {
   assert.match(source, /case 'session\.send': return sendOrQueue\(params\)/);
-  assert.match(source, /new TurnStore\(join\(dataDir, 'turn-state\.sqlite3'\)\)/);
+  assert.match(source, /const localState = new ConversationDatabase\(databasePath\)/);
+  assert.match(source, /new TurnStore\(localState\.sqlRepository\(\), \{ legacyPath: join\(dataDir, 'turn-state\.sqlite3'\) \}\)/);
+  assert.doesNotMatch(source, /new TurnStore\(join\(dataDir, 'turn-state\.sqlite3'\)\)/, 'legacy turn-state.sqlite3 must not remain a live runtime authority');
   assert.match(source, /turnStore\.enqueue\(/);
   assert.match(source, /turnStore\.claimNext\(/);
   assert.match(source, /turnStore\.completeQueue\(/);
