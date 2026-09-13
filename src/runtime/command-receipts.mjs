@@ -54,7 +54,14 @@ export class CommandReceiptStore {
     return this.#db.transaction(() => {
       const current = this.get(id);
       if (!current) throw receiptError(`Unknown command receipt: ${id}`, 'COMMAND_RECEIPT_MISSING');
-      if (current.state === 'accepted') return current;
+      if (current.state === 'accepted') {
+        this.#db.prepare(`
+          UPDATE command_receipts
+          SET result_json=?, error=NULL, updated_at=?
+          WHERE command_id=? AND state='accepted'
+        `).run(JSON.stringify(safeResult(result)), now, id);
+        return this.get(id);
+      }
       if (current.state !== 'processing') throw receiptStateError(current);
       this.#db.prepare(`
         UPDATE command_receipts
