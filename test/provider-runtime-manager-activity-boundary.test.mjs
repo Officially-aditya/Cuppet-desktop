@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { providerActivity } from '../src/runtime/providers/activity.mjs';
+import { buildProviderBackendRegistry } from '../src/runtime/providers/default-registry.mjs';
 import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
+
+const opencodeFixture = fileURLToPath(new URL('./fixtures/fake-opencode-acp-agent.mjs', import.meta.url));
 
 function managedAdapter() {
   return {
@@ -86,4 +90,25 @@ test('managed ACP still forwards canonical Activity when a canonical observer ex
   } finally {
     await manager.close();
   }
+});
+
+test('stateless ACP emits canonical Activity without a legacy provider-event mirror', async () => {
+  const registry = buildProviderBackendRegistry();
+  const adapter = registry.createConfiguredRuntime({
+    providerID: 'opencode',
+    cliCommand: process.execPath,
+    cliArgs: [opencodeFixture],
+    primary: { modelID: 'provider/model-b', variant: 'max' },
+  });
+  const activities = [];
+  const legacy = [];
+  const result = await adapter.stream([{ role: 'user', content: 'Reply when ready.' }], {
+    projectRoot: process.cwd(),
+    onActivity: async (activity) => activities.push(activity),
+    onProviderEvent: async (event) => legacy.push(event),
+  });
+
+  assert.equal(result.text, 'OpenCode ACP ready.');
+  assert.ok(activities.some((activity) => activity.type === 'activity.text.delta' && activity.text === 'OpenCode ACP ready.'));
+  assert.deepEqual(legacy, []);
 });
