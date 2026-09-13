@@ -24,6 +24,17 @@ function fixture() {
       { id: 'exec-1', sessionId: 's1', callId: 'tool-1', tool: 'workspace_read', status: 'complete' },
     ],
   };
+  const run = {
+    runId: 'm-assistant',
+    sessionId: 's1',
+    sourceSessionId: null,
+    projectId: 'p1',
+    status: 'running',
+    phase: 'tool_running',
+    error: null,
+    createdAt: 100,
+    updatedAt: 120,
+  };
   const call = async (method, params = {}) => {
     switch (method) {
       case 'project.list': return [{ id: 'p1', name: 'Project', canonicalPath: '/tmp/project' }];
@@ -32,6 +43,7 @@ function fixture() {
       case 'session.get': assert.equal(params.sessionId, 's1'); return structuredClone(session);
       case 'session.mode.get': return { sessionId: 's1', mode: 'build' };
       case 'session.auto.get': return { sessionId: 's1', enabled: false };
+      case 'session.run.latest': assert.equal(params.sessionId, 's1'); return structuredClone(run);
       default: throw new Error(`unexpected ${method}`);
     }
   };
@@ -42,7 +54,7 @@ function fixture() {
   });
 }
 
-test('remote session.snapshot returns the durable session transcript/activity/tool projection intact', async () => {
+test('remote session.snapshot returns durable transcript, tool, and run projections intact', async () => {
   const adapter = fixture();
   await adapter.execute(actor, 'workspace.attach', { workspaceId: 'p1' });
   await adapter.execute(actor, 'session.resume', { sessionID: 's1' });
@@ -53,6 +65,17 @@ test('remote session.snapshot returns the durable session transcript/activity/to
   assert.deepEqual(snapshot.session.messages.map((item) => item.id), ['m-user', 'm-assistant']);
   assert.deepEqual(snapshot.session.activities.map((item) => item.activity.type), ['activity.reasoning.delta', 'activity.tool.closed']);
   assert.deepEqual(snapshot.session.toolExecutions.map((item) => item.callId), ['tool-1']);
+  assert.deepEqual(snapshot.run, {
+    runId: 'm-assistant',
+    sessionId: 's1',
+    sourceSessionId: null,
+    projectId: 'p1',
+    status: 'running',
+    phase: 'tool_running',
+    error: null,
+    createdAt: 100,
+    updatedAt: 120,
+  });
   assert.equal(snapshot.mode, 'build');
   assert.equal(snapshot.autoMode, false);
   assert.equal(JSON.stringify(snapshot).includes('secret'), false);
@@ -79,11 +102,15 @@ test('remote runtime publication invalidates durable projections instead of rema
 });
 
 test('remote browser consumes session.snapshot projection instead of owning live transcript reducers', async () => {
-  const source = await readFile(new URL('../src/remote-app/app.js', import.meta.url), 'utf8');
+  const [source, commands] = await Promise.all([
+    readFile(new URL('../src/remote-app/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/remote/commands.mjs', import.meta.url), 'utf8'),
+  ]);
   assert.match(source, /case 'session\.projection\.invalidated'/);
   assert.match(source, /command\('session\.snapshot'\)/);
   assert.match(source, /renderSessionProjection\(snap\)/);
   assert.match(source, /session\.activities/);
+  assert.match(commands, /this\.#call\('session\.run\.latest',\{sessionId\}\)/);
   assert.doesNotMatch(source, /command\('session\.messages'\)/);
   assert.doesNotMatch(source, /case 'assistant\.text\.delta'/);
   assert.doesNotMatch(source, /case 'tool\.started'/);
