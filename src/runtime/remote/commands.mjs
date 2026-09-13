@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { PROTOCOL_VERSION } from './protocol.mjs';
 import {
@@ -31,7 +32,7 @@ export class RemoteCommandAdapter {
       case 'session.messages': return this.#sessionMessages(state,explicitSession);
       case 'session.new': return this.#sessionNew(state,params);
       case 'session.resume': return this.#sessionResume(state,explicitSession);
-      case 'session.submit': return this.#sessionSubmit(actor,state,explicitSession,params);
+      case 'session.submit': return this.#sessionSubmit(actor,state,explicitSession,params,envelope);
       case 'session.steer': return this.#sessionSteer(state,explicitSession,params);
       case 'session.abort': return this.#call('session.stop',{sessionId:this.#requireSession(state,explicitSession)});
       case 'session.compact': return this.#call('context.compact',{sessionId:this.#requireSession(state,explicitSession),provider:this.#selectedProvider(state)});
@@ -76,7 +77,7 @@ export class RemoteCommandAdapter {
     const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId}); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
   }
   async #sessionResume(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});state.sessionId=session.id;state.projectId=session.projectId??state.projectId;return session;}
-  async #sessionSubmit(actor,state,explicit,params){
+  async #sessionSubmit(actor,state,explicit,params,envelope){
     const sessionId=this.#requireSession(state,explicit); const prompt=String(params.prompt??params.text??'').trim(); if(!prompt)throw new Error('prompt is required');
     const parsed=parseSlashCommand(prompt);
     if(parsed.kind==='unknown')throw new Error(`Unknown Cuppet command: /${parsed.name}`);
@@ -95,7 +96,13 @@ export class RemoteCommandAdapter {
       });
     }
     if(params.delivery==='steer')return this.#sessionSteer(state,sessionId,{instruction:prompt});
-    const result=await this.#call('session.send',{sessionId,text:prompt,attachments:boundedAttachments(params.attachments),provider:this.#selectedProvider(state)}); state.sessionId=result.sessionId; return result;
+    const result=await this.#call(
+      'session.send',
+      {sessionId,text:prompt,attachments:boundedAttachments(params.attachments),provider:this.#selectedProvider(state)},
+      {commandId:remoteCommandId(actor,envelope)},
+    );
+    state.sessionId=result.sessionId;
+    return result;
   }
   async #sessionSteer(state,explicit,params){
     const sessionId=this.#requireSession(state,explicit); const instruction=String(params.instruction??params.prompt??'').trim(); if(!instruction)throw new Error('instruction is required');
@@ -218,6 +225,13 @@ export class RemoteCommandAdapter {
   #state(deviceId){const key=String(deviceId??'unknown');let state=this.#states.get(key);if(!state){state={projectId:null,sessionId:null,providerID:null,selection:null};this.#states.set(key,state);}return state;}
 }
 
+function remoteCommandId(actor,envelope){
+  const deviceID=String(actor?.deviceID??'');
+  const envelopeID=String(envelope?.id??'');
+  if(!deviceID||!envelopeID)throw new Error('remote session.submit requires a command envelope id');
+  const digest=createHash('sha256').update(deviceID).update('\0').update(envelopeID).digest('hex');
+  return `remote:${digest}`;
+}
 function sameSelection(left,right){return String(left?.providerID??'').toLowerCase()===String(right?.providerID??'').toLowerCase()&&String(left?.modelID??'')===String(right?.modelID??'');}
 function displayPath(path,name){if(typeof path!=='string'||!path)return name??'Project';return `…/${basename(path)}`;}
 function record(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
