@@ -229,14 +229,11 @@ export class RemoteCommandAdapter {
 function remoteCommandId(actor,envelope){
   const deviceID=String(actor?.deviceID??'');
   const envelopeID=String(envelope?.id??'');
-  if(!deviceID||!envelopeID)throw new Error('remote session.submit requires a command envelope id');
+  if(!deviceID||!envelopeID)throw new Error('remote retry-sensitive command requires a command envelope id');
   const digest=createHash('sha256').update(deviceID).update('\0').update(envelopeID).digest('hex');
   return `remote:${digest}`;
 }
 function remoteCommandContext(actor,envelope){
-  const deviceID=String(actor?.deviceID??'');
-  const envelopeID=String(envelope?.id??'');
-  if(!deviceID||!envelopeID)return undefined;
   return {commandId:remoteCommandId(actor,envelope)};
 }
 function sameSelection(left,right){return String(left?.providerID??'').toLowerCase()===String(right?.providerID??'').toLowerCase()&&String(left?.modelID??'')===String(right?.modelID??'');}
