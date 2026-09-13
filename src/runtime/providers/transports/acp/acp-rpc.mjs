@@ -1,3 +1,5 @@
+import { providerFailureError } from '../../provider-failure.mjs';
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 const SESSION_NEW_RETRY_DELAY_MS = 250;
 
@@ -20,12 +22,23 @@ export class AcpRpcChannel {
     processHandle.onLine((line) => this.#onLine(line));
     processHandle.onExit(({ code, signal, expected }) => {
       if (expected || this.#closed) return;
-      this.#failAll(new Error(`${this.#label} ACP exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.`));
+      this.#failAll(providerFailureError(
+        `${this.#label} ACP exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.`,
+        {
+          code: 'PROVIDER_PROCESS_EXITED',
+          category: 'process_exited',
+          retryable: true,
+          action: 'retry',
+          diagnostic: this.#process.stderr(),
+        },
+      ));
     });
   }
 
   ready() { return this.#process.ready(); }
   stderr() { return this.#process.stderr(); }
+  processSnapshot() { return this.#process.snapshot?.() ?? null; }
+  healthy() { return this.#closed === false && (this.#process.isRunning?.() ?? true); }
   setNotificationHandler(handler) { this.#notificationHandler = typeof handler === 'function' ? handler : async () => {}; }
   setRequestHandler(handler) { this.#requestHandler = typeof handler === 'function' ? handler : this.#requestHandler; }
 
@@ -40,24 +53,48 @@ export class AcpRpcChannel {
   }
 
   #requestOnce(method, params, timeoutMs) {
-    if (this.#closed) return Promise.reject(new Error(`${this.#label} ACP channel is closed.`));
+    if (this.#closed) {
+      return Promise.reject(providerFailureError(`${this.#label} ACP channel is closed.`, {
+        code: 'PROVIDER_TRANSPORT_CLOSED',
+        category: 'transport_closed',
+        retryable: true,
+        action: 'retry',
+      }));
+    }
     const id = this.#nextId++;
     return new Promise((resolveRequest, rejectRequest) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
-        rejectRequest(new Error(`${method} timed out.`));
+        rejectRequest(providerFailureError(`${method} timed out.`, {
+          code: 'PROVIDER_TIMEOUT',
+          category: 'timeout',
+          retryable: true,
+          action: 'retry',
+          diagnostic: this.#process.stderr(),
+        }));
       }, timeoutMs);
-      this.#pending.set(id, {
+      const pending = {
         resolve(value) { clearTimeout(timer); resolveRequest(value); },
         reject(error) { clearTimeout(timer); rejectRequest(error); },
-      });
-      this.#process.write({ jsonrpc: '2.0', id, method, params });
+      };
+      this.#pending.set(id, pending);
+      try {
+        this.#process.write({ jsonrpc: '2.0', id, method, params });
+      } catch (error) {
+        this.#pending.delete(id);
+        clearTimeout(timer);
+        rejectRequest(error);
+      }
     });
   }
 
   notify(method, params) {
     if (this.#closed) return;
-    this.#process.write({ jsonrpc: '2.0', method, params });
+    try {
+      this.#process.write({ jsonrpc: '2.0', method, params });
+    } catch {
+      // Notifications are best-effort; request paths carry transport failures to callers.
+    }
   }
 
   terminate() { this.#process.terminate(); }
@@ -65,7 +102,11 @@ export class AcpRpcChannel {
   close() {
     if (this.#closed) return;
     this.#closed = true;
-    this.#failAll(new Error(`${this.#label} ACP channel closed.`));
+    this.#failAll(providerFailureError(`${this.#label} ACP channel closed.`, {
+      code: 'PROVIDER_TRANSPORT_CLOSED',
+      category: 'transport_closed',
+      retryable: false,
+    }));
     this.#process.close();
   }
 
@@ -85,8 +126,8 @@ export class AcpRpcChannel {
 
     if (message.method && Object.prototype.hasOwnProperty.call(message, 'id')) {
       void Promise.resolve(this.#requestHandler(message)).then(
-        (result) => this.#process.write({ jsonrpc: '2.0', id: message.id, result: result ?? {} }),
-        (error) => this.#process.write({
+        (result) => safeWrite(this.#process, { jsonrpc: '2.0', id: message.id, result: result ?? {} }),
+        (error) => safeWrite(this.#process, {
           jsonrpc: '2.0',
           id: message.id,
           error: { code: error?.rpcCode ?? -32000, message: cleanError(error) },
@@ -123,6 +164,9 @@ function isTransientSessionNewFailure(method, error) {
     && /internal error/i.test(cleanError(error));
 }
 
+function safeWrite(processHandle, payload) {
+  try { processHandle.write(payload); } catch {}
+}
 function safeRpcData(value) {
   if (value === undefined || value === null) return '';
   try {
