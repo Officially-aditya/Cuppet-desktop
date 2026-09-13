@@ -1,3 +1,5 @@
+import { normalizeRunPhase } from './run-phase.mjs';
+
 const ACTIVE_RUN_STATUSES = ['starting', 'running', 'waiting', 'settling'];
 
 export class RunStateProjection {
@@ -31,7 +33,7 @@ export class RunStateProjection {
     if (!session) return null;
     const row = this.#db.prepare(`
       SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
-             project_id AS projectId, status, error, created_at AS createdAt, updated_at AS updatedAt
+             project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt
       FROM runs
       WHERE session_id=? AND status IN ('starting','running','waiting','settling')
       ORDER BY updated_at DESC, created_at DESC, run_id DESC
@@ -43,6 +45,7 @@ export class RunStateProjection {
       sourceSessionId: optionalText(row.sourceSessionId),
       projectId: optionalText(row.projectId),
       status: ACTIVE_RUN_STATUSES.includes(String(row.status)) ? String(row.status) : 'running',
+      phase: normalizeRunPhase(row.phase, row.status),
       error: optionalText(row.error),
       createdAt: Number(row.createdAt) || 0,
       updatedAt: Number(row.updatedAt) || 0,
