@@ -7,7 +7,6 @@ import type {
   Message,
   PermissionRequest,
   Project,
-  ProviderSettings,
   QuestionRequest,
   RuntimeEvent,
   Session,
@@ -29,6 +28,11 @@ import {
   markClientRunStarted,
   useClientRunState,
 } from './client-run-state';
+import {
+  hydrateClientProviderSettings,
+  refreshClientProviderSettings,
+  useClientProviderSettings,
+} from './client-provider-state';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
@@ -40,7 +44,6 @@ export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [active, setActive] = useState<Session | null>(null);
   const [draft, setDraft] = useState<Draft | null>({ projectId: null, mode: 'build' });
-  const [provider, setProvider] = useState<ProviderSettings | null>(null);
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
@@ -51,6 +54,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const running = useClientRunState();
+  const provider = useClientProviderSettings();
 
   const activeProjectId = active?.projectId ?? draft?.projectId ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
@@ -123,17 +127,16 @@ export function App() {
     let disposed = false;
     void (async () => {
       try {
-        const [health, nextProvider, nextProjects, nextSessions, nextCognitive, nextCommands] = await Promise.all([
+        const [health, nextProjects, nextSessions, nextCognitive, nextCommands] = await Promise.all([
           window.cuppet.health(),
-          window.cuppet.settings.get(),
           window.cuppet.projects.list(),
           window.cuppet.sessions.list(),
           window.cuppet.cognitive.status(),
           window.cuppet.commands.list(),
+          refreshClientProviderSettings(),
         ]);
         if (disposed) return;
         if (!health?.ok) showToast('Runtime unavailable');
-        setProvider(nextProvider);
         setProjects(nextProjects);
         setSessions(nextSessions);
         setCognitive(nextCognitive);
@@ -412,7 +415,7 @@ export function App() {
       {modal === 'add-project' && <AddProjectModal onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}
       {modal === 'search' && <SearchModal projects={projects} onClose={() => setModal(null)} onOpen={async (id) => { await openSession(id); setModal(null); }} onChanged={refreshLists} onError={showToast} />}
       {modal === 'remote' && <RemoteModal onClose={() => setModal(null)} onError={showToast} />}
-      {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={(value) => setProvider(value)} onOpenRemote={() => setModal('remote')} onError={showToast} />}
+      {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={hydrateClientProviderSettings} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
       {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
       <Toast message={toast} onClear={() => setToast(null)} />
