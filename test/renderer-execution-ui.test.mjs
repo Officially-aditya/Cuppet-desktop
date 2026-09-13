@@ -22,8 +22,10 @@ test('React composer selects queue or steer intent while durable queue ownership
   assert.match(app, /queue\.queued/);
   assert.match(app, /queue\.dispatched/);
 
-  assert.match(runtimeMain, /case 'session\.send': return sendOrQueue\(params\)/);
+  assert.match(runtimeMain, /case 'session\.send': return sendOrQueue\(params, context\.commandId\)/);
+  assert.match(runtimeMain, /new CommandReceiptStore\(repository\)/);
   assert.match(runtimeMain, /turnStore\.enqueue\(/);
+  assert.match(runtimeMain, /queueSafeSendParams\(/);
   assert.match(runtimeMain, /drainQueued\(/);
   assert.match(runtimeMain, /turnStore\.queuedSessions\(\)/);
 });
