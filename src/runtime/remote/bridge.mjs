@@ -65,7 +65,7 @@ export class RemoteBridge {
       const actor={kind:'remote',deviceID:deviceId,deviceName:authorized.name,scopes:[...authorized.scopes]};
       const result=await this.#commands.execute(actor,envelope.type,envelope.payload??{},envelope);
       this.#send({version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId});
-    }catch(error){this.#resultError(envelope.id,cleanError(error),deviceId);}
+    }catch(error){this.#resultError(envelope.id,cleanError(error),deviceId,errorCode(error));}
   }
   async #reauthorize(deviceId,device){
     if(typeof device.reauthorize!=='function')return device;
@@ -108,6 +108,7 @@ export class RemoteBridge {
   #clearDevices(){for(const id of [...this.#devices.keys()])this.#clearDevice(id);for(const timer of this.#timers.values())clearTimeout(timer);this.#timers.clear();}
   #notifyDeviceChange(){try{this.#onDeviceChange?.(this.activeDevices);}catch{}}
   #remember(id){this.#seen.set(id,true);if(this.#seen.size>DEDUPE_CAPACITY)this.#seen.delete(this.#seen.keys().next().value);}
-  #resultError(replyTo,message,deviceId){this.#send({version:PROTOCOL_VERSION,replyTo,ok:false,error:String(message).slice(0,1000),...(deviceId?{deviceId}:{})});}
+  #resultError(replyTo,message,deviceId,code){this.#send({version:PROTOCOL_VERSION,replyTo,ok:false,error:String(message).slice(0,1000),...(code?{code}:{}),...(deviceId?{deviceId}:{})});}
 }
+function errorCode(error){const code=typeof error?.code==='string'?error.code.trim().slice(0,120):'';return code||undefined;}
 function cleanError(error){return (error instanceof Error?error.message:String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [redacted]').slice(0,1000);}
