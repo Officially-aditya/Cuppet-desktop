@@ -1,11 +1,16 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { installCodexAuthIpc } from './codex-auth.mjs';
+import { applyLocalCliEnvironment } from '../runtime/local-cli-environment.mjs';
 
 const singleInstance = app.requestSingleInstanceLock();
 
 if (!singleInstance) {
   app.quit();
 } else {
+  // LaunchServices/Finder starts macOS apps with launchd's reduced PATH. Recover
+  // only the user's login-shell PATH before importing the desktop runtime so the
+  // runtime child and Settings probes resolve the same local CLIs as Terminal.
+  applyLocalCliEnvironment();
   installSecurityGuards();
   installCodexAuthIpc();
   app.on('second-instance', () => {
