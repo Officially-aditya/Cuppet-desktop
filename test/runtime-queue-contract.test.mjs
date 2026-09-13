@@ -56,6 +56,6 @@ test('renderer delegates queue ownership to the runtime', () => {
   assert.match(chatPane, /The runtime owns queueing/);
 });
 
-test('remote manager calls through the same runtime host boundary', () => {
-  assert.match(source, /new RemoteManager\(\{ dataDir, call: \(method, params\) => handle\(method, params\)/);
+test('remote manager calls through the same runtime host boundary and preserves durable command context', () => {
+  assert.match(source, /new RemoteManager\(\{ dataDir, call: \(method, params, context\) => handle\(method, params, context\)/);
 });
