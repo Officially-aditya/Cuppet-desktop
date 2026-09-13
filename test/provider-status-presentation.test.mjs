@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/renderer/react/provider-status-presentation.ts', import.meta.url), 'utf8');
+const settingsSource = await readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8');
 
 function project(status, providerLabel = 'OpenCode', busy = false) {
   const transformed = source
@@ -15,6 +16,13 @@ function project(status, providerLabel = 'OpenCode', busy = false) {
     .replace(/ as Record<string, any>/g, '');
   return Function(`${transformed}; return providerStatusPresentation(arguments[0], arguments[1], arguments[2]);`)(status, providerLabel, busy);
 }
+
+test('unknown provider observation remains checking rather than missing', () => {
+  const value = project({ providerID: 'opencode', available: false, message: 'Checking local CLI…' });
+  assert.equal(value.credentialReady, false);
+  assert.equal(value.badge, 'Checking…');
+  assert.equal(value.canConnect, false);
+});
 
 test('authenticated stopped provider is connected and idle, not broken', () => {
   const value = project({
@@ -83,4 +91,13 @@ test('capability discovery failure does not pretend auth or runtime failed', () 
   assert.equal(value.badge, 'Connected');
   assert.equal(value.tone, 'warning');
   assert.equal(value.detail, 'model discovery failed');
+});
+
+test('settings renders the runtime-owned provider projection instead of flattening connected state', () => {
+  assert.match(settingsSource, /providerStatusPresentation\(cliStatus,/);
+  assert.match(settingsSource, /cliPresentation\.credentialReady/);
+  assert.match(settingsSource, /cliPresentation\.badge/);
+  assert.match(settingsSource, /Retry next request/);
+  assert.doesNotMatch(settingsSource, /const cliConnected = Boolean\(cliStatus\?\.connected/);
+  assert.doesNotMatch(settingsSource, /cliConnected \? 'Connected'/);
 });
