@@ -25,7 +25,6 @@ const MAX_QUEUED_TURNS = 16;
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remote;
 let currentProviderConfig = null;
-const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
 const localState = new ConversationDatabase(databasePath);
@@ -47,16 +46,17 @@ const emit = (event) => {
     });
   }
   if (event?.type === 'run.finished' && event.sessionId) {
+    let queueOwnerSessionId = event.sessionId;
     if (event.messageId) {
+      const durableRun = turnStore.getRun(event.messageId);
+      queueOwnerSessionId = durableRun?.sourceSessionId ?? durableRun?.sessionId ?? event.sessionId;
       const message = localState?.getMessage?.(event.messageId);
       turnStore.finishRun(event.messageId, {
         status: message?.status ?? 'complete',
         ...(message?.status === 'error' ? { error: 'Generation failed.' } : {}),
       });
     }
-    const owner = queueOwnerByRun.get(event.sessionId) ?? event.sessionId;
-    queueOwnerByRun.delete(event.sessionId);
-    queueMicrotask(() => void drainQueued(owner));
+    queueMicrotask(() => void drainQueued(queueOwnerSessionId));
   }
   write({ kind: 'event', event });
   remote?.handleRuntimeEvent(event);
@@ -301,7 +301,6 @@ async function drainQueued(ownerSessionId) {
     const result = await service.handle('session.send', params);
     turnStore.completeQueue(item.id);
     const runSessionId = result?.sessionId ?? ownerSessionId;
-    queueOwnerByRun.set(runSessionId, ownerSessionId);
     emit({ type: 'queue.dispatched', sessionId: ownerSessionId, runSessionId, queueId: item.id });
     if (!runState.isActive(runSessionId)) queueMicrotask(() => void drainQueued(ownerSessionId));
   } catch (error) {
