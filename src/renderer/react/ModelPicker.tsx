@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderModelCatalog, ProviderSettings } from '../types';
-import { PROVIDER_SETTINGS_EVENT, notifyProviderSettingsChanged } from './provider-settings-events';
+import { notifyProviderSettingsChanged } from './provider-settings-events';
+import {
+  hydrateClientProviderSettings,
+  refreshClientProviderSettings,
+  useClientProviderSettings,
+} from './client-provider-state';
 
 type ModelOption = {
   id: string;
@@ -26,27 +31,36 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<PickerStage>('models');
   const [busy, setBusy] = useState(false);
-  const [settings, setSettings] = useState<ProviderSettings | null>(null);
+  const settings = useClientProviderSettings();
   const [advertised, setAdvertised] = useState<ProviderModelCatalog>(EMPTY_ADVERTISED);
   const [error, setError] = useState('');
 
-  const refresh = async () => {
-    const next = await window.cuppet.settings.get();
-    setSettings(next);
+  const refreshCatalog = async (next: ProviderSettings) => {
     const providerID = next.primary?.providerID || next.providerID || '';
     setError('');
     const catalog = await window.cuppet.settings.models();
     setAdvertised(catalog.providerID === providerID ? catalog : EMPTY_ADVERTISED);
     if (catalog.error && !catalog.models.length) setError(catalog.error);
+    return catalog;
+  };
+
+  const refresh = async () => {
+    const next = settings ?? await refreshClientProviderSettings();
+    await refreshCatalog(next);
+    return next;
+  };
+
+  const acceptSettings = (next: ProviderSettings) => {
+    hydrateClientProviderSettings(next);
+    onChange?.(next);
+    notifyProviderSettingsChanged();
     return next;
   };
 
   useEffect(() => {
-    void refresh().catch((value) => setError(message(value)));
-    const sync = () => { void refresh().catch((value) => setError(message(value))); };
-    window.addEventListener(PROVIDER_SETTINGS_EVENT, sync);
-    return () => window.removeEventListener(PROVIDER_SETTINGS_EVENT, sync);
-  }, []);
+    if (!settings) return;
+    void refreshCatalog(settings).catch((value) => setError(message(value)));
+  }, [settings]);
 
   useEffect(() => {
     if (!open) return;
@@ -123,7 +137,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setBusy(true);
     setError('');
     try {
-      const current = settings ?? await window.cuppet.settings.get();
+      const current = settings ?? await refreshClientProviderSettings();
       const currentProvider = current.primary?.providerID || current.providerID || '';
       const primaryModel = current.primary?.modelID || '';
       if (!currentProvider || !primaryModel) throw new Error('Configure a primary model before using automatic secondary selection.');
@@ -136,9 +150,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         secondaryEffort: '',
         secondaryAuto: true,
       });
-      setSettings(next);
-      onChange?.(next);
-      notifyProviderSettingsChanged();
+      acceptSettings(next);
       setOpen(false);
       setStage('models');
     } catch (value) {
@@ -154,7 +166,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setBusy(true);
     setError('');
     try {
-      const current = settings ?? await window.cuppet.settings.get();
+      const current = settings ?? await refreshClientProviderSettings();
       const currentProvider = current.primary?.providerID || current.providerID || '';
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
@@ -184,9 +196,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
           secondaryEffort: slot === 'secondary' ? nextEffort : selectedEffort('secondary', currentProvider, current),
           ...(slot === 'secondary' ? { secondaryAuto: false } : {}),
         });
-        setSettings(next);
-        onChange?.(next);
-        notifyProviderSettingsChanged();
+        acceptSettings(next);
       }
 
       if (slot === 'primary' && nextEffortState.options.length > 0) {
@@ -214,7 +224,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setBusy(true);
     setError('');
     try {
-      const current = settings ?? await window.cuppet.settings.get();
+      const current = settings ?? await refreshClientProviderSettings();
       const currentProvider = current.primary?.providerID || current.providerID || '';
       if (!currentProvider) throw new Error('Configure a provider before selecting reasoning effort.');
       const saved = await window.cuppet.settings.save({
@@ -225,9 +235,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         primaryEffort: value,
         secondaryEffort: selectedEffort('secondary', currentProvider, current),
       });
-      setSettings(saved);
-      onChange?.(saved);
-      notifyProviderSettingsChanged();
+      acceptSettings(saved);
       setOpen(false);
       setStage('models');
     } catch (value) {
