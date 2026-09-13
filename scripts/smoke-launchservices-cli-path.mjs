@@ -19,14 +19,6 @@ const fakeShell = join(tempRoot, 'login-shell');
 const fakeOpenCode = join(fakeBin, 'opencode');
 const resultPath = join(tempRoot, 'result.json');
 const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
-const envPatch = {
-  PATH: launchdPath,
-  SHELL: fakeShell,
-  HOME: fakeHome,
-  CUPPET_INTERNAL_GUI_CLI_SMOKE: '1',
-  CUPPET_INTERNAL_GUI_CLI_SMOKE_RESULT: resultPath,
-};
-const previous = new Map();
 
 if (process.platform !== 'darwin') throw new Error('LaunchServices CLI PATH smoke is macOS-only.');
 await access(appPath);
@@ -41,14 +33,21 @@ await chmod(fakeShell, 0o700);
 await chmod(fakeOpenCode, 0o700);
 
 try {
-  for (const [name, value] of Object.entries(envPatch)) {
-    previous.set(name, await launchctlGet(name));
-    await launchctlSet(name, value);
-  }
-
   const args = ['-W', '-n', appPath];
   if (!requestedApp) args.push('--args', root);
+  const launchEnvironment = {
+    PATH: launchdPath,
+    SHELL: fakeShell,
+    HOME: fakeHome,
+    TMPDIR: process.env.TMPDIR || '/tmp',
+    USER: process.env.USER || 'runner',
+    LOGNAME: process.env.LOGNAME || process.env.USER || 'runner',
+    LANG: process.env.LANG || 'en_US.UTF-8',
+    CUPPET_INTERNAL_GUI_CLI_SMOKE: '1',
+    CUPPET_INTERNAL_GUI_CLI_SMOKE_RESULT: resultPath,
+  };
   await execFileAsync('/usr/bin/open', args, {
+    env: launchEnvironment,
     timeout: 45_000,
     maxBuffer: 256 * 1024,
   });
@@ -63,17 +62,10 @@ try {
   assert.ok(!launchdPath.split(':').includes(fakeBin), 'test setup accidentally put fake CLI in launchd PATH');
 
   console.log(`[launchservices-smoke] app=${appPath}`);
+  console.log(`[launchservices-smoke] launchdPath=${launchdPath}`);
   console.log(`[launchservices-smoke] executable=${result.executable}`);
-  console.log('[launchservices-smoke] PASS: LaunchServices -> bootstrap login PATH recovery -> runtime child -> runtime provider control plane resolved authenticated OpenCode.');
+  console.log('[launchservices-smoke] PASS: LaunchServices with launchd-style env -> bootstrap login PATH recovery -> runtime child -> runtime provider control plane resolved authenticated OpenCode.');
 } finally {
-  for (const [name, oldValue] of [...previous.entries()].reverse()) {
-    try {
-      if (oldValue === null) await launchctlUnset(name);
-      else await launchctlSet(name, oldValue);
-    } catch (error) {
-      console.error(`[launchservices-smoke] failed to restore ${name}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
   await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
 }
 
@@ -108,22 +100,4 @@ function normalizeApp(value) {
   const resolved = resolve(app);
   if (!resolved.endsWith('.app')) throw new Error(`Expected a .app bundle, received ${resolved}`);
   return resolved;
-}
-
-async function launchctlGet(name) {
-  try {
-    const { stdout } = await execFileAsync('/bin/launchctl', ['getenv', name], { timeout: 5_000, maxBuffer: 64 * 1024 });
-    const value = String(stdout ?? '').replace(/\r?\n$/, '');
-    return value || null;
-  } catch {
-    return null;
-  }
-}
-
-async function launchctlSet(name, value) {
-  await execFileAsync('/bin/launchctl', ['setenv', name, String(value)], { timeout: 5_000, maxBuffer: 64 * 1024 });
-}
-
-async function launchctlUnset(name) {
-  await execFileAsync('/bin/launchctl', ['unsetenv', name], { timeout: 5_000, maxBuffer: 64 * 1024 });
 }
