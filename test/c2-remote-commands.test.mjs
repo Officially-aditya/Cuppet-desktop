@@ -70,6 +70,23 @@ test('ordinary remote submits derive stable device-scoped durable command ids',a
   assert.notEqual(dev2Send.context.commandId,dev1Sends[0].context.commandId);
 });
 
+test('remote submit command identity survives adapter recreation',async()=>{
+  const first=fixture();
+  await first.adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+  await first.adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  await first.adapter.execute(actor,'session.submit',{prompt:'survive restart'},{id:'restart-envelope'});
+  const firstSend=first.calls.findLast((entry)=>entry.method==='session.send');
+
+  const second=fixture();
+  await second.adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+  await second.adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  await second.adapter.execute(actor,'session.submit',{prompt:'survive restart'},{id:'restart-envelope'});
+  const secondSend=second.calls.findLast((entry)=>entry.method==='session.send');
+
+  assert.equal(firstSend.context.commandId,expectedRemoteCommandId('dev_1','restart-envelope'));
+  assert.equal(secondSend.context.commandId,firstSend.context.commandId);
+});
+
 test('remote model selection stays host constrained while undo and questions delegate to runtime authorities',async()=>{
   const {adapter,calls}=fixture();await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});await adapter.execute(actor,'session.resume',{sessionID:'s1'});
   const models=await adapter.execute(actor,'model.list');assert.deepEqual(models.map((m)=>m.modelID),['model-a','model-b']);
