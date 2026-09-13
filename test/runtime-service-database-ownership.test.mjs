@@ -45,8 +45,13 @@ test('RuntimeService borrows a host-owned ConversationDatabase without closing i
   }
 });
 
-test('runtime main injects the single host-owned conversation database into RuntimeService', async () => {
+test('runtime main keeps one physical conversation database owner and injects its receipt-aware view into RuntimeService', async () => {
   const source = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
+  const physicalOwners = source.match(/new ConversationDatabase\(databasePath\)/g) ?? [];
+
+  assert.equal(physicalOwners.length, 1, 'runtime main must create exactly one physical ConversationDatabase');
   assert.match(source, /const localState = new ConversationDatabase\(databasePath\)/);
-  assert.match(source, /new RuntimeService\(\{ database: localState, databasePath, dataDir, emit, tst, browserControl \}\)/);
+  assert.match(source, /const receiptDatabase = new CommandReceiptDatabaseFacade\(localState, commandReceipts\)/);
+  assert.match(source, /new RuntimeService\(\{ database: receiptDatabase\.database, databasePath, dataDir, emit, tst, browserControl \}\)/);
+  assert.doesNotMatch(source, /new RuntimeService\(\{ database: new ConversationDatabase/);
 });
