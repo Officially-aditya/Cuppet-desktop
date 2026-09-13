@@ -123,11 +123,14 @@ async function handle(method, params = {}, context = {}) {
     }
     case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
+    case 'session.create': return runReceiptProtectedCommand('session.create', params, context.commandId, () => service.handle('session.create', params));
     case 'session.send': {
       const sessionId = boundedId(params.sessionId);
       if (!sessionId) return sendOrQueue(params, context.commandId);
       return sendCommands.run(sessionId, () => sendOrQueue(params, context.commandId));
     }
+    case 'session.steer': return runReceiptProtectedCommand('session.steer', params, context.commandId, () => service.handle('session.steer', params));
+    case 'session.undo': return runReceiptProtectedCommand('session.undo', params, context.commandId, () => service.handle('session.undo', params));
     case 'session.search': { await purgeExpiredDeleted(); return localState.search(String(params.query ?? '').slice(0, 512), { limit: params.limit, includeArchived: params.includeArchived === true }); }
     case 'session.rename': return renameSession(params);
     case 'session.archive': return archiveSession(params, true);
@@ -251,6 +254,27 @@ function renameProject(params = {}) {
 function assertSessionIdle(sessionId, action) {
   if (runState.isActive(sessionId)) throw new Error(`cannot ${action} a chat while it is generating`);
   if (turnStore.hasQueued(sessionId)) throw new Error(`cannot ${action} a chat while it has queued messages`);
+}
+
+async function runReceiptProtectedCommand(method, params = {}, commandId = null, execute) {
+  const receiptId = typeof commandId === 'string' && commandId ? commandId : null;
+  if (!receiptId) return execute();
+  const replay = commandReceipts.resolve({ commandId: receiptId, method, params });
+  if (replay?.replay) return replay.result;
+
+  const sessionId = boundedId(params.sessionId) || null;
+  const begun = commandReceipts.begin({ commandId: receiptId, method, sessionId, params });
+  if (!begun.created) return commandReceiptResult(begun.receipt);
+  try {
+    const result = await execute();
+    commandReceipts.accept(receiptId, result);
+    return result;
+  } catch (error) {
+    const receipt = commandReceipts.get(receiptId);
+    if (receipt?.state === 'accepted') return commandReceiptResult(receipt);
+    commandReceipts.fail(receiptId, error);
+    throw error;
+  }
 }
 
 async function sendOrQueue(params = {}, commandId = null) {
