@@ -41,6 +41,48 @@ test('authenticated stopped provider is connected and idle, not broken', () => {
   assert.equal(value.canConnect, false);
 });
 
+test('incompatible provider version is neither missing nor unauthenticated', () => {
+  const value = project({
+    installed: true,
+    connected: false,
+    message: 'OpenCode 1.18.29 is installed, but Cuppet requires OpenCode 1.18.30 or newer. Upgrade OpenCode outside Cuppet, then retry.',
+    control: {
+      overall: 'needs_update',
+      installation: {
+        canUpdate: false,
+        compatibility: { state: 'too_old', supported: false, minimumVersion: '1.18.30', observedVersion: '1.18.29' },
+      },
+      authentication: { state: 'blocked' },
+      runtime: { state: 'stopped' },
+      capabilities: { state: 'blocked' },
+    },
+  });
+  assert.equal(value.credentialReady, false);
+  assert.equal(value.badge, 'Update required');
+  assert.equal(value.tone, 'warning');
+  assert.match(value.detail, /1\.18\.30 or newer/i);
+  assert.equal(value.canConnect, false);
+});
+
+test('Cuppet-managed incompatible provider can use Connect as the explicit repair mutation', () => {
+  const value = project({
+    installed: true,
+    connected: false,
+    control: {
+      overall: 'needs_update',
+      installation: {
+        canUpdate: true,
+        compatibility: { state: 'too_old', supported: false, minimumVersion: '1.18.30', observedVersion: '1.18.29' },
+      },
+      authentication: { state: 'blocked' },
+      runtime: { state: 'stopped' },
+      capabilities: { state: 'blocked' },
+    },
+  });
+  assert.equal(value.badge, 'Update required');
+  assert.equal(value.canConnect, true);
+});
+
 test('transport crash remains authenticated and becomes needs retry', () => {
   const value = project({
     installed: true,
