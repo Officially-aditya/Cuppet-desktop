@@ -2,10 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('composer model picker listens for provider settings changes and requests generic live catalog', async () => {
+test('composer model picker consumes shared provider settings and requests generic live catalog', async () => {
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
+  const providerState = await readFile(new URL('../src/renderer/react/client-provider-state.ts', import.meta.url), 'utf8');
   const modal = await readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8');
-  assert.match(picker, /PROVIDER_SETTINGS_EVENT/);
+  assert.match(picker, /useClientProviderSettings\(\)/);
+  assert.match(picker, /refreshClientProviderSettings\(\)/);
+  assert.doesNotMatch(picker, /window\.cuppet\.settings\.get\(\)/);
+  assert.match(providerState, /PROVIDER_SETTINGS_EVENT/);
+  assert.match(providerState, /window\.cuppet\.settings\.get\(\)/);
   assert.match(picker, /window\.cuppet\.settings\.models\(\)/);
   assert.doesNotMatch(picker, /codexAuth\.models/);
   assert.match(modal, /notifyProviderSettingsChanged\(\)/);
