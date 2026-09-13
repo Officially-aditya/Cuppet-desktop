@@ -3,7 +3,7 @@ import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
 import { executionCapabilities } from './execution/execution-capabilities.mjs';
 import { diffExecutionSnapshots } from './execution/benchmark.mjs';
-import { activityFromLegacyProviderEvent, activityFromToolRuntimeEvent, isProviderActivity, providerActivity } from './providers/activity.mjs';
+import { activityFromToolRuntimeEvent, isProviderActivity, providerActivity } from './providers/activity.mjs';
 
 export class JournaledToolRuntime {
   #inner; #journal; #captures = new Map(); #emit; #db; #providerRuntimes; #executionKernel; #benchmark; #executionCapabilitySource;
@@ -82,18 +82,6 @@ export class JournaledToolRuntime {
         this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
       onActivity: emitProviderActivity,
-      onProviderEvent: (event) => {
-        if (!messageId || !event || typeof event !== 'object') return;
-        try {
-          const activity = activityFromLegacyProviderEvent(event);
-          if (activity) emitProviderActivity(activity);
-        } catch {
-          emitProviderActivity(providerActivity('activity.warning', {
-            code: 'malformed_provider_event',
-            message: 'Provider telemetry was ignored because it did not match the Cuppet Activity contract.',
-          }));
-        }
-      },
     });
     this.#captures.set(options.sessionId, capture);
     try {
@@ -175,9 +163,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #onProviderEvent;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, onProviderEvent = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity; this.#onProviderEvent = onProviderEvent;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
   }
 
   async stream(messages, options) {
@@ -216,7 +204,6 @@ class ToolMutationCapture {
         tools: providerTools,
         onDelta: previewDelta,
         onActivity: async (activity) => this.#onActivity(activity),
-        onProviderEvent: async (event) => this.#onProviderEvent(event),
         ...(executeTool ? { executeTool } : {}),
       });
     } catch (error) {
