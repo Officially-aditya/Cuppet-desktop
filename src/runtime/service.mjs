@@ -20,7 +20,7 @@ import { classifyProviderError } from './provider-error.mjs';
 import { generateChatTitle } from './title-generator.mjs';
 
 export class RuntimeService {
-  #db; #ownsDatabase = false; #emit; #providerFactory; #runs = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #liveExecutions = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     database = null,
@@ -43,12 +43,14 @@ export class RuntimeService {
     backgroundFactory,
     pe3Factory,
     browserControl = null,
+    runState = null,
   }) {
     this.#dataDir = dataDir;
     this.#ownsDatabase = !database;
     this.#db = database ?? new ConversationDatabase(databasePath);
     this.#emit = emit;
     this.#providerFactory = providerFactory;
+    this.#runState = runState;
     this.#projects = projectManagerFactory(this.#db);
     this.#tst = tst;
     this.#plans = planStore ?? new LosslessPlanStore(join(dataDir, 'lossless-plans'));
@@ -69,8 +71,8 @@ export class RuntimeService {
   async close() {
     if (this.#closed) return;
     this.#closed = true;
-    for (const run of this.#runs.values()) run.controller.abort();
-    this.#runs.clear();
+    for (const execution of this.#liveExecutions.values()) execution.controller.abort();
+    this.#liveExecutions.clear();
     await Promise.all([
       ...[...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined)),
       Promise.resolve(this.#tools.close?.()).catch(() => undefined),
@@ -84,7 +86,7 @@ export class RuntimeService {
   async handle(method, params = {}) {
     await this.#ready;
     switch (method) {
-      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#runs.size, activeProjectWriters: this.#writer.activeProjects, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
+      case 'health': return { ok: true, runtime: 'independent', activeRuns: this.#liveExecutions.size, activeProjectWriters: this.#writer.activeProjects, pendingPermissions: this.#permissions.list().length, pendingQuestions: this.#questions.list().length, cognitive: this.#cognitiveStatus(), pe3: { enabled: process.env.CUPPET_PE3 !== '0', projects: this.#pe3Routers.size } };
       case 'cognitive.status': return this.#cognitiveStatus();
       case 'orchestrator.status': return { enabled: this.#cognitive.snapshot().orchestratorEnabled };
       case 'orchestrator.set': return this.#setOrchestrator(params.enabled);
@@ -170,6 +172,10 @@ export class RuntimeService {
       roles: { foreground: 'primary', plan: 'primary', background: 'secondary', orchestratorMaster: 'primary', worker: 'secondary' },
     };
   }
+  #isSessionActive(sessionId) {
+    if (this.#runState?.isActive) return this.#runState.isActive(sessionId);
+    return this.#liveExecutions.has(sessionId);
+  }
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
     const prompt = typeof params.prompt === 'string' ? params.prompt : [...session.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
@@ -251,7 +257,7 @@ export class RuntimeService {
   }
   async #undo(sessionId) {
     const session = this.requireSession(sessionId);
-    if (this.#runs.has(session.id)) throw new Error('Cannot undo while this session is generating. Stop it first.');
+    if (this.#isSessionActive(session.id)) throw new Error('Cannot undo while this session is generating. Stop it first.');
     if (!session.projectId) throw new Error('Undo requires a project-bound session.');
     const project = await this.#projects.get(session.projectId);
     if (!project || project.missing) throw new Error('Undo requires the original project workspace to be available.');
@@ -281,7 +287,7 @@ export class RuntimeService {
 
   async #cleanupSession(sessionId) {
     const session = this.requireSession(sessionId);
-    if (this.#runs.has(session.id)) throw new Error('cannot purge a chat while it is generating');
+    if (this.#isSessionActive(session.id)) throw new Error('cannot purge a chat while it is generating');
     await this.#tools.forgetSession?.(session.id);
     this.#permissions.forgetSession?.(session.id);
     this.#questions.forgetSession?.(session.id);
@@ -308,7 +314,7 @@ export class RuntimeService {
     const slash = parseSlashCommand(text);
     if (slash.kind === 'command') throw new Error(`Slash command /${slash.name} must be executed through the command registry`);
     if (slash.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${slash.name}`);
-    if (this.#runs.has(sourceSessionId)) throw new Error('this session is already generating');
+    if (this.#isSessionActive(sourceSessionId)) throw new Error('this session is already generating');
     const existing = this.requireSession(sourceSessionId);
     const projectBinding={projectId:existing.projectId??null};
     let project = null;
@@ -332,7 +338,7 @@ export class RuntimeService {
       try {
         router = await this.#pe3For(existing.projectId, project);
         route = await router.prepare({ sourceSessionId, prompt: text, attachments: params.attachments });
-        route = router.accept(route.token, { targetAvailable: (targetSessionId) => !this.#runs.has(targetSessionId) });
+        route = router.accept(route.token, { targetAvailable: (targetSessionId) => !this.#isSessionActive(targetSessionId) });
       } catch (error) {
         if (router && route?.token) router.abort(route.token, cleanError(error));
         route = fallbackRoute(sourceSessionId, existing.projectId, `PE3 preserved source after routing fallback: ${cleanError(error)}`);
@@ -368,7 +374,8 @@ export class RuntimeService {
     }
 
     const controller = new AbortController();
-    this.#runs.set(targetSessionId, { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route });
+    const execution = { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route };
+    this.#liveExecutions.set(targetSessionId, execution);
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
     void this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
     return { accepted: true, sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route };
@@ -414,8 +421,8 @@ export class RuntimeService {
 
   stop(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
-    const run = this.#runs.get(sessionId); if (!run) return { stopped: false, sessionId };
-    run.controller.abort(); return { stopped: true, sessionId, messageId: run.assistantId, projectId: run.projectId };
+    const execution = this.#liveExecutions.get(sessionId); if (!execution) return { stopped: false, sessionId };
+    execution.controller.abort(); return { stopped: true, sessionId, messageId: execution.assistantId, projectId: execution.projectId };
   }
 
   async #steer(params) {
@@ -424,9 +431,10 @@ export class RuntimeService {
     if (!sessionId) throw new Error('sessionId is required');
     if (!text) throw new Error('steer text is required');
     this.requireSession(sessionId);
-    if (this.#runs.has(sessionId)) this.stop(sessionId);
     for (let attempt = 0; attempt < 250; attempt++) {
-      if (!this.#runs.has(sessionId)) return this.send({ sessionId, text, provider: params.provider ?? {} });
+      const live = this.#liveExecutions.get(sessionId);
+      if (live && !live.controller.signal.aborted) live.controller.abort();
+      if (!this.#isSessionActive(sessionId)) return this.send({ sessionId, text, provider: params.provider ?? {} });
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     throw new Error('session did not stop before steer');
@@ -479,13 +487,15 @@ export class RuntimeService {
     } finally {
       if (this.#closed) return;
       if (this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
-      const run = this.#runs.get(sessionId); this.#runs.delete(sessionId);
+      const currentExecution = this.#liveExecutions.get(sessionId);
+      const execution = currentExecution?.assistantId === assistantId ? currentExecution : null;
+      if (execution) this.#liveExecutions.delete(sessionId);
       const session = this.#db.getSessionSummary(sessionId); if (session) this.#emit({ type: 'session.updated', session });
-      this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: run?.projectId ?? session?.projectId ?? null });
-      if (run && completedMessage?.status === 'complete') {
-        const worker = this.#backgroundFor(run.projectId);
+      this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: execution?.projectId ?? session?.projectId ?? null });
+      if (execution && completedMessage?.status === 'complete') {
+        const worker = this.#backgroundFor(execution.projectId);
         worker.setProviderConfig(provider ?? {});
-        await worker.recordTurn({ sessionID: sessionId, projectID: run.projectId ?? 'general', userText: run.userText, assistantText: completedMessage.content }).catch(() => undefined);
+        await worker.recordTurn({ sessionID: sessionId, projectID: execution.projectId ?? 'general', userText: execution.userText, assistantText: completedMessage.content }).catch(() => undefined);
         worker.foregroundIdle(sessionId);
       }
     }
@@ -538,7 +548,7 @@ function fallbackRoute(sessionId, projectId, reason) { return { token: null, sta
 function routingMarker(tx) { return `[PE3 routing marker] action=${tx.action} target=${tx.targetSessionId} reason=${String(tx.reason).replace(/\s+/g, ' ').slice(0, 220)}`; }
 function injectPe3Context(messages, refreshPaths, attachments) {
   const blocks = [];
-  if (refreshPaths.length) blocks.push(`<CUPPET_PE3_REFRESH ephemeral="true">\nThe workspace changed while this task was dormant. Refresh these paths from current filesystem truth before relying on old file-specific assumptions: ${refreshPaths.slice(0, 12).join(', ')}\n</CUPPET_PE3_REFRESH>`);
+  if (refreshPaths.length) blocks.push(`<CUPPET_PE3_REFRESH ephemeral="true">\nThe workspace changed while this task was dormant. Refresh these paths from current workspace truth before relying on old file-specific assumptions: ${refreshPaths.slice(0, 12).join(', ')}\n</CUPPET_PE3_REFRESH>`);
   if (attachments.length) blocks.push(`<CUPPET_PE3_ATTACHMENTS ephemeral="true">\nAttachment metadata routed with this turn (metadata only; do not invent unread contents):\n${attachments.slice(0, 16).map((item) => `- ${[item.name, item.path, item.mime, Number.isFinite(item.size) ? `${item.size} bytes` : ''].filter(Boolean).join(' · ')}`).join('\n')}\n</CUPPET_PE3_ATTACHMENTS>`);
   if (!blocks.length) return messages.map((message) => ({ ...message }));
   const output = messages.map((message) => ({ ...message })); let index = output.length - 1; while (index >= 0 && output[index].role !== 'user') index--;
