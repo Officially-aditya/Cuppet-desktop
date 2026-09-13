@@ -108,21 +108,27 @@ test('slash mutations inherit the enclosing remote envelope command id',async()=
   assert.deepEqual(undo.context,{commandId:expectedRemoteCommandId('dev_1','slash-undo')});
 });
 
-test('remote submit command identity survives adapter recreation',async()=>{
+test('remote command identity survives adapter recreation for submits and mutations',async()=>{
   const first=fixture();
   await first.adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
   await first.adapter.execute(actor,'session.resume',{sessionID:'s1'});
   await first.adapter.execute(actor,'session.submit',{prompt:'survive restart'},{id:'restart-envelope'});
+  await first.adapter.execute(actor,'session.undo',{}, {id:'restart-undo'});
   const firstSend=first.calls.findLast((entry)=>entry.method==='session.send');
+  const firstUndo=first.calls.findLast((entry)=>entry.method==='session.undo');
 
   const second=fixture();
   await second.adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
   await second.adapter.execute(actor,'session.resume',{sessionID:'s1'});
   await second.adapter.execute(actor,'session.submit',{prompt:'survive restart'},{id:'restart-envelope'});
+  await second.adapter.execute(actor,'session.undo',{}, {id:'restart-undo'});
   const secondSend=second.calls.findLast((entry)=>entry.method==='session.send');
+  const secondUndo=second.calls.findLast((entry)=>entry.method==='session.undo');
 
   assert.equal(firstSend.context.commandId,expectedRemoteCommandId('dev_1','restart-envelope'));
   assert.equal(secondSend.context.commandId,firstSend.context.commandId);
+  assert.equal(firstUndo.context.commandId,expectedRemoteCommandId('dev_1','restart-undo'));
+  assert.equal(secondUndo.context.commandId,firstUndo.context.commandId);
 });
 
 test('remote model selection stays host constrained while undo and questions delegate to runtime authorities',async()=>{
