@@ -8,7 +8,6 @@ import { ConversationBridge } from './conversation-bridge.mjs';
 import { SupervisedAcpSessionRuntime } from './transports/acp/supervised-acp-runtime.mjs';
 import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
 import { AcpTextStreamAssembler } from './transports/acp/acp-text-stream.mjs';
-import { activityToLegacyEvent } from './runtime-manager-legacy.mjs';
 
 const DEFAULT_IDLE_MS = 5 * 60_000;
 const DEFAULT_MAX_WARM_RUNTIMES = 3;
@@ -157,20 +156,13 @@ export class ProviderRuntimeManager {
         messages,
       });
 
-      const legacyState = new Map();
       const textStream = new AcpTextStreamAssembler(descriptor.textStream);
       const activityTextStream = new AcpTextStreamAssembler(descriptor.textStream);
       let reasoningStream = usesTokenizedWhitespace(descriptor.textStream)
         ? new AcpTextStreamAssembler(descriptor.textStream)
         : null;
       const forwardActivity = async (activity) => {
-        if (typeof options.onActivity === 'function') {
-          await options.onActivity(activity);
-          return;
-        }
-        // Compatibility for callers that have not moved to Cuppet Activity yet.
-        const legacy = activityToLegacyEvent(activity, legacyState);
-        if (legacy) await options.onProviderEvent?.(legacy);
+        await options.onActivity?.(activity);
       };
       const flushReasoning = async () => {
         if (!reasoningStream) return;
