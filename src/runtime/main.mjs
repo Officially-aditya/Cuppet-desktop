@@ -14,6 +14,7 @@ import { TurnStore } from './turn-store.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
+import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
 import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
@@ -32,6 +33,7 @@ const repository = localState.sqlRepository();
 const turnStore = new TurnStore(repository, { legacyPath: join(dataDir, 'turn-state.sqlite3') });
 const runWaits = new RunWaitProjection(repository);
 const commandReceipts = new CommandReceiptStore(repository);
+const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
   runWaits.observe(event);
@@ -64,7 +66,7 @@ const emit = (event) => {
 };
 const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
 const browserControl = new BrowserControlManager({ emit });
-const runtimeService = new RuntimeService({ database: localState, databasePath, dataDir, emit, tst, browserControl });
+const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);
@@ -276,11 +278,18 @@ async function sendOrQueue(params = {}, commandId = null) {
 
   if (receiptId) commandReceipts.begin({ commandId: receiptId, method: 'session.send', sessionId: sessionId || null, params });
   try {
-    const result = await service.handle('session.send', params);
+    const execute = () => service.handle('session.send', params);
+    const result = receiptId
+      ? await receiptDatabase.run({ commandId: receiptId, method: 'session.send', sourceSessionId: sessionId || null }, execute)
+      : await execute();
     if (receiptId) commandReceipts.accept(receiptId, result);
     return result;
   } catch (error) {
-    if (receiptId) commandReceipts.fail(receiptId, error);
+    if (receiptId) {
+      const receipt = commandReceipts.get(receiptId);
+      if (receipt?.state === 'accepted') return commandReceiptResult(receipt);
+      commandReceipts.fail(receiptId, error);
+    }
     throw error;
   }
 }
