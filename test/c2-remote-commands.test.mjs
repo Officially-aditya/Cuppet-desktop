@@ -43,7 +43,7 @@ test('remote command adapter keeps provider secret local and binds device worksp
   assert.equal(JSON.stringify(providers).includes('api.example.test'),false);assert.equal(JSON.stringify(providers).includes('baseUrl'),false);assert.equal(JSON.stringify(providers).includes('apiKey'),false);
   const workspaces=await adapter.execute(actor,'workspace.list');assert.deepEqual(workspaces.map((w)=>w.workspaceId),['p1']);
   await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
-  const created=await adapter.execute(actor,'session.new',{});assert.equal(created.projectId,'p1');
+  const created=await adapter.execute(actor,'session.new',{}, {id:'new_1'});assert.equal(created.projectId,'p1');
   await adapter.execute(actor,'session.submit',{prompt:'Implement it'},{id:'submit_1'});
   const send=calls.findLast((entry)=>entry.method==='session.send');assert.equal(send.params.sessionId,'s2');assert.equal(send.params.provider.apiKey,'super-secret');
   assert.equal(send.params.provider.baseUrl,'https://api.example.test/v1');
@@ -98,6 +98,19 @@ test('retry-sensitive remote mutations forward stable envelope command ids',asyn
   assert.equal(undos[1].context.commandId,undos[0].context.commandId);
 });
 
+test('retry-sensitive remote mutations fail closed without envelope ids',async()=>{
+  const {adapter,calls}=fixture();
+  await adapter.execute(actor,'workspace.attach',{workspaceId:'p1'});
+  await assert.rejects(()=>adapter.execute(actor,'session.new',{}),/command envelope id/);
+  assert.equal(calls.some((entry)=>entry.method==='session.create'),false);
+
+  await adapter.execute(actor,'session.resume',{sessionID:'s1'});
+  await assert.rejects(()=>adapter.execute(actor,'session.steer',{instruction:'redirect it'}),/command envelope id/);
+  await assert.rejects(()=>adapter.execute(actor,'session.undo'),/command envelope id/);
+  assert.equal(calls.some((entry)=>entry.method==='session.steer'),false);
+  assert.equal(calls.some((entry)=>entry.method==='session.undo'),false);
+});
+
 test('slash mutations inherit the enclosing remote envelope command id',async()=>{
   const {adapter,calls}=fixture();
   const trusted={deviceID:'dev_1',scopes:['session.write']};
@@ -137,8 +150,8 @@ test('remote model selection stays host constrained while undo and questions del
   assert.deepEqual(await adapter.execute(actor,'model.select',{providerID:'openai-compatible',modelID:'model-b'}),{providerID:'openai-compatible',modelID:'model-b'});
   await assert.rejects(()=>adapter.execute(actor,'model.select',{providerID:'openai-compatible',modelID:'model-c'}),/not configured/);
 
-  assert.deepEqual(await adapter.execute(actor,'session.undo'),{undone:true,sessionId:'s1',path:'src/a.js'});
-  assert.deepEqual(calls.findLast((entry)=>entry.method==='session.undo'),{method:'session.undo',params:{sessionId:'s1'}});
+  assert.deepEqual(await adapter.execute(actor,'session.undo',{}, {id:'delegate-undo'}),{undone:true,sessionId:'s1',path:'src/a.js'});
+  assert.deepEqual(calls.findLast((entry)=>entry.method==='session.undo'),{method:'session.undo',params:{sessionId:'s1'},context:{commandId:expectedRemoteCommandId('dev_1','delegate-undo')}});
 
   await adapter.execute(actor,'question.reply',{requestID:'q1',answers:[['yes']]});
   assert.deepEqual(calls.findLast((entry)=>entry.method==='question.reply'),{method:'question.reply',params:{requestId:'q1',answers:[['yes']]}});
