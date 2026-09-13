@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [app, chat, transcript, runtimeMain] = await Promise.all([
+const [app, chat, clientTranscript, transcript, runtimeMain] = await Promise.all([
   readFile(new URL('../src/renderer/react/App.tsx', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
 ]);
@@ -27,17 +28,24 @@ test('React composer selects queue or steer intent while durable queue ownership
   assert.match(runtimeMain, /turnStore\.queuedSessions\(\)/);
 });
 
-test('React transcript consumes canonical runtime events through one transcript reducer', () => {
+test('React transcript consumes canonical runtime events through the client transcript store', () => {
   assert.match(app, /tool\.started/);
   assert.match(app, /tool\.finished/);
   assert.match(app, /validation\.completed/);
 
-  assert.match(chat, /runtime\.activity/);
-  assert.match(chat, /reduceTranscriptEvent/);
-  assert.match(chat, /hydrateTranscript/);
+  assert.match(chat, /useClientTranscript\(session\)/);
+  assert.doesNotMatch(chat, /runtime\.activity/);
+  assert.doesNotMatch(chat, /reduceTranscriptEvent/);
+  assert.doesNotMatch(chat, /hydrateTranscript/);
+  assert.doesNotMatch(chat, /window\.cuppet\.onEvent/);
   assert.doesNotMatch(chat, /activity\.reasoning\.delta/);
   assert.doesNotMatch(chat, /activity\.tool\./);
   assert.doesNotMatch(chat, /traceByMessage|updateToolTraceFromActivity/);
+
+  assert.match(clientTranscript, /window\.cuppet\.onEvent/);
+  assert.match(clientTranscript, /runtime\.activity/);
+  assert.match(clientTranscript, /reduceTranscriptEvent/);
+  assert.match(clientTranscript, /hydrateTranscript/);
 
   assert.match(transcript, /event\.source === 'provider' && activityType === 'activity\.reasoning\.delta'/);
   assert.match(transcript, /event\.source === 'execution' && activityType\.startsWith\('activity\.tool\.'\)/);
