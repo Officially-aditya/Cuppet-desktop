@@ -8,6 +8,7 @@ test('control plane projects local provider readiness without flattening install
   assert.equal(missing.control.overall, 'needs_install');
   assert.equal(missing.control.installation.state, 'missing');
   assert.equal(missing.control.authentication.state, 'unknown');
+  assert.equal(missing.control.runtime.state, 'stopped');
 
   const needsAuth = withControlState({ providerID: 'opencode', installed: true, connected: false, available: false, installation: { detected: true, executable: '/tmp/opencode' } });
   assert.equal(needsAuth.control.overall, 'needs_auth');
@@ -18,11 +19,13 @@ test('control plane projects local provider readiness without flattening install
   assert.equal(ready.control.overall, 'ready');
   assert.equal(ready.control.installation.state, 'cuppet_managed');
   assert.equal(ready.control.authentication.state, 'authenticated');
+  assert.equal(ready.control.runtime.state, 'stopped', 'authenticated providers may be ready even when their lazy runtime is not warm');
   assert.equal(ready.control.installation.identity.realPath, '/tmp/opencode');
 });
 
-test('runtime control plane owns lifecycle operations', async () => {
+test('runtime control plane owns lifecycle operations and composes actual process health', async () => {
   const calls = [];
+  const healthCalls = [];
   const plane = new ProviderControlPlane({
     dataDir: '/tmp/cuppet-control-plane-test',
     operationsFactory(providerID, options) {
@@ -32,11 +35,19 @@ test('runtime control plane owns lifecycle operations', async () => {
         async connect() { return { providerID, installed: true, connected: true, available: true, installation: { detected: true, executable: '/tmp/opencode' } }; },
       };
     },
+    runtimeHealth(providerID) {
+      healthCalls.push(providerID);
+      return { state: 'busy', activeProcesses: 1, busyProcesses: 1, readyProcesses: 0, generation: 2, restarts: 1, lastFailure: null };
+    },
     capabilityDiscovery: async () => ({ providerID: 'opencode', source: 'acp', available: true, models: [{ id: 'm1', label: 'M1' }], defaultModel: 'm1', fetchedAt: 1 }),
   });
 
   const status = await plane.localStatus('opencode');
   assert.equal(status.control.overall, 'ready');
+  assert.equal(status.control.runtime.state, 'busy');
+  assert.equal(status.control.runtime.activeProcesses, 1);
+  assert.equal(status.control.runtime.restarts, 1);
+  assert.deepEqual(healthCalls, ['opencode']);
   assert.equal(calls[0].providerID, 'opencode');
 
   const catalog = await plane.models({ providerID: 'opencode', primary: { providerID: 'opencode', modelID: 'm1' } });
@@ -62,4 +73,5 @@ test('Electron main is a provider-control proxy, not a second lifecycle authorit
   assert.match(runtime, /case 'provider\.models'/);
   assert.doesNotMatch(controlPlane, /\.\.\/\.\.\/main\//);
   assert.match(controlPlane, /from '\.\/local-provider-operations\.mjs'/);
+  assert.match(controlPlane, /from '\.\/runtime-health-registry\.mjs'/);
 });
