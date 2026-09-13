@@ -37,6 +37,8 @@ jobs:
         run: node --test --test-concurrency=1 test/acp-runtime-supervisor.test.mjs
       - name: Validate structured provider failures
         run: node --test --test-concurrency=1 test/provider-error.test.mjs
+      - name: Validate LaunchServices acceptance contract
+        run: node --test --test-concurrency=1 test/gui-launchservices-path.test.mjs
       - name: Run provider architecture and ACP regressions
         run: >-
           node --test --test-concurrency=1
@@ -98,10 +100,12 @@ jobs:
           node --check scripts/run-provider-benchmark-suite.mjs
           node --check scripts/smoke-authenticated-opencode-acp.mjs
           node --check scripts/smoke-authenticated-opencode-desktop-path.mjs
+          node --check scripts/smoke-launchservices-cli-path.mjs
           node --check scripts/verify-provider-release-gate.mjs
           node -e "const fs=require('node:fs'); const schema=JSON.parse(fs.readFileSync('benchmarks/provider-v2.schema.json','utf8')); const example=JSON.parse(fs.readFileSync('benchmarks/provider-v2.example.json','utf8')); if(schema.properties.schemaVersion.const!==1 || example.schemaVersion!==1 || !Array.isArray(example.tasks) || !example.tasks.length) process.exit(1)"
           node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-authenticated-opencode-acp.mjs','utf8'); if(!smoke.includes('totalCompletedTurns, 2') || !smoke.includes('warmRuntimeCount, 1') || !smoke.includes('previousMarker') || !smoke.includes('MIN_OPENCODE_VERSION')) process.exit(1)"
           node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-authenticated-opencode-desktop-path.mjs','utf8'); if(!smoke.includes('session.send') || !smoke.includes('providerError?.diagnostic') || !smoke.includes('CUPPET_RESOURCES_PATH')) process.exit(1)"
+          node -e "const fs=require('node:fs'); const smoke=fs.readFileSync('scripts/smoke-launchservices-cli-path.mjs','utf8'); if(!smoke.includes('/usr/bin/open') || !smoke.includes('/bin/launchctl') || smoke.includes('Contents/MacOS/cuppet')) process.exit(1)"
 
           GITHUB_REF_NAME=feat/provider-architecture-v2 \
           GITHUB_EVENT_NAME=workflow_dispatch \
@@ -140,3 +144,19 @@ jobs:
             echo "Provider V2 mismatched-SHA release gate unexpectedly passed" >&2
             exit 1
           fi
+
+  macos-gui-cli-path:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install desktop dependencies with Electron app bundle
+        run: npm install
+      - name: Validate LaunchServices smoke contract
+        run: node --test --test-concurrency=1 test/gui-launchservices-path.test.mjs
+      - name: Prove Finder/Dock CLI PATH recovery through runtime authority
+        run: node scripts/smoke-launchservices-cli-path.mjs
