@@ -11,6 +11,7 @@ import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.m
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
+import { RunWaitProjection } from './run-wait-projection.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
@@ -25,8 +26,10 @@ const purgingSessions = new Set();
 let purgePromise;
 const localState = new ConversationDatabase(databasePath);
 const turnStore = new TurnStore(localState.sqlRepository(), { legacyPath: join(dataDir, 'turn-state.sqlite3') });
+const runWaits = new RunWaitProjection(localState.sqlRepository());
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
+  runWaits.observe(event);
   if (event?.type === 'run.started' && event.sessionId) {
     activeSessions.add(event.sessionId);
     if (event.messageId) {
