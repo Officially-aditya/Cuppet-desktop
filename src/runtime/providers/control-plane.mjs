@@ -3,6 +3,11 @@ import { localProviderOperations } from './local-provider-operations.mjs';
 import { discoverProviderCapabilitySnapshot } from './default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from './capability-snapshot.mjs';
 import { providerRuntimeHealth } from './runtime-health-registry.mjs';
+import {
+  assertLocalProviderVersionSupported,
+  localProviderVersionCompatibility,
+  providerVersionUpgradeMessage,
+} from './version-policy.mjs';
 
 /**
  * Runtime-owned provider lifecycle authority.
@@ -36,33 +41,53 @@ export class ProviderControlPlane {
 
   async localStatus(providerID) {
     const id = requiredProviderID(providerID);
-    const status = await this.#operations(id).status();
+    const operations = this.#operations(id);
+    const detected = withVersionCompatibility(id, await operations.detect());
+    const status = detected.installed === true && versionBlocked(detected)
+      ? incompatibleLocalState(detected)
+      : withVersionCompatibility(id, await operations.status());
     return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localConnect(providerID) {
     const id = requiredProviderID(providerID);
-    const status = await this.#operations(id).connect();
+    const operations = this.#operations(id);
+    let detected = withVersionCompatibility(id, await operations.detect());
+    if (detected.installed !== true) detected = withVersionCompatibility(id, await operations.install());
+    if (versionBlocked(detected) && detected.installation?.ownedByCuppet === true && detected.installation?.canUpdate === true) {
+      detected = withVersionCompatibility(id, await operations.update());
+    }
+    if (versionBlocked(detected)) {
+      assertLocalProviderVersionSupported(id, detected.version || detected.installation?.version, detected.label || id);
+    }
+    const status = withVersionCompatibility(id, await operations.connect());
+    if (versionBlocked(status)) {
+      assertLocalProviderVersionSupported(id, status.version || status.installation?.version, status.label || id);
+    }
     if (status.connected !== true && status.available !== true) this.#capabilityState.delete(id);
     return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localDetect(providerID) {
     const id = requiredProviderID(providerID);
-    const state = await this.#operations(id).detect();
+    const state = withVersionCompatibility(id, await this.#operations(id).detect());
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localProbe(providerID) {
     const id = requiredProviderID(providerID);
-    const state = await this.#operations(id).probe();
+    const operations = this.#operations(id);
+    const detected = withVersionCompatibility(id, await operations.detect());
+    const state = detected.installed === true && versionBlocked(detected)
+      ? incompatibleLocalState(detected)
+      : withVersionCompatibility(id, await operations.probe());
     if (state.connected !== true && state.available !== true) this.#capabilityState.delete(id);
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localUpdate(providerID) {
     const id = requiredProviderID(providerID);
-    const state = await this.#operations(id).update();
+    const state = withVersionCompatibility(id, await this.#operations(id).update());
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
@@ -100,29 +125,37 @@ export class ProviderControlPlane {
 
 export function withControlState(status = {}, runtimeHealth = null, capabilityState = null) {
   const installed = status.installed === true || status.installation?.detected === true;
-  const connected = status.connected === true || status.available === true;
+  const compatibility = normalizeVersionCompatibility(status.compatibility);
+  const compatibilityBlocked = installed && compatibility.required === true && compatibility.supported === false;
+  const connected = !compatibilityBlocked && (status.connected === true || status.available === true);
   const installationState = !installed
     ? 'missing'
     : status.installation?.ownedByCuppet === true
       ? 'cuppet_managed'
       : 'external';
-  const authenticationState = connected
-    ? 'authenticated'
-    : installed
-      ? 'required'
-      : 'unknown';
+  const authenticationState = compatibilityBlocked
+    ? 'blocked'
+    : connected
+      ? 'authenticated'
+      : installed
+        ? 'required'
+        : 'unknown';
   const runtime = normalizeRuntimeHealth(runtimeHealth);
-  const capabilities = connected ? normalizeCapabilityControl(capabilityState) : blockedCapabilities();
+  const capabilities = connected && !compatibilityBlocked ? normalizeCapabilityControl(capabilityState) : blockedCapabilities();
   const runtimeNeedsRetry = runtime.state === 'crashed' || runtime.state === 'unhealthy';
   const overall = !installed
     ? 'needs_install'
-    : !connected
-      ? 'needs_auth'
-      : runtimeNeedsRetry
-        ? 'needs_retry'
-        : 'ready';
+    : compatibilityBlocked
+      ? 'needs_update'
+      : !connected
+        ? 'needs_auth'
+        : runtimeNeedsRetry
+          ? 'needs_retry'
+          : 'ready';
   return {
     ...status,
+    connected,
+    available: connected,
     control: {
       overall,
       installation: {
@@ -133,6 +166,7 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
         ownedByCuppet: status.installation?.ownedByCuppet === true,
         canUpdate: status.installation?.canUpdate === true,
         identity: cloneIdentity(status.installation?.identity),
+        compatibility,
       },
       authentication: {
         state: authenticationState,
@@ -141,6 +175,50 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
       runtime,
       capabilities,
     },
+  };
+}
+
+function withVersionCompatibility(providerID, state = {}) {
+  const version = text(state.version || state.installation?.version) || null;
+  return {
+    ...state,
+    compatibility: localProviderVersionCompatibility(providerID, version),
+  };
+}
+
+function versionBlocked(state = {}) {
+  return state.compatibility?.required === true && state.compatibility?.supported === false;
+}
+
+function incompatibleLocalState(state = {}) {
+  const managed = state.installation?.ownedByCuppet === true && state.installation?.canUpdate === true;
+  return {
+    ...state,
+    connected: false,
+    available: false,
+    probe: 'incompatible-version',
+    action: 'connect',
+    message: providerVersionUpgradeMessage(
+      state.providerID,
+      state.version || state.installation?.version,
+      state.label || state.providerID,
+      { managed },
+    ),
+  };
+}
+
+function normalizeVersionCompatibility(value) {
+  const source = record(value);
+  const state = ['not_required', 'compatible', 'too_old', 'unverified'].includes(source.state)
+    ? source.state
+    : 'not_required';
+  const required = source.required === true;
+  return {
+    required,
+    supported: required ? source.supported === true : true,
+    state,
+    minimumVersion: text(source.minimumVersion) || null,
+    observedVersion: text(source.observedVersion) || null,
   };
 }
 
