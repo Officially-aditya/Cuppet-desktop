@@ -17,12 +17,17 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
   const runtimeState = text(runtime.state) || 'stopped';
   const capabilityState = text(capabilities.state) || 'unknown';
   const installation = record(source.installation);
+  const controlInstallation = record(control.installation);
+  const compatibility = record(controlInstallation.compatibility);
   const installationKnown = typeof source.installed === 'boolean' || typeof installation.detected === 'boolean' || Boolean(overall);
   const installed = source.installed === true || installation.detected === true;
   const authenticated = record(control.authentication).state === 'authenticated'
     || source.connected === true
     || source.available === true;
-  const credentialReady = authenticated && overall !== 'needs_install' && overall !== 'needs_auth';
+  const credentialReady = authenticated
+    && overall !== 'needs_install'
+    && overall !== 'needs_update'
+    && overall !== 'needs_auth';
   const fallback = text(source.message);
 
   if (busy) {
@@ -58,6 +63,22 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
       runtimeState,
       capabilityState,
       canConnect: true,
+    };
+  }
+
+  if (overall === 'needs_update') {
+    const minimumVersion = text(compatibility.minimumVersion);
+    const observedVersion = text(compatibility.observedVersion);
+    const requirement = minimumVersion ? `${providerLabel} ${minimumVersion} or newer` : `a supported ${providerLabel} version`;
+    const observed = observedVersion ? `${providerLabel} ${observedVersion}` : `this ${providerLabel} installation`;
+    return {
+      credentialReady: false,
+      badge: 'Update required',
+      tone: 'warning',
+      detail: fallback || `${observed} is not compatible with this Cuppet build. Install ${requirement}, then retry.`,
+      runtimeState,
+      capabilityState,
+      canConnect: controlInstallation.canUpdate === true,
     };
   }
 
