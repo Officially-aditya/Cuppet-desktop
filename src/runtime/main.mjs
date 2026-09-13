@@ -9,6 +9,7 @@ import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
+import { listSessionEditedFiles } from './session-edited-files.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
@@ -120,6 +121,14 @@ async function handle(method, params = {}, context = {}) {
       return localState.listSessions({ archived: true })
         .filter((session) => Number(session.deletedAt) > 0 && now - Number(session.deletedAt) < DELETED_CHAT_RETENTION_MS)
         .map((session) => ({ ...session, purgeAt: Number(session.deletedAt) + DELETED_CHAT_RETENTION_MS }));
+    }
+    case 'session.edited-files': {
+      const sessionId = boundedId(params.sessionId);
+      if (!sessionId) throw new Error('sessionId is required');
+      const session = localState.getSessionSummary(sessionId);
+      if (!session) throw new Error(`unknown session: ${sessionId}`);
+      const files = await listSessionEditedFiles(dataDir, sessionId);
+      return { sessionId, projectId: session.projectId ?? null, files };
     }
     case 'session.queue.list': return turnStore.listQueued(boundedId(params.sessionId));
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));

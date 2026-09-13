@@ -6,7 +6,6 @@ import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
-import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -78,13 +77,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:deleted:list', () => request('session.deleted.list'));
   ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
   ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
-  ipcMain.handle('cuppet:session:edited-files', async (_event, sessionId) => {
-    const id = boundedId(sessionId);
-    if (!id) throw new Error('sessionId is required');
-    const session = await request('session.get', { sessionId: id });
-    const files = await listSessionEditedFiles(runtimeDataDir, id);
-    return { sessionId: id, projectId: session?.projectId ?? null, files };
-  });
+  ipcMain.handle('cuppet:session:edited-files', (_event, sessionId) => request('session.edited-files', { sessionId: boundedId(sessionId) }));
   ipcMain.handle('cuppet:session:search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
   ipcMain.handle('cuppet:session:rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));
   ipcMain.handle('cuppet:session:archive', (_event, sessionId) => request('session.archive', { sessionId: boundedId(sessionId) }));

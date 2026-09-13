@@ -39,8 +39,9 @@ test('edited file events preserve repeated edits across turns while excluding un
 });
 
 test('workspace links, turn-scoped edited files, dynamic user messages, working state, and reasoning surfaces stay separated', async () => {
-  const [host, preload, markdown, enhancements, styles] = await Promise.all([
+  const [host, runtime, preload, markdown, enhancements, styles] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/markdown.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/WorkspaceEnhancements.tsx', import.meta.url), 'utf8'),
@@ -52,6 +53,11 @@ test('workspace links, turn-scoped edited files, dynamic user messages, working 
   assert.match(host, /shell\.openPath\(actual\)/);
   assert.match(host, /shell\.openExternal\(url\.toString\(\)\)/);
   assert.match(host, /setWindowOpenHandler/);
+  assert.match(host, /cuppet:session:edited-files'[\s\S]*request\('session\.edited-files'/);
+  assert.doesNotMatch(host, /listSessionEditedFiles|mutation-journal/);
+  assert.match(runtime, /listSessionEditedFiles/);
+  assert.match(runtime, /case 'session\.edited-files'/);
+  assert.match(runtime, /listSessionEditedFiles\(dataDir, sessionId\)/);
   assert.match(preload, /openProjectFile:.*cuppet:native:open-project-file/s);
   assert.match(preload, /openExternal:.*cuppet:native:open-external/s);
   assert.match(preload, /editedFiles:.*cuppet:session:edited-files/s);
