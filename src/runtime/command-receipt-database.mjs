@@ -23,6 +23,7 @@ export class CommandReceiptDatabaseFacade {
     this.#view = new Proxy(database, {
       get: (target, property) => {
         if (property === 'transaction') return (callback) => this.#transaction(callback);
+        if (property === 'createSession') return (...args) => this.#createSession(...args);
         const value = Reflect.get(target, property, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },
@@ -46,6 +47,18 @@ export class CommandReceiptDatabaseFacade {
       if (result && typeof result.then === 'function') throw new Error('SQLite transaction callback must be synchronous');
       this.#acceptCommittedCommand(result);
       return result;
+    });
+  }
+
+  #createSession(...args) {
+    const command = this.#context.getStore();
+    if (!command?.commandId || command.method !== 'session.create') return this.#database.createSession(...args);
+    return this.#database.transaction(() => {
+      const session = this.#database.createSession(...args);
+      const committed = committedSessionCreation(session);
+      if (!committed) throw new Error('session.create did not produce a durable session projection');
+      this.#receipts.accept(command.commandId, committed);
+      return session;
     });
   }
 
