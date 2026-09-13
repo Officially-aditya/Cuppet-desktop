@@ -80,6 +80,62 @@ test('supervised ACP runtime publishes starting, ready, busy, and stopped proces
   resetProviderRuntimeHealthForTests();
 });
 
+test('provider health and control state expose sanitized bounded pre-turn retry diagnostics', async () => {
+  resetProviderRuntimeHealthForTests();
+  let generation = 0;
+  const runtime = new SupervisedAcpSessionRuntime(
+    { descriptor: { id: 'opencode' } },
+    {
+      retryPolicy: { maxAttempts: 3, baseDelayMs: 25, maxDelayMs: 50 },
+      sleep: async () => {},
+      runtimeFactory: () => {
+        generation += 1;
+        const id = generation;
+        return {
+          async start() {
+            if (id === 1) throw providerFailureError('pipe closed', {
+              code: 'PROVIDER_TRANSPORT_CLOSED',
+              category: 'transport_closed',
+              retryable: true,
+              action: 'retry',
+              diagnostic: 'Bearer should-not-leak',
+            });
+            return { state: 'ready', sessionId: `s${id}` };
+          },
+          async close() {},
+          snapshot() { return { state: id === 1 ? 'error' : 'ready', sessionId: id === 1 ? null : `s${id}` }; },
+        };
+      },
+    },
+  );
+
+  await runtime.start();
+  const health = providerRuntimeHealth('opencode');
+  assert.equal(health.state, 'ready');
+  assert.equal(health.generation, 2);
+  assert.equal(health.restarts, 1);
+  assert.equal(health.preTurnRetries, 1);
+  assert.deepEqual(health.retryPolicy, { maxAttempts: 3, baseDelayMs: 25, maxDelayMs: 50 });
+  assert.equal(health.lastRetry.retry, 1);
+  assert.equal(health.lastRetry.delayMs, 25);
+  assert.equal(health.lastRetry.failure.category, 'transport_closed');
+  assert.equal(JSON.stringify(health).includes('should-not-leak'), false);
+
+  const connected = {
+    providerID: 'opencode',
+    installed: true,
+    connected: true,
+    installation: { detected: true, executable: '/tmp/opencode' },
+  };
+  const projected = withControlState(connected, health);
+  assert.equal(projected.control.runtime.preTurnRetries, 1);
+  assert.deepEqual(projected.control.runtime.retryPolicy, { maxAttempts: 3, baseDelayMs: 25, maxDelayMs: 50 });
+  assert.equal(projected.control.runtime.lastRetry.failure.category, 'transport_closed');
+
+  await runtime.close();
+  resetProviderRuntimeHealthForTests();
+});
+
 test('transport failure remains visible after failed runtime is evicted', async () => {
   resetProviderRuntimeHealthForTests();
   let state = 'idle';
