@@ -17,6 +17,7 @@ export class ProviderControlPlane {
   #operationsFactory;
   #capabilityDiscovery;
   #runtimeHealth;
+  #capabilityState = new Map();
 
   constructor({
     dataDir,
@@ -36,31 +37,33 @@ export class ProviderControlPlane {
   async localStatus(providerID) {
     const id = requiredProviderID(providerID);
     const status = await this.#operations(id).status();
-    return withControlState(status, this.#runtimeHealth(id));
+    return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localConnect(providerID) {
     const id = requiredProviderID(providerID);
     const status = await this.#operations(id).connect();
-    return withControlState(status, this.#runtimeHealth(id));
+    if (status.connected !== true && status.available !== true) this.#capabilityState.delete(id);
+    return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localDetect(providerID) {
     const id = requiredProviderID(providerID);
     const state = await this.#operations(id).detect();
-    return withControlState(state, this.#runtimeHealth(id));
+    return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localProbe(providerID) {
     const id = requiredProviderID(providerID);
     const state = await this.#operations(id).probe();
-    return withControlState(state, this.#runtimeHealth(id));
+    if (state.connected !== true && state.available !== true) this.#capabilityState.delete(id);
+    return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localUpdate(providerID) {
     const id = requiredProviderID(providerID);
     const state = await this.#operations(id).update();
-    return withControlState(state, this.#runtimeHealth(id));
+    return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async models(configuration = {}, { model = '' } = {}) {
@@ -72,10 +75,22 @@ export class ProviderControlPlane {
     const discoveryConfiguration = requestedModel
       ? configurationForCandidateModel(configuration, requestedModel)
       : configuration;
-    const snapshot = await this.#capabilityDiscovery(discoveryConfiguration, {
-      ...(this.#resourcesPath ? { resourcesPath: this.#resourcesPath } : {}),
-    });
-    return modelCatalogFromCapabilitySnapshot(snapshot, configuredModel);
+    const previous = this.#capabilityState.get(providerID);
+    this.#capabilityState.set(providerID, { state: 'loading', ...(previous?.fetchedAt ? { fetchedAt: previous.fetchedAt } : {}) });
+    try {
+      const snapshot = await this.#capabilityDiscovery(discoveryConfiguration, {
+        ...(this.#resourcesPath ? { resourcesPath: this.#resourcesPath } : {}),
+      });
+      this.#capabilityState.set(providerID, capabilityControlState(snapshot));
+      return modelCatalogFromCapabilitySnapshot(snapshot, configuredModel);
+    } catch (error) {
+      this.#capabilityState.set(providerID, {
+        state: previous?.state === 'ready' || previous?.state === 'stale' ? 'stale' : 'failed',
+        fetchedAt: previous?.fetchedAt ?? 0,
+        error: cleanError(error),
+      });
+      throw error;
+    }
   }
 
   #operations(providerID) {
@@ -83,7 +98,7 @@ export class ProviderControlPlane {
   }
 }
 
-export function withControlState(status = {}, runtimeHealth = null) {
+export function withControlState(status = {}, runtimeHealth = null, capabilityState = null) {
   const installed = status.installed === true || status.installation?.detected === true;
   const connected = status.connected === true || status.available === true;
   const installationState = !installed
@@ -97,6 +112,7 @@ export function withControlState(status = {}, runtimeHealth = null) {
       ? 'required'
       : 'unknown';
   const runtime = normalizeRuntimeHealth(runtimeHealth);
+  const capabilities = connected ? normalizeCapabilityControl(capabilityState) : blockedCapabilities();
   const runtimeNeedsRetry = runtime.state === 'crashed' || runtime.state === 'unhealthy';
   const overall = !installed
     ? 'needs_install'
@@ -123,11 +139,39 @@ export function withControlState(status = {}, runtimeHealth = null) {
         probe: text(status.probe) || null,
       },
       runtime,
-      capabilities: {
-        state: connected ? 'unknown' : 'blocked',
-      },
+      capabilities,
     },
   };
+}
+
+function capabilityControlState(snapshot = {}) {
+  const source = record(snapshot);
+  const state = source.stale === true
+    ? 'stale'
+    : text(source.discoveryError) || text(source.error)
+      ? 'failed'
+      : 'ready';
+  return {
+    state,
+    fetchedAt: nonnegativeInteger(source.fetchedAt),
+    modelCount: Array.isArray(source.models) ? source.models.length : 0,
+    error: text(source.discoveryError || source.error) || null,
+  };
+}
+
+function normalizeCapabilityControl(value) {
+  const source = record(value);
+  const state = ['unknown', 'loading', 'ready', 'stale', 'failed'].includes(source.state) ? source.state : 'unknown';
+  return {
+    state,
+    fetchedAt: nonnegativeInteger(source.fetchedAt),
+    modelCount: nonnegativeInteger(source.modelCount),
+    error: text(source.error) || null,
+  };
+}
+
+function blockedCapabilities() {
+  return { state: 'blocked', fetchedAt: 0, modelCount: 0, error: null };
 }
 
 function normalizeRuntimeHealth(value) {
@@ -189,6 +233,9 @@ function cloneFailure(value) {
 function nonnegativeInteger(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
+}
+function cleanError(error) {
+  return text(error instanceof Error ? error.message : String(error ?? '')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]');
 }
 function text(value) {
   return typeof value === 'string' ? value.trim().slice(0, 1000) : '';
