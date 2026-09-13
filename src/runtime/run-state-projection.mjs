@@ -18,6 +18,14 @@ export class RunStateProjection {
     `).get(session));
   }
 
+  activeCount() {
+    return Number(this.#db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM runs
+      WHERE status IN ('starting','running','waiting','settling')
+    `).get()?.count ?? 0);
+  }
+
   activeRun(sessionId) {
     const session = optionalText(sessionId);
     if (!session) return null;
