@@ -111,6 +111,60 @@ test('committed batch is never rolled back by restart recovery', async () => {
   }
 });
 
+test('committed graph invalidations survive restart and aggregate across session histories', async () => {
+  const { dir, projectRoot, journalDir } = await fixture('cuppet-graph-invalidation-restart-');
+  try {
+    await writeFile(join(projectRoot, 'a.txt'), 'before-a');
+    await writeFile(join(projectRoot, 'b.txt'), 'before-b');
+    const first = new MutationJournal(journalDir);
+    await first.ready();
+
+    const a = await first.beginFile({ sessionId: 's-a', executionId: 'exec-a', tool: 'workspace_edit', projectRoot, path: 'a.txt' });
+    await writeFile(join(projectRoot, 'a.txt'), 'after-a');
+    await first.commitFile(a);
+    const b = await first.beginFile({ sessionId: 's-b', executionId: 'exec-b', tool: 'workspace_edit', projectRoot, path: 'b.txt' });
+    await writeFile(join(projectRoot, 'b.txt'), 'after-b');
+    await first.commitFile(b);
+
+    assert.deepEqual(await first.graphInvalidations(projectRoot), ['a.txt', 'b.txt']);
+    const restarted = new MutationJournal(journalDir);
+    await restarted.ready();
+    assert.deepEqual(await restarted.graphInvalidations(projectRoot), ['a.txt', 'b.txt']);
+
+    const partial = await restarted.acknowledgeGraphRefresh({ projectRoot, paths: ['a.txt'] });
+    assert.deepEqual(partial.remaining, ['b.txt']);
+    const restartedAgain = new MutationJournal(journalDir);
+    await restartedAgain.ready();
+    assert.deepEqual(await restartedAgain.graphInvalidations(projectRoot), ['b.txt']);
+    const complete = await restartedAgain.acknowledgeGraphRefresh({ projectRoot, paths: ['b.txt'] });
+    assert.deepEqual(complete.remaining, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('undo durably reopens graph invalidation after an earlier refresh was acknowledged', async () => {
+  const { dir, projectRoot, journalDir } = await fixture('cuppet-graph-invalidation-undo-');
+  try {
+    await writeFile(join(projectRoot, 'a.txt'), 'before');
+    const first = new MutationJournal(journalDir);
+    await first.ready();
+    const token = await first.beginFile({ sessionId: 's1', executionId: 'exec1', tool: 'workspace_edit', projectRoot, path: 'a.txt' });
+    await writeFile(join(projectRoot, 'a.txt'), 'after');
+    await first.commitFile(token);
+    await first.acknowledgeGraphRefresh({ projectRoot, paths: ['a.txt'] });
+    assert.deepEqual(await first.graphInvalidations(projectRoot), []);
+
+    await first.undoLatest({ sessionId: 's1', projectRoot });
+    assert.equal(await readFile(join(projectRoot, 'a.txt'), 'utf8'), 'before');
+    const restarted = new MutationJournal(journalDir);
+    await restarted.ready();
+    assert.deepEqual(await restarted.graphInvalidations(projectRoot), ['a.txt']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('recovery preserves unknown external edits and reports a conflict', async () => {
   const { dir, projectRoot, journalDir } = await fixture('cuppet-mutation-conflict-');
   try {
@@ -174,6 +228,7 @@ test('restart completes a partially-applied multi-file undo from its durable int
     assert.equal(recovery.recovered[0].operation, 'undo');
     assert.equal(recovery.recovered[0].mutationId, token.id);
     assert.deepEqual(recovery.conflicts, []);
+    assert.deepEqual(await restarted.graphInvalidations(projectRoot), ['a.txt', 'b.txt']);
     const status = await restarted.status('s-undo');
     assert.equal(status.available, false);
   } finally {
@@ -201,6 +256,7 @@ test('restart completes undo of a Cuppet-created file by removing the remaining 
     await assert.rejects(() => readFile(join(projectRoot, 'new.txt'), 'utf8'), (error) => error?.code === 'ENOENT');
     assert.equal(recovery.restoredFiles, 1);
     assert.equal(recovery.recovered[0].operation, 'undo');
+    assert.deepEqual(await restarted.graphInvalidations(projectRoot), ['new.txt']);
     assert.equal((await restarted.status('s-create-undo')).available, false);
   } finally {
     await rm(dir, { recursive: true, force: true });
