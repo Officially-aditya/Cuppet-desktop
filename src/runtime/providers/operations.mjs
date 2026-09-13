@@ -59,6 +59,7 @@ export function normalizeProviderInstallation(input = {}) {
     ownedByCuppet: source.ownedByCuppet === true,
     // Updating an unknown/external install is never inferred from detection.
     canUpdate: detected && installationSource !== 'unknown' && source.ownedByCuppet === true && source.canUpdate === true,
+    identity: normalizeExecutableIdentity(source.identity),
   });
 }
 
@@ -69,9 +70,24 @@ export function unsupportedProviderOperation(name) {
   return error;
 }
 
+function normalizeExecutableIdentity(value) {
+  const source = record(value);
+  const resolvedPath = text(source.resolvedPath);
+  const realPath = text(source.realPath);
+  if (!resolvedPath && !realPath) return null;
+  return Object.freeze({
+    resolvedPath: resolvedPath || realPath,
+    realPath: realPath || resolvedPath,
+    ...(finite(source.dev) ? { dev: Number(source.dev) } : {}),
+    ...(finite(source.ino) ? { ino: Number(source.ino) } : {}),
+    ...(finite(source.size) ? { size: Number(source.size) } : {}),
+    ...(finite(source.mtimeMs) ? { mtimeMs: Number(source.mtimeMs) } : {}),
+  });
+}
 function installationSourceValue(value) {
   const normalized = text(value).toLowerCase();
   return ['homebrew', 'npm', 'pnpm', 'bun', 'native', 'managed'].includes(normalized) ? normalized : 'unknown';
 }
+function finite(value) { return Number.isFinite(Number(value)); }
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
