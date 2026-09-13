@@ -39,7 +39,6 @@ type TraceTool = {
 };
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
-type QueuedMessage = { text: string; attachments: Attachment[] };
 const BROWSERCONTROL_MENTION = '@browserControl';
 
 type Props = {
@@ -61,14 +60,12 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
-  const [queuedBySession, setQueuedBySession] = useState<Record<string, QueuedMessage[]>>({});
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const [transcript, setTranscript] = useState<TranscriptState>({});
   const transcriptSession = useRef<string | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
-  const queueDispatching = useRef(false);
 
   const palette = useMemo(() => {
     const query = currentSlashQuery(value);
@@ -161,33 +158,6 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
   }, [session?.messages, transcript]);
 
-  useEffect(() => {
-    const sessionId = session?.id;
-    if (!sessionId || running || queueDispatching.current) return;
-    const next = queuedBySession[sessionId]?.[0];
-    if (!next) return;
-
-    queueDispatching.current = true;
-    setQueuedBySession((current) => {
-      const remaining = (current[sessionId] ?? []).slice(1);
-      if (remaining.length) return { ...current, [sessionId]: remaining };
-      const copy = { ...current };
-      delete copy[sessionId];
-      return copy;
-    });
-
-    void onSend(next.text, 'queue', next.attachments)
-      .then((result) => {
-        if (result.commandResult) setCommandResult(result.commandResult);
-        if (!result.clear) {
-          setValue((current) => current || next.text);
-          setAttachments((current) => current.length ? current : next.attachments);
-          requestAnimationFrame(() => resize(textarea.current));
-        }
-      })
-      .finally(() => { queueDispatching.current = false; });
-  }, [onSend, queuedBySession, running, session?.id]);
-
   const clearComposer = () => {
     setValue('');
     setAttachments([]);
@@ -199,22 +169,8 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const submit = async () => {
     const raw = value.trim();
     if (!raw && !attachments.length) return;
-    const shouldQueue = Boolean(
-      running
-      && session?.id
-      && !raw.startsWith('/')
-      && (deliveryMode === 'queue' || attachments.length > 0),
-    );
-    if (shouldQueue && session?.id) {
-      const queued: QueuedMessage = { text: raw, attachments: attachments.map((item) => ({ ...item })) };
-      setQueuedBySession((current) => ({
-        ...current,
-        [session.id]: [...(current[session.id] ?? []), queued],
-      }));
-      clearComposer();
-      return;
-    }
-
+    // The runtime owns queueing so queued work survives renderer reloads and there is
+    // only one authority for ordering, capacity, dispatch, and failure semantics.
     const result = await onSend(raw, deliveryMode, attachments);
     if (result.commandResult) setCommandResult(result.commandResult);
     if (result.clear) clearComposer();
