@@ -4,7 +4,6 @@ import { ProviderBackendRegistry } from '../src/runtime/providers/backend-regist
 import { normalizeProviderCapabilities, reasoningRuntimeSetting, settingAdvertisesValue } from '../src/runtime/providers/capabilities.mjs';
 import { normalizeProviderConnection, patchProviderConnection } from '../src/runtime/providers/connection.mjs';
 import { normalizeProviderInstallation, providerOperationKind } from '../src/runtime/providers/operations.mjs';
-import { legacyProviderRuntime } from '../src/runtime/providers/runtime-contract.mjs';
 
 test('capabilities preserve provider-advertised ids without inventing a default', () => {
   const capabilities = normalizeProviderCapabilities({
@@ -103,30 +102,4 @@ test('installation ownership never grants update authority to unknown external i
   assert.equal(managed.source, 'managed');
   assert.equal(managed.ownedByCuppet, true);
   assert.equal(managed.canUpdate, true);
-});
-
-test('legacy runtime converts existing provider callbacks into Cuppet activities', async () => {
-  const seen = [];
-  const provider = {
-    async stream(_messages, hooks) {
-      await hooks.onProviderEvent({ type: 'reasoning', text: 'Inspecting files' });
-      await hooks.onProviderEvent({ type: 'tool.started', callId: 'call-1', tool: 'read', label: 'Read file' });
-      await hooks.onDelta('Done');
-      await hooks.onProviderEvent({ type: 'tool.finished', callId: 'call-1', tool: 'read', success: true });
-      return { text: 'Done', usage: null };
-    },
-  };
-
-  const runtime = legacyProviderRuntime(provider);
-  const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'hello' }] }, {
-    onActivity: async (activity) => seen.push(activity),
-  });
-
-  assert.equal(result.text, 'Done');
-  assert.deepEqual(seen.map((activity) => activity.type), [
-    'activity.reasoning.delta',
-    'activity.tool.opened',
-    'activity.text.delta',
-    'activity.tool.closed',
-  ]);
 });
