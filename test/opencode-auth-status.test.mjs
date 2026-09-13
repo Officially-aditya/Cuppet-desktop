@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cliAgentStatus } from '../src/main/cli-agent-status.mjs';
-import { parseOpenCodeAuthList } from '../src/main/opencode-auth.mjs';
+import { parseOpenCodeAuthList } from '../src/runtime/providers/opencode-auth.mjs';
 
 test('OpenCode auth parser rejects a successful zero-credential listing', () => {
   const parsed = parseOpenCodeAuthList(`
