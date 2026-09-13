@@ -28,13 +28,19 @@ const DEFAULTS = serializableProviderConfiguration({
 
 export class ProviderSettingsStore {
   #path;
+  #safeStorage;
+  #credentialStorageStatus;
   #value = structuredClone(DEFAULTS);
   #encryptedApiKey;
   #primaryEffort = '';
   #secondaryAuto = true;
   #customModels = {};
 
-  constructor(path) { this.#path = path; }
+  constructor(path, { safeStorageImpl = safeStorage, credentialStorageStatusImpl = credentialStorageStatus } = {}) {
+    this.#path = path;
+    this.#safeStorage = safeStorageImpl;
+    this.#credentialStorageStatus = credentialStorageStatusImpl;
+  }
 
   async load() {
     try {
@@ -56,19 +62,21 @@ export class ProviderSettingsStore {
   rendererValue() {
     const effective = this.#effectiveValue();
     const projection = providerProjection(effective, { includeEndpoint: true });
-    const storage = credentialStorageStatus(safeStorage);
     const selectedPreset = providerPreset(projection.providerID ?? effective.providerID);
     const chatGPTProvider = selectedPreset?.authType === 'chatgpt';
     const localCliProvider = selectedPreset?.authType === 'local-cli';
     const externalCredentialProvider = chatGPTProvider || localCliProvider;
+    // Provider-managed auth must not touch Electron safeStorage/Keychain merely to
+    // render Settings. Only API-key providers need the host credential vault.
+    const storage = externalCredentialProvider ? null : this.#credentialStorageStatus(this.#safeStorage);
     const encryptedApiKeyConfigured = Boolean(this.#encryptedApiKey);
-    const credentialConfigured = externalCredentialProvider || (storage.available && encryptedApiKeyConfigured);
+    const credentialConfigured = externalCredentialProvider || Boolean(storage?.available && encryptedApiKeyConfigured);
     return {
       ...projection,
       secondaryAuto: this.#secondaryAuto,
       configured: credentialConfigured && Boolean(projection.primary?.modelID),
-      // Compatibility for the current renderer send gate. For Codex this means the provider's
-      // credential requirement is satisfied by its separate ChatGPT OAuth flow; no API key exists.
+      // Compatibility for the current renderer send gate. For Codex/local CLI this means
+      // the credential requirement is provider-managed; no Cuppet API key exists.
       apiKeyConfigured: externalCredentialProvider ? true : encryptedApiKeyConfigured,
       credentialConfigured,
       credentialMode: selectedPreset?.authType ?? 'api-key',
@@ -79,9 +87,9 @@ export class ProviderSettingsStore {
       presets: providerPresetList(),
       customModels: customModelEntries(this.#customModels),
       primaryEffort: this.#primaryEffort || projection.primary?.variant || null,
-      encryptionAvailable: storage.available,
-      encryptionBackend: storage.backend,
-      encryptionUnavailableReason: storage.reason,
+      encryptionAvailable: externalCredentialProvider ? true : storage?.available === true,
+      encryptionBackend: externalCredentialProvider ? 'provider-managed' : storage?.backend,
+      encryptionUnavailableReason: externalCredentialProvider ? undefined : storage?.reason,
     };
   }
 
@@ -158,9 +166,9 @@ export class ProviderSettingsStore {
     if (externalCredentialProvider || source.clearApiKey === true || (providerChanged && !(typeof source.apiKey === 'string' && source.apiKey.trim()))) {
       this.#encryptedApiKey = undefined;
     } else if (typeof source.apiKey === 'string' && source.apiKey.trim()) {
-      const storage = credentialStorageStatus(safeStorage);
+      const storage = this.#credentialStorageStatus(this.#safeStorage);
       if (!storage.available) throw new Error(`${storage.reason}; Cuppet will not persist the API key in plaintext`);
-      this.#encryptedApiKey = safeStorage.encryptString(source.apiKey.trim()).toString('base64');
+      this.#encryptedApiKey = this.#safeStorage.encryptString(source.apiKey.trim()).toString('base64');
     }
 
     await this.#persist();
@@ -209,9 +217,10 @@ export class ProviderSettingsStore {
   }
 
   #decryptApiKey() {
-    const storage = credentialStorageStatus(safeStorage);
-    if (!this.#encryptedApiKey || !storage.available) return '';
-    try { return safeStorage.decryptString(Buffer.from(this.#encryptedApiKey, 'base64')); } catch { return ''; }
+    if (!this.#encryptedApiKey) return '';
+    const storage = this.#credentialStorageStatus(this.#safeStorage);
+    if (!storage.available) return '';
+    try { return this.#safeStorage.decryptString(Buffer.from(this.#encryptedApiKey, 'base64')); } catch { return ''; }
   }
 }
 
