@@ -31,25 +31,25 @@ export function hydrateClientRunState(sessions: Session[] = []) {
 
 export function hydrateClientRunSession(session: Session | null | undefined) {
   if (!session?.id) return running;
-  return setRunning(session.id, sessionRunning(session));
+  setRunning(session.id, sessionRunning(session));
+  return running;
 }
 
 export function markClientRunStarted(sessionId: string | null | undefined) {
   const id = text(sessionId);
-  return id ? setRunning(id, true) : running;
+  if (id) setRunning(id, true);
+  return running;
 }
 
 export function reduceClientRunEvent(event: RuntimeEvent) {
   const type = text(event?.type);
   if (type === 'run.started') {
     const sessionId = text(event?.sessionId ?? event?.message?.sessionId);
-    if (!sessionId) return false;
-    return changed(setRunning(sessionId, true));
+    return Boolean(sessionId && setRunning(sessionId, true));
   }
   if (type === 'run.finished') {
     const sessionId = text(event?.sessionId ?? event?.message?.sessionId);
-    if (!sessionId) return false;
-    return changed(setRunning(sessionId, false));
+    return Boolean(sessionId && setRunning(sessionId, false));
   }
   if (type === 'pe3.routed') {
     const source = text(event?.sourceSessionId);
@@ -95,14 +95,13 @@ function sessionRunning(session: Session) {
   return session.lastStatus === 'streaming' || (session.messages ?? []).some((message) => message.status === 'streaming');
 }
 
-function setRunning(sessionId: string, active: boolean): ClientRunState {
+function setRunning(sessionId: string, active: boolean) {
   const has = running.has(sessionId);
-  if (has === active) return running;
+  if (has === active) return false;
   const next = new Set(running);
   if (active) next.add(sessionId);
   else next.delete(sessionId);
-  replace(next);
-  return running;
+  return replace(next);
 }
 
 function replace(next: Set<string>) {
@@ -116,10 +115,6 @@ function sameMembers(current: ClientRunState, next: Set<string>) {
   if (current.size !== next.size) return false;
   for (const value of current) if (!next.has(value)) return false;
   return true;
-}
-
-function changed(value: ClientRunState) {
-  return value === running;
 }
 
 function text(value: unknown) {
