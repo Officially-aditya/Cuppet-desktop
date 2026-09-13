@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'running', 'waiting', 'settling']);
 const TERMINAL_RUN_STATUSES = new Set(['complete', 'stopped', 'interrupted', 'error']);
 const QUEUE_STATES = new Set(['queued', 'dispatching', 'failed']);
+const EVENT_SCHEMA_VERSION = 1;
 
 export class TurnStore {
   #db;
@@ -38,26 +39,24 @@ export class TurnStore {
       );
       CREATE INDEX IF NOT EXISTS idx_queued_turns_session_state
         ON queued_turns(session_id, status, queued_at ASC, queue_id ASC);
+
+      CREATE TABLE IF NOT EXISTS runtime_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        run_id TEXT,
+        queue_id TEXT,
+        sequence INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(session_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS idx_runtime_events_session_sequence
+        ON runtime_events(session_id, sequence ASC);
     `);
 
-    const now = Date.now();
-    this.#db.prepare(`
-      UPDATE runs
-      SET status='interrupted',
-          error=CASE WHEN error IS NULL OR error='' THEN 'Interrupted by runtime restart.' ELSE error END,
-          updated_at=?
-      WHERE status IN ('starting','running','waiting','settling')
-    `).run(now);
-    // A dispatching queue item may already have created its user/assistant messages.
-    // Never replay it after a crash: at-most-once delivery is safer than duplicating work.
-    this.#db.prepare(`
-      UPDATE queued_turns
-      SET status='failed',
-          error='Queue dispatch was interrupted by runtime restart; item was not replayed.',
-          updated_at=?
-      WHERE status='dispatching'
-    `).run(now);
-    this.#pruneFailedQueueRows();
+    this.#recoverInterruptedState(Date.now());
   }
 
   close() {
@@ -67,27 +66,48 @@ export class TurnStore {
   startRun({ runId, sessionId, sourceSessionId = null, projectId = null, now = Date.now() }) {
     const id = requiredText(runId, 'runId');
     const session = requiredText(sessionId, 'sessionId');
-    this.#db.prepare(`
-      INSERT INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at)
-      VALUES (?,?,?,?, 'running', NULL, ?, ?)
-      ON CONFLICT(run_id) DO UPDATE SET
-        session_id=excluded.session_id,
-        source_session_id=excluded.source_session_id,
-        project_id=excluded.project_id,
-        status='running',
-        error=NULL,
-        updated_at=excluded.updated_at
-    `).run(id, session, optionalText(sourceSessionId), optionalText(projectId), now, now);
-    return this.getRun(id);
+    return this.#transaction(() => {
+      this.#db.prepare(`
+        INSERT INTO runs (run_id,session_id,source_session_id,project_id,status,error,created_at,updated_at)
+        VALUES (?,?,?,?, 'running', NULL, ?, ?)
+        ON CONFLICT(run_id) DO UPDATE SET
+          session_id=excluded.session_id,
+          source_session_id=excluded.source_session_id,
+          project_id=excluded.project_id,
+          status='running',
+          error=NULL,
+          updated_at=excluded.updated_at
+      `).run(id, session, optionalText(sourceSessionId), optionalText(projectId), now, now);
+      this.#appendEvent({
+        sessionId: session,
+        runId: id,
+        type: 'run.started',
+        payload: { status: 'running', sourceSessionId: optionalText(sourceSessionId), projectId: optionalText(projectId) },
+        createdAt: now,
+      });
+      return this.getRun(id);
+    });
   }
 
   finishRun(runId, { status = 'complete', error = null, now = Date.now() } = {}) {
     const id = requiredText(runId, 'runId');
     const normalizedStatus = normalizeTerminalRunStatus(status);
-    const result = this.#db.prepare(`
-      UPDATE runs SET status=?, error=?, updated_at=? WHERE run_id=?
-    `).run(normalizedStatus, optionalText(error), now, id);
-    return result.changes > 0 ? this.getRun(id) : null;
+    return this.#transaction(() => {
+      const current = this.getRun(id);
+      if (!current) return null;
+      const normalizedError = optionalText(error);
+      this.#db.prepare(`
+        UPDATE runs SET status=?, error=?, updated_at=? WHERE run_id=?
+      `).run(normalizedStatus, normalizedError, now, id);
+      this.#appendEvent({
+        sessionId: current.sessionId,
+        runId: id,
+        type: 'run.finished',
+        payload: { status: normalizedStatus, error: normalizedError },
+        createdAt: now,
+      });
+      return this.getRun(id);
+    });
   }
 
   getRun(runId) {
@@ -110,11 +130,20 @@ export class TurnStore {
     const queueId = requiredText(id, 'queue id');
     const session = requiredText(sessionId, 'sessionId');
     const payload = JSON.stringify(params ?? {});
-    this.#db.prepare(`
-      INSERT INTO queued_turns (queue_id,session_id,params_json,status,error,queued_at,updated_at)
-      VALUES (?,?,?,'queued',NULL,?,?)
-    `).run(queueId, session, payload, queuedAt, queuedAt);
-    return { id: queueId, sessionId: session, params: parseParams(payload), status: 'queued', queuedAt };
+    return this.#transaction(() => {
+      this.#db.prepare(`
+        INSERT INTO queued_turns (queue_id,session_id,params_json,status,error,queued_at,updated_at)
+        VALUES (?,?,?,'queued',NULL,?,?)
+      `).run(queueId, session, payload, queuedAt, queuedAt);
+      this.#appendEvent({
+        sessionId: session,
+        queueId,
+        type: 'queue.queued',
+        payload: { status: 'queued', queuedAt },
+        createdAt: queuedAt,
+      });
+      return { id: queueId, sessionId: session, params: parseParams(payload), status: 'queued', queuedAt };
+    });
   }
 
   countQueued(sessionId) {
@@ -146,10 +175,24 @@ export class TurnStore {
     return rows.map(queueRow);
   }
 
+  listEvents(sessionId, { afterSequence = 0, limit = 200 } = {}) {
+    const session = requiredText(sessionId, 'sessionId');
+    const after = Math.max(0, Number.isFinite(Number(afterSequence)) ? Math.trunc(Number(afterSequence)) : 0);
+    const boundedLimit = Math.max(1, Math.min(1000, Number.isFinite(Number(limit)) ? Math.trunc(Number(limit)) : 200));
+    return this.#db.prepare(`
+      SELECT event_id AS eventId, session_id AS sessionId, run_id AS runId, queue_id AS queueId,
+             sequence, type, payload_json AS payloadJson, schema_version AS schemaVersion,
+             created_at AS createdAt
+      FROM runtime_events
+      WHERE session_id=? AND sequence>?
+      ORDER BY sequence ASC
+      LIMIT ?
+    `).all(session, after, boundedLimit).map(eventRow);
+  }
+
   claimNext(sessionId, now = Date.now()) {
     const session = requiredText(sessionId, 'sessionId');
-    this.#db.exec('BEGIN IMMEDIATE');
-    try {
+    return this.#transaction(() => {
       const row = this.#db.prepare(`
         SELECT queue_id AS id, session_id AS sessionId, params_json AS paramsJson,
                status, error, queued_at AS queuedAt, updated_at AS updatedAt
@@ -158,33 +201,160 @@ export class TurnStore {
         ORDER BY queued_at ASC, queue_id ASC
         LIMIT 1
       `).get(session);
-      if (!row) {
-        this.#db.exec('COMMIT');
-        return null;
-      }
-      this.#db.prepare(`
+      if (!row) return null;
+      const result = this.#db.prepare(`
         UPDATE queued_turns SET status='dispatching', error=NULL, updated_at=?
         WHERE queue_id=? AND status='queued'
       `).run(now, row.id);
-      this.#db.exec('COMMIT');
+      if (result.changes === 0) return null;
+      this.#appendEvent({
+        sessionId: session,
+        queueId: String(row.id),
+        type: 'queue.started',
+        payload: { status: 'dispatching', queuedAt: Number(row.queuedAt) || 0 },
+        createdAt: now,
+      });
       return { ...queueRow(row), status: 'dispatching', updatedAt: now };
+    });
+  }
+
+  completeQueue(queueId, now = Date.now()) {
+    const id = requiredText(queueId, 'queue id');
+    return this.#transaction(() => {
+      const row = this.#db.prepare(`
+        SELECT queue_id AS id, session_id AS sessionId, queued_at AS queuedAt
+        FROM queued_turns WHERE queue_id=?
+      `).get(id);
+      if (!row) return false;
+      const result = this.#db.prepare('DELETE FROM queued_turns WHERE queue_id=?').run(id);
+      if (result.changes === 0) return false;
+      this.#appendEvent({
+        sessionId: String(row.sessionId),
+        queueId: id,
+        type: 'queue.dispatched',
+        payload: { status: 'dispatched', queuedAt: Number(row.queuedAt) || 0 },
+        createdAt: now,
+      });
+      return true;
+    });
+  }
+
+  failQueue(queueId, error, now = Date.now()) {
+    const id = requiredText(queueId, 'queue id');
+    const message = cleanError(error);
+    return this.#transaction(() => {
+      const row = this.#db.prepare(`
+        SELECT queue_id AS id, session_id AS sessionId, queued_at AS queuedAt
+        FROM queued_turns WHERE queue_id=?
+      `).get(id);
+      if (!row) return false;
+      const result = this.#db.prepare(`
+        UPDATE queued_turns SET status='failed', error=?, updated_at=? WHERE queue_id=?
+      `).run(message, now, id);
+      if (result.changes === 0) return false;
+      this.#appendEvent({
+        sessionId: String(row.sessionId),
+        queueId: id,
+        type: 'queue.failed',
+        payload: { status: 'failed', error: message, queuedAt: Number(row.queuedAt) || 0 },
+        createdAt: now,
+      });
+      this.#pruneFailedQueueRows();
+      return true;
+    });
+  }
+
+  #recoverInterruptedState(now) {
+    this.#transaction(() => {
+      const activeRuns = this.#db.prepare(`
+        SELECT run_id AS runId, session_id AS sessionId, status
+        FROM runs WHERE status IN ('starting','running','waiting','settling')
+      `).all();
+      for (const run of activeRuns) {
+        const message = 'Interrupted by runtime restart.';
+        this.#db.prepare(`
+          UPDATE runs
+          SET status='interrupted',
+              error=CASE WHEN error IS NULL OR error='' THEN ? ELSE error END,
+              updated_at=?
+          WHERE run_id=?
+        `).run(message, now, run.runId);
+        const current = this.getRun(run.runId);
+        this.#appendEvent({
+          sessionId: String(run.sessionId),
+          runId: String(run.runId),
+          type: 'run.finished',
+          payload: {
+            status: 'interrupted',
+            error: current?.error ?? message,
+            previousStatus: String(run.status),
+            recovery: 'runtime_restart',
+          },
+          createdAt: now,
+        });
+      }
+
+      // A dispatching queue item may already have created its user/assistant messages.
+      // Never replay it after a crash: at-most-once delivery is safer than duplicating work.
+      const dispatching = this.#db.prepare(`
+        SELECT queue_id AS id, session_id AS sessionId, queued_at AS queuedAt
+        FROM queued_turns WHERE status='dispatching'
+      `).all();
+      for (const row of dispatching) {
+        const message = 'Queue dispatch was interrupted by runtime restart; item was not replayed.';
+        this.#db.prepare(`
+          UPDATE queued_turns SET status='failed', error=?, updated_at=? WHERE queue_id=?
+        `).run(message, now, row.id);
+        this.#appendEvent({
+          sessionId: String(row.sessionId),
+          queueId: String(row.id),
+          type: 'queue.failed',
+          payload: {
+            status: 'failed',
+            error: message,
+            queuedAt: Number(row.queuedAt) || 0,
+            recovery: 'runtime_restart',
+          },
+          createdAt: now,
+        });
+      }
+      this.#pruneFailedQueueRows();
+    });
+  }
+
+  #appendEvent({ sessionId, runId = null, queueId = null, type, payload = {}, createdAt = Date.now() }) {
+    const session = requiredText(sessionId, 'sessionId');
+    const eventType = requiredText(type, 'event type');
+    const nextSequence = Number(this.#db.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM runtime_events WHERE session_id=?
+    `).get(session)?.sequence ?? 1);
+    this.#db.prepare(`
+      INSERT INTO runtime_events (
+        session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
+      ) VALUES (?,?,?,?,?,?,?,?)
+    `).run(
+      session,
+      optionalText(runId),
+      optionalText(queueId),
+      nextSequence,
+      eventType,
+      JSON.stringify(payload ?? {}),
+      EVENT_SCHEMA_VERSION,
+      createdAt,
+    );
+  }
+
+  #transaction(callback) {
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = callback();
+      if (result && typeof result.then === 'function') throw new Error('TurnStore transaction callback must be synchronous');
+      this.#db.exec('COMMIT');
+      return result;
     } catch (error) {
       try { this.#db.exec('ROLLBACK'); } catch {}
       throw error;
     }
-  }
-
-  completeQueue(queueId) {
-    const result = this.#db.prepare('DELETE FROM queued_turns WHERE queue_id=?').run(String(queueId ?? ''));
-    return result.changes > 0;
-  }
-
-  failQueue(queueId, error, now = Date.now()) {
-    const result = this.#db.prepare(`
-      UPDATE queued_turns SET status='failed', error=?, updated_at=? WHERE queue_id=?
-    `).run(cleanError(error), now, String(queueId ?? ''));
-    this.#pruneFailedQueueRows();
-    return result.changes > 0;
   }
 
   #pruneFailedQueueRows(limit = 500) {
@@ -219,6 +389,20 @@ function queueRow(row) {
     error: optionalText(row.error),
     queuedAt: Number(row.queuedAt) || 0,
     updatedAt: Number(row.updatedAt) || 0,
+  };
+}
+
+function eventRow(row) {
+  return {
+    eventId: Number(row.eventId) || 0,
+    sessionId: String(row.sessionId),
+    runId: optionalText(row.runId),
+    queueId: optionalText(row.queueId),
+    sequence: Number(row.sequence) || 0,
+    type: String(row.type),
+    payload: parseParams(row.payloadJson),
+    schemaVersion: Number(row.schemaVersion) || EVENT_SCHEMA_VERSION,
+    createdAt: Number(row.createdAt) || 0,
   };
 }
 
