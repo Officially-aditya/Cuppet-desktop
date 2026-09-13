@@ -41,14 +41,39 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 
 - Runtime-owned durable queue replaces renderer-owned dispatch queues.
 - Runs and queue state share `conversations.sqlite3` with messages and tool history.
-- `runtime_events` exists for durable run/queue lifecycle.
 - Assistant message + run phase transitions share one SQLite transaction through projection triggers.
-- Durable run phases include `starting`, `running`, `waiting`, `settling`, and terminal states.
+- Durable run phases currently include `starting`, `running`, `waiting`, `settling`, and terminal states.
+- `RunStateProjection` is the sole semantic active-run authority; the live AbortController map is process metadata only.
+- Runtime health reports durable `activeRuns` separately from process-local `liveExecutions`.
 - Permission/question waits are reference-counted by request ID so overlapping waits cannot resume a run early.
 - Transcript event ownership has moved out of `ChatPane` into a renderer client-runtime store.
 - TST `turn.completed` now fires at the true terminal run boundary instead of on the next prompt.
 - Remote credential revocation reauthorizes live commands and immediately ejects revoked devices.
 - Lossless-plan read/modify/write mutations are serialized per session.
+
+### Durable mutation recovery — complete for current scope
+
+- Multi-file TST batches persist a pending mutation intent before the first workspace write.
+- Pending intents contain per-file preimages plus expected post-write identity.
+- Successful mutation history becomes durable before the pending intent is removed.
+- Restart recovery is hash-safe:
+  - files still matching their preimage are left unchanged;
+  - files matching the expected Cuppet postimage are restored to the durable preimage;
+  - files matching neither are preserved and reported as recovery conflicts.
+- Partially-created files are removed only when the durable preimage proves they did not exist.
+- Committed batches are never rolled back by stale pending-intent cleanup.
+- Crash-recovery regressions cover partial multi-file publication, created-file recovery, committed batches, and unknown external edits.
+
+### Canonical runtime event coverage — complete for current P0 scope
+
+- `runtime_events` is the canonical ordered per-session event log for run/queue lifecycle and restart recovery.
+- Permission/question waits durably record `run.waiting`, `run.wait.resolved`, and `run.resumed` in the same transaction as their run/wait projection changes.
+- Tool lifecycle records metadata-only `tool.started` / `tool.finished` events associated with the durable run.
+- TST batch lifecycle records metadata-only `edit.batch.prepared` / `edit.batch.applied` events.
+- Mutation recovery/conflict/undo events can be durably attached to a session even when no run is active.
+- Run and queue restart recovery transitions are durably journaled and are never reconstructed by replaying side effects.
+- Durable event projection deliberately excludes prompt bodies, tool arguments, tool output, full diffs, API keys, and arbitrary provider payloads; bounded diagnostics redact bearer credentials.
+- Whitelisted mutation events are persisted before renderer/remote publication; persistence failure is surfaced as a durability diagnostic rather than publishing the mutation event as if durable.
 
 ## Remaining milestones
 
@@ -56,41 +81,7 @@ The target is not to copy T3 or OpenCode wholesale. Cuppet keeps its multi-provi
 
 Priority: P0
 
-This is the next implementation milestone.
-
-### 1.1 Crash-safe mutation intents
-
-Problem: multi-file TST batches currently snapshot preimages in memory and only become durable after all files have been published. A runtime/process crash between file publications can leave a partially applied workspace with no durable recovery record.
-
-Target:
-
-- persist a pending batch mutation intent before the first workspace write;
-- record per-file preimage plus expected post-write hash;
-- atomically publish files as today;
-- on successful journal commit, mark/remove the pending intent only after durable history exists;
-- on restart:
-  - if a file still matches its preimage, leave it;
-  - if it matches the expected postimage, restore the preimage;
-  - if it matches neither, do not overwrite it and report a recovery conflict;
-- never silently destroy a user/external edit during recovery.
-
-Acceptance:
-
-- simulated crash after N of M file publications restores all safely recoverable files after journal restart;
-- successful committed batches are never rolled back by stale pending-intent cleanup;
-- unknown external hashes produce a conflict, not an overwrite.
-
-### 1.2 Canonical runtime event coverage
-
-Current `runtime_events` primarily covers run/queue lifecycle. Expand durable event coverage incrementally for the state that must be replayable/debuggable:
-
-- turn lifecycle;
-- human-interaction waits;
-- tool execution lifecycle;
-- mutation lifecycle;
-- terminal recovery transitions.
-
-Do not duplicate secrets or queued prompt bodies into diagnostic/runtime events unless the event is intentionally the canonical content authority.
+The next implementation milestone is explicit Turn authority.
 
 ### 1.3 Explicit Turn authority
 
@@ -119,18 +110,18 @@ Requirements:
 - provider protocol completion and Cuppet turn completion remain separate;
 - terminal state is immutable;
 - restart recovery is deterministic and journaled;
-- side effects are never replayed merely to reconstruct state.
+- side effects are never replayed merely to reconstruct state;
+- migration from the existing coarse `starting / running / waiting / settling` contract must be incremental and keep existing clients compatible until they consume the canonical detailed lifecycle.
 
 ### 1.4 Command receipts / idempotency
 
-Add durable receipts for externally issued runtime mutations where duplicate dispatch would be dangerous.
+Durable receipts already protect `session.send` and its queue admission path. Finish receipt/idempotency coverage for externally issued mutations where duplicate dispatch would be dangerous.
 
-Initial targets:
+Remaining initial targets:
 
-- `session.send`;
-- queued-turn dispatch;
 - mutation/apply commands;
-- remote mutation commands.
+- remote mutation commands;
+- any queue/mutation transition that can still be retried outside an already-transactional receipt boundary.
 
 A command ID must resolve to one of: accepted, committed, terminally failed, or unknown. Retrying the same command ID must not duplicate a turn or tool side effect.
 
@@ -236,14 +227,13 @@ Decision gate:
 
 ## Implementation order from here
 
-1. Crash-safe pending mutation intents and restart recovery.
-2. Extend runtime event coverage around mutations/tools/recovery.
-3. Add command receipts/idempotency for dangerous mutations.
-4. Finish canonical Turn lifecycle transitions and publication ordering.
-5. Extract remaining renderer server-state ownership.
-6. Remove legacy provider event compatibility.
-7. Remote/PE3 projection parity and graph/history durability.
-8. Signing/notarization and final production supervisor hardening.
+1. Finish canonical Turn lifecycle transitions and publication ordering.
+2. Finish command receipts/idempotency for dangerous mutation and remote mutation commands.
+3. Tighten remaining command/event/projection transaction boundaries.
+4. Extract remaining renderer server-state ownership.
+5. Remove legacy provider event compatibility.
+6. Remote/PE3 projection parity and graph/history durability.
+7. Signing/notarization and final production supervisor hardening.
 
 ## Release rule
 
