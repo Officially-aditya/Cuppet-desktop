@@ -28,10 +28,18 @@ test('tool and mutation lifecycle events are durably journaled before client pub
     const events = store.listEvents('s1');
     assert.deepEqual(events.map((event) => event.type), [
       'run.started',
+      'run.phase',
+      'run.phase',
       'tool.started',
       'edit.batch.prepared',
       'edit.batch.applied',
+      'run.phase',
       'tool.finished',
+    ]);
+    assert.deepEqual(events.filter((event) => event.type === 'run.phase').map((event) => event.payload.phase), [
+      'provider_starting',
+      'tool_running',
+      'waiting_for_provider',
     ]);
     assert.ok(events.slice(1).every((event) => event.runId === 'm1'));
     const encoded = JSON.stringify(events);
