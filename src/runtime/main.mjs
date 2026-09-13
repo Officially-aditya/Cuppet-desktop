@@ -56,7 +56,7 @@ const emit = (event) => {
 const localState = new ConversationDatabase(databasePath);
 const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
 const browserControl = new BrowserControlManager({ emit });
-const runtimeService = new RuntimeService({ databasePath, dataDir, emit, tst, browserControl });
+const runtimeService = new RuntimeService({ database: localState, databasePath, dataDir, emit, tst, browserControl });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);
@@ -309,7 +309,7 @@ function boundedProvider(value) {
 
 function boundedProviderID(value) {
   const id = typeof value === 'string' ? value.trim().toLowerCase().slice(0, 80) : '';
-  if (!id || !/^[a-z0-9._-]+$/.test(id)) throw new Error('A valid provider id is required.');
+  if (!id || !/^[a-z0-9._-]+$/.test(id)) throw new Error('A valid local provider id is required.');
   return id;
 }
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
