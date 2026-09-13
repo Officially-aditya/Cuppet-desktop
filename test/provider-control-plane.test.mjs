@@ -33,9 +33,11 @@ test('runtime control plane owns lifecycle operations and composes actual proces
     dataDir: '/tmp/cuppet-control-plane-test',
     operationsFactory(providerID, options) {
       calls.push({ providerID, options });
+      const detected = { providerID, installed: true, version: 'opencode 1.18.30', installation: { detected: true, executable: '/tmp/opencode', version: 'opencode 1.18.30' } };
       return {
-        async status() { return { providerID, installed: true, connected: true, available: true, installation: { detected: true, executable: '/tmp/opencode' } }; },
-        async connect() { return { providerID, installed: true, connected: true, available: true, installation: { detected: true, executable: '/tmp/opencode' } }; },
+        async detect() { return detected; },
+        async status() { return { ...detected, connected: true, available: true }; },
+        async connect() { return { ...detected, connected: true, available: true }; },
       };
     },
     runtimeHealth(providerID) {
@@ -70,7 +72,11 @@ test('capability discovery failure is distinct from provider process failure', a
   const plane = new ProviderControlPlane({
     dataDir: '/tmp/cuppet-control-plane-capability-test',
     operationsFactory(providerID) {
-      return { async status() { return { providerID, installed: true, connected: true, available: true, installation: { detected: true } }; } };
+      const detected = { providerID, installed: true, version: 'opencode 1.18.30', installation: { detected: true, version: 'opencode 1.18.30' } };
+      return {
+        async detect() { return detected; },
+        async status() { return { ...detected, connected: true, available: true }; },
+      };
     },
     runtimeHealth: () => ({ state: 'ready', activeProcesses: 1, readyProcesses: 1 }),
     capabilityDiscovery: async () => {
