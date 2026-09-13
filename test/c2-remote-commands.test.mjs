@@ -19,6 +19,7 @@ function fixture(){
     case 'session.mode.get':return{sessionId:params.sessionId,mode:'build'};
     case 'session.mode.set':return{sessionId:params.sessionId,mode:params.mode};
     case 'session.auto.get':return{sessionId:params.sessionId,enabled:false};
+    case 'session.run.latest':return null;
     case 'session.send':return{accepted:true,sessionId:params.sessionId,messageId:'m1'};
     case 'session.steer':return{accepted:true,sessionId:params.sessionId,messageId:'m-steer'};
     case 'session.stop':return{stopped:true,sessionId:params.sessionId};
@@ -66,6 +67,7 @@ test('session snapshot is the durable remote transcript projection',async()=>{
   assert.deepEqual(snapshot.session.messages,[{id:'m1',role:'assistant',status:'complete',content:'ok'}]);
   assert.equal(snapshot.session.activities[0]?.activity?.type,'activity.tool.closed');
   assert.equal(snapshot.session.toolExecutions[0]?.callId,'c1');
+  assert.equal(snapshot.run,null);
   assert.equal(snapshot.mode,'build');
   assert.equal(snapshot.autoMode,false);
 });
