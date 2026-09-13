@@ -37,6 +37,8 @@ jobs:
         run: node --test --test-concurrency=1 test/acp-runtime-supervisor.test.mjs
       - name: Validate structured provider failures
         run: node --test --test-concurrency=1 test/provider-error.test.mjs
+      - name: Validate RuntimeClient recovery never replays sends
+        run: node --test --test-concurrency=1 test/runtime-client-recovery.test.mjs
       - name: Validate LaunchServices acceptance contract
         run: node --test --test-concurrency=1 test/gui-launchservices-path.test.mjs
       - name: Run provider architecture and ACP regressions
