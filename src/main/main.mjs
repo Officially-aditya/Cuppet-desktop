@@ -4,9 +4,7 @@ import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
-import { fetchProviderModelCatalog } from './provider-model-catalog.mjs';
 import { providerPreset } from './provider-presets.mjs';
-import { cliAgentConnect, cliAgentStatus } from './cli-agent-status.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { listSessionEditedFiles } from '../runtime/session-edited-files.mjs';
 
@@ -22,7 +20,11 @@ async function bootstrap() {
   runtimeDataDir = join(userData, 'runtime');
   settings = new ProviderSettingsStore(join(userData, 'provider-settings.json'));
   await settings.load();
-  runtime = new RuntimeClient({ entry: join(here, '..', 'runtime', 'main.mjs'), dataDir: runtimeDataDir });
+  runtime = new RuntimeClient({
+    entry: join(here, '..', 'runtime', 'main.mjs'),
+    dataDir: runtimeDataDir,
+    environment: { CUPPET_USER_DATA_DIR: userData },
+  });
   runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
   await runtime.start();
@@ -115,10 +117,11 @@ function registerIpc() {
     return { copied: true };
   });
 
-  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => cliAgentStatus(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
-  ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => cliAgentConnect(validateCliProviderID(providerID), { userData: app.getPath('userData') }));
+  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
+  ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
-  ipcMain.handle('cuppet:settings:models', (_event, value) => fetchProviderModelCatalog(settings.runtimeValue(), {
+  ipcMain.handle('cuppet:settings:models', (_event, value) => request('provider.models', {
+    provider: settings.runtimeValue(),
     model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
       ? value.model.trim().slice(0, 1000)
       : '',
@@ -170,7 +173,14 @@ function desktopProviderAuthority(request) {
   return {
     models: async () => {
       const value = settings.rendererValue();
-      return { configured: value.configured, primary: value.primary, secondary: value.secondary, models: value.models, catalog: value.catalog };
+      const discovered = await request('provider.models', { provider: settings.runtimeValue() }).catch(() => null);
+      return {
+        configured: value.configured,
+        primary: value.primary,
+        secondary: value.secondary,
+        models: discovered?.models?.length ? discovered.models : value.models,
+        catalog: value.catalog,
+      };
     },
     providers: async () => {
       const value = settings.rendererValue();
@@ -187,14 +197,20 @@ function desktopProviderAuthority(request) {
     },
     effort: async () => {
       const value = settings.rendererValue();
-      const model = value.models?.find?.((item) => item.providerID === value.primary?.providerID && item.modelID === value.primary?.modelID);
+      const discovered = await request('provider.models', { provider: settings.runtimeValue(), model: value.primary?.modelID ?? '' }).catch(() => null);
+      const models = discovered?.models?.length ? discovered.models : value.models;
+      const model = models?.find?.((item) => item.providerID === value.primary?.providerID && item.modelID === value.primary?.modelID)
+        ?? models?.find?.((item) => item.id === value.primary?.modelID || item.modelID === value.primary?.modelID);
       return { providerID: value.primary?.providerID ?? null, modelID: value.primary?.modelID ?? null, variant: value.primary?.variant ?? null, variants: model?.variants ?? [] };
     },
     setEffort: async (variant) => {
       const value = settings.rendererValue();
       if (!value.primary?.modelID || !value.baseUrl) throw new Error('Configure a primary model before selecting effort.');
       const requested = String(variant ?? '').trim();
-      const model = value.models?.find?.((item) => item.providerID === value.primary.providerID && item.modelID === value.primary.modelID);
+      const discovered = await request('provider.models', { provider: settings.runtimeValue(), model: value.primary.modelID }).catch(() => null);
+      const models = discovered?.models?.length ? discovered.models : value.models;
+      const model = models?.find?.((item) => item.providerID === value.primary.providerID && item.modelID === value.primary.modelID)
+        ?? models?.find?.((item) => item.id === value.primary.modelID || item.modelID === value.primary.modelID);
       if (requested && requested !== 'default' && !model?.variants?.includes?.(requested)) throw new Error(`Effort variant is not advertised for ${value.primary.modelID}: ${requested}`);
       const saved = await settings.save({
         providerID: value.primary.providerID,
