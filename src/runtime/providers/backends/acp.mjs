@@ -2,7 +2,6 @@ import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
 import { AcpSessionRuntime } from '../transports/acp/acp-session.mjs';
 import { CuppetMcpToolSession } from '../transports/acp/cuppet-mcp-tool-session.mjs';
 import { AcpTextStreamAssembler } from '../transports/acp/acp-text-stream.mjs';
-import { activityToLegacyEvent } from '../runtime-manager-legacy.mjs';
 
 export class AcpProviderAdapter {
   #configuration;
@@ -35,15 +34,13 @@ export class AcpProviderAdapter {
     const toolSession = this.#descriptor.mcpToolBridge === true
       ? await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options })
       : null;
-    const activityState = new Map();
     const textStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
     const activityTextStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
     let reasoningStream = usesTokenizedWhitespace(this.#descriptor.textStream)
       ? new AcpTextStreamAssembler(this.#descriptor.textStream)
       : null;
     const forwardActivity = async (activity) => {
-      const legacy = activityToLegacyEvent(activity, activityState);
-      if (legacy) await options.onProviderEvent?.(legacy);
+      await options.onActivity?.(activity);
     };
     const flushReasoning = async () => {
       if (!reasoningStream) return;
