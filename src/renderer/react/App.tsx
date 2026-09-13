@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { Sidebar } from './Sidebar';
 import { ChatPane, type ComposerMode, type DeliveryMode } from './ChatPane';
+import { TstMemorySidebar } from './TstMemorySidebar';
 import { NewChatModal } from './NewChatModal';
 import { AddProjectModal } from './AddProjectModal';
 import { SearchModal } from './SearchModal';
@@ -377,6 +378,7 @@ export function App() {
         onStop={stop}
         onModeChange={changeMode}
       />
+      {active?.projectId && <TstMemorySidebar sessionId={active.id} projectName={activeProject?.name} running={activeRunning} />}
 
       {modal === 'new-chat' && <NewChatModal projects={projects} selectedProjectId={activeProjectId} onClose={() => setModal(null)} onStart={(projectId) => { startDraft(projectId); setModal(null); }} />}
       {modal === 'add-project' && <AddProjectModal onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}

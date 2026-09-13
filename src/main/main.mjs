@@ -59,6 +59,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:background:flush', (_event, sessionId) => request('background.flush', { sessionId }));
   ipcMain.handle('cuppet:plan:get', (_event, sessionId, requestValue) => request('plan.get', { sessionId, request: requestValue }));
   ipcMain.handle('cuppet:memory:query', (_event, sessionId, query) => request('memory.query', { sessionId, query }));
+  ipcMain.handle('cuppet:memory:graph', (_event, sessionId) => request('memory.graph', { sessionId: boundedId(sessionId) }));
   ipcMain.handle('cuppet:pe3:status', (_event, sessionId) => request('pe3.status', { sessionId }));
   ipcMain.handle('cuppet:pe3:observe-paths', (_event, sessionId, paths) => request('pe3.observe-paths', { sessionId, paths: validatePaths(paths) }));
   ipcMain.handle('cuppet:pe3:workspace-mutation', (_event, sessionId, paths) => request('pe3.workspace-mutation', { sessionId, paths: validatePaths(paths) }));

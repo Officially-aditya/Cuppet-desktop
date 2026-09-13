@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('cuppet', {
     backgroundFlush: (sessionId) => ipcRenderer.invoke('cuppet:background:flush', sessionId),
     planGet: (sessionId, request = { action: 'overview' }) => ipcRenderer.invoke('cuppet:plan:get', sessionId, request),
     memoryQuery: (sessionId, query) => ipcRenderer.invoke('cuppet:memory:query', sessionId, query),
+    memoryGraph: (sessionId) => ipcRenderer.invoke('cuppet:memory:graph', sessionId),
   },
   commands: {
     list: () => ipcRenderer.invoke('cuppet:command:list'),

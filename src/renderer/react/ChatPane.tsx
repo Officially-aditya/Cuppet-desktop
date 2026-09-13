@@ -347,7 +347,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
   const hasTrace = assistant && trace.length > 0;
-  const canCopy = assistant && !live && message.status !== 'streaming' && Boolean(content.trim());
+  const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
     if (!live) setTraceOpen(false);
@@ -356,7 +356,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   const copySummary = async () => {
     if (!canCopy) return;
     try {
-      const rendered = responseRef.current?.innerText?.trim();
+      const rendered = assistant ? responseRef.current?.innerText?.trim() : '';
       const value = rendered || content.trim();
       if (!value) return;
       await window.cuppet.native.copyText(value);
@@ -392,7 +392,7 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}
       {canCopy && (
         <div className="message-footer-actions message-footer-copy">
-          <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : 'Copy final response'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
+          <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : assistant ? 'Copy final response' : 'Copy message'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
             <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="6.1" y="5.7" width="7" height="8" rx="1.4" stroke="currentColor" strokeWidth="1.25"/><path d="M4.6 11.7H4a1.4 1.4 0 0 1-1.4-1.4V4A1.4 1.4 0 0 1 4 2.6h6.1A1.4 1.4 0 0 1 11.5 4v.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/></svg>
           </button>
         </div>
@@ -408,8 +408,23 @@ function TraceView({ trace }: { trace: TraceItem[] }) {
       {ordered.map((item) => item.type === 'reasoning' ? (
         <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
       ) : (
-        <div key={item.id} className={`thread-activity-line ${item.status}`}>{friendlyActivityLabel({ id: item.id, kind: 'tool', status: item.status, label: item.label, details: item.details })}</div>
+        <ToolTraceRow key={item.id} item={item} />
       ))}
+    </div>
+  );
+}
+
+function ToolTraceRow({ item }: { item: TraceTool }) {
+  const [open, setOpen] = useState(false);
+  const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details);
+  return (
+    <div className={`thread-tool-row ${item.status}`}>
+      <button type="button" className="thread-tool-summary" aria-expanded={open} onClick={() => detail && setOpen((current) => !current)}>
+        <span className="thread-tool-status" aria-hidden="true">{item.status === 'running' ? '●' : item.status === 'error' ? '!' : '✓'}</span>
+        <span className="thread-tool-label">{item.label}</span>
+        {detail ? <span className="thread-tool-chevron" aria-hidden="true">{open ? '−' : '+'}</span> : null}
+      </button>
+      {open && detail ? <div className="thread-tool-detail">{detail.split('\n').map((line, index) => <div key={`${item.id}:detail:${index}`}>{line}</div>)}</div> : null}
     </div>
   );
 }
@@ -570,42 +585,92 @@ function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceToo
   const complete = status === 'complete';
   const phrase = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
   const targets = toolTargets(toolName, args);
-  const one = targets.length === 1 ? targetName(targets[0]) : '';
-  const many = targets.length > 1 ? `${targets.length} files` : '';
-  const target = one || many;
+  const target = describeTargets(targets, args);
+  const focus = toolExploreFocus(args);
+  const command = toolCommand(args);
 
-  if (toolName === 'workspace_read') return target
+  if (toolName === 'workspace_read' || toolName === 'tst_read' || /(^|[_-])read($|[_-])/.test(toolName)) return target
     ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
-    : phrase('Reading…', 'Read file', 'Couldn’t read file');
-  if (toolName === 'tst_read') return target
-    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
-    : phrase('Reading…', 'Read files', 'Couldn’t read files');
-  if (toolName === 'tst_explore') {
-    const focus = toolExploreFocus(args);
-    return focus
-      ? phrase(`Exploring ${focus}…`, `Explored ${focus}`, `Couldn’t explore ${focus}`)
-      : phrase('Exploring…', 'Explored', 'Couldn’t explore');
-  }
+    : phrase('Reading file…', 'Read file', 'Couldn’t read file');
+  if (toolName === 'tst_explore' || /search|grep|find|explore|locate/.test(toolName)) return focus
+    ? phrase(`Searching ${focus}…`, `Searched ${focus}`, `Search failed for ${focus}`)
+    : phrase('Searching workspace…', 'Searched workspace', 'Workspace search failed');
   if (toolName === 'tst_edit_batch') {
-    if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edits…', 'Applied edits', 'Couldn’t apply edits');
-    return target
-      ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
-      : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
+    if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edit batch…', 'Applied edit batch', 'Edit batch failed');
+    return target ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`) : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
   }
-  if (toolName === 'workspace_edit') return target
+  if (toolName === 'workspace_edit' || /(^|[_-])(edit|patch)($|[_-])/.test(toolName)) return target
     ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
-    : phrase('Editing…', 'Edited file', 'Couldn’t edit file');
-  if (toolName === 'workspace_write') return target
+    : phrase('Editing file…', 'Edited file', 'Couldn’t edit file');
+  if (toolName === 'workspace_write' || /(^|[_-])(write|create)($|[_-])/.test(toolName)) return target
     ? phrase(`Writing ${target}…`, `Wrote ${target}`, `Couldn’t write ${target}`)
-    : phrase('Writing…', 'Wrote file', 'Couldn’t write file');
-  if (toolName === 'tst_validate') return target
+    : phrase('Writing file…', 'Wrote file', 'Couldn’t write file');
+  if (toolName === 'tst_validate' || /test|verify|validate|lint|check/.test(toolName)) return target
     ? phrase(`Validating ${target}…`, `Validated ${target}`, `Validation failed for ${target}`)
-    : phrase('Validating…', 'Validated', 'Validation failed');
-  if (toolName === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Couldn’t search memory');
+    : phrase('Running validation…', `${humanToolLabel(toolName)} passed`, `${humanToolLabel(toolName)} failed`);
+  if (toolName === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Memory search failed');
   if (toolName === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
-  if (toolName === 'bash') return phrase('Running command…', 'Ran command', 'Command failed');
+  if (toolName === 'bash' || /shell|terminal|command|exec/.test(toolName)) return command
+    ? phrase(`Running ${command}…`, `Ran ${command}`, `Command failed: ${command}`)
+    : phrase('Running command…', 'Ran command', 'Command failed');
   if (toolName === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
-  return phrase('Working…', 'Completed', 'Failed');
+
+  const name = humanToolLabel(toolName);
+  return phrase(`${name}…`, `${name} completed`, `${name} failed`);
+}
+
+function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDetails?: string) {
+  const args = parseToolArguments(argumentsJson);
+  const lines: string[] = [];
+  const targets = toolTargets(toolName, args);
+  if (targets.length) lines.push(`Target${targets.length === 1 ? '' : 's'}: ${targets.slice(0, 6).join(', ')}${targets.length > 6 ? ` +${targets.length - 6} more` : ''}`);
+  const range = toolLineRange(args);
+  if (range) lines.push(`Range: ${range}`);
+  const query = toolExploreFocus(args);
+  if (query && !targets.length) lines.push(`Query: ${query}`);
+  const command = toolCommand(args, false);
+  if (command) lines.push(`Command: ${command}`);
+  const action = typeof args.action === 'string' ? compactActivityText(args.action) : '';
+  if (action && !lines.some((line) => line.includes(action))) lines.push(`Action: ${action}`);
+  if (runtimeDetails) lines.push(`Result: ${compactActivityText(runtimeDetails)}`);
+  if (!lines.length && toolName) lines.push(`Tool: ${humanToolLabel(toolName)}`);
+  return lines.join('\n');
+}
+
+function describeTargets(targets: string[], args: Record<string, unknown>) {
+  if (!targets.length) return '';
+  if (targets.length > 1) return `${targets.length} files`;
+  const base = targetName(targets[0]);
+  const range = toolLineRange(args);
+  return range ? `${base} · ${range}` : base;
+}
+
+function toolLineRange(args: Record<string, unknown>) {
+  const start = Number(args.start_line ?? args.startLine ?? args.line_start ?? args.offset);
+  const end = Number(args.end_line ?? args.endLine ?? args.line_end);
+  if (Number.isFinite(start) && Number.isFinite(end) && start > 0 && end >= start) return `lines ${start}–${end}`;
+  if (Number.isFinite(start) && start > 0) return `from line ${start}`;
+  const limit = Number(args.limit);
+  if (Number.isFinite(limit) && limit > 0 && (args.path || args.file)) return `up to ${limit} lines`;
+  return '';
+}
+
+function toolCommand(args: Record<string, unknown>, compact = true) {
+  const value = [args.command, args.cmd, args.script].find((item) => typeof item === 'string' && item.trim());
+  if (typeof value !== 'string') return '';
+  const normalized = value.replace(/[\r\n\t]+/g, ' ').trim();
+  if (!compact) return normalized.length > 180 ? `${normalized.slice(0, 177)}…` : normalized;
+  return normalized.length > 54 ? `${normalized.slice(0, 51)}…` : normalized;
+}
+
+function humanToolLabel(value: string) {
+  const normalized = String(value || 'tool')
+    .replace(/^cuppet[_-]/, '')
+    .replace(/^tst[_-]/, 'TST ')
+    .replace(/^workspace[_-]/, '')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return normalized ? normalized.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Tool';
 }
 
 function toolTargets(toolName: string, args: Record<string, unknown>) {
@@ -615,6 +680,12 @@ function toolTargets(toolName: string, args: Record<string, unknown>) {
     const path = value.trim();
     if (path && !values.includes(path)) values.push(path);
   };
+
+  add(args.path);
+  add(args.file);
+  add(args.filename);
+  if (Array.isArray(args.paths)) for (const value of args.paths) add(value);
+  if (Array.isArray(args.files)) for (const value of args.files) add(typeof value === 'string' ? value : (value as Record<string, unknown>)?.path);
 
   if (toolName === 'tst_read' || toolName === 'workspace_read') {
     add(args.path);

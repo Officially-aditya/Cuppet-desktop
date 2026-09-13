@@ -20,6 +20,7 @@ import { classifyProviderError } from './provider-error.mjs';
 import { generateChatTitle } from './title-generator.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
+import { listSessionEditedFiles } from './session-edited-files.mjs';
 
 export class RuntimeService {
   #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #ownedTurnStore = null; #liveExecutions = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
@@ -125,6 +126,7 @@ export class RuntimeService {
       case 'context.compact': return this.#compact(params);
       case 'plan.get': return this.#plans.toolResult(params.sessionId, params.request ?? { action: 'overview' });
       case 'memory.query': return this.#queryMemory(params);
+      case 'memory.graph': return this.#memoryGraph(params);
       case 'memory.remember': return this.#rememberMemory(params);
       case 'memory.forget': return this.#forgetMemory(params);
       case 'memory.clear': return this.#clearMemory(params);
@@ -218,6 +220,18 @@ export class RuntimeService {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
     try { return { available: true, records: await this.#tst.queryMemory(params.sessionId, String(params.query ?? ''), params.limit ?? 20) }; }
     catch (error) { return { available: false, records: [], reason: cleanError(error) }; }
+  }
+  async #memoryGraph(params) {
+    const session = this.requireSession(params.sessionId);
+    const editedFiles = await listSessionEditedFiles(this.#dataDir, session.id);
+    if (!session.projectId) return { available: false, reason: 'TST memory graph requires a project-bound chat', files: [], editedFiles };
+    if (!this.#tst.configured) return { available: false, reason: 'TST is not configured', files: [], editedFiles };
+    try {
+      const workspace = await this.#tst.graphWorkspace(220);
+      return { available: true, ...workspace, editedFiles };
+    } catch (error) {
+      return { available: false, reason: cleanError(error), files: [], editedFiles };
+    }
   }
   async #rememberMemory(params) {
     const session = this.requireSession(params.sessionId);
