@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { RemoteStatus, RuntimeEvent } from '../types';
+import type { RemoteInvite, RemoteStatus, RuntimeEvent } from '../types';
 
 const EMPTY_REMOTE_STATUS: RemoteStatus = Object.freeze({});
 let status: RemoteStatus = EMPTY_REMOTE_STATUS;
@@ -40,7 +40,7 @@ export function reduceClientRemoteEvent(event: RuntimeEvent) {
     return true;
   }
   if (type === 'remote.setup' && event?.setup) {
-    hydrateClientRemoteStatus({ ...status, starting: true, setup: event.setup });
+    hydrateClientRemoteStatus({ ...status, starting: true, setup: normalizeRemoteSetup(event.setup) });
     return true;
   }
   if (type === 'remote.device') {
@@ -105,11 +105,23 @@ function releaseRuntimeSubscription() {
   unsubscribe?.();
 }
 
+function normalizeRemoteSetup(value: Record<string, unknown>): RemoteInvite {
+  const expiresAt = typeof value.expiresAt === 'string' ? Date.parse(value.expiresAt) : Number(value.expiresAt);
+  return {
+    ...(typeof value.url === 'string' ? { url: value.url } : {}),
+    ...(typeof value.code === 'string' ? { code: value.code } : {}),
+    ...(typeof value.role === 'string' ? { role: value.role } : {}),
+    ...(Number.isFinite(expiresAt) ? { expiresAt } : {}),
+  };
+}
+
 function sameRemoteStatus(current: RemoteStatus, next: RemoteStatus) {
   const currentKeys = Object.keys(current);
   const nextKeys = Object.keys(next);
   if (currentKeys.length !== nextKeys.length) return false;
-  return nextKeys.every((key) => Object.is((current as Record<string, unknown>)[key], (next as Record<string, unknown>)[key]));
+  const currentRecord = current as unknown as Record<string, unknown>;
+  const nextRecord = next as unknown as Record<string, unknown>;
+  return nextKeys.every((key) => Object.is(currentRecord[key], nextRecord[key]));
 }
 
 function notify() {
