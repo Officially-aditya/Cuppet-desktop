@@ -9,8 +9,28 @@ import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 const descriptor = localCliDescriptor('opencode');
 assert.ok(descriptor, 'OpenCode descriptor is missing');
 assert.equal(descriptor.transport, 'acp');
+assert.deepEqual(descriptor.args, ['acp']);
 assert.equal(descriptor.mcpToolBridge, true);
-assert.ok(Array.isArray(descriptor.requiredSessionSettings) && descriptor.requiredSessionSettings.length > 0, 'OpenCode guarded mode is missing');
+assert.equal(descriptor.requiredSessionSettings, undefined, 'OpenCode ACP must not require a synthetic Cuppet mode');
+
+// The released OpenCode ACP process owns its normal CLI auth/provider/config state.
+// Cuppet may add its execution permission overlay, but must never rewrite the
+// highest-precedence inline configuration merely to launch ACP.
+const inlineConfig = '{ /* provider-owned JSONC */ "theme": "system", }';
+const environment = descriptor.environment({
+  OPENCODE_CONFIG_CONTENT: inlineConfig,
+  OPENCODE_SERVER_PASSWORD: 'provider-owned-secret-placeholder',
+});
+assert.equal(environment.OPENCODE_CONFIG_CONTENT, inlineConfig, 'OpenCode inline config was rewritten');
+assert.equal(environment.OPENCODE_SERVER_PASSWORD, 'provider-owned-secret-placeholder', 'OpenCode inherited auth environment was dropped');
+assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
+assert.equal(environment.CUPPET_OPENCODE_AGENT_ID, undefined, 'synthetic OpenCode agent authority leaked back into ACP');
+const permissions = JSON.parse(environment.OPENCODE_PERMISSION || '{}');
+for (const native of ['*', 'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill', 'external_directory']) {
+  assert.equal(permissions[native], 'deny', `OpenCode native ${native} permission is not denied`);
+}
+assert.equal(permissions['cuppet-runtime_*'], 'allow');
+assert.equal(permissions['cuppet_runtime_*'], 'allow');
 
 const projectRoot = await mkdtemp(join(tmpdir(), 'cuppet-opencode-acp-'));
 const toolSession = new CuppetMcpToolSession({ sessionId: 'live-smoke', backendId: 'opencode' });
@@ -48,10 +68,9 @@ try {
     settings: capabilities.settings,
   })}`);
 
-  // Provider V2 deliberately owns durable context and opens a fresh provider
-  // logical session for each Cuppet turn. This second session therefore exercises
-  // stable ACP session/close + session/new against the released OpenCode package,
-  // plus re-application of the mandatory Cuppet execution mode.
+  // Provider V2 owns durable context and opens a fresh provider logical session
+  // for each Cuppet turn. Exercise the released package's session/close +
+  // session/new path without imposing a Cuppet-specific model or mode contract.
   const second = await runtime.newSession({ mcpServers: [toolSession.descriptor()] });
   assert.equal(second.state, 'ready');
   assert.ok(second.sessionId, 'released OpenCode ACP did not return a second session id');
