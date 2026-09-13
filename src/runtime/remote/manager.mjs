@@ -51,7 +51,16 @@ export class RemoteManager {
     const commands=new RemoteCommandAdapter({call:this.#call,identity,providerConfig:this.#provider});
     const bridge=new RemoteBridge({
       hostId:identity.hostId,transport,commandAdapter:commands,
-      authenticateDevice:async(deviceId,secret)=>{const local=await authenticateDevice(this.#remoteDir,deviceId,secret);if(local)return local;if(!identity.remoteTokenPublicKey)return undefined;return verifyRemoteToken(secret,identity.remoteTokenPublicKey,identity.hostId,deviceId);},
+      authenticateDevice:async(deviceId,secret)=>{
+        const reauthorize=async()=>{
+          const local=await authenticateDevice(this.#remoteDir,deviceId,secret);
+          if(local)return local;
+          if(!identity.remoteTokenPublicKey)return undefined;
+          return verifyRemoteToken(secret,identity.remoteTokenPublicKey,identity.hostId,deviceId);
+        };
+        const authenticated=await reauthorize();
+        return authenticated?{...authenticated,reauthorize}:undefined;
+      },
       claimPairingInvite:(code,name)=>claimPairingInvite(this.#remoteDir,code,name),
       buildAttachSnapshot:async()=>({host:await commands.execute({deviceID:'attach'},'host.get',{},{}),workspaces:await commands.execute({deviceID:'attach'},'workspace.list',{},{}),permissions:await this.#call('permission.list',{}),questions:[]}),
       onDeviceChange:(devices)=>this.#emit({type:'remote.device',devices}),
@@ -63,7 +72,13 @@ export class RemoteManager {
   async stop(){if(!this.#bridge)return {stopped:false,status:await this.status()};this.#bridge.stop();this.#bridge=undefined;this.#transport=undefined;this.#commands=undefined;this.#startedAt=undefined;this.#emit({type:'remote.stopped'});return {stopped:true,status:await this.status()};}
   async createInvite({role='trusted',ttlMs}={}){const identity=await this.ready();const invite=await createPairingInvite(this.#remoteDir,{role,...(Number.isFinite(ttlMs)?{ttlMs}:{}),...(this.#relayUrl?{relayUrl:this.#relayUrl}:{}),hostId:identity.hostId});this.#emit({type:'remote.invite',invite:{code:invite.code,expiresAt:invite.expiresAt,role:invite.role,url:invite.url??null}});return invite;}
   async devices(){return listPairedDevices(this.#remoteDir);}
-  async revoke(deviceId){const revoked=await revokeDevice(this.#remoteDir,deviceId);return {deviceId,revoked};}
+  async revoke(deviceId){
+    const id=String(deviceId??'');
+    const revoked=await revokeDevice(this.#remoteDir,id);
+    const disconnected=revoked?Boolean(this.#bridge?.revokeDevice(id)):false;
+    if(revoked)this.#emit({type:'remote.revoked',deviceId:id,disconnected});
+    return {deviceId:id,revoked,disconnected};
+  }
   async close(){
     // Runtime shutdown must not lazily create remote identity/state when the
     // user never opened or started remote control. `stop()` intentionally
