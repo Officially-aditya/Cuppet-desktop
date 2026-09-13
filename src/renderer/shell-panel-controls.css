@@ -1,0 +1,39 @@
+.cuppet-shell-header .react-app{position:relative;padding-top:38px}
+.shell-panel-header{position:fixed;z-index:40;top:0;left:0;right:0;height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 76px;border-bottom:1px solid rgba(255,255,255,.055);background:rgba(8,10,13,.94);backdrop-filter:blur(16px);-webkit-app-region:drag;user-select:none}
+.shell-panel-controls{display:flex;align-items:center;gap:4px;-webkit-app-region:no-drag}
+.shell-panel-button{width:27px;height:27px;display:grid;place-items:center;padding:0;border:0;border-radius:7px;background:transparent;color:#66707d;cursor:pointer}
+.shell-panel-button:hover:not(:disabled){background:rgba(255,255,255,.055);color:#d8e0ea}
+.shell-panel-button.active{color:#bdc8d6;background:rgba(255,255,255,.04)}
+.shell-panel-button:disabled{opacity:.24;cursor:default}
+.shell-panel-button:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(128,153,185,.22)}
+.shell-panel-button svg{width:17px;height:17px}
+
+/* The original controls stay as the state owners. The titlebar drives them programmatically. */
+.cuppet-shell-header .sidebar-toggle-button{display:none!important}
+.cuppet-shell-header .react-sidebar:not(.collapsed) .brand-row{padding-right:5px}
+.cuppet-shell-header .react-sidebar.collapsed .sidebar-collapsed-brand{top:9px}
+
+/* TST: graph only, floating as a square workspace panel. */
+.cuppet-shell-header .memory-sidebar{position:fixed;z-index:14;top:50px;right:12px;width:clamp(286px,30vw,380px);min-width:0;max-width:calc(100vw - 36px);height:auto;aspect-ratio:1/1;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#030405;box-shadow:0 18px 46px rgba(0,0,0,.34);overflow:hidden}
+.cuppet-shell-header .memory-sidebar-header,
+.cuppet-shell-header .memory-sidebar-stats,
+.cuppet-shell-header .memory-graph-legend,
+.cuppet-shell-header .memory-activity-section{display:none!important}
+.cuppet-shell-header .memory-sidebar-rail{display:none!important}
+.cuppet-shell-header .memory-graph-stage{position:absolute;inset:0;width:100%;height:100%!important;min-height:0!important;border:0}
+.cuppet-shell-header .memory-node-inspector{position:absolute;z-index:4;left:10px;right:10px;bottom:10px;margin:0;padding:8px 10px;border:1px solid rgba(136,184,244,.13);border-radius:8px;background:rgba(7,10,14,.78);backdrop-filter:blur(9px);pointer-events:none}
+.cuppet-shell-header .memory-inspector-label{display:none}
+.cuppet-shell-header .memory-node-inspector strong{font-size:10px;line-height:14px;color:#d5e0ee}
+.cuppet-shell-header .memory-inspector-meta{margin-top:3px;font-size:8.5px;color:#738095}
+.cuppet-shell-header .memory-graph-empty svg,
+.cuppet-shell-header .memory-graph-empty span{display:none}
+.cuppet-shell-header .memory-graph-empty strong{font-size:10px;font-weight:500;color:#687383}
+
+/* Terminal: no duplicate bottom disclosure bar. The titlebar button owns visibility. */
+.cuppet-shell-header .project-terminal.collapsed{height:0!important;border-top:0!important;overflow:hidden}
+.cuppet-shell-header .project-terminal-bar{display:none!important}
+.cuppet-shell-header .project-terminal.open{height:238px}
+.cuppet-shell-header .project-terminal.open .project-terminal-body{height:100%}
+
+@media(max-height:700px){.cuppet-shell-header .project-terminal.open{height:190px}}
+@media(max-width:960px){.cuppet-shell-header .memory-sidebar{width:min(320px,calc(100vw - 28px));right:8px}.shell-panel-header{padding-right:8px}}
