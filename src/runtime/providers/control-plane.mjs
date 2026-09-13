@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { localProviderOperations } from './local-provider-operations.mjs';
 import { discoverProviderCapabilitySnapshot } from './default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from './capability-snapshot.mjs';
+import { providerRuntimeHealth } from './runtime-health-registry.mjs';
 
 /**
  * Runtime-owned provider lifecycle authority.
@@ -15,6 +16,7 @@ export class ProviderControlPlane {
   #resourcesPath;
   #operationsFactory;
   #capabilityDiscovery;
+  #runtimeHealth;
 
   constructor({
     dataDir,
@@ -22,36 +24,43 @@ export class ProviderControlPlane {
     resourcesPath = process.env.CUPPET_RESOURCES_PATH,
     operationsFactory = localProviderOperations,
     capabilityDiscovery = discoverProviderCapabilitySnapshot,
+    runtimeHealth = providerRuntimeHealth,
   } = {}) {
     this.#userData = userData;
     this.#resourcesPath = resourcesPath;
     this.#operationsFactory = operationsFactory;
     this.#capabilityDiscovery = capabilityDiscovery;
+    this.#runtimeHealth = runtimeHealth;
   }
 
   async localStatus(providerID) {
-    const status = await this.#operations(providerID).status();
-    return withControlState(status);
+    const id = requiredProviderID(providerID);
+    const status = await this.#operations(id).status();
+    return withControlState(status, this.#runtimeHealth(id));
   }
 
   async localConnect(providerID) {
-    const status = await this.#operations(providerID).connect();
-    return withControlState(status);
+    const id = requiredProviderID(providerID);
+    const status = await this.#operations(id).connect();
+    return withControlState(status, this.#runtimeHealth(id));
   }
 
   async localDetect(providerID) {
-    const state = await this.#operations(providerID).detect();
-    return withControlState(state);
+    const id = requiredProviderID(providerID);
+    const state = await this.#operations(id).detect();
+    return withControlState(state, this.#runtimeHealth(id));
   }
 
   async localProbe(providerID) {
-    const state = await this.#operations(providerID).probe();
-    return withControlState(state);
+    const id = requiredProviderID(providerID);
+    const state = await this.#operations(id).probe();
+    return withControlState(state, this.#runtimeHealth(id));
   }
 
   async localUpdate(providerID) {
-    const state = await this.#operations(providerID).update();
-    return withControlState(state);
+    const id = requiredProviderID(providerID);
+    const state = await this.#operations(id).update();
+    return withControlState(state, this.#runtimeHealth(id));
   }
 
   async models(configuration = {}, { model = '' } = {}) {
@@ -74,7 +83,7 @@ export class ProviderControlPlane {
   }
 }
 
-export function withControlState(status = {}) {
+export function withControlState(status = {}, runtimeHealth = null) {
   const installed = status.installed === true || status.installation?.detected === true;
   const connected = status.connected === true || status.available === true;
   const installationState = !installed
@@ -87,7 +96,15 @@ export function withControlState(status = {}) {
     : installed
       ? 'required'
       : 'unknown';
-  const overall = connected ? 'ready' : installed ? 'needs_auth' : 'needs_install';
+  const runtime = normalizeRuntimeHealth(runtimeHealth);
+  const runtimeNeedsRetry = runtime.state === 'crashed' || runtime.state === 'unhealthy';
+  const overall = !installed
+    ? 'needs_install'
+    : !connected
+      ? 'needs_auth'
+      : runtimeNeedsRetry
+        ? 'needs_retry'
+        : 'ready';
   return {
     ...status,
     control: {
@@ -105,15 +122,27 @@ export function withControlState(status = {}) {
         state: authenticationState,
         probe: text(status.probe) || null,
       },
-      runtime: {
-        // Status/connect are observation/setup operations. The managed turn runtime
-        // owns the live process and reports its lifecycle separately.
-        state: connected ? 'available' : 'stopped',
-      },
+      runtime,
       capabilities: {
         state: connected ? 'unknown' : 'blocked',
       },
     },
+  };
+}
+
+function normalizeRuntimeHealth(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const state = ['stopped', 'starting', 'ready', 'busy', 'unhealthy', 'crashed'].includes(source.state)
+    ? source.state
+    : 'stopped';
+  return {
+    state,
+    activeProcesses: nonnegativeInteger(source.activeProcesses),
+    readyProcesses: nonnegativeInteger(source.readyProcesses),
+    busyProcesses: nonnegativeInteger(source.busyProcesses),
+    generation: nonnegativeInteger(source.generation),
+    restarts: nonnegativeInteger(source.restarts),
+    lastFailure: cloneFailure(source.lastFailure),
   };
 }
 
@@ -147,6 +176,19 @@ function requiredProviderID(value) {
 
 function cloneIdentity(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? structuredClone(value) : null;
+}
+function cloneFailure(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    code: text(value.code).slice(0, 120) || null,
+    category: text(value.category).slice(0, 120) || 'unknown',
+    retryable: value.retryable === true,
+    at: nonnegativeInteger(value.at),
+  };
+}
+function nonnegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 function text(value) {
   return typeof value === 'string' ? value.trim().slice(0, 1000) : '';
