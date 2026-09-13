@@ -14,6 +14,7 @@ import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
 import { SessionCommandSerializer } from './session-command-serializer.mjs';
+import { persistDurableRuntimeEvent } from './runtime-event-durability.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
 import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
@@ -38,6 +39,19 @@ const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
+  try {
+    persistDurableRuntimeEvent(event, turnStore);
+  } catch (error) {
+    const failure = {
+      type: 'runtime.event.persist.failed',
+      sessionId: typeof event?.sessionId === 'string' ? event.sessionId.slice(0, 256) : null,
+      eventType: typeof event?.type === 'string' ? event.type.slice(0, 160) : null,
+      message: cleanError(error),
+    };
+    write({ kind: 'event', event: failure });
+    remote?.handleRuntimeEvent(failure);
+    return;
+  }
   runWaits.observe(event);
   if (event?.type === 'run.started' && event.sessionId && event.messageId) {
     turnStore.startRun({
