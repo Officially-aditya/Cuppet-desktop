@@ -96,7 +96,9 @@ assert.match(chat, /data-message-id=\{message\.id\}/, 'messages are not addressa
 assert.match(modelPicker, /aria-label="Select model"/, 'model picker trigger is not accessible');
 assert.match(modelPicker, /stage === 'models'/, 'model picker does not transition from model selection to effort selection in one menu');
 assert.doesNotMatch(modelPicker, /effort-picker-trigger|model-picker-custom|Custom model ID|placeholder="Model ID"/, 'model picker returned a second effort control or manual model ID field');
-assert.match(modelPicker, /window\.cuppet\.settings\.get/, 'model picker does not read the authoritative current model');
+assert.match(modelPicker, /useClientProviderSettings\(\)/, 'model picker does not consume the shared provider settings projection');
+assert.match(modelPicker, /refreshClientProviderSettings\(\)/, 'model picker cannot refresh the shared provider settings projection');
+assert.doesNotMatch(modelPicker, /window\.cuppet\.settings\.get\(\)/, 'model picker bypasses the shared provider settings projection');
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
 assert.match(modelPicker, /window\.cuppet\.settings\.models\(\)/, 'model picker does not use the generic provider model catalog');
 assert.doesNotMatch(modelPicker, /window\.cuppet\.codexAuth\.models/, 'model picker still leaks the Codex-specific model catalog API');
