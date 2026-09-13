@@ -10,6 +10,7 @@ export class ProjectTerminalManager {
   #request;
   #spawn;
   #sessions = new Map();
+  #startTokens = new Map();
 
   constructor({ request, spawnProcess = spawn } = {}) {
     if (typeof request !== 'function') throw new TypeError('ProjectTerminalManager requires a runtime request function');
@@ -28,8 +29,12 @@ export class ProjectTerminalManager {
       this.#stopSession(session);
     }
 
+    const startToken = randomUUID();
+    this.#startTokens.set(sender.id, startToken);
     const root = await resolveProjectTerminalRoot(this.#request, id);
     const shell = await resolveTerminalShell();
+    if (this.#startTokens.get(sender.id) !== startToken) throw new Error('Terminal start was superseded');
+
     const sessionId = `terminal_${randomUUID()}`;
     const child = this.#spawn(shell, [], {
       cwd: root,
@@ -42,6 +47,7 @@ export class ProjectTerminalManager {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    if (this.#startTokens.get(sender.id) === startToken) this.#startTokens.delete(sender.id);
 
     const session = {
       id: sessionId,
@@ -97,12 +103,14 @@ export class ProjectTerminalManager {
   }
 
   stopOwner(ownerId) {
+    this.#startTokens.delete(ownerId);
     for (const session of [...this.#sessions.values()]) {
       if (session.ownerId === ownerId) this.#stopSession(session);
     }
   }
 
   stopAll() {
+    this.#startTokens.clear();
     for (const session of [...this.#sessions.values()]) this.#stopSession(session);
   }
 
