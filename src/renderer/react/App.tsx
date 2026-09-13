@@ -33,6 +33,11 @@ import {
   refreshClientProviderSettings,
   useClientProviderSettings,
 } from './client-provider-state';
+import {
+  refreshClientSessions,
+  upsertClientSession,
+  useClientSessions,
+} from './client-session-state';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
@@ -41,7 +46,6 @@ type ModalName = 'new-chat' | 'add-project' | 'search' | 'remote' | 'settings' |
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [sessions, setSessions] = useState<Session[]>([]);
   const [active, setActive] = useState<Session | null>(null);
   const [draft, setDraft] = useState<Draft | null>({ projectId: null, mode: 'build' });
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
@@ -53,6 +57,7 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState('account');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessions = useClientSessions();
   const running = useClientRunState();
   const provider = useClientProviderSettings();
 
@@ -68,10 +73,9 @@ export function App() {
   const refreshLists = useCallback(async () => {
     const [nextProjects, nextSessions] = await Promise.all([
       window.cuppet.projects.list(),
-      window.cuppet.sessions.list(),
+      refreshClientSessions(),
     ]);
     setProjects(nextProjects);
-    setSessions(nextSessions);
     hydrateClientRunState(nextSessions);
     return { nextProjects, nextSessions };
   }, []);
@@ -81,6 +85,7 @@ export function App() {
       window.cuppet.sessions.get(sessionId),
       window.cuppet.cognitive.modeGet(sessionId),
     ]);
+    upsertClientSession(session);
     setActive(session);
     setDraft(null);
     setMode(modeState.mode === 'plan' ? 'plan' : 'build');
@@ -101,7 +106,7 @@ export function App() {
     const created = await window.cuppet.sessions.create(projectId);
     if (draft?.mode === 'plan') await window.cuppet.cognitive.modeSet(created.id, 'plan');
     const session = { ...created, messages: created.messages ?? [] };
-    setSessions((current) => upsertSession(current, session));
+    upsertClientSession(session);
     setActive(session);
     setDraft(null);
     setMode(draft?.mode ?? 'build');
@@ -115,7 +120,7 @@ export function App() {
     if (!id) return;
     try {
       const session = await window.cuppet.sessions.get(id);
-      setSessions((current) => upsertSession(current, session));
+      upsertClientSession(session);
       setActive((current) => current?.id === id ? session : current);
       hydrateClientRunSession(session);
     } catch {
@@ -130,7 +135,7 @@ export function App() {
         const [health, nextProjects, nextSessions, nextCognitive, nextCommands] = await Promise.all([
           window.cuppet.health(),
           window.cuppet.projects.list(),
-          window.cuppet.sessions.list(),
+          refreshClientSessions(),
           window.cuppet.cognitive.status(),
           window.cuppet.commands.list(),
           refreshClientProviderSettings(),
@@ -138,7 +143,6 @@ export function App() {
         if (disposed) return;
         if (!health?.ok) showToast('Runtime unavailable');
         setProjects(nextProjects);
-        setSessions(nextSessions);
         setCognitive(nextCognitive);
         setCommands(nextCommands);
         hydrateClientRunState(nextSessions);
@@ -184,7 +188,6 @@ export function App() {
       setProjects((current) => current.filter((project) => project.id !== event.projectId));
       void refreshLists();
     }
-    if (event.session) setSessions((current) => upsertSession(current, event.session));
 
     if (event.message && active?.id === event.message.sessionId) {
       setActive((current) => current ? { ...current, messages: upsertMessage(current.messages ?? [], event.message) } : current);
@@ -199,7 +202,6 @@ export function App() {
       });
     }
     if ((event.type === 'message.created' || event.type === 'message.completed') && sessionId) void refreshActive(sessionId);
-    if (['session.archived', 'session.deleted', 'session.restored'].includes(event.type)) void refreshLists();
 
     if (event.type === 'permission.requested' && event.request) setPermission(event.request);
     if (event.type === 'permission.resolved' && permission?.id === event.requestId) setPermission(null);
@@ -311,33 +313,33 @@ export function App() {
   const renameSession = useCallback(async (session: Session) => {
     const value = window.prompt('Rename chat', session.title || 'New chat')?.trim();
     if (!value || value === session.title) return;
-    try { await window.cuppet.sessions.rename(session.id, value); await refreshLists(); if (active?.id === session.id) await refreshActive(session.id); }
+    try { await window.cuppet.sessions.rename(session.id, value); await refreshClientSessions(); if (active?.id === session.id) await refreshActive(session.id); }
     catch (error) { showToast(error); }
-  }, [active?.id, refreshActive, refreshLists, showToast]);
+  }, [active?.id, refreshActive, showToast]);
 
   const archiveSession = useCallback(async (session: Session) => {
     if (!window.confirm(`Archive “${session.title || 'New chat'}”?`)) return;
     try {
       await window.cuppet.sessions.archive(session.id);
-      const { nextSessions } = await refreshLists();
+      const nextSessions = await refreshClientSessions();
       if (active?.id === session.id) {
         const next = nextSessions.find((item) => item.id !== session.id);
         if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
       }
     } catch (error) { showToast(error); }
-  }, [active?.id, openSession, refreshLists, showToast, startDraft]);
+  }, [active?.id, openSession, showToast, startDraft]);
 
   const deleteSession = useCallback(async (session: Session) => {
     if (!window.confirm(`Delete “${session.title || 'New chat'}” permanently?`)) return;
     try {
       await window.cuppet.sessions.delete(session.id);
-      const { nextSessions } = await refreshLists();
+      const nextSessions = await refreshClientSessions();
       if (active?.id === session.id) {
         const next = nextSessions.find((item) => item.id !== session.id);
         if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
       }
     } catch (error) { showToast(error); }
-  }, [active?.id, openSession, refreshLists, showToast, startDraft]);
+  }, [active?.id, openSession, showToast, startDraft]);
 
   const changeMode = useCallback(async (next: ComposerMode) => {
     const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';
@@ -434,14 +436,6 @@ function upsertProject(values: Project[], value: Project) {
   if (index >= 0) next[index] = { ...next[index], ...value };
   else next.unshift(value);
   return next.sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0));
-}
-
-function upsertSession(values: Session[], value: Session) {
-  const next = [...values];
-  const index = next.findIndex((item) => item.id === value.id);
-  if (index >= 0) next[index] = { ...next[index], ...value };
-  else next.unshift(value);
-  return next.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 }
 
 function upsertMessage(values: Message[], value: Message) {
