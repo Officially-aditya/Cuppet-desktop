@@ -12,7 +12,7 @@ const SHA256_HEX = /^[a-f0-9]{64}$/;
 const STRUCTURAL_OPS = new Set(['replace_node', 'insert_before_node', 'insert_after_node', 'delete_node']);
 
 export class TstBatchEditManager {
-  #tst; #journal; #emit; #writer; #batches = new Map(); #graphStale = new Map();
+  #tst; #journal; #emit; #writer; #batches = new Map();
   constructor({ tst, journal, writer = null, emit = () => {} }) {
     this.#tst = tst; this.#journal = journal; this.#writer = writer; this.#emit = emit;
     const recovery = this.#journal?.ready?.();
@@ -27,8 +27,8 @@ export class TstBatchEditManager {
 
   async ensureGraphFresh(projectRoot) {
     const root = await canonicalRoot(projectRoot);
-    const stale = this.#graphStale.get(root);
-    if (!stale?.length) return { ready: true };
+    const stale = await this.#journal.graphInvalidations(root);
+    if (!stale.length) return { ready: true };
     try {
       const expected = new Map();
       for (const path of stale) {
@@ -45,7 +45,7 @@ export class TstBatchEditManager {
       if (mismatches.length) {
         return { ready: false, reason: `TST graph refresh is required before another structural operation: refresh did not acknowledge current hashes for ${mismatches.join(', ')}` };
       }
-      this.#graphStale.delete(root);
+      await this.#journal.acknowledgeGraphRefresh({ projectRoot: root, paths: stale });
       return { ready: true, recovered: true, refresh };
     } catch (error) {
       return { ready: false, reason: `TST graph refresh is required before another structural operation: ${cleanError(error)}` };
@@ -168,10 +168,11 @@ export class TstBatchEditManager {
         const mismatches = freshBatch.files.filter((file) => !returned.has(file.path) || returned.get(file.path) !== file.afterHash).map((file) => file.path);
         if (mismatches.length) {
           graphReady = false; graphError = `Graph refresh observed different post-edit hashes for: ${mismatches.join(', ')}`;
-          this.#graphStale.set(freshBatch.projectRoot, paths);
+        } else {
+          await this.#journal.acknowledgeGraphRefresh({ projectRoot: freshBatch.projectRoot, paths });
         }
       } catch (error) {
-        graphReady = false; graphError = cleanError(error); this.#graphStale.set(freshBatch.projectRoot, paths);
+        graphReady = false; graphError = cleanError(error);
       }
 
       this.#emit({ type: 'edit.batch.applied', sessionId, batchId, paths, diffDigest: freshBatch.diffDigest, graphReady, graphError });
