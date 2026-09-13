@@ -27,33 +27,38 @@ jobs:
       - run: npm install --ignore-scripts
       - name: Verify renderer compiles against runtime-owned queueing
         run: npm run renderer:verify
+      - name: Validate provider control-plane boundary
+        run: node --test --test-concurrency=1 test/provider-control-plane.test.mjs
+      - name: Validate credential boundary
+        run: node --test --test-concurrency=1 test/provider-credential-boundary.test.mjs
+      - name: Validate local CLI ownership identity
+        run: node --test --test-concurrency=1 test/cli-agent-linking.test.mjs
+      - name: Validate ACP runtime supervision
+        run: node --test --test-concurrency=1 test/acp-runtime-supervisor.test.mjs
+      - name: Validate structured provider failures
+        run: node --test --test-concurrency=1 test/provider-error.test.mjs
       - name: Run provider architecture and ACP regressions
         run: >-
           node --test --test-concurrency=1
           test/provider-architecture-v2.test.mjs
           test/provider-driver-registry.test.mjs
-          test/provider-control-plane.test.mjs
-          test/provider-credential-boundary.test.mjs
           test/provider-conversation-bridge.test.mjs
           test/provider-runtime-manager.test.mjs
           test/provider-runtime-manager-real-acp.test.mjs
           test/provider-runtime-manager-codex.test.mjs
           test/provider-acp-runtime-v2.test.mjs
           test/provider-acp-model-switch.test.mjs
-          test/acp-runtime-supervisor.test.mjs
           test/acp-text-stream.test.mjs
           test/claude-code-provider.test.mjs
           test/codex-provider.test.mjs
           test/opencode-provider.test.mjs
           test/opencode-auth-status.test.mjs
-          test/cli-agent-linking.test.mjs
           test/local-cli-environment.test.mjs
           test/runtime-service-provider-lifecycle.test.mjs
           test/runtime-c1.test.mjs
           test/provider-activity-renderer.test.mjs
           test/message-activities.test.mjs
           test/provider-model-renderer-sync.test.mjs
-          test/provider-error.test.mjs
           test/execution-capabilities.test.mjs
           test/acp-cuppet-tools.test.mjs
           test/acp-cuppet-tool-session-security.test.mjs
