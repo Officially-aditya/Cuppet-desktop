@@ -7,6 +7,10 @@ import {
 import { verifyLocalProviderExecutableVersion } from '../../local-provider-version-check.mjs';
 import { AcpSessionRuntime } from './acp-session.mjs';
 
+const DEFAULT_PRETURN_MAX_ATTEMPTS = 3;
+const DEFAULT_PRETURN_BASE_DELAY_MS = 150;
+const DEFAULT_PRETURN_MAX_DELAY_MS = 1_000;
+
 /**
  * Owns replacement of an ACP session runtime only at safe pre-turn boundaries.
  *
@@ -26,8 +30,12 @@ export class SupervisedAcpSessionRuntime {
   #lastFailure = null;
   #providerID = '';
   #unregisterHealth = null;
+  #retryPolicy;
+  #sleep;
+  #preTurnRetries = 0;
+  #lastRetry = null;
 
-  constructor(options = {}, { runtimeFactory, versionPreflight } = {}) {
+  constructor(options = {}, { runtimeFactory, versionPreflight, retryPolicy = {}, sleep = delay } = {}) {
     this.#providerID = providerID(options?.descriptor?.id);
     const injectedRuntimeFactory = typeof runtimeFactory === 'function';
     this.#factory = runtimeFactory ?? (() => new AcpSessionRuntime(options));
@@ -37,6 +45,12 @@ export class SupervisedAcpSessionRuntime {
       : injectedRuntimeFactory
         ? null
         : () => verifyLocalProviderExecutableVersion(options?.descriptor, options?.configuration);
+    this.#retryPolicy = Object.freeze({
+      maxAttempts: positiveInteger(retryPolicy.maxAttempts, DEFAULT_PRETURN_MAX_ATTEMPTS),
+      baseDelayMs: nonNegativeMs(retryPolicy.baseDelayMs, DEFAULT_PRETURN_BASE_DELAY_MS),
+      maxDelayMs: nonNegativeMs(retryPolicy.maxDelayMs, DEFAULT_PRETURN_MAX_DELAY_MS),
+    });
+    this.#sleep = typeof sleep === 'function' ? sleep : delay;
     this.#unregisterHealth = registerProviderRuntime(this.#providerID, () => this.snapshot());
   }
 
@@ -81,6 +95,9 @@ export class SupervisedAcpSessionRuntime {
       supervisor: {
         generation: this.#generation,
         restarts: this.#restarts,
+        preTurnRetries: this.#preTurnRetries,
+        retryPolicy: { ...this.#retryPolicy },
+        lastRetry: this.#lastRetry,
         lastFailure: this.#lastFailure,
         closed: this.#closed,
       },
@@ -97,35 +114,37 @@ export class SupervisedAcpSessionRuntime {
 
   async #beforeTurn(method, options) {
     if (this.#closed) throw new Error('ACP runtime supervisor is closed.');
-    await this.#verifyVersion();
-    try {
-      const result = await this.#runtime[method](options);
-      clearProviderRuntimeFailure(this.#providerID);
-      return result;
-    } catch (error) {
-      if (!canRebuildBeforeTurn(error)) {
+    let attempt = 1;
+    let operation = method;
+    while (true) {
+      try {
+        await this.#verifyVersion();
+        const result = await this.#runtime[operation](options);
+        clearProviderRuntimeFailure(this.#providerID);
+        return result;
+      } catch (error) {
         if (isProviderTransportFailure(error)) {
           this.#lastFailure = failureSnapshot(error);
           recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
         }
-        throw error;
-      }
-      this.#lastFailure = failureSnapshot(error);
-      recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
-      await this.#replaceRuntime();
-      // A replacement process has no ACP initialization/session state, so even if
-      // the caller requested newSession(), its first safe operation must be start().
-      try {
-        await this.#verifyVersion();
-        const result = await this.#runtime.start(options);
-        clearProviderRuntimeFailure(this.#providerID);
-        return result;
-      } catch (replacementError) {
-        if (isProviderTransportFailure(replacementError)) {
-          this.#lastFailure = failureSnapshot(replacementError);
-          recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
-        }
-        throw replacementError;
+        if (!canRebuildBeforeTurn(error) || attempt >= this.#retryPolicy.maxAttempts) throw error;
+
+        const retryNumber = attempt;
+        const delayMs = backoffDelay(this.#retryPolicy, retryNumber);
+        this.#preTurnRetries += 1;
+        this.#lastRetry = Object.freeze({
+          retry: retryNumber,
+          delayMs,
+          at: Date.now(),
+          failure: this.#lastFailure,
+        });
+        if (delayMs > 0) await this.#sleep(delayMs);
+        if (this.#closed) throw new Error('ACP runtime supervisor is closed.');
+        await this.#replaceRuntime();
+        // A replacement process has no ACP initialization/session state, so even if
+        // the caller requested newSession(), its first safe operation must be start().
+        operation = 'start';
+        attempt += 1;
       }
     }
   }
@@ -150,8 +169,9 @@ export function canRebuildBeforeTurn(error) {
   if (!isProviderTransportFailure(error)) return false;
   const metadata = providerFailureMetadata(error);
   // A missing executable cannot be repaired by respawning the same command. Setup
-  // must run through the control plane instead.
-  return metadata?.category !== 'executable_missing';
+  // must run through the control plane instead. Only failures explicitly marked as
+  // retryable are eligible for automatic pre-turn recovery.
+  return metadata?.retryable === true && metadata.category !== 'executable_missing';
 }
 
 function failureSnapshot(error) {
@@ -164,6 +184,13 @@ function failureSnapshot(error) {
   });
 }
 
+function backoffDelay(policy, retryNumber) {
+  const exponent = Math.max(0, retryNumber - 1);
+  return Math.min(policy.maxDelayMs, policy.baseDelayMs * (2 ** exponent));
+}
+function delay(ms) { return new Promise((resolveDelay) => setTimeout(resolveDelay, ms)); }
+function positiveInteger(value, fallback) { const number = Math.floor(Number(value)); return Number.isFinite(number) && number > 0 ? number : fallback; }
+function nonNegativeMs(value, fallback) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : fallback; }
 function providerID(value) {
   const id = String(value ?? '').trim().toLowerCase();
   return /^[a-z0-9._-]+$/.test(id) ? id : '';
