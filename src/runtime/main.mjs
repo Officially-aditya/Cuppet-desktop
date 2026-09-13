@@ -11,6 +11,7 @@ import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.m
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
+import { RunStateProjection } from './run-state-projection.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
@@ -24,32 +25,28 @@ const MAX_QUEUED_TURNS = 16;
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remote;
 let currentProviderConfig = null;
-const activeSessions = new Set();
 const queueOwnerByRun = new Map();
 const purgingSessions = new Set();
 let purgePromise;
 const localState = new ConversationDatabase(databasePath);
 const repository = localState.sqlRepository();
 const turnStore = new TurnStore(repository, { legacyPath: join(dataDir, 'turn-state.sqlite3') });
+const runState = new RunStateProjection(repository);
 const runWaits = new RunWaitProjection(repository);
 const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerControl = new ProviderControlPlane({ dataDir });
 const emit = (event) => {
   runWaits.observe(event);
-  if (event?.type === 'run.started' && event.sessionId) {
-    activeSessions.add(event.sessionId);
-    if (event.messageId) {
-      turnStore.startRun({
-        runId: event.messageId,
-        sessionId: event.sessionId,
-        sourceSessionId: event.sourceSessionId ?? null,
-        projectId: event.projectId ?? null,
-      });
-    }
+  if (event?.type === 'run.started' && event.sessionId && event.messageId) {
+    turnStore.startRun({
+      runId: event.messageId,
+      sessionId: event.sessionId,
+      sourceSessionId: event.sourceSessionId ?? null,
+      projectId: event.projectId ?? null,
+    });
   }
   if (event?.type === 'run.finished' && event.sessionId) {
-    activeSessions.delete(event.sessionId);
     if (event.messageId) {
       const message = localState?.getMessage?.(event.messageId);
       turnStore.finishRun(event.messageId, {
@@ -191,7 +188,7 @@ async function purgeExpiredDeleted(now = Date.now()) {
     let purged = 0;
     for (const candidate of localState.listExpiredDeleted(cutoff, 100)) {
       const sessionId = boundedId(candidate.id);
-      if (!sessionId || activeSessions.has(sessionId) || turnStore.hasQueued(sessionId) || purgingSessions.has(sessionId)) continue;
+      if (!sessionId || runState.isActive(sessionId) || turnStore.hasQueued(sessionId) || purgingSessions.has(sessionId)) continue;
       const current = localState.getSession(sessionId);
       if (!current?.deletedAt || current.deletedAt > cutoff) continue;
       purgingSessions.add(sessionId);
@@ -232,7 +229,7 @@ function renameProject(params = {}) {
 }
 
 function assertSessionIdle(sessionId, action) {
-  if (activeSessions.has(sessionId)) throw new Error(`cannot ${action} a chat while it is generating`);
+  if (runState.isActive(sessionId)) throw new Error(`cannot ${action} a chat while it is generating`);
   if (turnStore.hasQueued(sessionId)) throw new Error(`cannot ${action} a chat while it has queued messages`);
 }
 
@@ -244,7 +241,7 @@ async function sendOrQueue(params = {}, commandId = null) {
     if (replay?.replay) return replay.result;
   }
 
-  if (sessionId && activeSessions.has(sessionId)) {
+  if (sessionId && runState.isActive(sessionId)) {
     let item;
     let result;
     try {
@@ -295,7 +292,7 @@ async function sendOrQueue(params = {}, commandId = null) {
 }
 
 async function drainQueued(ownerSessionId) {
-  if (!ownerSessionId || activeSessions.has(ownerSessionId) || !currentProviderConfig) return;
+  if (!ownerSessionId || runState.isActive(ownerSessionId) || !currentProviderConfig) return;
   const item = turnStore.claimNext(ownerSessionId);
   if (!item) return;
   emit({ type: 'queue.started', sessionId: ownerSessionId, queueId: item.id, queuedAt: item.queuedAt });
@@ -306,7 +303,7 @@ async function drainQueued(ownerSessionId) {
     const runSessionId = result?.sessionId ?? ownerSessionId;
     queueOwnerByRun.set(runSessionId, ownerSessionId);
     emit({ type: 'queue.dispatched', sessionId: ownerSessionId, runSessionId, queueId: item.id });
-    if (!activeSessions.has(runSessionId)) queueMicrotask(() => void drainQueued(ownerSessionId));
+    if (!runState.isActive(runSessionId)) queueMicrotask(() => void drainQueued(ownerSessionId));
   } catch (error) {
     turnStore.failQueue(item.id, error);
     emit({ type: 'queue.failed', sessionId: ownerSessionId, queueId: item.id, message: cleanError(error) });
