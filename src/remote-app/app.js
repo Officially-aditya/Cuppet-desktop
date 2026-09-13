@@ -20,6 +20,7 @@
   $('model').addEventListener('change', () => void selectModel());
   $('effort').addEventListener('change', () => void selectEffort());
   $('stop').addEventListener('click', () => void command('session.abort').catch(showError));
+  $('stop').disabled = true;
   $('send').addEventListener('click', () => void sendPrompt());
   $('prompt').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendPrompt(); } });
 
@@ -56,7 +57,7 @@
     ws = new WebSocket(`${wsBase()}?role=device&hostId=${encodeURIComponent(hostId)}&deviceId=${encodeURIComponent(creds.deviceId)}`);
     ws.addEventListener('open', () => ws.send(JSON.stringify({version:1,type:'device.hello',deviceId:creds.deviceId,ts:Date.now(),payload:{deviceId:creds.deviceId,secret:creds.secret}})));
     ws.addEventListener('message', (event) => { let frame; try {frame=JSON.parse(String(event.data));} catch {return;} void handleFrame(frame); });
-    ws.addEventListener('close', (event) => { authed=false;setDot('err');if(event.code===4004){localStorage.removeItem(`cuppet.remote.device.${hostId}`);creds=null;return showPair('This device was rejected or revoked.');}const delay=Math.min(30000,1000*2**Math.min(++reconnectAttempt,5));reconnectTimer=setTimeout(connect,delay); });
+    ws.addEventListener('close', (event) => { authed=false;$('stop').disabled=true;setDot('err');if(event.code===4004){localStorage.removeItem(`cuppet.remote.device.${hostId}`);creds=null;return showPair('This device was rejected or revoked.');}const delay=Math.min(30000,1000*2**Math.min(++reconnectAttempt,5));reconnectTimer=setTimeout(connect,delay); });
   }
 
   async function handleFrame(frame) {
@@ -70,6 +71,7 @@
     switch(frame.type){
       case 'host.attach': applyAttach(frame.payload); break;
       case 'session.projection.invalidated': scheduleSessionProjectionRefresh(frame.sessionId); break;
+      case 'provider.projection.invalidated': await refreshModels(); break;
       case 'permission.requested': renderPermission(frame.payload?.request); break;
       case 'permission.resolved': document.querySelector(`[data-permission="${cssEscape(frame.payload?.requestID)}"]`)?.remove(); break;
       case 'question.requested': renderQuestion(frame.payload?.request); break;
@@ -109,7 +111,7 @@
   async function refreshSessions(){const list=await command('session.list').catch(()=>[]);const select=$('session');select.replaceChildren();for(const session of list){const option=document.createElement('option');option.value=session.id;option.textContent=session.title||session.id;select.append(option);}if(activeSession&&[...select.options].some((o)=>o.value===activeSession))select.value=activeSession;else if(select.value){activeSession=select.value;await command('session.resume',{sessionID:activeSession}).catch(()=>undefined);} }
   async function resumeSession(id){if(!id)return;await command('session.resume',{sessionID:id});activeSession=id;await refreshSession();await refreshInteractive();}
   async function newSession(){const result=await command('session.new');activeSession=result.id;await refreshSessions();await refreshSession();await refreshInteractive();}
-  async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();return;}try{const snap=await command('session.snapshot');currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderSessionProjection(snap);}catch{} }
+  async function refreshSession(){if(!activeSession){$('transcript').replaceChildren();$('stop').disabled=true;return;}try{const snap=await command('session.snapshot');currentMode=snap.mode||'build';$('plan').textContent=currentMode==='plan'?'Plan':'Build';renderSessionProjection(snap);}catch{} }
 
   async function refreshModels(){
     remoteModels=await command('model.list').catch(()=>[]);
@@ -155,7 +157,7 @@
     actions.append(answer,reject);row.append(note,actions);$('pending').append(row);
   }
   function setQuestionBusy(row,busy){for(const input of row.querySelectorAll('input,textarea,button'))input.disabled=busy;}
-  function renderSessionProjection(snapshot){const session=snapshot?.session||{};renderMessages(session.messages||[],session.activities||[]);}
+  function renderSessionProjection(snapshot){const session=snapshot?.session||{};const status=String(snapshot?.run?.status||'');$('stop').disabled=!['starting','running','waiting','settling'].includes(status);renderMessages(session.messages||[],session.activities||[]);}
   function renderMessages(messages,activities){
     $('transcript').replaceChildren();
     const byMessage=new Map();
