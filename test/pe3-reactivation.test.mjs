@@ -13,6 +13,13 @@ class DormantSemantic {
   }
 }
 
+function commitTurn(db, tx, prompt, suffix) {
+  if (tx.action === 'create') db.createSession({ id:tx.targetSessionId, projectId:'p' });
+  const user = db.appendMessage({ id:`user-${suffix}`, sessionId:tx.targetSessionId, role:'user', content:prompt, status:'complete' });
+  const assistant = db.appendMessage({ id:`run-${suffix}`, sessionId:tx.targetSessionId, role:'assistant', content:'', status:'streaming' });
+  return { user, assistant, targetSession:db.getSessionSummary(tx.targetSessionId) };
+}
+
 test('reactivated dormant task carries bounded stale-path refresh requirements', async () => {
   const dir = await mkdtemp(join(tmpdir(),'cuppet-pe3-reactivate-'));
   const db = new ConversationDatabase(join(dir,'db.sqlite3'));
@@ -22,12 +29,14 @@ test('reactivated dormant task carries bounded stale-path refresh requirements',
     const router = new Pe3ProjectRouter({projectId:'p',projectRoot:dir,projectStore:join(dir,'pe3'),db,tst:{configured:false},semanticRouter:new DormantSemantic()});
     await router.ready();
 
-    const a = await router.prepare({sourceSessionId:'a',prompt:'Implement authentication validation in src/auth.ts'});
-    router.accept(a.token); await router.commit(a.token,()=>null);
+    const authPrompt = 'Implement authentication validation in src/auth.ts';
+    const a = await router.prepare({sourceSessionId:'a',prompt:authPrompt});
+    router.accept(a.token); await router.commit(a.token,(tx)=>commitTurn(db,tx,authPrompt,'auth'));
 
-    const b = await router.prepare({sourceSessionId:'a',prompt:'New task: implement billing calculations in src/billing.ts'});
+    const billingPrompt = 'New task: implement billing calculations in src/billing.ts';
+    const b = await router.prepare({sourceSessionId:'a',prompt:billingPrompt});
     assert.equal(b.action,'create');
-    router.accept(b.token); await router.commit(b.token,(tx)=>{db.createSession({id:tx.targetSessionId,projectId:'p'});return null;});
+    router.accept(b.token); await router.commit(b.token,(tx)=>commitTurn(db,tx,billingPrompt,'billing'));
     await router.noteWorkspaceMutation(b.targetSessionId,['src/auth.ts']);
 
     const back = await router.prepare({sourceSessionId:b.targetSessionId,prompt:'Please resume the earlier authentication validation behavior we discussed'});
