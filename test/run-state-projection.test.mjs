@@ -45,6 +45,31 @@ test('durable run projection is the active-session authority across starting, ru
   }
 });
 
+test('run source session survives restart so a rerouted queue owner never depends on process memory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-run-owner-'));
+  const path = join(dir, 'conversations.sqlite3');
+  let db = new ConversationDatabase(path);
+  let store = new TurnStore(db.sqlRepository());
+
+  try {
+    store.startRun({ runId: 'm-rerouted', sessionId: 'target-session', sourceSessionId: 'source-session', projectId: 'p1', now: 10 });
+    assert.equal(store.getRun('m-rerouted')?.sourceSessionId, 'source-session');
+    store.close();
+    db.close();
+
+    db = new ConversationDatabase(path);
+    store = new TurnStore(db.sqlRepository());
+    const recovered = store.getRun('m-rerouted');
+    assert.equal(recovered?.sourceSessionId, 'source-session');
+    assert.equal(recovered?.sessionId, 'target-session');
+    assert.equal(recovered?.status, 'interrupted');
+  } finally {
+    try { store.close(); } catch {}
+    try { db.close(); } catch {}
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('run projection fails closed for missing or invalid session ids', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-run-state-'));
   const path = join(dir, 'conversations.sqlite3');
