@@ -41,6 +41,7 @@ const SAFE_RETRY_METHODS = new Set([
   'tst.graph.refresh',
   'remote.provider-config',
 ]);
+const DURABLE_COMMAND_METHODS = new Set(['session.send']);
 
 export class RuntimeClient extends EventEmitter {
   #entry;
@@ -203,6 +204,7 @@ export class RuntimeClient extends EventEmitter {
   }
 
   async request(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+    const requestId = randomUUID();
     if (this.#recoveryPromise) await this.#recoveryPromise;
     if (!this.#child?.stdin.writable || !this.#readyEvent) {
       if (!this.#shouldRun) throw runtimeUnavailableError();
@@ -213,7 +215,7 @@ export class RuntimeClient extends EventEmitter {
     await this.#probeAfterIdle(method);
 
     try {
-      return await this.#rawRequest(method, params, timeoutMs);
+      return await this.#rawRequest(method, params, timeoutMs, requestId);
     } catch (error) {
       if (!this.#shouldRun || !isRuntimeInterruption(error)) throw error;
       const unavailableBeforeWrite = error?.code === 'CUPPET_RUNTIME_UNAVAILABLE';
@@ -221,8 +223,11 @@ export class RuntimeClient extends EventEmitter {
         unavailableBeforeWrite ? 'runtime pipe was unavailable before request' : `runtime interrupted ${method}`,
         { replaceCurrent: unavailableBeforeWrite },
       ));
-      if (unavailableBeforeWrite || SAFE_RETRY_METHODS.has(method)) {
-        return this.#rawRequest(method, params, timeoutMs);
+      if (unavailableBeforeWrite || SAFE_RETRY_METHODS.has(method) || DURABLE_COMMAND_METHODS.has(method)) {
+        // Durable commands reuse the same request id. The runtime receipt layer
+        // either returns the accepted result, executes an as-yet unseen command,
+        // or refuses an unknown outcome. It never creates a second turn for this id.
+        return this.#rawRequest(method, params, timeoutMs, requestId);
       }
       throw runtimeError(
         `Cuppet runtime recovered after ${method} was interrupted. The action was not retried to avoid duplicating work; check the chat state before retrying.`,
@@ -242,10 +247,10 @@ export class RuntimeClient extends EventEmitter {
     }
   }
 
-  #rawRequest(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  #rawRequest(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, requestId = randomUUID()) {
     const child = this.#child;
     if (!child?.stdin.writable) return Promise.reject(runtimeUnavailableError());
-    const id = randomUUID();
+    const id = String(requestId);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
