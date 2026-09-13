@@ -70,7 +70,7 @@ export class RemoteCommandAdapter {
   }
   async #sessionSnapshot(state,explicit){
     const sessionId=this.#requireSession(state,explicit); const session=await this.#call('session.get',{sessionId}); const mode=await this.#call('session.mode.get',{sessionId}); const auto=await this.#call('session.auto.get',{sessionId});
-    return {session:{...session,messages:undefined,toolExecutions:undefined},mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
+    return {projectionVersion:1,session,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
   async #sessionMessages(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return session.messages??[];}
   async #sessionNew(actor,state,params,envelope){
