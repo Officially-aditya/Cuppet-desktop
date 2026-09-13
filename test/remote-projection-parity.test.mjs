@@ -54,6 +54,22 @@ function fixture() {
   });
 }
 
+function providerConfig(variants = ['low', 'high']) {
+  return {
+    providerID: 'future-provider',
+    baseUrl: 'https://provider.example.test/v1',
+    apiKey: 'secret',
+    models: [{
+      providerID: 'future-provider',
+      modelID: 'coder',
+      name: 'Coder',
+      capabilities: { tools: true, streaming: true, input: ['text'], output: ['text'] },
+      variants: variants.map((id) => ({ id, body: { reasoning: { effort: id } } })),
+    }],
+    primary: { providerID: 'future-provider', modelID: 'coder', variant: 'low' },
+  };
+}
+
 test('remote session.snapshot returns durable transcript, tool, and run projections intact', async () => {
   const adapter = fixture();
   await adapter.execute(actor, 'workspace.attach', { workspaceId: 'p1' });
@@ -101,16 +117,43 @@ test('remote runtime publication invalidates durable projections instead of rema
   assert.equal(mapped.some((event) => ['assistant.text.delta', 'tool.started', 'tool.completed', 'session.idle', 'session.updated'].includes(event?.type)), false);
 });
 
-test('remote browser consumes session.snapshot projection instead of owning live transcript reducers', async () => {
-  const [source, commands] = await Promise.all([
+test('remote device provider selection is reconciled against refreshed host authority', async () => {
+  const adapter = new RemoteCommandAdapter({
+    call: async () => { throw new Error('runtime calls are not needed for provider projection reconciliation'); },
+    identity: { hostId: 'host_projection', deviceName: 'Laptop' },
+    providerConfig: providerConfig(),
+  });
+
+  await adapter.execute(actor, 'provider.select', { providerID: 'future-provider' });
+  await adapter.execute(actor, 'model.select', { providerID: 'future-provider', modelID: 'coder', variant: 'high' });
+  assert.equal((await adapter.execute(actor, 'model.list'))[0]?.selectedVariant, 'high');
+
+  adapter.setProviderConfig({ ...providerConfig(), apiKey: 'rotated-secret' });
+  assert.equal((await adapter.execute(actor, 'model.list'))[0]?.selectedVariant, 'high', 'still-advertised device selection should survive host refresh');
+
+  adapter.setProviderConfig(providerConfig(['low']));
+  const models = await adapter.execute(actor, 'model.list');
+  assert.equal(models[0]?.selected, true);
+  assert.equal(models[0]?.selectedVariant, 'low', 'removed effort must fall back to the host primary projection');
+  assert.deepEqual(models[0]?.variants, ['low']);
+});
+
+test('remote browser consumes durable session/run/provider projections instead of owning live reducers', async () => {
+  const [source, commands, manager] = await Promise.all([
     readFile(new URL('../src/remote-app/app.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/remote/commands.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/runtime/remote/manager.mjs', import.meta.url), 'utf8'),
   ]);
   assert.match(source, /case 'session\.projection\.invalidated'/);
+  assert.match(source, /case 'provider\.projection\.invalidated'/);
   assert.match(source, /command\('session\.snapshot'\)/);
   assert.match(source, /renderSessionProjection\(snap\)/);
+  assert.match(source, /snapshot\?\.run\?\.status/);
+  assert.match(source, /\['starting','running','waiting','settling'\]\.includes\(status\)/);
   assert.match(source, /session\.activities/);
   assert.match(commands, /this\.#call\('session\.run\.latest',\{sessionId\}\)/);
+  assert.match(commands, /resolveAdvertisedSelection\(this\.#provider,state\.selection\)/);
+  assert.match(manager, /this\.#bridge\?\.publish\('provider\.projection\.invalidated',\{\}\)/);
   assert.doesNotMatch(source, /command\('session\.messages'\)/);
   assert.doesNotMatch(source, /case 'assistant\.text\.delta'/);
   assert.doesNotMatch(source, /case 'tool\.started'/);
