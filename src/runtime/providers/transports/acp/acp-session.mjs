@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
+import { providerFailureMetadata } from '../../provider-failure.mjs';
 import { AcpProcess } from './acp-process.mjs';
 import { AcpRpcChannel } from './acp-rpc.mjs';
 import { AcpHostBridge } from './acp-host-bridge.mjs';
@@ -489,7 +490,7 @@ function serializeConversation(messages) { const value=(Array.isArray(messages)?
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
 function supportsSessionClose(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.close !== undefined && sessions.close !== false;}
 async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
-function enrichProviderError(descriptor,error,stderr){const message=cleanError(error); const detail=cleanError(stderr).trim(); if(/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`); return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);}
+function enrichProviderError(descriptor,error,stderr){if(providerFailureMetadata(error))return error;const message=cleanError(error); const detail=cleanError(stderr).trim(); if(/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`); return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);}
 function cleanError(error){return error instanceof Error?error.message:String(error??'');}
 function stalledError(descriptor){const error=new Error(`${descriptor.label} stopped responding via ACP. The provider/model may be unavailable, rate-limited, out of quota, or the agent process may have stalled.`); error.code='ACP_STALLED'; return error;}
 function abortError(){const error=new Error('Provider request aborted.'); error.name='AbortError'; return error;}
