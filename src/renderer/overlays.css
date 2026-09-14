@@ -173,7 +173,7 @@
   transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),transform var(--motion-micro) var(--ease-standard);
 }
 .settings-hub-nav button:hover{background:var(--overlay-hover);color:var(--text-secondary)}
-.settings-hub-nav button.active{background:var(--overlay-selected);color:var(--text-primary);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--text-secondary) 42%,transparent)}
+.settings-hub-nav button.active{background:var(--overlay-selected);color:var(--text-primary)}
 .settings-hub-nav button:focus-visible{outline:0;box-shadow:0 0 0 2px var(--focus-ring-strong)}
 .settings-hub-main{background:color-mix(in srgb,var(--surface-1) 82%,var(--overlay-surface))}
 .settings-hub-header{background:color-mix(in srgb,var(--overlay-surface) 78%,transparent)}
