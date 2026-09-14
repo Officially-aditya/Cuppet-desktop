@@ -23,7 +23,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       RELEASE_REF: feat/ui-polish-system
-      RELEASE_SHA: c019a40f6353a104ce548d57843c7b6b8a007b6b
+      RELEASE_SHA: 010b4c834ac29b6112996ef393d9d8d8ee18374f
       RELEASE_TAG: v0.9.0-alpha.4
     steps:
       - name: Validate release head
