@@ -88,6 +88,8 @@
   --motion-micro: 120ms;
   --motion-popover: 180ms;
   --motion-structural: 280ms;
+  --motion-activity: 1200ms;
+  --motion-spin: 800ms;
   --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-geometry: cubic-bezier(0.32, 0.72, 0, 1);
 

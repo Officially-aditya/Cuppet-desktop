@@ -1,0 +1,117 @@
+/* Phase 6: one restrained motion system across the renderer. */
+
+/* Structural movement: geometry only, using the shared T3-like easing. */
+.react-sidebar,
+.project-terminal,
+.react-composer-wrap,
+.react-composer,
+.react-composer textarea{
+  transition-timing-function:var(--ease-geometry);
+}
+
+.cuppet-shell-header .memory-sidebar,
+.memory-sidebar-rail{
+  animation:workspace-layer-in var(--motion-structural) var(--ease-geometry) both;
+  transform-origin:right center;
+}
+.memory-sidebar-rail{transform-origin:right center}
+
+/* Micro interaction: almost immediate and never springy. */
+.react-sidebar .nav-button,
+.react-sidebar .project-row,
+.react-sidebar .session-item,
+.react-sidebar .session-show-more,
+.react-sidebar .project-new-chat-button,
+.react-sidebar .project-menu-button,
+.react-sidebar .session-menu-button,
+.react-sidebar .sidebar-toggle-button,
+.react-sidebar .sidebar-bottom .ghost-button,
+.shell-panel-button,
+.project-terminal-bar,
+.message-cuppet-toggle,
+.message-reasoning-toggle,
+.thread-tool-summary,
+.message-copy-button,
+.composer-attach-button,
+.composer-mode-select,
+.model-picker-trigger,
+.model-picker-trigger svg,
+.cuppet-select-trigger,
+.cuppet-select-trigger svg,
+.settings-hub-nav button,
+.settings-toggle-row input[type="checkbox"],
+.settings-toggle-row input[type="checkbox"]::after,
+.memory-sidebar-rail,
+.memory-icon-button,
+.memory-activity-item,
+.permission-inline-button,
+.search-result,
+.search-result-action,
+.sidebar-resizer::after{
+  transition-duration:var(--motion-micro)!important;
+  transition-timing-function:var(--ease-standard)!important;
+}
+
+/* Secondary disclosure geometry is still micro motion, not structural motion. */
+.message-reasoning-toggle svg,
+.message-cuppet-toggle svg,
+.message-edited-files-chevron{
+  transition:transform var(--motion-micro) var(--ease-standard)!important;
+}
+
+/* Popovers/dialogs share one short entrance category. */
+.nav-context-menu,
+.cuppet-select-menu,
+.model-picker-menu,
+.react-command-palette,
+.integration-mention-palette,
+.react-modal,
+.search-dialog,
+.command-dialog,
+.sidebar-rename-dialog,
+.permission-inline,
+.command-result{
+  animation-duration:var(--motion-popover)!important;
+  animation-timing-function:var(--ease-standard)!important;
+}
+
+/* Long-running feedback remains calm and consistent. */
+.thread-activity-line.running,
+.activity-row.running .activity-status,
+.react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
+.react-main-pane:has(.composer-pause-button) .message-preview::after,
+.memory-live i{
+  animation-duration:var(--motion-activity)!important;
+  animation-timing-function:ease-in-out!important;
+}
+.memory-icon-button svg.spin{
+  animation-duration:var(--motion-spin)!important;
+  animation-timing-function:linear!important;
+}
+
+/* Search result emphasis is feedback, not navigation motion; keep it subtle. */
+.search-hit{animation-timing-function:var(--ease-standard)}
+
+@keyframes workspace-layer-in{
+  from{opacity:0;transform:translateX(8px) scale(.99)}
+  to{opacity:1;transform:translateX(0) scale(1)}
+}
+
+/* User preference and OS preference both disable structural and decorative motion cleanly. */
+body.reduce-motion *,
+body.reduce-motion *::before,
+body.reduce-motion *::after{
+  scroll-behavior:auto!important;
+  transition:none!important;
+  animation:none!important;
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,
+  *::before,
+  *::after{
+    scroll-behavior:auto!important;
+    transition:none!important;
+    animation:none!important;
+  }
+}
