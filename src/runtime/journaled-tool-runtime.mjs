@@ -47,7 +47,7 @@ export class JournaledToolRuntime {
     this.#executionKernel.forget?.(sessionId);
     return this.#providerRuntimes.forget?.(sessionId) ?? false;
   }
-  close() { return this.#providerRuntimes.close?.() ?? Promise.resolve(); }
+  async close() { await Promise.all([Promise.resolve(this.#inner.close?.()), Promise.resolve(this.#providerRuntimes.close?.())]); }
 
   async run(options) {
     const messageId = latestAssistantMessageID(this.#db, options.sessionId);

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
 import { PermissionBroker } from '../src/runtime/permissions.mjs';
-import { ToolRuntime } from '../src/runtime/tool-runtime.mjs';
+import { ToolRuntime, runShell } from '../src/runtime/tool-runtime.mjs';
 
 async function fixture({ tst } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-c1-tools-'));
@@ -136,3 +136,70 @@ test('identical TST exploration calls are cached per session and do not repeat d
     ]);
   } finally { broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('runShell returns after the parent exits even when a background descendant keeps stdio open', { skip: process.platform === 'win32' }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-shell-inherited-stdio-'));
+  let orphanPid = null;
+  try {
+    const childScript = "const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); console.log('child-pid=' + child.pid); child.unref();";
+    const command = `${shellQuote(process.execPath)} -e ${shellQuote(childScript)}`;
+    const started = Date.now();
+    const result = await runShell(command, dir, 3000, new AbortController().signal);
+    const elapsed = Date.now() - started;
+    const match = result.stdout.match(/child-pid=(\d+)/);
+    orphanPid = match ? Number(match[1]) : null;
+    assert.equal(result.code, 0);
+    assert.ok(elapsed < 2000, `expected inherited-stdio command to return promptly; took ${elapsed}ms`);
+    assert.ok(orphanPid > 0);
+  } finally {
+    if (orphanPid) { try { process.kill(orphanPid, 'SIGKILL'); } catch {} }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('background_process starts, reads logs, and stops a long-lived project server without blocking the turn', async () => {
+  const { dir, root, db, broker, toolRuntime } = await fixture();
+  try {
+    broker.setAuto('s1', 'full');
+    let processId = '';
+    let step = 0;
+    const adapter = {
+      async stream(messages, { tools }) {
+        assert.ok(tools.some((entry) => entry.function?.name === 'background_process'));
+        step += 1;
+        if (step === 1) {
+          const script = "console.log('server-ready'); setInterval(() => {}, 1000);";
+          return { text: '', toolCalls: [{ id: 'call_start', name: 'background_process', arguments: JSON.stringify({ action: 'start', command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`, label: 'test-server' }) }], usage: null };
+        }
+        const latest = [...messages].reverse().find((message) => message.role === 'tool');
+        if (step === 2) {
+          assert.match(latest?.content ?? '', /BACKGROUND PROCESS STARTED/);
+          processId = latest.content.match(/process_id: (process_[^\s]+)/)?.[1] ?? '';
+          assert.ok(processId);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return { text: '', toolCalls: [{ id: 'call_logs', name: 'background_process', arguments: JSON.stringify({ action: 'logs', process_id: processId }) }], usage: null };
+        }
+        if (step === 3) {
+          assert.match(latest?.content ?? '', /status: running/);
+          assert.match(latest?.content ?? '', /server-ready/);
+          return { text: '', toolCalls: [{ id: 'call_stop', name: 'background_process', arguments: JSON.stringify({ action: 'stop', process_id: processId }) }], usage: null };
+        }
+        assert.match(latest?.content ?? '', /BACKGROUND PROCESS STOPPED/);
+        assert.match(latest?.content ?? '', /status: exited/);
+        return { text: 'server lifecycle complete', toolCalls: [], usage: null };
+      },
+    };
+    const started = Date.now();
+    const result = await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'run the dev server in the background' }], sessionId: 's1', projectId: 'p1', projectRoot: root, mode: 'build', signal: new AbortController().signal, onDelta: async () => {} });
+    assert.equal(result.toolSteps, 3);
+    assert.ok(Date.now() - started < 5000);
+    assert.equal(db.listToolExecutions('s1').every((execution) => execution.status === 'complete'), true);
+  } finally {
+    await toolRuntime.close();
+    broker.close(); db.close(); await rm(dir, { recursive: true, force: true });
+  }
+});
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
