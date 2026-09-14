@@ -1,0 +1,297 @@
+/* Phase 5: one visual language for menus, pickers, dialogs, search, settings and permissions. */
+
+.modal-backdrop{
+  background:var(--overlay-backdrop);
+  backdrop-filter:blur(10px);
+  animation:overlay-backdrop-in var(--motion-popover) var(--ease-standard) both;
+}
+
+.react-modal,
+.settings-dialog,
+.search-dialog,
+.rename-dialog,
+.command-dialog,
+.sidebar-rename-dialog{
+  border-color:var(--overlay-border);
+  background:var(--overlay-surface);
+  color:var(--text-primary);
+  box-shadow:var(--shadow-dialog);
+}
+
+.react-modal,
+.search-dialog,
+.command-dialog,
+.sidebar-rename-dialog{
+  animation:overlay-dialog-in var(--motion-popover) var(--ease-standard) both;
+  transform-origin:center center;
+}
+
+.dialog-header,
+.settings-hub-header{
+  border-color:var(--overlay-divider);
+}
+.dialog-header h2,
+.settings-hub-header h2{color:var(--text-primary)}
+.dialog-header p,
+.settings-hub-header p,
+.dialog-note,
+.settings-note{color:var(--text-tertiary)}
+
+.icon-button,
+.settings-close-button,
+.search-close{
+  color:var(--text-tertiary);
+  border-radius:var(--radius-sm);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),box-shadow var(--motion-micro) var(--ease-standard);
+}
+.icon-button:hover,
+.settings-close-button:hover,
+.search-close:hover{background:var(--overlay-hover);color:var(--text-primary)}
+.icon-button:focus-visible,
+.settings-close-button:focus-visible,
+.search-close:focus-visible{outline:0;box-shadow:0 0 0 2px var(--focus-ring-strong)}
+
+/* Shared compact menu surface. */
+.nav-context-menu,
+.cuppet-select-menu,
+.model-picker-menu,
+.react-command-palette,
+.integration-mention-palette{
+  border:1px solid var(--overlay-border)!important;
+  border-radius:var(--radius-md)!important;
+  background:var(--overlay-surface)!important;
+  box-shadow:var(--shadow-popover)!important;
+  color:var(--text-secondary);
+  animation:overlay-popover-in var(--motion-popover) var(--ease-standard) both;
+  transform-origin:top center;
+}
+.model-picker-menu,
+.react-command-palette,
+.integration-mention-palette{transform-origin:bottom center}
+
+.nav-context-menu{padding:6px;min-width:184px}
+.nav-context-menu button,
+.cuppet-select-option,
+.model-picker-option,
+.model-picker-effort-option,
+.model-picker-back,
+.command-option{
+  border-radius:var(--radius-sm)!important;
+  color:var(--text-secondary);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),opacity var(--motion-micro) var(--ease-standard);
+}
+.nav-context-menu button:hover,
+.nav-context-menu button:focus-visible,
+.cuppet-select-option:hover,
+.cuppet-select-option.active,
+.model-picker-option:hover,
+.model-picker-option.selected,
+.model-picker-effort-option:hover,
+.model-picker-effort-option.selected,
+.model-picker-back:hover,
+.command-option:hover,
+.command-option.selected{
+  outline:0;
+  background:var(--overlay-hover)!important;
+  color:var(--text-primary)!important;
+}
+.nav-context-menu button:focus-visible,
+.cuppet-select-option:focus-visible,
+.model-picker-option:focus-visible,
+.model-picker-effort-option:focus-visible,
+.model-picker-back:focus-visible,
+.command-option:focus-visible{box-shadow:inset 0 0 0 1px var(--focus-ring-strong)}
+.nav-context-menu button.danger{color:var(--status-error)}
+.nav-context-menu hr{border-color:var(--overlay-divider);margin:5px 3px}
+
+/* Custom select triggers use the same field language everywhere. */
+.cuppet-select-trigger{
+  border-color:var(--border-default);
+  border-radius:var(--radius-sm);
+  background:var(--surface-input);
+  color:var(--text-secondary);
+}
+.cuppet-select-trigger:hover{border-color:var(--border-strong);background:color-mix(in srgb,var(--surface-input) 72%,var(--surface-2))}
+.cuppet-select-trigger:focus-visible,
+.cuppet-select.open .cuppet-select-trigger{border-color:var(--border-strong);background:color-mix(in srgb,var(--surface-input) 72%,var(--surface-2));box-shadow:0 0 0 2px var(--focus-ring)}
+.cuppet-select-check,
+.model-picker-check{color:var(--text-secondary)}
+
+/* Search is a dialog built from the same overlay pieces, not a separate visual system. */
+.react-search-dialog{
+  width:min(720px,calc(100vw - 44px));
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+}
+.search-header{border-color:var(--overlay-divider);padding:12px 14px}
+.search-input-wrap{
+  border:1px solid var(--border-default);
+  border-radius:var(--radius-md);
+  background:var(--surface-input);
+  transition:border-color var(--motion-micro) var(--ease-standard),background var(--motion-micro) var(--ease-standard),box-shadow var(--motion-micro) var(--ease-standard);
+}
+.search-input-wrap:focus-within{border-color:var(--border-strong);background:color-mix(in srgb,var(--surface-input) 74%,var(--surface-2));box-shadow:0 0 0 2px var(--focus-ring)}
+.search-input-wrap span{color:var(--text-tertiary)}
+.search-input{color:var(--text-primary)}
+.search-options{border-color:var(--overlay-divider);color:var(--text-tertiary)}
+.search-results{padding:6px}
+.search-result{
+  border-radius:var(--radius-md);
+  transition:background var(--motion-micro) var(--ease-standard),transform var(--motion-micro) var(--ease-standard);
+}
+.search-result:hover,
+.search-result.selected{background:var(--overlay-hover)}
+.search-result.selected{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--border-default) 72%,transparent)}
+.search-result-title{color:var(--text-primary)}
+.search-result-meta{color:var(--text-tertiary)}
+.search-result-snippet{color:var(--text-secondary)}
+.search-result-snippet mark{background:color-mix(in srgb,var(--text-primary) 12%,transparent);color:var(--text-primary)}
+.search-result-action{
+  border-color:var(--border-default);
+  border-radius:var(--radius-sm);
+  color:var(--text-secondary);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),border-color var(--motion-micro) var(--ease-standard);
+}
+.search-result-action:hover{background:var(--overlay-hover);border-color:var(--border-strong);color:var(--text-primary)}
+.archive-badge{border-color:var(--border-default);color:var(--text-tertiary);background:color-mix(in srgb,var(--surface-2) 76%,transparent)}
+
+/* Settings becomes the canonical large overlay layout. */
+.settings-hub-dialog{
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+}
+.settings-hub-sidebar{
+  background:color-mix(in srgb,var(--bg-sidebar) 78%,var(--overlay-surface));
+  border-right:1px solid var(--overlay-divider);
+}
+.settings-hub-brand strong{color:var(--text-primary)}
+.settings-hub-brand span{color:var(--text-tertiary)}
+.settings-hub-nav{gap:2px}
+.settings-hub-nav button{
+  border-radius:var(--radius-sm);
+  color:var(--text-tertiary);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),transform var(--motion-micro) var(--ease-standard);
+}
+.settings-hub-nav button:hover{background:var(--overlay-hover);color:var(--text-secondary)}
+.settings-hub-nav button.active{background:var(--overlay-selected);color:var(--text-primary);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--text-secondary) 42%,transparent)}
+.settings-hub-nav button:focus-visible{outline:0;box-shadow:0 0 0 2px var(--focus-ring-strong)}
+.settings-hub-main{background:color-mix(in srgb,var(--surface-1) 82%,var(--overlay-surface))}
+.settings-hub-header{background:color-mix(in srgb,var(--overlay-surface) 78%,transparent)}
+.settings-hub-content{background:transparent}
+.settings-card,
+.project-method,
+.provider-auth-card,
+.platform-model-section,
+.remote-active-session,
+.usage-placeholder,
+.settings-device{
+  border:1px solid var(--overlay-divider);
+  border-radius:var(--radius-md);
+  background:color-mix(in srgb,var(--overlay-surface-raised) 66%,transparent);
+  box-shadow:0 1px 0 rgba(255,255,255,.012) inset;
+}
+.settings-card+.settings-card{margin-top:12px}
+.settings-card-heading h3,
+.project-method h3{color:var(--text-primary)}
+.settings-card-heading p,
+.project-method p,
+.provider-auth-copy>span,
+.platform-model-hint{color:var(--text-tertiary)}
+.settings-row,
+.settings-toggle-row,
+.settings-form-footer{border-color:var(--overlay-divider)}
+.settings-status-pill{
+  border-color:var(--border-default);
+  background:color-mix(in srgb,var(--surface-2) 76%,transparent);
+  color:var(--text-secondary);
+}
+
+/* Generic dialog cards inherit the same hierarchy as settings. */
+.project-method{padding:14px}
+.repo-result{
+  border-radius:var(--radius-sm);
+  background:color-mix(in srgb,var(--overlay-surface-raised) 62%,transparent);
+  color:var(--text-secondary);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard);
+}
+.repo-result:hover{background:var(--overlay-hover);color:var(--text-primary)}
+.repo-result span{color:var(--text-tertiary)}
+
+/* Permission requests are elevated inline overlays, using the same primitives. */
+.permission-inline{
+  border:1px solid var(--overlay-border);
+  border-radius:var(--radius-md);
+  background:color-mix(in srgb,var(--overlay-surface) 96%,transparent);
+  box-shadow:var(--shadow-popover);
+  backdrop-filter:blur(16px);
+  color:var(--text-primary);
+  animation:overlay-inline-in var(--motion-popover) var(--ease-standard) both;
+}
+.permission-inline-copy strong{color:var(--text-primary)}
+.permission-inline-description{color:var(--text-secondary)}
+.permission-inline-resource{color:var(--text-tertiary)}
+.permission-inline-button{
+  border-color:var(--border-default);
+  border-radius:var(--radius-sm);
+  color:var(--text-secondary);
+  transition:background var(--motion-micro) var(--ease-standard),color var(--motion-micro) var(--ease-standard),border-color var(--motion-micro) var(--ease-standard),transform var(--motion-micro) var(--ease-standard),box-shadow var(--motion-micro) var(--ease-standard);
+}
+.permission-inline-button:hover:not(:disabled){background:var(--overlay-hover);border-color:var(--border-strong);color:var(--text-primary)}
+.permission-inline-button:focus-visible{outline:0;box-shadow:0 0 0 2px var(--focus-ring-strong)}
+.permission-inline-button.primary{border-color:var(--action-primary-bg);background:var(--action-primary-bg);color:var(--action-primary-text)}
+
+/* Compact command results read as transient overlay feedback instead of permanent cards. */
+.command-result{
+  border-color:var(--overlay-border);
+  border-radius:var(--radius-md);
+  background:var(--overlay-surface);
+  color:var(--text-secondary);
+  box-shadow:var(--shadow-popover);
+  animation:overlay-inline-in var(--motion-popover) var(--ease-standard) both;
+}
+.command-result strong{color:var(--text-primary)}
+.command-result.error{border-color:color-mix(in srgb,var(--status-error) 36%,var(--overlay-border));background:color-mix(in srgb,var(--status-error) 10%,var(--overlay-surface));color:color-mix(in srgb,var(--status-error) 76%,white)}
+
+@keyframes overlay-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes overlay-dialog-in{from{opacity:0;transform:translateY(8px) scale(.988)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes overlay-popover-in{from{opacity:0;transform:translateY(4px) scale(.992)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes overlay-inline-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+@media(max-width:760px){
+  .modal-backdrop{padding:12px}
+  .react-search-dialog{width:calc(100vw - 24px)}
+  .settings-hub-dialog{border-radius:var(--radius-md)}
+  .settings-hub-nav button{padding-inline:8px}
+}
+
+.reduce-motion .modal-backdrop,
+.reduce-motion .react-modal,
+.reduce-motion .search-dialog,
+.reduce-motion .command-dialog,
+.reduce-motion .sidebar-rename-dialog,
+.reduce-motion .nav-context-menu,
+.reduce-motion .cuppet-select-menu,
+.reduce-motion .model-picker-menu,
+.reduce-motion .react-command-palette,
+.reduce-motion .integration-mention-palette,
+.reduce-motion .permission-inline,
+.reduce-motion .command-result{
+  animation:none!important;
+}
+
+@media(prefers-reduced-motion:reduce){
+  .modal-backdrop,
+  .react-modal,
+  .search-dialog,
+  .command-dialog,
+  .sidebar-rename-dialog,
+  .nav-context-menu,
+  .cuppet-select-menu,
+  .model-picker-menu,
+  .react-command-palette,
+  .integration-mention-palette,
+  .permission-inline,
+  .command-result{
+    animation:none!important;
+  }
+}

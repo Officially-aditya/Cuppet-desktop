@@ -24,6 +24,7 @@ import './shell-panel-controls.css';
 import './shell.css';
 import './conversation.css';
 import './composer.css';
+import './overlays.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { ProjectTerminalMount } from './react/ProjectTerminalMount';

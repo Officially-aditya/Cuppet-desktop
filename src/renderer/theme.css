@@ -55,6 +55,15 @@
   --shadow-dialog: 0 40px 100px rgba(0, 0, 0, 0.55);
   --shadow-floating: 0 24px 70px rgba(0, 0, 0, 0.5);
 
+  /* Overlay stack */
+  --overlay-backdrop: rgba(3, 5, 8, 0.68);
+  --overlay-surface: #11161c;
+  --overlay-surface-raised: #14191f;
+  --overlay-border: #303741;
+  --overlay-divider: #252c35;
+  --overlay-hover: #1b2027;
+  --overlay-selected: #20262e;
+
   /* 4px spacing rhythm */
   --space-1: 4px;
   --space-2: 8px;
