@@ -51,6 +51,7 @@ const MIN_GRAPH_ZOOM = 0.65;
 const MAX_GRAPH_ZOOM = 2.5;
 const NODE_CLICK_RADIUS = 13;
 const DRAG_THRESHOLD = 6;
+const ROOT_NODE_PATH = '__cuppet_root__';
 
 export function TstMemorySidebar({ sessionId, projectName, running = false }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
@@ -113,7 +114,7 @@ export function TstMemorySidebar({ sessionId, projectName, running = false }: Pr
   const files = Array.isArray(snapshot?.files) ? snapshot!.files! : [];
   const edits = Array.isArray(snapshot?.editedFiles) ? snapshot!.editedFiles! : [];
   const recent = [...edits].sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0)).slice(0, 5);
-  const selected = selectedPath ? edits.find((item) => normalizePath(item.path) === normalizePath(selectedPath)) : null;
+  const selected = selectedPath && selectedPath !== ROOT_NODE_PATH ? edits.find((item) => normalizePath(item.path) === normalizePath(selectedPath)) : null;
   const indexing = snapshot?.graph?.progress;
 
   return (
@@ -168,7 +169,7 @@ export function TstMemorySidebar({ sessionId, projectName, running = false }: Pr
       {selectedPath && (
         <div className="memory-node-inspector">
           <div className="memory-inspector-label">Selected node</div>
-          <strong title={selectedPath}>{selectedPath}</strong>
+          <strong title={displayGraphPath(selectedPath)}>{displayGraphPath(selectedPath)}</strong>
           <div className="memory-inspector-meta">
             {selected?.updatedAt ? <span>Edited {relativeTime(selected.updatedAt)}</span> : <span>Indexed by TST</span>}
             {selected?.tool ? <span>{humanTool(selected.tool)}</span> : null}
@@ -321,41 +322,72 @@ function buildScene(filesInput: string[], edits: EditedFile[]) {
     .map((path) => ({ path, editedAt: Number(editByPath.get(path)?.updatedAt ?? 0) }))
     .sort((a, b) => b.editedAt - a.editedAt || a.path.localeCompare(b.path))
     .slice(0, MAX_GRAPH_FILES);
-  const groups = [...new Set(prioritized.map(({ path }) => topGroup(path)))];
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
+  const folderPaths = new Set<string>();
 
-  groups.forEach((group, index) => {
-    const angle = (index / Math.max(groups.length, 1)) * Math.PI * 2;
-    const radius = groups.length <= 1 ? 0 : 0.48;
-    nodes.push({ id: `group:${group}`, path: group, label: group, kind: 'group', x: Math.cos(angle) * radius, y: Math.sin(angle * 1.7) * 0.22, z: Math.sin(angle) * radius, editedAt: 0 });
-  });
+  for (const { path } of prioritized) {
+    const segments = pathSegments(path);
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      folderPaths.add(segments.slice(0, depth).join('/'));
+    }
+  }
 
-  prioritized.forEach(({ path }, index) => {
+  const branchNames = [...new Set(prioritized.map(({ path }) => pathSegments(path)[0]).filter(Boolean))].sort();
+  const branchAngle = new Map(branchNames.map((name, index) => [name, (index / Math.max(branchNames.length, 1)) * Math.PI * 2]));
+  const maxDepth = Math.max(1, ...prioritized.map(({ path }) => pathSegments(path).length));
+
+  nodes.push({ id: `group:${ROOT_NODE_PATH}`, path: ROOT_NODE_PATH, label: 'root', kind: 'group', x: 0, y: 0, z: 0, editedAt: 0 });
+
+  const sortedFolders = [...folderPaths].sort((a, b) => pathSegments(a).length - pathSegments(b).length || a.localeCompare(b));
+  for (const folderPath of sortedFolders) {
+    const segments = pathSegments(folderPath);
+    const depth = segments.length;
+    const baseAngle = branchAngle.get(segments[0]) ?? 0;
+    const seed = hashNumber(folderPath);
+    const spread = 0.1 + (depth / maxDepth) * 0.34;
+    const angle = baseAngle + ((((seed >>> 8) % 1000) / 1000) - 0.5) * spread;
+    const radius = 0.78 * (depth / maxDepth);
+    const y = ((((seed >>> 20) % 1000) / 1000) - 0.5) * (0.18 + 0.34 * (depth / maxDepth));
+    nodes.push({
+      id: `group:${folderPath}`,
+      path: folderPath,
+      label: segments.at(-1) || folderPath,
+      kind: 'group',
+      x: Math.cos(angle) * radius,
+      y,
+      z: Math.sin(angle) * radius,
+      editedAt: 0,
+    });
+    const parentPath = segments.slice(0, -1).join('/');
+    edges.push({ from: parentPath ? `group:${parentPath}` : `group:${ROOT_NODE_PATH}`, to: `group:${folderPath}` });
+  }
+
+  for (const { path } of prioritized) {
     const edit = editByPath.get(path);
-    const group = topGroup(path);
-    const groupIndex = Math.max(0, groups.indexOf(group));
-    const baseAngle = (groupIndex / Math.max(groups.length, 1)) * Math.PI * 2;
+    const segments = pathSegments(path);
+    const depth = Math.max(1, segments.length);
+    const parentPath = segments.slice(0, -1).join('/');
+    const baseAngle = branchAngle.get(segments[0]) ?? 0;
     const seed = hashNumber(path);
-    const localAngle = ((seed % 1000) / 1000) * Math.PI * 2;
-    const ring = 0.2 + (((seed >>> 10) % 1000) / 1000) * 0.42;
-    const gx = Math.cos(baseAngle) * (groups.length <= 1 ? 0 : 0.48);
-    const gz = Math.sin(baseAngle) * (groups.length <= 1 ? 0 : 0.48);
-    const yJitter = (((seed >>> 20) % 1000) / 1000 - 0.5) * 0.95;
+    const spread = 0.16 + (depth / maxDepth) * 0.48;
+    const angle = baseAngle + ((((seed >>> 8) % 1000) / 1000) - 0.5) * spread;
+    const radius = 0.88 * (depth / maxDepth);
+    const y = ((((seed >>> 20) % 1000) / 1000) - 0.5) * (0.24 + 0.46 * (depth / maxDepth));
     nodes.push({
       id: `file:${path}`,
       path,
       label: leafName(path),
       kind: 'file',
-      x: gx + Math.cos(localAngle) * ring,
-      y: yJitter,
-      z: gz + Math.sin(localAngle) * ring,
+      x: Math.cos(angle) * radius,
+      y,
+      z: Math.sin(angle) * radius,
       editedAt: Number(edit?.updatedAt ?? 0),
       tool: edit?.tool,
     });
-    edges.push({ from: `group:${group}`, to: `file:${path}` });
-    if (index > 0 && topGroup(prioritized[index - 1].path) === group && index % 3 === 0) edges.push({ from: `file:${prioritized[index - 1].path}`, to: `file:${path}` });
-  });
+    edges.push({ from: parentPath ? `group:${parentPath}` : `group:${ROOT_NODE_PATH}`, to: `file:${path}` });
+  }
+
   return { nodes, edges };
 }
 
@@ -376,17 +408,18 @@ function drawScene(
   const scale = Math.min(width, height) * 0.54 * zoom;
   const projected = scene.nodes.map((node) => ({ node, ...project(node, rotation, centerX, centerY, scale) })).sort((a, b) => a.depth - b.depth);
   const byId = new Map(projected.map((item) => [item.node.id, item]));
+  const selectedTrace = selectedPath ? graphTracePaths(selectedPath) : null;
 
   for (const edge of scene.edges) {
     const from = byId.get(edge.from);
     const to = byId.get(edge.to);
     if (!from || !to) continue;
-    const highlighted = selectedPath && (from.node.path === selectedPath || to.node.path === selectedPath);
+    const highlighted = Boolean(selectedTrace?.has(from.node.path) && selectedTrace?.has(to.node.path));
     context.beginPath();
     context.moveTo(from.x, from.y);
     context.lineTo(to.x, to.y);
-    context.strokeStyle = highlighted ? 'rgba(153, 199, 255, .6)' : 'rgba(145, 161, 190, .24)';
-    context.lineWidth = highlighted ? 1.25 : 0.85;
+    context.strokeStyle = highlighted ? 'rgba(153, 199, 255, .68)' : 'rgba(145, 161, 190, .24)';
+    context.lineWidth = highlighted ? 1.35 : 0.85;
     context.stroke();
   }
 
@@ -397,7 +430,7 @@ function drawScene(
     const selected = node.path === selectedPath;
     const age = node.editedAt ? Math.max(0, Date.now() - node.editedAt) : Infinity;
     const active = age < ACTIVE_EDIT_MS;
-    const baseRadius = node.kind === 'group' ? 4.2 : active ? 4.8 : 2.6;
+    const baseRadius = node.path === ROOT_NODE_PATH ? 5.2 : node.kind === 'group' ? 4.2 : active ? 4.8 : 2.6;
     const radius = baseRadius * depthScale;
 
     if (active) {
@@ -423,7 +456,9 @@ function drawScene(
     context.fillStyle = node.kind === 'group'
       ? selected
         ? 'rgba(218, 229, 246, .96)'
-        : 'rgba(168, 177, 198, .78)'
+        : node.path === ROOT_NODE_PATH
+          ? 'rgba(193, 205, 226, .9)'
+          : 'rgba(168, 177, 198, .78)'
       : active
         ? 'rgba(128, 219, 255, .96)'
         : selected
@@ -434,7 +469,7 @@ function drawScene(
 
     if (selected) {
       context.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      const text = node.label.length > 34 ? `${node.label.slice(0, 31)}…` : node.label;
+      const text = displayGraphPath(node.path);
       const metrics = context.measureText(text);
       const boxX = Math.min(width - metrics.width - 18, Math.max(8, x + 10));
       const boxY = Math.max(18, y - 17);
@@ -471,8 +506,16 @@ function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, wi
 }
 
 function normalizePath(value: unknown) { return String(value ?? '').trim().replaceAll('\\', '/').replace(/^\.\//, ''); }
-function topGroup(path: string) { return normalizePath(path).split('/').filter(Boolean)[0] || 'root'; }
-function leafName(path: string) { return normalizePath(path).split('/').filter(Boolean).at(-1) || normalizePath(path); }
+function pathSegments(path: string) { return normalizePath(path).split('/').filter(Boolean); }
+function leafName(path: string) { return pathSegments(path).at(-1) || normalizePath(path); }
+function displayGraphPath(path: string) { return path === ROOT_NODE_PATH ? 'root' : `root/${normalizePath(path)}`; }
+function graphTracePaths(path: string) {
+  const trace = new Set<string>([ROOT_NODE_PATH]);
+  if (path === ROOT_NODE_PATH) return trace;
+  const segments = pathSegments(path);
+  for (let depth = 1; depth <= segments.length; depth += 1) trace.add(segments.slice(0, depth).join('/'));
+  return trace;
+}
 function hashNumber(value: string) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
 function relativeTime(value: number) { const delta = Date.now() - Number(value || 0); if (!value) return 'recently'; if (delta < 5_000) return 'just now'; if (delta < 60_000) return `${Math.max(1, Math.floor(delta / 1000))}s ago`; if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`; return `${Math.floor(delta / 3_600_000)}h ago`; }
 function humanTool(value: string) { return value.replace(/^cuppet_/, '').replace(/^tst_/, 'TST ').replace(/^workspace_/, '').replaceAll('_', ' ').replace(/\b\w/g, (match) => match.toUpperCase()); }
