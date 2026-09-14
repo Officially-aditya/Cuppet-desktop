@@ -32,6 +32,8 @@
   --text-disabled: #4e5662;
 
   /* Status */
+  --status-success: #9fbe9f;
+  --status-info: #9db7df;
   --status-error: #ff9898;
   --status-warning: #e2a66f;
 

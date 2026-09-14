@@ -1,0 +1,17 @@
+/*
+ * Cuppet UI polish entrypoint.
+ *
+ * Keep the phase-specific files focused by concern, but expose one renderer
+ * import point so cascade order is explicit and future consolidation can
+ * happen without growing main.tsx import churn. The order below intentionally
+ * matches the previous direct imports exactly.
+ */
+
+@import './shell.css';
+@import './conversation.css';
+@import './composer.css';
+@import './overlays.css';
+@import './motion.css';
+@import './typography.css';
+@import './icons.css';
+@import './states.css';
