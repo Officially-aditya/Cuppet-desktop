@@ -23,11 +23,13 @@ import './project-terminal.css';
 import './shell-panel-controls.css';
 import './shell.css';
 import './conversation.css';
+import './composer.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { ProjectTerminalMount } from './react/ProjectTerminalMount';
 import { CommandResultEnhancement } from './react/CommandResultEnhancement';
 import { ShellPanelControls } from './react/ShellPanelControls';
+import { ComposerPolish } from './react/ComposerPolish';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -43,5 +45,6 @@ createRoot(root).render(
     <ProjectTerminalMount />
     <CommandResultEnhancement />
     <ShellPanelControls />
+    <ComposerPolish />
   </React.StrictMode>,
 );
