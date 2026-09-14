@@ -26,8 +26,6 @@ on:
 permissions:
   contents: write
 
-authorization: none
-
 concurrency:
   group: apple-silicon-test-${{ github.ref }}
   cancel-in-progress: true
