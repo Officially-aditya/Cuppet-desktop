@@ -1,0 +1,268 @@
+/*
+ * Conversation presentation.
+ *
+ * The transcript should carry the content hierarchy while controls and traces
+ * recede until they are relevant. Keep the readable 820px measure intact.
+ */
+
+.react-messages {
+  scrollbar-color: color-mix(in srgb, var(--border-default) 72%, transparent) transparent;
+}
+
+.message {
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.message-role {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  letter-spacing: 0.065em;
+}
+
+/* Role labels add little once bubble geometry establishes authorship. */
+.message.assistant .message-role,
+.message.user .message-role {
+  display: none;
+}
+
+.message-content {
+  color: var(--text-primary);
+  font-size: var(--text-ui);
+  line-height: 1.64;
+}
+
+.message.user .message-content {
+  border: 1px solid color-mix(in srgb, var(--border-default) 58%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--bg-canvas));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018);
+  color: var(--text-secondary);
+  padding: 10px var(--space-3);
+}
+
+.message.assistant .message-content {
+  color: color-mix(in srgb, var(--text-primary) 94%, var(--text-secondary));
+}
+
+.message-status.error {
+  color: var(--status-error);
+}
+
+/* Markdown rhythm ------------------------------------------------------- */
+.message.assistant .markdown-rendered p {
+  margin: 0 0 0.72em;
+}
+
+.message.assistant .markdown-rendered p:last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant .markdown-rendered h1,
+.message.assistant .markdown-rendered h2,
+.message.assistant .markdown-rendered h3,
+.message.assistant .markdown-rendered h4,
+.message.assistant .markdown-rendered h5,
+.message.assistant .markdown-rendered h6 {
+  color: var(--text-primary);
+  line-height: 1.32;
+  letter-spacing: -0.012em;
+}
+
+.message.assistant .markdown-rendered h1 {
+  margin: 1.2em 0 0.5em;
+  font-size: 20px;
+}
+
+.message.assistant .markdown-rendered h2 {
+  margin: 1.15em 0 0.48em;
+  font-size: 17px;
+}
+
+.message.assistant .markdown-rendered h3 {
+  margin: 1.05em 0 0.42em;
+  font-size: 15px;
+}
+
+.message.assistant .markdown-rendered h4,
+.message.assistant .markdown-rendered h5,
+.message.assistant .markdown-rendered h6 {
+  margin: 1em 0 0.4em;
+  font-size: var(--text-ui);
+}
+
+.message.assistant .markdown-rendered > :first-child {
+  margin-top: 0;
+}
+
+.message.assistant .markdown-rendered ul,
+.message.assistant .markdown-rendered ol {
+  margin: 0.45em 0 0.82em;
+  padding-left: 1.45em;
+}
+
+.message.assistant .markdown-rendered li {
+  margin: 0.24em 0;
+  padding-left: 0.08em;
+}
+
+.message.assistant .markdown-rendered li::marker {
+  color: var(--text-tertiary);
+}
+
+.message.assistant .markdown-rendered strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.message.assistant .markdown-rendered a {
+  color: color-mix(in srgb, var(--text-primary) 82%, #9db7df);
+  text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
+  text-underline-offset: 2px;
+}
+
+.message.assistant .markdown-rendered blockquote {
+  margin: 0.8em 0;
+  padding: 0.05em 0 0.05em var(--space-3);
+  border-left: 2px solid color-mix(in srgb, var(--border-strong) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.message.assistant .markdown-rendered hr {
+  margin: var(--space-5) 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+
+/* Code remains distinct without becoming a card inside every answer. */
+.message.assistant .markdown-rendered pre {
+  margin: 0.8em 0;
+  padding: 11px var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--border-default) 56%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-code);
+  box-shadow: none;
+  font: 12px/1.58 var(--font-mono);
+}
+
+.message.assistant .markdown-rendered code {
+  font-family: var(--font-mono);
+}
+
+.message.assistant .markdown-rendered :not(pre) > code {
+  padding: 0.12em 0.34em;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.message.assistant .markdown-rendered pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.md-table-wrap {
+  margin: 0.8em 0;
+  border: 1px solid color-mix(in srgb, var(--border-default) 52%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.message.assistant .markdown-rendered table {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.message.assistant .markdown-rendered th,
+.message.assistant .markdown-rendered td {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  padding: 7px 9px;
+}
+
+.message.assistant .markdown-rendered th + th,
+.message.assistant .markdown-rendered td + td {
+  border-left: 1px solid color-mix(in srgb, var(--border-subtle) 56%, transparent);
+}
+
+.message.assistant .markdown-rendered tr:last-child td {
+  border-bottom: 0;
+}
+
+.message.assistant .markdown-rendered th {
+  background: color-mix(in srgb, var(--surface-1) 72%, var(--bg-canvas));
+  color: var(--text-secondary);
+  font-weight: 620;
+}
+
+/* Reasoning and tools --------------------------------------------------- */
+.message-trace.thread-activity,
+.message-reasoning-content,
+.thread-tool-summary,
+.thread-tool-detail {
+  color: var(--text-tertiary);
+}
+
+.message-trace-reasoning {
+  color: color-mix(in srgb, var(--text-tertiary) 88%, transparent);
+}
+
+.message-trace-reasoning pre {
+  border-color: color-mix(in srgb, var(--border-subtle) 66%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-code) 88%, transparent);
+}
+
+.message-cuppet-toggle,
+.message-reasoning-toggle,
+.thread-tool-summary,
+.message-copy-button {
+  transition:
+    background-color var(--motion-micro) var(--ease-standard),
+    color var(--motion-micro) var(--ease-standard),
+    opacity var(--motion-micro) var(--ease-standard);
+}
+
+.message-cuppet-toggle:hover,
+.message-reasoning-toggle:hover,
+.thread-tool-summary:hover,
+.message-copy-button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 68%, transparent);
+  color: var(--text-secondary);
+}
+
+.thread-tool-row.error .thread-tool-summary,
+.thread-activity-line.error {
+  color: color-mix(in srgb, var(--status-error) 76%, var(--text-tertiary));
+}
+
+.thread-tool-row.running .thread-tool-status,
+.thread-activity-line.running {
+  color: var(--text-secondary);
+}
+
+.message-footer-actions {
+  min-height: 20px;
+  margin-top: 2px;
+}
+
+.message-copy-button {
+  color: var(--text-tertiary);
+}
+
+.message-copy-button:focus-visible,
+.message-cuppet-toggle:focus-visible,
+.message-reasoning-toggle:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-cuppet-toggle,
+  .message-reasoning-toggle,
+  .thread-tool-summary,
+  .message-copy-button {
+    transition: none;
+  }
+}

@@ -22,6 +22,7 @@ import './tst-memory-sidebar.css';
 import './project-terminal.css';
 import './shell-panel-controls.css';
 import './shell.css';
+import './conversation.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { ProjectTerminalMount } from './react/ProjectTerminalMount';
