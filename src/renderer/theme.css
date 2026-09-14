@@ -83,6 +83,25 @@
   --text-ui: 14px;
   --text-title: 18px;
   --text-display: 24px;
+  --text-ui-sm: 12px;
+  --text-ui-md: 13px;
+  --text-ui-strong: 14px;
+  --text-body: 15px;
+  --text-body-compact: 14px;
+  --text-meta: 10.5px;
+  --text-label: 9.5px;
+  --text-code: 12.5px;
+  --text-heading-lg: 18px;
+  --text-heading-md: 16px;
+  --text-heading-sm: 14px;
+  --leading-ui: 1.4;
+  --leading-body: 1.65;
+  --leading-body-compact: 1.55;
+  --leading-meta: 1.45;
+  --leading-label: 1.3;
+  --leading-code: 1.55;
+  --tracking-ui: 0;
+  --tracking-body: -0.002em;
 
   /* Motion */
   --motion-micro: 120ms;

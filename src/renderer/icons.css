@@ -1,0 +1,140 @@
+/* Phase 7: normalize icon geometry and hit targets without changing icon ownership. */
+
+.icon-button,
+.settings-close-button,
+.sidebar-toggle-button,
+.shell-panel-button,
+.memory-icon-button,
+.composer-attach-button,
+.project-new-chat-button,
+.project-menu-button,
+.session-menu-button,
+.message-copy-button{
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  box-sizing:border-box;
+  line-height:0;
+}
+
+.icon-button,
+.settings-close-button,
+.sidebar-toggle-button,
+.shell-panel-button,
+.memory-icon-button{
+  width:30px;
+  height:30px;
+  min-width:30px;
+  min-height:30px;
+  padding:0;
+  border-radius:var(--radius-sm);
+}
+
+.project-new-chat-button,
+.project-menu-button,
+.session-menu-button,
+.message-copy-button{
+  width:28px;
+  height:28px;
+  min-width:28px;
+  min-height:28px;
+  padding:0;
+  border-radius:var(--radius-xs);
+}
+
+.composer-attach-button{
+  width:32px;
+  height:32px;
+  min-width:32px;
+  min-height:32px;
+  padding:0;
+  border-radius:var(--radius-sm);
+}
+
+.icon-button svg,
+.settings-close-button svg,
+.sidebar-toggle-button svg,
+.shell-panel-button svg,
+.memory-icon-button svg{
+  width:16px;
+  height:16px;
+  display:block;
+  flex:none;
+}
+
+.project-new-chat-button svg,
+.project-menu-button svg,
+.session-menu-button svg,
+.message-copy-button svg{
+  width:15px;
+  height:15px;
+  display:block;
+  flex:none;
+}
+
+.composer-attach-button svg{
+  width:17px;
+  height:17px;
+  display:block;
+  flex:none;
+}
+
+/* Sidebar masks are optically balanced against the same 16px glyph box. */
+.react-sidebar .primary-nav .nav-button::before,
+.react-sidebar .sidebar-bottom .ghost-button::before{
+  width:16px;
+  height:16px;
+  flex-basis:16px;
+  -webkit-mask-size:16px 16px;
+  mask-size:16px 16px;
+  opacity:.86;
+}
+
+/* Text glyph controls inherit the same optical box as SVG icons. */
+.project-new-chat-button,
+.project-menu-button,
+.session-menu-button,
+.icon-button,
+.settings-close-button{
+  font-size:16px;
+}
+
+/* Do not let icon controls grow when adjacent text changes. */
+.sidebar-toggle-button,
+.shell-panel-button,
+.memory-icon-button,
+.project-new-chat-button,
+.project-menu-button,
+.session-menu-button,
+.message-copy-button,
+.composer-attach-button{
+  overflow:hidden;
+}
+
+/* Accessible focus remains visible while staying visually quiet at rest. */
+.icon-button:focus-visible,
+.settings-close-button:focus-visible,
+.sidebar-toggle-button:focus-visible,
+.shell-panel-button:focus-visible,
+.memory-icon-button:focus-visible,
+.composer-attach-button:focus-visible,
+.project-new-chat-button:focus-visible,
+.project-menu-button:focus-visible,
+.session-menu-button:focus-visible,
+.message-copy-button:focus-visible{
+  outline:0;
+  box-shadow:0 0 0 2px var(--focus-ring-strong);
+}
+
+@media(max-width:900px){
+  .icon-button,
+  .settings-close-button,
+  .sidebar-toggle-button,
+  .shell-panel-button,
+  .memory-icon-button{
+    width:32px;
+    height:32px;
+    min-width:32px;
+    min-height:32px;
+  }
+}

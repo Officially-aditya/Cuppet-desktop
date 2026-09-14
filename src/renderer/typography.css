@@ -1,0 +1,218 @@
+/* Phase 7: a restrained, explicit type hierarchy for the renderer. */
+
+html,
+body,
+#root{
+  font-family:var(--font-ui);
+  font-size:var(--text-ui-md);
+  line-height:var(--leading-ui);
+  letter-spacing:var(--tracking-ui);
+}
+
+button,
+input,
+textarea,
+select{
+  font-family:var(--font-ui);
+}
+
+/* Conversation is the primary reading surface. Keep prose slightly larger than UI chrome. */
+.react-messages{
+  font-size:var(--text-body);
+}
+.message{
+  gap:var(--space-2);
+}
+.message-content{
+  font-size:var(--text-body);
+  line-height:var(--leading-body);
+  letter-spacing:var(--tracking-body);
+}
+.message.user .message-content{
+  font-size:var(--text-body-compact);
+  line-height:var(--leading-body-compact);
+}
+.message-role{
+  font-size:var(--text-meta);
+  line-height:var(--leading-meta);
+  letter-spacing:.08em;
+}
+.message-status,
+.message-reasoning-content,
+.thread-tool-detail{
+  font-size:var(--text-meta);
+  line-height:var(--leading-meta);
+}
+
+/* Rendered markdown gets a predictable vertical scale without oversized headings. */
+.message.assistant .message-content.markdown-rendered h1{
+  font-size:var(--text-heading-lg);
+  line-height:1.25;
+  margin:1.1em 0 .55em;
+  letter-spacing:-.015em;
+}
+.message.assistant .message-content.markdown-rendered h2{
+  font-size:var(--text-heading-md);
+  line-height:1.3;
+  margin:1em 0 .5em;
+  letter-spacing:-.01em;
+}
+.message.assistant .message-content.markdown-rendered h3{
+  font-size:var(--text-heading-sm);
+  line-height:1.35;
+  margin:.9em 0 .45em;
+}
+.message.assistant .message-content.markdown-rendered h4,
+.message.assistant .message-content.markdown-rendered h5,
+.message.assistant .message-content.markdown-rendered h6{
+  font-size:var(--text-ui-strong);
+  line-height:1.4;
+  margin:.8em 0 .4em;
+}
+.message.assistant .message-content.markdown-rendered p{
+  margin:.6em 0;
+}
+.message.assistant .message-content.markdown-rendered ul,
+.message.assistant .message-content.markdown-rendered ol{
+  margin:.6em 0;
+  padding-left:1.45em;
+}
+.message.assistant .message-content.markdown-rendered li + li{
+  margin-top:.22em;
+}
+.message.assistant .message-content.markdown-rendered pre,
+.message.assistant .message-content.markdown-rendered code{
+  font-family:var(--font-mono);
+  font-size:var(--text-code);
+  line-height:var(--leading-code);
+}
+.message.assistant .message-content.markdown-rendered :not(pre)>code{
+  letter-spacing:-.01em;
+}
+.message.assistant .message-content.markdown-rendered blockquote{
+  line-height:var(--leading-body-compact);
+}
+.message.assistant .message-content.markdown-rendered th,
+.message.assistant .message-content.markdown-rendered td{
+  font-size:var(--text-ui-sm);
+  line-height:var(--leading-ui);
+}
+
+/* UI chrome: compact, legible, and intentionally below transcript weight. */
+.react-sidebar,
+.topbar,
+.composer,
+.settings-hub-dialog,
+.react-modal,
+.search-dialog,
+.command-dialog,
+.nav-context-menu,
+.cuppet-select-menu,
+.model-picker-menu,
+.react-command-palette,
+.permission-inline{
+  font-size:var(--text-ui-md);
+}
+
+.react-sidebar .brand-title,
+.conversation-title{
+  font-size:var(--text-ui-strong);
+  line-height:1.35;
+}
+.react-sidebar .brand-subtitle,
+.react-sidebar .project-meta,
+.react-sidebar .session-meta,
+.runtime-status,
+.project-status{
+  font-size:var(--text-meta);
+  line-height:var(--leading-meta);
+}
+.react-sidebar .nav-button,
+.react-sidebar .project-name,
+.react-sidebar .session-title,
+.react-sidebar .sidebar-bottom .ghost-button{
+  font-size:var(--text-ui-md);
+  line-height:1.4;
+}
+.react-sidebar .projects-header,
+.react-sidebar .general-label{
+  font-size:var(--text-label);
+  line-height:var(--leading-label);
+}
+.react-sidebar .session-show-more{
+  font-size:var(--text-meta);
+  line-height:1.45;
+}
+
+.topbar .provider-pill,
+.topbar .control-pill,
+.muted-inline,
+.composer-hint{
+  font-size:var(--text-meta);
+}
+
+.composer textarea,
+#prompt{
+  font-size:var(--text-body-compact);
+  line-height:var(--leading-body-compact);
+}
+
+.settings-hub-header h2,
+.dialog-header h2{
+  font-size:var(--text-title);
+  line-height:1.3;
+  letter-spacing:-.012em;
+}
+.settings-hub-header p,
+.dialog-header p,
+.project-method p{
+  font-size:var(--text-ui-sm);
+  line-height:1.5;
+}
+.settings-card-heading h3,
+.project-method h3{
+  font-size:var(--text-ui-strong);
+  line-height:1.35;
+}
+.settings-card-heading p,
+.settings-row span,
+.settings-toggle-row span,
+.settings-note,
+.dialog-note{
+  font-size:var(--text-meta);
+  line-height:var(--leading-meta);
+}
+.settings-row strong,
+.settings-toggle-row strong{
+  font-size:var(--text-ui-md);
+  line-height:1.4;
+}
+
+.empty-state h1{
+  font-size:var(--text-display);
+  line-height:1.2;
+  letter-spacing:-.02em;
+}
+.empty-state p{
+  font-size:var(--text-ui-md);
+  line-height:1.6;
+}
+
+/* Keep labels and status text from competing with content. */
+.thread-tool-summary,
+.message-reasoning-toggle,
+.permission-inline-button,
+.search-result,
+.search-result-action,
+.command-result,
+.model-picker-menu,
+.cuppet-select-menu{
+  font-size:var(--text-ui-sm);
+}
+
+@media(max-width:900px){
+  .message-content,
+  .message.user .message-content{
+    font-size:var(--text-body-compact);
+  }
+}
