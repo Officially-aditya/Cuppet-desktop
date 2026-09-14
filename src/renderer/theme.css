@@ -1,0 +1,96 @@
+/*
+ * Cuppet visual foundation.
+ *
+ * Keep this file selector-free. Components consume semantic tokens from here;
+ * feature CSS owns selectors. Values intentionally match the current UI so the
+ * first migration step changes styling architecture, not product behavior.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Canvas and surfaces */
+  --bg-canvas: #0d0f12;
+  --bg-sidebar: #0a0c0f;
+  --surface-1: #111419;
+  --surface-2: #171b21;
+  --surface-input: #0c1014;
+  --surface-popover: #11161c;
+  --surface-code: #0b0e12;
+  --surface-hover: #1b2027;
+  --surface-selected: #1a1f26;
+
+  /* Borders */
+  --border-subtle: #252a32;
+  --border-default: #303741;
+  --border-strong: #46505d;
+
+  /* Text */
+  --text-primary: #f4f6f8;
+  --text-secondary: #cbd2dc;
+  --text-tertiary: #8f98a6;
+  --text-disabled: #4e5662;
+
+  /* Status */
+  --status-error: #ff9898;
+  --status-warning: #e2a66f;
+
+  /* Primary action */
+  --action-primary-bg: #f3f5f7;
+  --action-primary-text: #111318;
+
+  /* Focus */
+  --focus-ring: rgba(130, 145, 165, 0.16);
+  --focus-ring-strong: rgba(130, 145, 165, 0.18);
+
+  /* Radius system */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.42);
+  --shadow-dialog: 0 40px 100px rgba(0, 0, 0, 0.55);
+  --shadow-floating: 0 24px 70px rgba(0, 0, 0, 0.5);
+
+  /* 4px spacing rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Typography */
+  --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-ui: 14px;
+  --text-title: 18px;
+  --text-display: 24px;
+
+  /* Motion */
+  --motion-micro: 120ms;
+  --motion-popover: 180ms;
+  --motion-structural: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-geometry: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /*
+   * Transitional aliases for the pre-token renderer. These keep existing
+   * selectors stable while each CSS file is migrated to semantic names.
+   */
+  --panel: var(--surface-1);
+  --panel-2: var(--surface-2);
+  --line: var(--border-subtle);
+  --muted: var(--text-tertiary);
+  --text: var(--text-primary);
+  --accent: var(--action-primary-bg);
+  --accent-text: var(--action-primary-text);
+}
