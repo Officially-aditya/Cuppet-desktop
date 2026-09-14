@@ -6,8 +6,7 @@ const DESCRIPTORS = Object.freeze({
     // OpenCode ACP is documented to use the credentials/configuration already
     // available to the normal CLI process. Preserve that authority verbatim.
     // Cuppet constrains native execution through the dedicated permission overlay
-    // and supplies its own tools through the session-scoped MCP bridge; it must not
-    // rewrite OPENCODE_CONFIG_CONTENT or force a synthetic agent/mode.
+    // and supplies its own tools through the session-scoped MCP bridge.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
@@ -145,11 +144,15 @@ function openCodeAcpEnvironment(inherited = process.env) {
 function openCodeCuppetPermissions() {
   return {
     '*': 'deny',
-    read: 'deny',
+    // OpenCode's workspace-discovery stack is read-only. Keep search/list/file
+    // reads available so a normal first turn does not die on an intentional
+    // permission denial before it can reach Cuppet's mutation/tool boundary.
+    // All mutation, shell, external access, and agent delegation remain denied.
+    read: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    list: 'allow',
     edit: 'deny',
-    glob: 'deny',
-    grep: 'deny',
-    list: 'deny',
     bash: 'deny',
     task: 'deny',
     todowrite: 'deny',
