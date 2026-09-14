@@ -28,6 +28,7 @@ jobs:
           package-manager-cache: false
       - run: npm install --ignore-scripts
       - run: npm run renderer:verify
+      - run: npm run ui-polish:verify
       - run: npm run phase0:verify
       - run: npm run phase1:verify
       - run: npm run phaseb:verify
