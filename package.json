@@ -13,6 +13,7 @@
     "prebuild:renderer": "npm run mac:prepare-icon",
     "build:renderer": "vite build",
     "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
+    "ui-polish:verify": "node scripts/verify-ui-polish.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test",

@@ -55,7 +55,7 @@ button[aria-disabled='true']:hover,
 .search-result.active {
   background: var(--surface-selected) !important;
   color: var(--text-primary) !important;
-  box-shadow: inset 2px 0 0 var(--action-primary);
+  box-shadow: inset 2px 0 0 var(--action-primary-bg);
 }
 
 /* Keyboard focus stays visible without making every focused mouse control glow. */
