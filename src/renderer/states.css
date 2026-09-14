@@ -1,0 +1,242 @@
+/*
+ * State quality pass.
+ *
+ * Keep state changes legible through contrast, tone and restraint. This layer
+ * intentionally styles existing hooks rather than introducing new behavior.
+ */
+
+/* Shared interaction states */
+button,
+[role='button'],
+[role='option'],
+[role='menuitem'] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:active:not(:disabled),
+[role='button']:active,
+[role='option']:active,
+[role='menuitem']:active {
+  transform: translateY(1px);
+}
+
+button:disabled,
+button[aria-disabled='true'],
+[role='button'][aria-disabled='true'],
+[aria-disabled='true'] {
+  color: var(--text-disabled) !important;
+  border-color: var(--border-subtle) !important;
+  cursor: not-allowed;
+}
+
+button:disabled:hover,
+button[aria-disabled='true']:hover,
+[role='button'][aria-disabled='true']:hover,
+[aria-disabled='true']:hover {
+  background: transparent !important;
+  color: var(--text-disabled) !important;
+}
+
+/* Explicit selection: stronger than hover, quieter than a primary action. */
+[aria-selected='true'],
+[aria-checked='true'],
+[aria-current='true'],
+.is-selected,
+.selected,
+.active {
+  outline-color: transparent;
+}
+
+/* Common menu/list selection hooks already used by the renderer. */
+[role='option'][aria-selected='true'],
+[role='menuitem'][aria-selected='true'],
+.model-option.active,
+.command-item.active,
+.search-result.active {
+  background: var(--surface-selected) !important;
+  color: var(--text-primary) !important;
+  box-shadow: inset 2px 0 0 var(--action-primary);
+}
+
+/* Keyboard focus stays visible without making every focused mouse control glow. */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible,
+[role='option']:focus-visible,
+[role='menuitem']:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Loading: use quiet placeholders rather than broad, high-frequency shimmer. */
+.loading,
+.is-loading,
+[data-loading='true'] {
+  cursor: progress;
+}
+
+.skeleton,
+.skeleton-line,
+.skeleton-block,
+[data-skeleton='true'] {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.skeleton::after,
+.skeleton-line::after,
+.skeleton-block::after,
+[data-skeleton='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .035), transparent);
+  animation: cuppet-state-shimmer 1.8s ease-in-out infinite;
+}
+
+/* Running/agent work: visible status, low visual pressure. */
+.execution-activity {
+  border-color: var(--border-subtle);
+  background: var(--surface-1);
+}
+
+.activity-row {
+  border-bottom-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.activity-row.running .activity-status {
+  color: var(--status-info);
+  animation: cuppet-state-pulse 1.2s ease-in-out infinite;
+}
+
+.activity-row.complete .activity-status {
+  color: var(--status-success);
+}
+
+.activity-row.error .activity-status {
+  color: var(--status-error);
+}
+
+.react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
+.react-main-pane:has(.composer-pause-button) .message-preview::after {
+  color: var(--text-tertiary);
+  animation: cuppet-state-pulse 1.4s ease-in-out infinite;
+}
+
+/* Feedback states: status color belongs to the status, not the whole component. */
+.status-success,
+.success,
+[data-state='success'] {
+  color: var(--status-success);
+}
+
+.status-warning,
+.warning,
+[data-state='warning'] {
+  color: var(--status-warning);
+}
+
+.status-error,
+.error,
+[data-state='error'] {
+  color: var(--status-error);
+}
+
+.status-success,
+.status-warning,
+.status-error {
+  border-color: var(--border-subtle);
+}
+
+/* Error surfaces get a restrained tint so the message remains readable. */
+.error-message,
+.inline-error,
+.settings-error,
+[data-state='error'].message,
+.message.error {
+  background: color-mix(in srgb, var(--status-error) 7%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--status-error) 22%, var(--border-subtle));
+}
+
+/* Empty states: hierarchy comes from spacing and type, not decorative cards. */
+.empty-state,
+.empty-state-container,
+[data-empty='true'] {
+  color: var(--text-secondary);
+}
+
+.empty-state h1,
+.empty-state h2,
+.empty-state h3,
+[data-empty='true'] h1,
+[data-empty='true'] h2,
+[data-empty='true'] h3 {
+  color: var(--text-primary);
+}
+
+.empty-state p,
+[data-empty='true'] p {
+  color: var(--text-tertiary);
+}
+
+/* Retain hover-only controls: inactive chrome should retreat. */
+.sidebar-row:not(:hover) .project-menu-button,
+.sidebar-row:not(:focus-within) .project-menu-button,
+.session-row:not(:hover) .session-menu-button,
+.session-row:not(:focus-within) .session-menu-button,
+.message:not(:hover):not(:focus-within) .message-copy-button {
+  opacity: 0;
+}
+
+/* Pending permission/input states should read as waiting, not as errors. */
+.permission-inline,
+.modal-priority .question-fields {
+  border-color: var(--border-default);
+  background: var(--surface-2);
+}
+
+/* Respect the app's existing reduced-motion preference and the OS preference. */
+@keyframes cuppet-state-shimmer {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(100%); }
+}
+
+@keyframes cuppet-state-pulse {
+  0%, 100% { opacity: .52; }
+  50% { opacity: 1; }
+}
+
+html.cuppet-reduced-motion .skeleton::after,
+html.cuppet-reduced-motion .skeleton-line::after,
+html.cuppet-reduced-motion .skeleton-block::after,
+html.cuppet-reduced-motion [data-skeleton='true']::after,
+html.cuppet-reduced-motion .activity-row.running .activity-status,
+html.cuppet-reduced-motion .react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
+html.cuppet-reduced-motion .react-main-pane:has(.composer-pause-button) .message-preview::after {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after,
+  .skeleton-line::after,
+  .skeleton-block::after,
+  [data-skeleton='true']::after,
+  .activity-row.running .activity-status,
+  .react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
+  .react-main-pane:has(.composer-pause-button) .message-preview::after {
+    animation: none;
+  }
+
+  button:active:not(:disabled),
+  [role='button']:active,
+  [role='option']:active,
+  [role='menuitem']:active {
+    transform: none;
+  }
+}
