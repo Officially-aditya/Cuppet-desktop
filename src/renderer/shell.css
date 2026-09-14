@@ -1,0 +1,253 @@
+/*
+ * Application shell polish.
+ *
+ * This layer owns only workspace geometry and shell surfaces. Runtime behavior,
+ * panel ownership and feature-specific content remain in their existing files.
+ */
+
+html,
+body,
+#root,
+.react-app,
+.workspace-center-column,
+.react-main-pane {
+  background: var(--bg-canvas);
+}
+
+.react-app {
+  color: var(--text-primary);
+}
+
+/* Sidebar --------------------------------------------------------------- */
+.react-sidebar {
+  background: var(--bg-sidebar);
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  transition:
+    width var(--motion-structural) var(--ease-geometry),
+    min-width var(--motion-structural) var(--ease-geometry),
+    max-width var(--motion-structural) var(--ease-geometry),
+    border-color var(--motion-micro) var(--ease-standard);
+}
+
+.sidebar-resizing .react-sidebar {
+  transition: none;
+}
+
+.react-sidebar .sidebar-top,
+.react-sidebar .sidebar-bottom {
+  background: transparent;
+  border-color: transparent;
+}
+
+.react-sidebar .brand-title {
+  color: var(--text-primary);
+}
+
+.react-sidebar .projects-header,
+.react-sidebar .general-label,
+.react-sidebar .project-meta,
+.react-sidebar .session-meta,
+.react-sidebar .sidebar-empty {
+  color: var(--text-tertiary);
+}
+
+.react-sidebar .nav-button,
+.react-sidebar .project-row,
+.react-sidebar .session-item,
+.react-sidebar .session-show-more,
+.react-sidebar .project-new-chat-button,
+.react-sidebar .project-menu-button,
+.react-sidebar .session-menu-button,
+.react-sidebar .sidebar-toggle-button,
+.react-sidebar .sidebar-bottom .ghost-button {
+  transition:
+    background-color var(--motion-micro) var(--ease-standard),
+    color var(--motion-micro) var(--ease-standard),
+    opacity var(--motion-micro) var(--ease-standard);
+}
+
+.react-sidebar .nav-button {
+  color: var(--text-tertiary);
+}
+
+.react-sidebar .nav-button:hover:not(:disabled),
+.react-sidebar .project-row:hover:not(.active),
+.react-sidebar .session-item:hover:not(.active),
+.react-sidebar .session-show-more:hover,
+.react-sidebar .sidebar-toggle-button:hover,
+.react-sidebar .sidebar-bottom .ghost-button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.react-sidebar .project-row.active,
+.react-sidebar .session-item.active {
+  background: color-mix(in srgb, var(--surface-selected) 88%, transparent);
+  color: var(--text-primary);
+}
+
+.react-sidebar .project-name,
+.react-sidebar .session-title {
+  color: inherit;
+}
+
+.react-sidebar .project-new-chat-button:hover,
+.react-sidebar .project-menu-button:hover,
+.react-sidebar .session-menu-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.react-sidebar .sidebar-bottom .ghost-button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.react-sidebar.collapsed {
+  background: var(--bg-sidebar);
+  border-right-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+
+/* Main workspace -------------------------------------------------------- */
+.main-pane,
+.react-main-pane {
+  background: var(--bg-canvas);
+}
+
+.topbar {
+  border-bottom-color: color-mix(in srgb, var(--border-subtle) 52%, transparent);
+  background: color-mix(in srgb, var(--bg-canvas) 92%, transparent);
+}
+
+.workspace-center-column {
+  isolation: isolate;
+}
+
+/* macOS titlebar shell -------------------------------------------------- */
+.shell-panel-header {
+  border-bottom-color: color-mix(in srgb, var(--border-subtle) 48%, transparent);
+  background: color-mix(in srgb, var(--bg-canvas) 94%, transparent);
+}
+
+.shell-panel-button {
+  color: var(--text-tertiary);
+  transition:
+    background-color var(--motion-micro) var(--ease-standard),
+    color var(--motion-micro) var(--ease-standard),
+    opacity var(--motion-micro) var(--ease-standard);
+}
+
+.shell-panel-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 68%, transparent);
+  color: var(--text-primary);
+}
+
+.shell-panel-button.active {
+  background: color-mix(in srgb, var(--surface-selected) 70%, transparent);
+  color: var(--text-secondary);
+}
+
+.shell-panel-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring-strong);
+}
+
+/* TST is a contextual workspace layer, not a second application. */
+.cuppet-shell-header .memory-sidebar {
+  border-color: color-mix(in srgb, var(--border-default) 56%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-code);
+  box-shadow: var(--shadow-popover);
+}
+
+.cuppet-shell-header .memory-graph-stage {
+  background:
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--surface-2) 48%, transparent), transparent 50%),
+    var(--surface-code);
+}
+
+.cuppet-shell-header .memory-node-inspector {
+  border-color: color-mix(in srgb, var(--border-default) 58%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-popover) 88%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.cuppet-shell-header .memory-node-inspector strong {
+  color: var(--text-secondary);
+}
+
+.cuppet-shell-header .memory-inspector-meta,
+.cuppet-shell-header .memory-graph-empty strong {
+  color: var(--text-tertiary);
+}
+
+/* Terminal remains owned by ProjectTerminalMount and its existing hook. */
+.project-terminal {
+  background: var(--surface-code);
+  border-top-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  transition:
+    height var(--motion-structural) var(--ease-geometry),
+    border-color var(--motion-micro) var(--ease-standard);
+}
+
+.project-terminal-bar {
+  background: color-mix(in srgb, var(--surface-1) 62%, var(--surface-code));
+  color: var(--text-tertiary);
+  transition:
+    background-color var(--motion-micro) var(--ease-standard),
+    color var(--motion-micro) var(--ease-standard);
+}
+
+.project-terminal-bar:hover {
+  background: var(--surface-1);
+  color: var(--text-secondary);
+}
+
+.project-terminal-title,
+.terminal-output-stdout {
+  color: var(--text-secondary);
+}
+
+.project-terminal-shortcut {
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+}
+
+.project-terminal-body,
+.project-terminal-input-row {
+  background: var(--surface-code);
+}
+
+.project-terminal-input-row {
+  border-top-color: color-mix(in srgb, var(--border-subtle) 62%, transparent);
+}
+
+.project-terminal-input-row input {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.project-terminal:focus-within {
+  border-top-color: color-mix(in srgb, var(--border-strong) 62%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-sidebar,
+  .project-terminal,
+  .react-sidebar .nav-button,
+  .react-sidebar .project-row,
+  .react-sidebar .session-item,
+  .react-sidebar .session-show-more,
+  .react-sidebar .project-new-chat-button,
+  .react-sidebar .project-menu-button,
+  .react-sidebar .session-menu-button,
+  .react-sidebar .sidebar-toggle-button,
+  .react-sidebar .sidebar-bottom .ghost-button,
+  .shell-panel-button,
+  .project-terminal-bar {
+    transition: none;
+  }
+}
