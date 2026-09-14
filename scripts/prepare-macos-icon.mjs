@@ -4,6 +4,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const source = join(root, 'build', 'icon.png');
 const output = join(root, 'build', 'icon-macos.png');
@@ -216,5 +217,3 @@ function readPngInfo(buffer) {
     interlaceMethod: buffer[28],
   };
 }
-
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
