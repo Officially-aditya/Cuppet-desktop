@@ -1,0 +1,156 @@
+name: Release Dispatch Alpha4
+
+on:
+  push:
+    branches:
+      - release-dispatch-alpha4
+    paths:
+      - .github/workflows/release-dispatch-alpha4.yml
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: release-dispatch-alpha4
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RELEASE_REF: feat/ui-polish-system
+      RELEASE_SHA: c019a40f6353a104ce548d57843c7b6b8a007b6b
+      RELEASE_TAG: v0.9.0-alpha.4
+    steps:
+      - name: Validate release head
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(gh api "repos/$REPO/git/ref/heads/$RELEASE_REF" --jq '.object.sha')"
+          if [[ "$actual" != "$RELEASE_SHA" ]]; then
+            echo "Release ref moved: expected $RELEASE_SHA, found $actual" >&2
+            exit 1
+          fi
+          echo "Release head: $RELEASE_SHA"
+          echo "Release tag: $RELEASE_TAG"
+
+      - name: Dispatch CI stabilization gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml \
+            --repo "$REPO" \
+            --ref "$RELEASE_REF"
+
+      - name: Dispatch Provider V2 stabilization gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run provider-v2-selected.yml \
+            --repo "$REPO" \
+            --ref "$RELEASE_REF"
+
+      - name: Wait for exact-head stabilization gates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wait_for_success() {
+            local workflow="$1"
+            local deadline=$((SECONDS + 60 * 60))
+
+            echo "Waiting for $workflow at $RELEASE_SHA"
+            while (( SECONDS < deadline )); do
+              run_json="$(gh run list \
+                --repo "$REPO" \
+                --workflow "$workflow" \
+                --branch "$RELEASE_REF" \
+                --commit "$RELEASE_SHA" \
+                --event workflow_dispatch \
+                --limit 20 \
+                --json databaseId,status,conclusion,headSha \
+                --jq 'sort_by(.databaseId) | last // empty')"
+
+              if [[ -n "$run_json" ]]; then
+                run_id="$(jq -r '.databaseId' <<<"$run_json")"
+                status="$(jq -r '.status' <<<"$run_json")"
+                conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
+                echo "$workflow run=$run_id status=$status conclusion=${conclusion:-pending}"
+
+                if [[ "$status" == "completed" ]]; then
+                  if [[ "$conclusion" == "success" ]]; then
+                    return 0
+                  fi
+                  echo "$workflow failed for exact release head $RELEASE_SHA" >&2
+                  gh run view "$run_id" --repo "$REPO" --log-failed || true
+                  return 1
+                fi
+              else
+                echo "$workflow has not started yet for $RELEASE_SHA"
+              fi
+
+              sleep 15
+            done
+
+            echo "$workflow timed out while waiting for $RELEASE_SHA" >&2
+            return 1
+          }
+
+          wait_for_success ci.yml
+          wait_for_success provider-v2-selected.yml
+
+      - name: Dispatch production macOS release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --repo "$REPO" \
+            --ref "$RELEASE_REF" \
+            -f "tag=$RELEASE_TAG"
+
+      - name: Wait for production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 90 * 60))
+          echo "Waiting for $RELEASE_TAG production release"
+
+          while (( SECONDS < deadline )); do
+            run_json="$(gh run list \
+              --repo "$REPO" \
+              --workflow release.yml \
+              --branch "$RELEASE_REF" \
+              --commit "$RELEASE_SHA" \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,status,conclusion,headSha \
+              --jq 'sort_by(.databaseId) | last // empty')"
+
+            if [[ -n "$run_json" ]]; then
+              run_id="$(jq -r '.databaseId' <<<"$run_json")"
+              status="$(jq -r '.status' <<<"$run_json")"
+              conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
+              echo "release run=$run_id status=$status conclusion=${conclusion:-pending}"
+
+              if [[ "$status" == "completed" ]]; then
+                if [[ "$conclusion" == "success" ]]; then
+                  gh release view "$RELEASE_TAG" --repo "$REPO" --json url,name,tagName,isPrerelease,isDraft
+                  exit 0
+                fi
+                echo "Production release failed." >&2
+                gh run view "$run_id" --repo "$REPO" --log-failed || true
+                exit 1
+              fi
+            else
+              echo "Production release has not started yet"
+            fi
+
+            sleep 20
+          done
+
+          echo "Production release timed out" >&2
+          exit 1
