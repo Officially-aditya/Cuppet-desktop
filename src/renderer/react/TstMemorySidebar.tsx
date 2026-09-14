@@ -49,6 +49,8 @@ const MAX_GRAPH_FILES = 180;
 const ACTIVE_EDIT_MS = 12_000;
 const MIN_GRAPH_ZOOM = 0.65;
 const MAX_GRAPH_ZOOM = 2.5;
+const NODE_CLICK_RADIUS = 13;
+const DRAG_THRESHOLD = 6;
 
 export function TstMemorySidebar({ sessionId, projectName, running = false }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
@@ -206,7 +208,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   const selectedRef = useRef(selectedPath);
   const rotationRef = useRef({ x: -0.16, y: 0.1 });
   const zoomRef = useRef(1);
-  const pointerRef = useRef({ x: 0, y: 0, dragging: false, moved: false });
+  const pointerRef = useRef({ x: 0, y: 0, startX: 0, startY: 0, dragging: false, moved: false });
   const projectedRef = useRef<Array<{ node: GraphNode; x: number; y: number; r: number }>>([]);
 
   useEffect(() => { sceneRef.current = scene; }, [scene]);
@@ -255,14 +257,27 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   }, []);
 
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    pointerRef.current = { x: event.clientX, y: event.clientY, dragging: true, moved: false };
+    pointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: true,
+      moved: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!pointerRef.current.dragging) return;
     const dx = event.clientX - pointerRef.current.x;
     const dy = event.clientY - pointerRef.current.y;
-    if (Math.abs(dx) + Math.abs(dy) > 2) pointerRef.current.moved = true;
+    const totalDistance = Math.hypot(event.clientX - pointerRef.current.startX, event.clientY - pointerRef.current.startY);
+    if (!pointerRef.current.moved && totalDistance <= DRAG_THRESHOLD) {
+      pointerRef.current.x = event.clientX;
+      pointerRef.current.y = event.clientY;
+      return;
+    }
+    pointerRef.current.moved = true;
     rotationRef.current.y += dx * 0.0065;
     rotationRef.current.x = Math.max(-1.1, Math.min(1.1, rotationRef.current.x + dy * 0.005));
     pointerRef.current.x = event.clientX;
@@ -273,8 +288,17 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       const rect = event.currentTarget.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const hit = [...projectedRef.current].reverse().find((item) => Math.hypot(item.x - x, item.y - y) <= Math.max(8, item.r + 3));
-      onSelect(hit?.node.kind === 'file' ? hit.node.path : null);
+      let hit: { node: GraphNode; x: number; y: number; r: number } | null = null;
+      let bestDistance = Infinity;
+      for (const item of [...projectedRef.current].reverse()) {
+        const distance = Math.hypot(item.x - x, item.y - y);
+        const hitRadius = Math.max(NODE_CLICK_RADIUS, item.r + 7);
+        if (distance <= hitRadius && distance < bestDistance) {
+          hit = item;
+          bestDistance = distance;
+        }
+      }
+      onSelect(hit?.node.path ?? null);
     }
     pointerRef.current.dragging = false;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
@@ -361,8 +385,8 @@ function drawScene(
     context.beginPath();
     context.moveTo(from.x, from.y);
     context.lineTo(to.x, to.y);
-    context.strokeStyle = highlighted ? 'rgba(153, 199, 255, .42)' : 'rgba(132, 146, 171, .12)';
-    context.lineWidth = highlighted ? 1.1 : 0.65;
+    context.strokeStyle = highlighted ? 'rgba(153, 199, 255, .6)' : 'rgba(145, 161, 190, .24)';
+    context.lineWidth = highlighted ? 1.25 : 0.85;
     context.stroke();
   }
 
@@ -370,7 +394,7 @@ function drawScene(
   for (const item of projected) {
     const { node, x, y, depth } = item;
     const depthScale = Math.max(0.55, Math.min(1.35, 1.03 - depth * 0.24));
-    const selected = node.kind === 'file' && node.path === selectedPath;
+    const selected = node.path === selectedPath;
     const age = node.editedAt ? Math.max(0, Date.now() - node.editedAt) : Infinity;
     const active = age < ACTIVE_EDIT_MS;
     const baseRadius = node.kind === 'group' ? 4.2 : active ? 4.8 : 2.6;
@@ -397,12 +421,14 @@ function drawScene(
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fillStyle = node.kind === 'group'
-      ? 'rgba(168, 177, 198, .72)'
+      ? selected
+        ? 'rgba(218, 229, 246, .96)'
+        : 'rgba(168, 177, 198, .78)'
       : active
         ? 'rgba(128, 219, 255, .96)'
         : selected
           ? 'rgba(230, 245, 255, .96)'
-          : `rgba(181, 198, 224, ${Math.max(.28, .66 - Math.abs(depth) * .2)})`;
+          : `rgba(181, 198, 224, ${Math.max(.32, .7 - Math.abs(depth) * .2)})`;
     context.fill();
     clickTargets.push({ node, x, y, r: radius });
 
