@@ -30,6 +30,8 @@ type TerminalApi = {
 
 type Props = {
   project: Project | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 type OutputChunk = {
@@ -41,9 +43,15 @@ type OutputChunk = {
 const MAX_CHARS = 180_000;
 const MAX_HISTORY = 80;
 
-export function ProjectTerminal({ project }: Props) {
+export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props) {
   const terminal = (window.cuppet as typeof window.cuppet & { terminal: TerminalApi }).terminal;
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = (value: boolean | ((current: boolean) => boolean)) => {
+    const next = typeof value === 'function' ? value(openProp ?? uncontrolledOpen) : value;
+    if (onOpenChange) onOpenChange(next);
+    else setUncontrolledOpen(next);
+  };
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [output, setOutput] = useState<OutputChunk[]>([]);
   const [input, setInput] = useState('');
