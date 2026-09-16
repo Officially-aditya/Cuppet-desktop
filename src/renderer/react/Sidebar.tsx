@@ -74,7 +74,8 @@ export function Sidebar(props: Props) {
   useEffect(() => {
     if (!isMac) return;
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
-  }, [collapsed, isMac]);
+    if (props.onCollapsedChange) props.onCollapsedChange(collapsed);
+  }, [collapsed, isMac, props]);
 
   useEffect(() => {
     if (!isMac) return;
