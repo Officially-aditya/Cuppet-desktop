@@ -11,6 +11,7 @@ import type {
   Session,
 } from '../types';
 import { Sidebar } from './Sidebar';
+import { ShellPanelControls } from './ShellPanelControls';
 import { ChatPane, type ComposerMode, type DeliveryMode } from './ChatPane';
 import { TstMemorySidebar } from './TstMemorySidebar';
 import { NewChatModal } from './NewChatModal';
@@ -395,6 +396,19 @@ export function App() {
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={hydrateClientProviderSettings} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
       {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
+      <ShellPanelControls
+        state={{
+          leftAvailable: true,
+          leftOpen: panels.sidebar,
+          rightAvailable: Boolean(active?.projectId),
+          rightOpen: panels.memory,
+          bottomAvailable: Boolean(activeProject),
+          bottomOpen: panels.terminal,
+        }}
+        onToggleLeft={() => setSidebarCollapsed((current) => !current)}
+        onToggleRight={() => setMemoryOpen((current) => !current)}
+        onToggleBottom={() => setTerminalOpen((current) => !current)}
+      />
       <Toast message={toast} onClear={() => setToast(null)} />
     </div>
   );
