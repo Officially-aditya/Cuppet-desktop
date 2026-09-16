@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectTerminalManager, resolveProjectTerminalRoot } from '../src/main/project-terminal-manager.mjs';
@@ -42,7 +42,7 @@ test('terminal root comes only from runtime canonicalPath', async () => {
       calls.push([method, params]);
       return { id: 'project-1', canonicalPath: root, path: '/renderer/supplied/path' };
     }, 'project-1');
-    assert.equal(resolved, root);
+    assert.equal(resolved, await realpath(root));
     assert.deepEqual(calls, [['project.get', { projectId: 'project-1' }]]);
 
     await assert.rejects(
@@ -71,12 +71,12 @@ test('switching project stops the previous renderer-owned shell and rebinds cwd'
   const owner = sender(7);
   try {
     const first = await manager.start(owner, 'a');
-    assert.equal(first.cwd, rootA);
-    assert.equal(spawned[0].options.cwd, rootA);
+    assert.equal(first.cwd, await realpath(rootA));
+    assert.equal(spawned[0].options.cwd, await realpath(rootA));
 
     const second = await manager.start(owner, 'b');
-    assert.equal(second.cwd, rootB);
-    assert.equal(spawned[1].options.cwd, rootB);
+    assert.equal(second.cwd, await realpath(rootB));
+    assert.equal(spawned[1].options.cwd, await realpath(rootB));
     assert.deepEqual(children[0].kills, ['SIGTERM']);
     assert.equal(children[0].stdin.ended, true);
     assert.throws(() => manager.write(owner, first.sessionId, 'pwd\n'), /not active/i);
@@ -130,8 +130,8 @@ test('a superseded async start cannot spawn an old project shell', async () => {
     const current = await manager.start(owner, 'b');
     releaseA();
     await assert.rejects(staleStart, /superseded/i);
-    assert.equal(current.cwd, rootB);
-    assert.deepEqual(spawned, [rootB]);
+    assert.equal(current.cwd, await realpath(rootB));
+    assert.deepEqual(spawned, [await realpath(rootB)]);
   } finally {
     manager.stopAll();
     await rm(rootA, { recursive: true, force: true });
