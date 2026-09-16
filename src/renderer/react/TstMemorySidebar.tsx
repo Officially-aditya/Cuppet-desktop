@@ -43,6 +43,8 @@ type Props = {
   sessionId: string | null;
   projectName?: string | null;
   running?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const MAX_GRAPH_FILES = 180;
@@ -53,9 +55,15 @@ const NODE_CLICK_RADIUS = 13;
 const DRAG_THRESHOLD = 6;
 const ROOT_NODE_PATH = '__cuppet_root__';
 
-export function TstMemorySidebar({ sessionId, projectName, running = false }: Props) {
+export function TstMemorySidebar({ sessionId, projectName, running = false, open: openProp, onOpenChange }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
-  const [open, setOpen] = useState(true);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(true);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = useCallback((value: boolean | ((current: boolean) => boolean)) => {
+    const next = typeof value === 'function' ? value(openProp ?? uncontrolledOpen) : value;
+    if (onOpenChange) onOpenChange(next);
+    else setUncontrolledOpen(next);
+  }, [onOpenChange, openProp, uncontrolledOpen]);
   const [loading, setLoading] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
