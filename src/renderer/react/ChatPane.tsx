@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
+import { ProjectTerminal } from './ProjectTerminal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -335,6 +336,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
           </div>
         </form>
       </footer>
+      <ProjectTerminal project={project} />
     </main>
   );
 }

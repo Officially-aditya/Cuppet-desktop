@@ -22,7 +22,6 @@ import './project-terminal.css';
 import './shell-panel-controls.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
-import { ProjectTerminalMount } from './react/ProjectTerminalMount';
 import { CommandResultEnhancement } from './react/CommandResultEnhancement';
 import { ShellPanelControls } from './react/ShellPanelControls';
 import { installSessionRetentionCleanup } from './react/session-retention';
@@ -37,7 +36,6 @@ createRoot(root).render(
   <React.StrictMode>
     <App />
     <WorkspaceEnhancements />
-    <ProjectTerminalMount />
     <CommandResultEnhancement />
     <ShellPanelControls />
   </React.StrictMode>,
