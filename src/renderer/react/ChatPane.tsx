@@ -46,12 +46,14 @@ type Props = {
   running: boolean;
   commands: CommandDefinition[];
   activity: ActivityEntry[];
+  terminalOpen?: boolean;
+  onTerminalOpenChange?: (open: boolean) => void;
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
   onModeChange: (mode: ComposerMode) => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, activeMode, running, commands, activity: _activity, onSend, onStop, onModeChange }: Props) {
+export function ChatPane({ session, draft, project, mode, activeMode, running, commands, activity: _activity, terminalOpen, onTerminalOpenChange, onSend, onStop, onModeChange }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
@@ -336,7 +338,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
           </div>
         </form>
       </footer>
-      <ProjectTerminal project={project} />
+      <ProjectTerminal project={project} open={terminalOpen} onOpenChange={onTerminalOpenChange} />
     </main>
   );
 }
