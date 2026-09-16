@@ -58,6 +58,9 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState('account');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cuppet.desktop.sidebar-collapsed') === '1');
+  const [memoryOpen, setMemoryOpen] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const sessions = useClientSessions();
   const running = useClientRunState();
   const provider = useClientProviderSettings();
@@ -340,6 +343,7 @@ export function App() {
   }, [question, showToast]);
 
   const generalSessions = useMemo(() => sessions.filter((session) => !session.projectId && !session.archivedAt), [sessions]);
+  const panels = { sidebar: !sidebarCollapsed, memory: memoryOpen, terminal: terminalOpen };
 
   if (loading) return <div className="react-boot"><div className="react-boot-brand"><img src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><span>Starting Cuppet…</span></div></div>;
 
@@ -351,6 +355,8 @@ export function App() {
         generalSessions={generalSessions}
         activeSessionId={activeSessionId}
         selectedProjectId={activeProjectId}
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
         onNewChat={() => setModal('new-chat')}
         onNewProjectChat={(projectId) => startDraft(projectId)}
         onSearch={() => setModal('search')}
@@ -374,11 +380,13 @@ export function App() {
         running={activeRunning}
         commands={commands}
         activity={[]}
+        terminalOpen={panels.terminal}
+        onTerminalOpenChange={setTerminalOpen}
         onSend={send}
         onStop={stop}
         onModeChange={changeMode}
       />
-      {active?.projectId && <TstMemorySidebar sessionId={active.id} projectName={activeProject?.name} running={activeRunning} />}
+      {active?.projectId && <TstMemorySidebar sessionId={active.id} projectName={activeProject?.name} running={activeRunning} open={panels.memory} onOpenChange={setMemoryOpen} />}
 
       {modal === 'new-chat' && <NewChatModal projects={projects} selectedProjectId={activeProjectId} onClose={() => setModal(null)} onStart={(projectId) => { startDraft(projectId); setModal(null); }} />}
       {modal === 'add-project' && <AddProjectModal onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}
