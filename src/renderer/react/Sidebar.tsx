@@ -16,6 +16,8 @@ type Props = {
   generalSessions: Session[];
   activeSessionId: string | null;
   selectedProjectId: string | null;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
   onNewChat: () => void;
   onNewProjectChat: (projectId: string) => void;
   onSearch: () => void;
@@ -33,7 +35,13 @@ type Props = {
 
 export function Sidebar(props: Props) {
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+  const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+  const collapsed = props.collapsed ?? uncontrolledCollapsed;
+  const setCollapsed = (value: boolean | ((current: boolean) => boolean)) => {
+    const next = typeof value === 'function' ? value(props.collapsed ?? uncontrolledCollapsed) : value;
+    if (props.onCollapsedChange) props.onCollapsedChange(next);
+    else setUncontrolledCollapsed(next);
+  };
   const [menu, setMenu] = useState<{ kind: 'project' | 'session'; id: string; x: number; y: number } | null>(null);
   const [renameSession, setRenameSession] = useState<Session | null>(null);
   const [renameValue, setRenameValue] = useState('');
