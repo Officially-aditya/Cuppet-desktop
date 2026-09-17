@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 
 type PanelState = {
   leftAvailable: boolean;
@@ -18,6 +18,11 @@ type Props = {
 
 export function ShellPanelControls({ state, onToggleLeft, onToggleRight, onToggleBottom }: Props) {
   const isMac = window.cuppet.native.platform === 'darwin';
+  useEffect(() => {
+    if (!isMac) return;
+    document.documentElement.classList.add('cuppet-shell-header');
+    return () => document.documentElement.classList.remove('cuppet-shell-header');
+  }, [isMac]);
   return useMemo(() => {
     if (!isMac) return null;
     return (
