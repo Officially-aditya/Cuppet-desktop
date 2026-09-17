@@ -102,10 +102,10 @@ export class TstBatchEditManager {
   }
 
   async apply({ batchId, sessionId, projectRoot, executionId, authorize }) {
-    const batch = this.#require(batchId, sessionId, projectRoot);
+    const batch = await this.#require(batchId, sessionId, projectRoot);
     if (batch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
     return this.#withWriter(batch.projectRoot, async () => {
-      const freshBatch = this.#require(batchId, sessionId, projectRoot);
+      const freshBatch = await this.#require(batchId, sessionId, projectRoot);
       const paths = freshBatch.files.map((file) => file.path);
       await authorize({
         action: 'edit', resources: paths,
@@ -181,12 +181,12 @@ export class TstBatchEditManager {
     const batch = this.#batches.get(batchId); if (!batch) return null; return publicBatch(batch);
   }
 
-  #require(batchId, sessionId, projectRoot) {
+  async #require(batchId, sessionId, projectRoot) {
     this.#prune();
     const batch = this.#batches.get(String(batchId || ''));
     if (!batch) throw new Error(`Unknown or expired TST edit batch: ${batchId}`);
     if (batch.sessionId !== sessionId) throw new Error('TST edit batch belongs to a different session');
-    const expected = resolve(projectRoot); const actual = resolve(batch.projectRoot);
+    const expected = await canonicalRoot(projectRoot); const actual = resolve(batch.projectRoot);
     if (expected !== actual) throw new Error('TST edit batch belongs to a different project workspace');
     if (batch.expiresAt < Date.now()) { this.#batches.delete(batch.id); throw new Error(`TST edit batch expired: ${batch.id}`); }
     return batch;
