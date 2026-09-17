@@ -121,7 +121,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [project?.id]);
+  }, [project?.id, setOpen]);
 
   if (!project) return null;
 
