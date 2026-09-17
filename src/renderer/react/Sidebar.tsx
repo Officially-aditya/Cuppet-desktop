@@ -87,7 +87,7 @@ export function Sidebar(props: Props) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isMac]);
+  }, [isMac, setCollapsed]);
 
   useEffect(() => {
     const close = () => setMenu(null);
