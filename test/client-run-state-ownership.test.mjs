@@ -1,9 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { stripTypeScriptTypes } from 'node:module';
 
 const app = await readFile(new URL('../src/renderer/react/App.tsx', import.meta.url), 'utf8');
 const clientRunState = await readFile(new URL('../src/renderer/react/client-run-state.ts', import.meta.url), 'utf8');
+
+async function loadRunState() {
+  const source = stripTypeScriptTypes(clientRunState).replace(/import \{ useSyncExternalStore \} from 'react';/, '');
+  return import(`data:text/javascript,${encodeURIComponent(source)}`);
+}
+
+test('run-state membership includes only active sessions throughout their lifecycle', async () => {
+  const store = await loadRunState();
+  store.resetClientRunStateStore();
+  store.hydrateClientRunState([
+    { id: 'idle', lastStatus: 'complete', messages: [] },
+    { id: 'active', lastStatus: 'streaming', messages: [] },
+  ]);
+  assert.equal(store.clientRunStateSnapshot().has('idle'), false);
+  assert.equal(store.clientRunStateSnapshot().has('active'), true);
+  store.reduceClientRunEvent({ type: 'run.finished', sessionId: 'active', status: 'complete' });
+  assert.equal(store.clientRunStateSnapshot().has('active'), false);
+  store.markClientRunStarted('idle');
+  assert.equal(store.clientRunStateSnapshot().has('idle'), true);
+  store.reduceClientRunEvent({ type: 'pe3.routed', sourceSessionId: 'idle', targetSessionId: 'target' });
+  assert.equal(store.clientRunStateSnapshot().has('idle'), false);
+  assert.equal(store.clientRunStateSnapshot().has('target'), true);
+  store.resetClientRunStateStore();
+});
 
 test('App consumes shared run state without owning a mutable running-session projection', () => {
   assert.match(app, /const running = useClientRunState\(\)/);
