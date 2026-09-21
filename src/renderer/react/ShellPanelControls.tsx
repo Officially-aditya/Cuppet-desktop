@@ -23,6 +23,10 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const branchMenuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!isMac) return;
     document.documentElement.classList.add('cuppet-shell-header');
@@ -30,17 +34,26 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
   }, [isMac]);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !branchMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (menuOpen && menuRef.current && !menuRef.current.contains(target)) {
         setMenuOpen(false);
+      }
+      if (branchMenuOpen && branchMenuRef.current && !branchMenuRef.current.contains(target)) {
+        setBranchMenuOpen(false);
       }
     };
     window.addEventListener('mousedown', handleClickOutside);
     return () => window.removeEventListener('mousedown', handleClickOutside);
-  }, [menuOpen]);
+  }, [menuOpen, branchMenuOpen]);
 
   if (!isMac) return null;
+
+  const availableBranches = Array.from(new Set([
+    ...(project?.branches || []),
+    ...(project?.branch ? [project.branch] : []),
+  ]));
 
   return (
     <header className="shell-panel-header" aria-label="Workspace panel controls">
@@ -58,68 +71,131 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
       </div>
 
       {project && (
-        <div className="shell-panel-header-center" ref={menuRef}>
-          <button
-            type="button"
-            className={`project-header-button${menuOpen ? ' active' : ''}`}
-            title={`Project: ${project.name} · Click for project menu`}
-            aria-label={`Project: ${project.name} · Click for project menu`}
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-            onClick={() => setMenuOpen((current) => !current)}
-          >
-            <span className="project-header-name">
-              {project.name}
-            </span>
-            <svg className={`project-header-chevron${menuOpen ? ' open' : ''}`} viewBox="0 0 16 16" fill="none" width="10" height="10">
-              <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          {project.branch && (
-            <span className="project-branch-badge" title={`Git branch: ${project.branch}`}>
-              <GitBranchIcon />
-              <span>{project.branch}</span>
-            </span>
-          )}
-          {project.dirty && (
-            <span className="project-dirty-indicator" title="Uncommitted changes in workspace" aria-label="Uncommitted changes">
-              ●
-            </span>
-          )}
+        <div className="shell-panel-header-center">
+          <div className="project-header-anchor" ref={menuRef}>
+            <button
+              type="button"
+              className={`project-header-button${menuOpen ? ' active' : ''}`}
+              title={`Project: ${project.name} · Click for project menu`}
+              aria-label={`Project: ${project.name} · Click for project menu`}
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              onClick={() => {
+                setBranchMenuOpen(false);
+                setMenuOpen((current) => !current);
+              }}
+            >
+              <span className="project-header-name">
+                {project.name}
+              </span>
+              <svg className={`project-header-chevron${menuOpen ? ' open' : ''}`} viewBox="0 0 16 16" fill="none" width="10" height="10">
+                <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
 
-          {menuOpen && (
-            <div className="project-header-dropdown" role="menu">
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onToggleRight?.();
-                }}
-              >
-                <GraphIcon />
-                <span>{state.rightOpen ? 'Hide project graph' : 'Show project graph'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onToggleBottom?.();
-                }}
-              >
-                <BottomPanelIcon />
-                <span>{state.bottomOpen ? 'Hide terminal' : 'Show terminal'}</span>
-              </button>
-              {project.path && (
+            {menuOpen && (
+              <div className="project-header-dropdown" role="menu">
                 <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    void window.cuppet.projects.open(project.id).catch(() => undefined);
+                    onToggleRight?.();
                   }}
                 >
-                  <FolderIcon />
-                  <span>Open in Finder</span>
+                  <GraphIcon />
+                  <span>{state.rightOpen ? 'Hide project graph' : 'Show project graph'}</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onToggleBottom?.();
+                  }}
+                >
+                  <BottomPanelIcon />
+                  <span>{state.bottomOpen ? 'Hide terminal' : 'Show terminal'}</span>
+                </button>
+                {project.path && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void window.cuppet.projects.open(project.id).catch(() => undefined);
+                    }}
+                  >
+                    <FolderIcon />
+                    <span>Open in Finder</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {project.branch && (
+            <div className="project-branch-anchor" ref={branchMenuRef}>
+              <button
+                type="button"
+                className={`project-branch-badge${branchMenuOpen ? ' active' : ''}`}
+                title={`Git branch: ${project.branch} · Click to view branches and status`}
+                aria-label={`Git branch: ${project.branch} · Click to view branches and status`}
+                aria-expanded={branchMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setBranchMenuOpen((cur) => !cur);
+                }}
+              >
+                <GitBranchIcon />
+                <span>{project.branch}</span>
+                <svg className={`project-branch-chevron${branchMenuOpen ? ' open' : ''}`} viewBox="0 0 16 16" fill="none" width="8" height="8">
+                  <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+              {branchMenuOpen && (
+                <div className="project-branch-dropdown" role="menu">
+                  <div className="project-branch-status-row">
+                    <span className={`project-status-dot ${project.dirty ? 'dirty' : 'clean'}`}>●</span>
+                    <span className="project-status-text">
+                      {project.dirty ? 'Uncommitted changes' : 'Working tree clean'}
+                    </span>
+                  </div>
+                  <div className="project-branch-divider" />
+                  <div className="project-branch-list-header">Branches</div>
+                  <div className="project-branch-list" role="group">
+                    {availableBranches.map((branch) => {
+                      const isCurrent = branch === project.branch;
+                      return (
+                        <button
+                          key={branch}
+                          type="button"
+                          className={`project-branch-item${isCurrent ? ' selected' : ''}`}
+                          disabled={isCurrent || isSwitching}
+                          onClick={async () => {
+                            if (isCurrent) return;
+                            try {
+                              setIsSwitching(true);
+                              await window.cuppet.projects.checkoutBranch(project.id, branch);
+                              setBranchMenuOpen(false);
+                            } catch (err) {
+                              console.error('Failed to checkout branch:', err);
+                            } finally {
+                              setIsSwitching(false);
+                            }
+                          }}
+                        >
+                          <GitBranchIcon />
+                          <span className="project-branch-item-name">{branch}</span>
+                          {isCurrent && (
+                            <svg className="project-branch-check" viewBox="0 0 16 16" fill="none" width="12" height="12">
+                              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )}

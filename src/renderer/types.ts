@@ -3,6 +3,7 @@ export type Project = {
   name: string;
   path?: string;
   branch?: string | null;
+  branches?: string[];
   dirty?: boolean;
   missing?: boolean;
   lastOpenedAt?: number;
@@ -363,6 +364,7 @@ export type CuppetApi = {
     githubList: (query?: string) => Promise<Array<{ nameWithOwner: string; isPrivate?: boolean; defaultBranch?: string }>>;
     githubClone: (value: Record<string, unknown>) => Promise<Project>;
     relocate: (projectId: string, path: string) => Promise<Project>;
+    checkoutBranch: (projectId: string, branch: string) => Promise<Project>;
     remove: (projectId: string) => Promise<any>;
   };
   native: {

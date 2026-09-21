@@ -112,18 +112,36 @@ export class ProjectManager {
   async status(project) {
     let missing = false;
     try { await this.#access(project.canonicalPath); } catch { missing = true; }
-    if (missing) return { ...project, missing: true, branch: null, dirty: null };
+    if (missing) return { ...project, missing: true, branch: null, branches: [], dirty: null };
 
-    const [branch, status] = await Promise.all([
+    const [branch, status, branchList] = await Promise.all([
       this.#git(['-C', project.canonicalPath, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { allowFailure: true }),
       this.#git(['-C', project.canonicalPath, 'status', '--porcelain=v1', '--untracked-files=normal'], { allowFailure: true }),
+      this.#git(['-C', project.canonicalPath, 'branch', '--list', '--format=%(refname:short)'], { allowFailure: true }),
     ]);
     let branchName = branch.ok ? branch.stdout.trim() : '';
     if (!branchName) {
       const detached = await this.#git(['-C', project.canonicalPath, 'rev-parse', '--short', 'HEAD'], { allowFailure: true });
       branchName = detached.ok ? `detached:${detached.stdout.trim()}` : null;
     }
-    return { ...project, missing: false, branch: branchName || null, dirty: status.ok ? Boolean(status.stdout.trim()) : null };
+    const branches = branchList.ok
+      ? branchList.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+      : (branchName ? [branchName] : []);
+    return { ...project, missing: false, branch: branchName || null, branches, dirty: status.ok ? Boolean(status.stdout.trim()) : null };
+  }
+
+  async checkoutBranch(projectId, branchName) {
+    const project = this.#db.getProject(projectId);
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', `Unknown project: ${projectId}`);
+    const name = typeof branchName === 'string' ? branchName.trim() : '';
+    if (!name || name.includes('..') || name.startsWith('-')) {
+      throw new ProjectError('INVALID_BRANCH', 'Invalid branch name');
+    }
+    const result = await this.#git(['-C', project.canonicalPath, 'checkout', name], { allowFailure: true });
+    if (!result.ok) {
+      throw new ProjectError('CHECKOUT_FAILED', result.stderr.trim() || 'Failed to switch branch');
+    }
+    return this.status(project);
   }
 
   async listGithubRepositories({ query = '' } = {}) {

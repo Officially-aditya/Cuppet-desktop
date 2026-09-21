@@ -140,6 +140,7 @@ export class RuntimeService {
       case 'project.clone-url': return this.#addProject(() => this.#projects.cloneUrl({ id: `project_${randomUUID()}`, ...params }));
       case 'project.github-list': return this.#projects.listGithubRepositories(params);
       case 'project.github-clone': return this.#addProject(() => this.#projects.cloneGithubRepository({ id: `project_${randomUUID()}`, ...params }));
+      case 'project.checkout-branch': return this.#updateProject(() => this.#projects.checkoutBranch(params.projectId, params.branch));
       case 'project.relocate': {
         const project = await this.#updateProject(() => this.#projects.relocate(params.projectId, params.path));
         this.#pe3Routers.delete(project.id);

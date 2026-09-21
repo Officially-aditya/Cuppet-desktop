@@ -106,6 +106,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:project:github-list', (_event, query) => request('project.github-list', { query: typeof query === 'string' ? query.slice(0, 120) : '' }));
   ipcMain.handle('cuppet:project:github-clone', (_event, value) => request('project.github-clone', validateClonePayload(value, false)));
   ipcMain.handle('cuppet:project:relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
+  ipcMain.handle('cuppet:project:checkout-branch', (_event, projectId, branch) => request('project.checkout-branch', { projectId: boundedId(projectId), branch: typeof branch === 'string' ? branch.trim() : '' }));
   ipcMain.handle('cuppet:project:remove', (_event, projectId) => request('project.remove', { projectId }));
 
   ipcMain.handle('cuppet:terminal:start', (event, projectId, options) => terminals.start(event.sender, projectId, options));

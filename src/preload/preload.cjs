@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('cuppet', {
     githubList: (query = '') => ipcRenderer.invoke('cuppet:project:github-list', query),
     githubClone: (value) => ipcRenderer.invoke('cuppet:project:github-clone', value),
     relocate: (projectId, path) => ipcRenderer.invoke('cuppet:project:relocate', projectId, path),
+    checkoutBranch: (projectId, branch) => ipcRenderer.invoke('cuppet:project:checkout-branch', projectId, branch),
     remove: (projectId) => ipcRenderer.invoke('cuppet:project:remove', projectId),
   },
   terminal: {
