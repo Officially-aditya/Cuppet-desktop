@@ -26,7 +26,10 @@
 }
 
 .project-terminal.collapsed .project-terminal-body {
-  display: none;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .project-terminal.open {
@@ -36,7 +39,10 @@
 }
 
 .project-terminal.open .project-terminal-body {
+  height: calc(250px - 31px);
   display: flex;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .project-terminal-bar {

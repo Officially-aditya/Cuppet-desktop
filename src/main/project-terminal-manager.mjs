@@ -70,8 +70,27 @@ export class ProjectTerminalManager {
       }
     }
 
+    if (this.#usePty && !ptyProcess && process.platform !== 'win32') {
+      try {
+        ptyProcess = ptySpawnWithPython(shell, {
+          cols,
+          rows,
+          cwd: root,
+          env: {
+            ...process.env,
+            PWD: root,
+            TERM: 'xterm-256color',
+            COLORTERM: 'truecolor',
+          },
+        });
+      } catch {
+        ptyProcess = null;
+      }
+    }
+
     if (!ptyProcess) {
-      child = this.#spawn(shell, [], {
+      const args = process.platform === 'win32' ? [] : ['-i'];
+      child = this.#spawn(shell, args, {
         cwd: root,
         env: {
           ...process.env,
@@ -136,8 +155,9 @@ export class ProjectTerminalManager {
       session.ptyProcess.write(text);
       return { written: true };
     }
-    if (!session.child.stdin?.writable) throw new Error('Terminal is not accepting input');
-    session.child.stdin.write(text);
+    if (!session.child?.stdin?.writable) throw new Error('Terminal is not accepting input');
+    const input = text.replace(/\r/g, '\n');
+    session.child.stdin.write(input);
     return { written: true };
   }
 
@@ -164,7 +184,7 @@ export class ProjectTerminalManager {
       session.ptyProcess.write('\x03');
       return { interrupted: true };
     }
-    const interrupted = session.child.kill('SIGINT');
+    const interrupted = session.child?.kill ? session.child.kill('SIGINT') : false;
     return { interrupted };
   }
 
@@ -196,8 +216,11 @@ export class ProjectTerminalManager {
   #stopSession(session) {
     if (!session || session.closed) return { stopped: false };
     session.closed = true;
-    try { session.child.stdin?.end(); } catch {}
-    try { session.child.kill('SIGTERM'); } catch {}
+    if (session.ptyProcess?.kill) {
+      try { session.ptyProcess.kill('SIGTERM'); } catch {}
+    }
+    try { session.child?.stdin?.end(); } catch {}
+    try { session.child?.kill?.('SIGTERM'); } catch {}
     this.#sessions.delete(session.id);
     return { stopped: true };
   }
@@ -303,3 +326,93 @@ function truncateUtf8(value, maxBytes) {
 function cleanError(error) {
   return error instanceof Error ? error.message : String(error ?? 'Terminal error');
 }
+
+function ptySpawnWithPython(shell, { cols = 80, rows = 24, cwd = process.cwd(), env = process.env } = {}) {
+  const pyCode = `
+import os, sys, select, pty, fcntl, termios, struct, signal
+
+cols = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 80
+rows = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 24
+shell = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else '/bin/zsh'
+cwd = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else os.getcwd()
+
+try: os.chdir(cwd)
+except Exception: pass
+
+env = os.environ.copy()
+env['PWD'] = cwd
+env['TERM'] = 'xterm-256color'
+env['COLORTERM'] = 'truecolor'
+
+pid, master_fd = pty.fork()
+if pid == 0:
+    os.execlpe(shell, shell, '-l', env)
+
+fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+
+try:
+    while True:
+        rfds, _, _ = select.select([0, master_fd], [], [])
+        if master_fd in rfds:
+            try:
+                data = os.read(master_fd, 4096)
+                if not data: break
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            except OSError:
+                break
+        if 0 in rfds:
+            try:
+                data = os.read(0, 4096)
+                if not data: break
+                if b'\\x1b]99;resize;' in data:
+                    parts = data.split(b'\\x1b]99;resize;')
+                    if parts[0]: os.write(master_fd, parts[0])
+                    for part in parts[1:]:
+                        if b'\\x07' in part:
+                            cmd, rest = part.split(b'\\x07', 1)
+                            try:
+                                c_str, r_str = cmd.decode('utf-8').split(';')
+                                new_c, new_r = int(c_str), int(r_str)
+                                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', new_r, new_c, 0, 0))
+                                try: os.kill(pid, signal.SIGWINCH)
+                                except ProcessLookupError: pass
+                            except Exception: pass
+                            if rest: os.write(master_fd, rest)
+                        else:
+                            os.write(master_fd, b'\\x1b]99;resize;' + part)
+                else:
+                    os.write(master_fd, data)
+            except OSError:
+                break
+finally:
+    try: os.close(master_fd)
+    except Exception: pass
+`;
+
+  const child = spawn('python3', ['-c', pyCode, String(cols), String(rows), shell, cwd], {
+    cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+
+  return {
+    write(data) {
+      if (child.stdin?.writable) child.stdin.write(data);
+    },
+    resize(newCols, newRows) {
+      if (child.stdin?.writable) child.stdin.write(`\\x1b]99;resize;${newCols};${newRows}\\x07`);
+    },
+    onData(cb) {
+      child.stdout?.on('data', (chunk) => cb(chunk));
+    },
+    onExit(cb) {
+      child.on('exit', (exitCode, signal) => cb({ exitCode, signal }));
+    },
+    kill(signal) {
+      child.kill(signal);
+    },
+  };
+}
+

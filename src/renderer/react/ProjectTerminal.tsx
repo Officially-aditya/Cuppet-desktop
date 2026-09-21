@@ -120,9 +120,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     };
   }, [terminal]);
 
-  // Initialize xterm once when container is mounted
-  useEffect(() => {
-    if (!terminalContainerRef.current || xtermRef.current) return;
+  const initTerminal = useCallback(() => {
+    const container = terminalContainerRef.current;
+    if (!container || xtermRef.current) return;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -161,7 +161,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(terminalContainerRef.current);
+    term.open(container);
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
@@ -191,17 +191,26 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   // Start terminal session if open and no session exists
   useEffect(() => {
     if (!open) return;
+    initTerminal();
     if (!session && status !== 'starting') {
       void startTerminal(project?.id || 'default');
     }
-  }, [open, project?.id, session, status]);
+  }, [open, project?.id, session, status, initTerminal]);
 
   // Fit and focus when open changes to true
   useEffect(() => {
     if (!open) return;
+    initTerminal();
 
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       try {
+        const term = xtermRef.current;
+        if (term) {
+          const core = (term as any)._core;
+          if (core?._charSizeService && (!core._renderService?.dimensions?.css?.cell?.width)) {
+            core._charSizeService.measure();
+          }
+        }
         fitAddonRef.current?.fit();
         xtermRef.current?.focus();
         const active = sessionRef.current;
@@ -210,7 +219,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
         }
       } catch {}
     });
-  }, [open, terminal]);
+
+    return () => cancelAnimationFrame(frame);
+  }, [open, initTerminal, terminal]);
 
   // ResizeObserver for automatic terminal resizing
   useEffect(() => {
@@ -282,7 +293,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
         <span className="project-terminal-shortcut">⌘J</span>
       </button>
 
-      <div className="project-terminal-body" style={{ display: open ? 'flex' : 'none' }}>
+      <div className="project-terminal-body">
         <div ref={terminalContainerRef} className="project-terminal-xterm-container" />
       </div>
     </section>
