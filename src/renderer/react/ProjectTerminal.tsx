@@ -128,8 +128,8 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       cursorBlink: true,
       cursorStyle: 'bar',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-      fontSize: 12,
-      lineHeight: 1.25,
+      fontSize: 11,
+      lineHeight: 1.2,
       theme: {
         background: '#050608',
         foreground: '#c9d1d9',
