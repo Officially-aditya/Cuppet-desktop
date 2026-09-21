@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { ProjectTerminalManager, resolveProjectTerminalRoot } from '../src/main/project-terminal-manager.mjs';
 
 function fakeChild() {
@@ -52,6 +52,18 @@ test('terminal root comes only from runtime canonicalPath', async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('terminal falls back to device root / homedir when project is missing or deleted from disk', async () => {
+  const missingProjectResolved = await resolveProjectTerminalRoot(async () => ({ id: 'missing-proj', missing: true }), 'missing-proj');
+  assert.equal(missingProjectResolved, await realpath(homedir()));
+
+  const deletedPath = join(tmpdir(), `nonexistent-${Date.now()}`);
+  const deletedFromDiskResolved = await resolveProjectTerminalRoot(async () => ({ id: 'deleted-proj', canonicalPath: deletedPath }), 'deleted-proj');
+  assert.equal(deletedFromDiskResolved, await realpath(homedir()));
+
+  const defaultResolved = await resolveProjectTerminalRoot(async () => null, null);
+  assert.equal(defaultResolved, await realpath(homedir()));
 });
 
 test('switching project stops the previous renderer-owned shell and rebinds cwd', async () => {

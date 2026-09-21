@@ -412,7 +412,7 @@ export function App() {
           leftOpen: panels.sidebar,
           rightAvailable: Boolean(active?.projectId),
           rightOpen: panels.memory,
-          bottomAvailable: Boolean(activeProject),
+          bottomAvailable: true,
           bottomOpen: panels.terminal,
         }}
         onToggleLeft={() => setSidebarCollapsed((current) => !current)}

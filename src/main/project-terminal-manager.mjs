@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { access, realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 
 const require = createRequire(import.meta.url);
 let pty = null;
@@ -29,8 +30,7 @@ export class ProjectTerminalManager {
 
   async start(sender, projectId, options = {}) {
     if (!sender || typeof sender.send !== 'function') throw new Error('Terminal requires a renderer owner');
-    const id = boundedId(projectId);
-    if (!id) throw new Error('A project is required to open the terminal');
+    const id = boundedId(projectId) || 'default';
 
     for (const session of [...this.#sessions.values()]) {
       if (session.ownerId !== sender.id || session.closed) continue;
@@ -222,15 +222,50 @@ export class ProjectTerminalManager {
 
 export async function resolveProjectTerminalRoot(request, projectId) {
   const id = boundedId(projectId);
-  if (!id) throw new Error('A project is required to open the terminal');
-  const project = await request('project.get', { projectId: id });
-  if (!project || project.missing) throw new Error('The project folder is unavailable');
+  if (!id || id === 'default') {
+    return resolveFallbackTerminalRoot();
+  }
+  let project = null;
+  if (typeof request === 'function') {
+    try {
+      project = await request('project.get', { projectId: id });
+    } catch {}
+  }
+  if (!project || project.missing) {
+    return resolveFallbackTerminalRoot();
+  }
   const configured = typeof project.canonicalPath === 'string' ? project.canonicalPath.trim() : '';
-  if (!configured || !isAbsolute(configured) || configured.includes('\0')) throw new Error('The canonical project root is invalid');
-  const root = await realpath(configured);
-  const metadata = await stat(root);
-  if (!metadata.isDirectory()) throw new Error('The project root is not a directory');
-  return root;
+  if (!configured || !isAbsolute(configured) || configured.includes('\0')) {
+    throw new Error('The canonical project root is invalid');
+  }
+  try {
+    const root = await realpath(configured);
+    const metadata = await stat(root);
+    if (!metadata.isDirectory()) return resolveFallbackTerminalRoot();
+    return root;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return resolveFallbackTerminalRoot();
+    }
+    throw error;
+  }
+}
+
+export async function resolveFallbackTerminalRoot() {
+  const candidates = [
+    homedir(),
+    process.env.HOME,
+    '/',
+  ].filter((value) => typeof value === 'string' && isAbsolute(value));
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = await realpath(candidate);
+      const metadata = await stat(resolved);
+      if (metadata.isDirectory()) return resolved;
+    } catch {}
+  }
+  return '/';
 }
 
 export async function resolveTerminalShell() {

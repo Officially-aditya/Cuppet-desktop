@@ -190,9 +190,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
 
   // Start terminal session if open and no session exists
   useEffect(() => {
-    if (!open || !project?.id) return;
+    if (!open) return;
     if (!session && status !== 'starting') {
-      void startTerminal(project.id);
+      void startTerminal(project?.id || 'default');
     }
   }, [open, project?.id, session, status]);
 
@@ -236,17 +236,14 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'j') return;
-      if (!project) return;
       event.preventDefault();
       setOpen((current) => !current);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [project?.id, setOpen]);
+  }, [setOpen]);
 
-  if (!project) return null;
-
-  async function startTerminal(projectId: string) {
+  async function startTerminal(projectId: string = 'default') {
     if (!terminal) return;
     const generation = ++startGeneration.current;
     setStatus('starting');
@@ -254,7 +251,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       const cols = xtermRef.current?.cols && xtermRef.current.cols > 0 ? xtermRef.current.cols : 80;
       const rows = xtermRef.current?.rows && xtermRef.current.rows > 0 ? xtermRef.current.rows : 24;
       const next = await terminal.start(projectId, { cols, rows });
-      const stale = generation !== startGeneration.current || projectIdRef.current !== projectId;
+      const stale = generation !== startGeneration.current || projectIdRef.current !== (projectId === 'default' ? null : projectId);
       if (stale) {
         await terminal.stop(next.sessionId).catch(() => undefined);
         return;
@@ -272,7 +269,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       }
       xtermRef.current?.focus();
     } catch (reason) {
-      if (generation !== startGeneration.current || projectIdRef.current !== projectId) return;
+      if (generation !== startGeneration.current || projectIdRef.current !== (projectId === 'default' ? null : projectId)) return;
       xtermRef.current?.write(`\r\n\x1b[31m${cleanError(reason)}\x1b[0m\r\n`);
       setStatus('error');
     }
@@ -281,7 +278,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   return (
     <section className={`project-terminal ${open ? 'open' : 'collapsed'}`} aria-label="Project terminal">
       <button type="button" className="project-terminal-bar" aria-expanded={open} aria-label={open ? 'Hide terminal' : 'Show terminal'} onClick={() => setOpen((current) => !current)}>
-        <span className="project-terminal-title">Terminal</span>
+        <span className="project-terminal-title">{project?.name ? `Terminal — ${project.name}` : 'Terminal'}</span>
         <span className="project-terminal-shortcut">⌘J</span>
       </button>
 
