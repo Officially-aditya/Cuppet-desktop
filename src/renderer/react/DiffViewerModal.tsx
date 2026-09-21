@@ -162,11 +162,13 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
             )}
             <button
               type="button"
-              className="diff-action-button"
+              className={`diff-action-button${copied ? ' copied' : ''}`}
               title="Copy diff to clipboard"
               onClick={() => void copyDiff()}
             >
-              <CopyIcon />
+              <span className="copy-icon-wrapper" aria-hidden="true">
+                {copied ? <CheckIcon /> : <CopyIcon />}
+              </span>
               <span>{copied ? 'Copied!' : 'Copy diff'}</span>
             </button>
             <button
@@ -455,11 +457,19 @@ function CodeIcon() {
   );
 }
 
-function CopyIcon() {
+export function CopyIcon({ className = 'copy-icon-svg copy' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M3.5 11H3a1.5 1.5 0 0 1-1.5-1.5V3.5A1.5 1.5 0 0 1 3 2h6a1.5 1.5 0 0 1 1.5 1.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true" width="14" height="14">
+      <rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3.5 10.5H3a1.5 1.5 0 0 1-1.5-1.5V3.5A1.5 1.5 0 0 1 3 2h5.5A1.5 1.5 0 0 1 10 3.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ className = 'copy-icon-svg check' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true" width="14" height="14">
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

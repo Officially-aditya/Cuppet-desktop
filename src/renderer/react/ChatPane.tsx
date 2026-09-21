@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ProjectTerminal } from './ProjectTerminal';
-import { DiffViewerModal, type DiffFile } from './DiffViewerModal';
+import { DiffViewerModal, type DiffFile, CopyIcon, CheckIcon } from './DiffViewerModal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -530,8 +530,16 @@ function MessageView({
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}
       {canCopy && (
         <div className="message-footer-actions message-footer-copy">
-          <button type="button" className="message-copy-button" aria-label={copied ? 'Copied' : assistant ? 'Copy final response' : 'Copy message'} title={copied ? 'Copied' : 'Copy'} onClick={() => void copySummary()}>
-            <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="6.1" y="5.7" width="7" height="8" rx="1.4" stroke="currentColor" strokeWidth="1.25"/><path d="M4.6 11.7H4a1.4 1.4 0 0 1-1.4-1.4V4A1.4 1.4 0 0 1 4 2.6h6.1A1.4 1.4 0 0 1 11.5 4v.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/></svg>
+          <button
+            type="button"
+            className={`message-copy-button${copied ? ' copied' : ''}`}
+            aria-label={copied ? 'Copied' : assistant ? 'Copy final response' : 'Copy message'}
+            title={copied ? 'Copied' : 'Copy'}
+            onClick={() => void copySummary()}
+          >
+            <span className="copy-icon-wrapper" aria-hidden="true">
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </span>
           </button>
         </div>
       )}
@@ -651,11 +659,14 @@ function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?
             )}
             <button
               type="button"
-              className="diff-action-button"
-              style={{ fontSize: '10.5px', padding: '3px 8px' }}
+              className={`tool-copy-button${copied ? ' copied' : ''}`}
+              aria-label={copied ? 'Copied' : 'Copy output'}
+              title={copied ? 'Copied' : 'Copy output'}
               onClick={copyDetails}
             >
-              {copied ? 'Copied' : 'Copy output'}
+              <span className="copy-icon-wrapper" aria-hidden="true">
+                {copied ? <CheckIcon /> : <CopyIcon />}
+              </span>
             </button>
           </div>
         </div>
