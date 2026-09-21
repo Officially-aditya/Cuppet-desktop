@@ -415,8 +415,15 @@ function projectMetadata(project: Project) {
 function relativeTime(timestamp?: number) {
   if (!timestamp) return '';
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return 'Just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return new Date(timestamp).toLocaleDateString();
+  if (seconds < 60) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30.4375);
+  if (months < 12) return `${Math.max(1, months)}M`;
+  const years = Math.floor(days / 365.25);
+  return `${Math.max(1, years)}Y`;
 }
