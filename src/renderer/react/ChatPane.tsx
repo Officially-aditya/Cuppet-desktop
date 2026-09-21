@@ -292,7 +292,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const runningState = runningAssistant ? transcript[runningAssistant.id] : undefined;
   const runningPreview = runningState?.preview ?? '';
   const runningTrace = runningAssistant ? traceForMessage(transcript, runningAssistant.id) : [];
-  const emptyTitle = project ? 'Start working in this project' : 'Start a conversation';
+  const emptyTitle = project?.name ? `Start Working in ${project.name}` : project ? 'Start Working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
   return (
