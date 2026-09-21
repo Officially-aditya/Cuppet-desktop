@@ -109,18 +109,35 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     if (running) setDeliveryMode(readSendBehavior());
   }, [running]);
 
+  const shouldAutoScrollRef = useRef(true);
+
   useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
     const key = session?.id ? `cuppet.desktop.scroll.${session.id}` : null;
     if (!key) {
       node.scrollTop = node.scrollHeight;
+      shouldAutoScrollRef.current = true;
       return;
     }
     const saved = Number(localStorage.getItem(key));
-    if (Number.isFinite(saved) && saved > 0) node.scrollTop = saved;
-    else node.scrollTop = node.scrollHeight;
-    const onScroll = () => localStorage.setItem(key, String(Math.max(0, Math.round(node.scrollTop))));
+    if (Number.isFinite(saved) && saved > 0) {
+      node.scrollTop = saved;
+      const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
+      shouldAutoScrollRef.current = distance < 60;
+    } else {
+      node.scrollTop = node.scrollHeight;
+      shouldAutoScrollRef.current = true;
+    }
+    const onScroll = () => {
+      const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
+      if (distance < 60) {
+        shouldAutoScrollRef.current = true;
+      } else if (distance > 120) {
+        shouldAutoScrollRef.current = false;
+      }
+      localStorage.setItem(key, String(Math.max(0, Math.round(node.scrollTop))));
+    };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
   }, [session?.id]);
@@ -128,9 +145,25 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
-    const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
-    if (distance < 100) requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
-  }, [session?.messages, transcript]);
+    if (shouldAutoScrollRef.current) {
+      requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
+    }
+  }, [session?.messages, transcript, running]);
+
+  useEffect(() => {
+    const node = messagesRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (shouldAutoScrollRef.current) {
+        node.scrollTop = node.scrollHeight;
+      }
+    });
+    observer.observe(node);
+    for (const child of Array.from(node.children)) {
+      observer.observe(child);
+    }
+    return () => observer.disconnect();
+  }, [session?.id, session?.messages?.length]);
 
   const clearComposer = () => {
     setValue('');
@@ -143,6 +176,10 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const submit = async () => {
     const raw = value.trim();
     if (!raw && !attachments.length) return;
+    shouldAutoScrollRef.current = true;
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
     // The runtime owns queueing so queued work survives renderer reloads and there is
     // only one authority for ordering, capacity, dispatch, and failure semantics.
     const result = await onSend(raw, deliveryMode, attachments);
@@ -456,10 +493,6 @@ function MessageView({
     return { editedFiles: Array.from(filesMap.values()), rawDiff: diffAccumulator };
   }, [assistant, trace]);
 
-  useEffect(() => {
-    if (!live) setTraceOpen(false);
-  }, [live]);
-
   const copySummary = async () => {
     if (!canCopy) return;
     try {
@@ -490,7 +523,7 @@ function MessageView({
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} />}
       {assistant ? (
         content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
@@ -551,20 +584,20 @@ function MessageView({
   );
 }
 
-function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+function TraceView({ trace }: { trace: TraceItem[] }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
         <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
       ) : (
-        <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
+        <ToolTraceRow key={item.id} item={item} />
       ))}
     </div>
   );
 }
 
-function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+function ToolTraceRow({ item }: { item: TraceTool }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const isFailed = item.status === 'error';
@@ -649,18 +682,6 @@ function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?
             </div>
           )}
           <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-            {isEdit && onInspectDiff && (
-              <button
-                type="button"
-                className="turn-diff-inspect-btn"
-                onClick={() => {
-                  const files: DiffFile[] = targets.map((p) => ({ path: p, status: 'modified' }));
-                  onInspectDiff(files, rawDiff);
-                }}
-              >
-                Inspect diff
-              </button>
-            )}
             <button
               type="button"
               className={`tool-copy-button${copied ? ' copied' : ''}`}
