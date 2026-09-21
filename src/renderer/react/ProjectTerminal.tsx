@@ -126,7 +126,8 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
 
     const term = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'bar',
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'outline',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 11,
       lineHeight: 1.2,
@@ -293,7 +294,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
         <span className="project-terminal-shortcut">⌘J</span>
       </button>
 
-      <div className="project-terminal-body">
+      <div className="project-terminal-body" onClick={() => xtermRef.current?.focus()}>
         <div ref={terminalContainerRef} className="project-terminal-xterm-container" />
       </div>
     </section>
