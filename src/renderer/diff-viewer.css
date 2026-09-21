@@ -374,7 +374,7 @@
 
 .diff-split-header-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   background: #161b22;
   border-bottom: 1px solid #21262d;
   font-size: 11px;
@@ -386,6 +386,9 @@
 
 .diff-split-col-header {
   padding: 6px 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-split-left-header {
@@ -395,7 +398,8 @@
 .diff-split-lines {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 20px;
@@ -410,13 +414,16 @@
   font-style: italic;
   border-top: 1px solid rgba(56, 139, 253, 0.2);
   border-bottom: 1px solid rgba(56, 139, 253, 0.2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-split-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-width: 100%;
-  width: max-content;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .diff-split-row:hover {
@@ -427,6 +434,7 @@
   display: flex;
   align-items: stretch;
   min-width: 0;
+  overflow: hidden;
   border-right: 1px solid #21262d;
 }
 
@@ -458,7 +466,34 @@
   min-width: 0;
   padding: 0 8px 0 4px;
   white-space: pre;
+  overflow-x: auto;
+  scrollbar-width: thin;
   color: #c9d1d9;
+}
+
+.diff-split-code::-webkit-scrollbar {
+  height: 4px;
+}
+
+.diff-split-code::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 2px;
+}
+
+/* Wrapping mode */
+.diff-wrap .diff-split-code,
+.diff-wrap .diff-line-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
+
+.diff-wrap-btn.active {
+  background: #1f242c;
+  color: #58a6ff;
+  border-color: #388bfd;
+  font-weight: 600;
 }
 
 /* Split cell states */

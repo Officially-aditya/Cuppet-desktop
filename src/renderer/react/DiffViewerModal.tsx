@@ -46,6 +46,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
   const parsedFiles = useMemo(() => parseDiff(rawDiff, files), [rawDiff, files]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
+  const [wrapLines, setWrapLines] = useState(true);
   const [copied, setCopied] = useState(false);
 
   const activeFile: ParsedFileDiff | null = parsedFiles[selectedIndex] ?? parsedFiles[0] ?? null;
@@ -139,6 +140,15 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
               </button>
             </div>
 
+            <button
+              type="button"
+              className={`diff-action-button diff-wrap-btn${wrapLines ? ' active' : ''}`}
+              title="Toggle line wrapping"
+              onClick={() => setWrapLines((w) => !w)}
+            >
+              <span>{wrapLines ? 'Wrap: On' : 'Wrap: Off'}</span>
+            </button>
+
             {projectId && activeFile && (
               <button
                 type="button"
@@ -204,7 +214,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                 {activeFile.lines.length === 0 ? (
                   <EmptyFileDiffState file={activeFile} onOpenInEditor={projectId ? openInEditor : undefined} />
                 ) : viewMode === 'split' ? (
-                  <div className="diff-split-container">
+                  <div className={`diff-split-container${wrapLines ? ' diff-wrap' : ''}`}>
                     <div className="diff-split-header-row">
                       <div className="diff-split-col-header diff-split-left-header">Base (Original)</div>
                       <div className="diff-split-col-header diff-split-right-header">Modified (Current)</div>
@@ -236,7 +246,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                     </div>
                   </div>
                 ) : (
-                  <div className="diff-lines-container">
+                  <div className={`diff-lines-container${wrapLines ? ' diff-wrap' : ''}`}>
                     {activeFile.lines.map((line, lineIndex) => (
                       <div key={lineIndex} className={`diff-line ${line.type}`}>
                         <div className="diff-line-gutter">
@@ -340,7 +350,7 @@ function buildSplitRows(lines: ParsedDiffLine[]): SplitRow[] {
 }
 
 function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
-  const result: ParsedFileDiff[] = [];
+  const fileMap = new Map<string, ParsedFileDiff>();
   const raw = rawDiff.trim();
 
   if (raw) {
@@ -382,24 +392,38 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
         }
       }
 
-      result.push({
-        path: filePath,
-        status: dels > 0 && adds === 0 ? 'deleted' : adds > 0 && dels === 0 ? 'added' : 'modified',
-        lines: parsedLines,
-        additions: adds,
-        deletions: dels,
-        raw: chunk,
-      });
+      const chunkStatus = dels > 0 && adds === 0 ? 'deleted' : adds > 0 && dels === 0 ? 'added' : 'modified';
+
+      if (fileMap.has(filePath)) {
+        const existing = fileMap.get(filePath)!;
+        existing.lines.push(...parsedLines);
+        existing.additions += adds;
+        existing.deletions += dels;
+        existing.raw += '\n' + chunk;
+        if (existing.status !== 'modified' && chunkStatus !== existing.status) {
+          existing.status = 'modified';
+        }
+      } else {
+        fileMap.set(filePath, {
+          path: filePath,
+          status: chunkStatus,
+          lines: parsedLines,
+          additions: adds,
+          deletions: dels,
+          raw: chunk,
+        });
+      }
     }
   }
 
   for (const item of fileList) {
-    const existing = result.find((file) => file.path === item.path);
+    if (!item.path) continue;
+    const existing = fileMap.get(item.path);
     if (!existing) {
       if (item.diff) {
         const sub = parseDiff(item.diff, []);
         if (sub.length > 0 && sub[0].lines.length > 0) {
-          result.push({
+          fileMap.set(item.path, {
             ...sub[0],
             path: item.path,
             status: item.status || sub[0].status,
@@ -407,7 +431,7 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
           continue;
         }
       }
-      result.push({
+      fileMap.set(item.path, {
         path: item.path,
         status: item.status || 'modified',
         lines: [],
@@ -415,10 +439,12 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
         deletions: 0,
         raw: item.diff || '',
       });
+    } else if (item.status && item.status !== 'modified' && existing.status === 'modified' && existing.lines.length === 0) {
+      existing.status = item.status;
     }
   }
 
-  return result;
+  return Array.from(fileMap.values());
 }
 
 function CodeIcon() {
