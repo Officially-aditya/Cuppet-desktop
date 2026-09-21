@@ -138,3 +138,23 @@ test('a superseded async start cannot spawn an old project shell', async () => {
     await rm(rootB, { recursive: true, force: true });
   }
 });
+
+test('terminal resize delegates to active session and enforces renderer ownership', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-terminal-resize-'));
+  const manager = new ProjectTerminalManager({
+    request: async () => ({ canonicalPath: root }),
+    spawnProcess: () => fakeChild(),
+  });
+  const owner = sender(21);
+  const other = sender(22);
+  try {
+    const terminal = await manager.start(owner, 'project-1');
+    const result = manager.resize(owner, terminal.sessionId, 120, 40);
+    assert.deepEqual(result, { resized: false }); // fakeChild has no ptyProcess.resize
+    assert.throws(() => manager.resize(other, terminal.sessionId, 120, 40), /another renderer/i);
+  } finally {
+    manager.stopAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

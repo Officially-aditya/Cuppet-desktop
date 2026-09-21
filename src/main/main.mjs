@@ -108,8 +108,9 @@ function registerIpc() {
   ipcMain.handle('cuppet:project:relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
   ipcMain.handle('cuppet:project:remove', (_event, projectId) => request('project.remove', { projectId }));
 
-  ipcMain.handle('cuppet:terminal:start', (event, projectId) => terminals.start(event.sender, projectId));
+  ipcMain.handle('cuppet:terminal:start', (event, projectId, options) => terminals.start(event.sender, projectId, options));
   ipcMain.handle('cuppet:terminal:write', (event, sessionId, input) => terminals.write(event.sender, sessionId, input));
+  ipcMain.handle('cuppet:terminal:resize', (event, sessionId, cols, rows) => terminals.resize(event.sender, sessionId, cols, rows));
   ipcMain.handle('cuppet:terminal:interrupt', (event, sessionId) => terminals.interrupt(event.sender, sessionId));
   ipcMain.handle('cuppet:terminal:stop', (event, sessionId) => terminals.stop(event.sender, sessionId));
 

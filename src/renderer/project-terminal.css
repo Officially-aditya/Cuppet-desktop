@@ -1,3 +1,113 @@
-.workspace-center-column{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}.workspace-center-column>.react-main-pane{flex:1;min-height:0;height:auto!important}
-.project-terminal{flex:0 0 auto;background:#050608;border-top:1px solid rgba(255,255,255,.075);color:#d8dee8;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}.project-terminal.collapsed{height:31px}.project-terminal.open{height:238px;display:flex;flex-direction:column}.project-terminal-bar{height:31px;min-height:31px;width:100%;display:flex;align-items:center;gap:7px;padding:0 10px;border:0;background:#090b0e;color:#808a97;text-align:left;font:inherit;cursor:pointer}.project-terminal-bar:hover{background:#0d1014;color:#aeb8c6}.project-terminal-title{color:#b8c1cc;font-size:10px;font-weight:620}.project-terminal-shortcut{margin-left:auto;font-size:8px;color:#424a55;border:1px solid #242a31;border-radius:4px;padding:2px 4px}.project-terminal-body{min-height:0;flex:1;display:grid;grid-template-rows:minmax(0,1fr) 31px;background:#050608}.project-terminal-output{min-height:0;overflow:auto;padding:9px 10px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:10.5px;line-height:1.52;scrollbar-width:thin;scrollbar-color:#252b32 transparent}.project-terminal-output>span{white-space:pre-wrap}.terminal-output-stdout{color:#b8c0ca}.terminal-output-stderr{color:#d49a9a}.terminal-output-command{color:#dce6f3}.project-terminal-input-row{display:flex;align-items:center;gap:7px;padding:0 10px;border-top:1px solid rgba(255,255,255,.05);background:#080a0d}.project-terminal-prompt{flex:0 0 auto;color:#8ba9c5;font-size:10px}.project-terminal-input-row input{min-width:0;flex:1;height:26px;padding:0;border:0;outline:0;background:transparent;color:#d6dde7;font:10.5px/26px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;caret-color:#d7e7fa}.project-terminal-input-row input:disabled{opacity:.55}.project-terminal:focus-within{border-top-color:rgba(125,166,201,.16)}
-@media(max-height:700px){.project-terminal.open{height:190px}}
+.workspace-center-column {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-center-column > .react-main-pane {
+  flex: 1;
+  min-height: 0;
+  height: auto !important;
+}
+
+.project-terminal {
+  flex: 0 0 auto;
+  background: #050608;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
+  color: #d8dee8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.project-terminal.collapsed {
+  height: 31px;
+}
+
+.project-terminal.open {
+  height: 250px;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-terminal-bar {
+  height: 31px;
+  min-height: 31px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  background: #090b0e;
+  color: #808a97;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+.project-terminal-bar:hover {
+  background: #0d1014;
+  color: #aeb8c6;
+}
+
+.project-terminal-title {
+  color: #b8c1cc;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.project-terminal-shortcut {
+  margin-left: auto;
+  font-size: 8px;
+  color: #424a55;
+  border: 1px solid #242a31;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.project-terminal-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #050608;
+  position: relative;
+  overflow: hidden;
+}
+
+.project-terminal-xterm-container {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 8px;
+  overflow: hidden;
+  background: #050608;
+}
+
+.project-terminal-xterm-container .xterm {
+  height: 100%;
+  padding: 0;
+}
+
+.project-terminal-xterm-container .xterm-viewport {
+  background-color: #050608 !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: #252b32 transparent;
+}
+
+.project-terminal-xterm-container .xterm-screen {
+  background-color: #050608;
+}
+
+.project-terminal:focus-within {
+  border-top-color: rgba(125, 166, 201, 0.2);
+}
+
+@media (max-height: 700px) {
+  .project-terminal.open {
+    height: 190px;
+  }
+}

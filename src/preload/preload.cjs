@@ -91,8 +91,9 @@ contextBridge.exposeInMainWorld('cuppet', {
     remove: (projectId) => ipcRenderer.invoke('cuppet:project:remove', projectId),
   },
   terminal: {
-    start: (projectId) => ipcRenderer.invoke('cuppet:terminal:start', projectId),
+    start: (projectId, options) => ipcRenderer.invoke('cuppet:terminal:start', projectId, options),
     write: (sessionId, input) => ipcRenderer.invoke('cuppet:terminal:write', sessionId, input),
+    resize: (sessionId, cols, rows) => ipcRenderer.invoke('cuppet:terminal:resize', sessionId, cols, rows),
     interrupt: (sessionId) => ipcRenderer.invoke('cuppet:terminal:interrupt', sessionId),
     stop: (sessionId) => ipcRenderer.invoke('cuppet:terminal:stop', sessionId),
     onEvent: (callback) => {

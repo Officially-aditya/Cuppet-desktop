@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+let pty = null;
+try {
+  pty = require('node-pty');
+} catch {}
 
 const MAX_WRITE_BYTES = 64 * 1024;
 const MAX_EVENT_BYTES = 128 * 1024;
@@ -9,16 +16,18 @@ const MAX_EVENT_BYTES = 128 * 1024;
 export class ProjectTerminalManager {
   #request;
   #spawn;
+  #usePty;
   #sessions = new Map();
   #startTokens = new Map();
 
-  constructor({ request, spawnProcess = spawn } = {}) {
+  constructor({ request, spawnProcess = spawn, usePty = true } = {}) {
     if (typeof request !== 'function') throw new TypeError('ProjectTerminalManager requires a runtime request function');
     this.#request = request;
     this.#spawn = spawnProcess;
+    this.#usePty = spawnProcess === spawn && usePty !== false;
   }
 
-  async start(sender, projectId) {
+  async start(sender, projectId, options = {}) {
     if (!sender || typeof sender.send !== 'function') throw new Error('Terminal requires a renderer owner');
     const id = boundedId(projectId);
     if (!id) throw new Error('A project is required to open the terminal');
@@ -36,17 +45,45 @@ export class ProjectTerminalManager {
     if (this.#startTokens.get(sender.id) !== startToken) throw new Error('Terminal start was superseded');
 
     const sessionId = `terminal_${randomUUID()}`;
-    const child = this.#spawn(shell, [], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PWD: root,
-        TERM: process.env.TERM || 'xterm-256color',
-        COLORTERM: process.env.COLORTERM || 'truecolor',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
+    const cols = Number.isInteger(options?.cols) && options.cols > 0 ? options.cols : 80;
+    const rows = Number.isInteger(options?.rows) && options.rows > 0 ? options.rows : 24;
+
+    let ptyProcess = null;
+    let child = null;
+
+    if (this.#usePty && pty && typeof pty.spawn === 'function') {
+      try {
+        ptyProcess = pty.spawn(shell, [], {
+          name: 'xterm-256color',
+          cols,
+          rows,
+          cwd: root,
+          env: {
+            ...process.env,
+            PWD: root,
+            TERM: 'xterm-256color',
+            COLORTERM: 'truecolor',
+          },
+        });
+      } catch {
+        ptyProcess = null;
+      }
+    }
+
+    if (!ptyProcess) {
+      child = this.#spawn(shell, [], {
+        cwd: root,
+        env: {
+          ...process.env,
+          PWD: root,
+          TERM: process.env.TERM || 'xterm-256color',
+          COLORTERM: process.env.COLORTERM || 'truecolor',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    }
+
     if (this.#startTokens.get(sender.id) === startToken) this.#startTokens.delete(sender.id);
 
     const session = {
@@ -57,21 +94,31 @@ export class ProjectTerminalManager {
       ownerId: sender.id,
       sender,
       child,
+      ptyProcess,
       closed: false,
       startedAt: Date.now(),
     };
     this.#sessions.set(sessionId, session);
 
-    child.stdout?.on('data', (chunk) => this.#emitOutput(session, 'stdout', chunk));
-    child.stderr?.on('data', (chunk) => this.#emitOutput(session, 'stderr', chunk));
-    child.on('error', (error) => {
-      this.#emit(session, { type: 'error', message: cleanError(error) });
-    });
-    child.on('exit', (code, signal) => {
-      session.closed = true;
-      this.#emit(session, { type: 'exit', code: Number.isInteger(code) ? code : null, signal: signal || null });
-      this.#sessions.delete(session.id);
-    });
+    if (ptyProcess) {
+      ptyProcess.onData((data) => this.#emitOutput(session, 'stdout', data));
+      ptyProcess.onExit(({ exitCode, signal }) => {
+        session.closed = true;
+        this.#emit(session, { type: 'exit', code: Number.isInteger(exitCode) ? exitCode : null, signal: signal || null });
+        this.#sessions.delete(session.id);
+      });
+    } else if (child) {
+      child.stdout?.on('data', (chunk) => this.#emitOutput(session, 'stdout', chunk));
+      child.stderr?.on('data', (chunk) => this.#emitOutput(session, 'stderr', chunk));
+      child.on('error', (error) => {
+        this.#emit(session, { type: 'error', message: cleanError(error) });
+      });
+      child.on('exit', (code, signal) => {
+        session.closed = true;
+        this.#emit(session, { type: 'exit', code: Number.isInteger(code) ? code : null, signal: signal || null });
+        this.#sessions.delete(session.id);
+      });
+    }
 
     if (typeof sender.once === 'function') {
       sender.once('destroyed', () => this.stopOwner(sender.id));
@@ -85,14 +132,38 @@ export class ProjectTerminalManager {
     const text = typeof value === 'string' ? value : '';
     if (!text) return { written: false };
     if (Buffer.byteLength(text, 'utf8') > MAX_WRITE_BYTES) throw new Error('Terminal input is too large');
+    if (session.ptyProcess) {
+      session.ptyProcess.write(text);
+      return { written: true };
+    }
     if (!session.child.stdin?.writable) throw new Error('Terminal is not accepting input');
     session.child.stdin.write(text);
     return { written: true };
   }
 
+  resize(sender, sessionId, cols, rows) {
+    const session = this.#ownedSession(sender, sessionId);
+    if (session.closed) return { resized: false };
+    const c = Number.isInteger(cols) && cols > 0 ? cols : 80;
+    const r = Number.isInteger(rows) && rows > 0 ? rows : 24;
+    if (session.ptyProcess?.resize) {
+      try {
+        session.ptyProcess.resize(c, r);
+        return { resized: true, cols: c, rows: r };
+      } catch {
+        return { resized: false };
+      }
+    }
+    return { resized: false };
+  }
+
   interrupt(sender, sessionId) {
     const session = this.#ownedSession(sender, sessionId);
     if (session.closed) return { interrupted: false };
+    if (session.ptyProcess) {
+      session.ptyProcess.write('\x03');
+      return { interrupted: true };
+    }
     const interrupted = session.child.kill('SIGINT');
     return { interrupted };
   }

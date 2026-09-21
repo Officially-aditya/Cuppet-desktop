@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 import type { Project } from '../types';
 
 type TerminalSession = {
@@ -21,8 +24,9 @@ type TerminalEvent = {
 };
 
 type TerminalApi = {
-  start: (projectId: string) => Promise<TerminalSession>;
+  start: (projectId: string, options?: { cols?: number; rows?: number }) => Promise<TerminalSession>;
   write: (sessionId: string, input: string) => Promise<{ written: boolean }>;
+  resize: (sessionId: string, cols: number, rows: number) => Promise<{ resized: boolean }>;
   interrupt: (sessionId: string) => Promise<{ interrupted: boolean }>;
   stop: (sessionId: string) => Promise<{ stopped: boolean }>;
   onEvent: (handler: (event: TerminalEvent) => void) => () => void;
@@ -34,39 +38,28 @@ type Props = {
   onOpenChange?: (open: boolean) => void;
 };
 
-type OutputChunk = {
-  id: number;
-  kind: 'stdout' | 'stderr' | 'command';
-  text: string;
-};
-
-const MAX_CHARS = 180_000;
-const MAX_HISTORY = 80;
-
 export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props) {
   const terminal = (window.cuppet as typeof window.cuppet & { terminal: TerminalApi }).terminal;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
-  const setOpen = (value: boolean | ((current: boolean) => boolean)) => {
+  const setOpen = useCallback((value: boolean | ((current: boolean) => boolean)) => {
     const next = typeof value === 'function' ? value(openProp ?? uncontrolledOpen) : value;
     if (onOpenChange) onOpenChange(next);
     else setUncontrolledOpen(next);
-  };
+  }, [onOpenChange, openProp, uncontrolledOpen]);
+
   const [session, setSession] = useState<TerminalSession | null>(null);
-  const [output, setOutput] = useState<OutputChunk[]>([]);
-  const [input, setInput] = useState('');
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const [status, setStatus] = useState<'idle' | 'starting' | 'ready' | 'exited' | 'error'>('idle');
-  const outputRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const nextId = useRef(1);
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const projectIdRef = useRef<string | null>(project?.id ?? null);
   const startGeneration = useRef(0);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
 
+  // Handle project switch: stop previous session and reset state
   useEffect(() => {
     projectIdRef.current = project?.id ?? null;
     startGeneration.current += 1;
@@ -74,44 +67,151 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     sessionRef.current = null;
     setOpen(false);
     setSession(null);
-    setOutput([]);
-    setInput('');
-    setHistory([]);
-    setHistoryIndex(-1);
     setStatus('idle');
     if (active) void terminal.stop(active.sessionId).catch(() => undefined);
-  }, [project?.id, terminal]);
+  }, [project?.id, terminal, setOpen]);
 
+  // Listen to terminal backend events
   useEffect(() => {
     const unsubscribe = terminal.onEvent((event) => {
       const active = sessionRef.current;
       if (!active || event.sessionId !== active.sessionId || event.projectId !== active.projectId) return;
-      handleTerminalEvent(event);
+      if (event.type === 'output' && event.data) {
+        xtermRef.current?.write(event.data);
+      } else if (event.type === 'exit') {
+        setStatus('exited');
+        setSession(null);
+        sessionRef.current = null;
+        xtermRef.current?.write('\r\n\x1b[90m[Process completed]\x1b[0m\r\n');
+      } else if (event.type === 'error') {
+        setStatus('error');
+        xtermRef.current?.write(`\r\n\x1b[31m${event.message || 'Terminal error'}\x1b[0m\r\n`);
+      }
     });
     return unsubscribe;
   }, [terminal]);
 
+  // Clean up on unmount
   useEffect(() => {
     return () => {
       startGeneration.current += 1;
       const active = sessionRef.current;
       sessionRef.current = null;
       if (active) void terminal.stop(active.sessionId).catch(() => undefined);
+      xtermRef.current?.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
     };
   }, [terminal]);
 
+  // Start terminal session if open and no session exists
   useEffect(() => {
     if (!open || !project) return;
-    if (!session && status !== 'starting') void startTerminal(project.id);
-    window.setTimeout(() => inputRef.current?.focus(), 0);
+    if (!session && status !== 'starting') {
+      void startTerminal(project.id);
+    }
   }, [open, project?.id, session, status]);
 
+  // Initialize or fit xterm when open and container is available
   useEffect(() => {
-    const node = outputRef.current;
-    if (!node || !open) return;
-    node.scrollTop = node.scrollHeight;
-  }, [open, output]);
+    if (!open || !terminalContainerRef.current) return;
 
+    if (!xtermRef.current) {
+      const term = new Terminal({
+        cursorBlink: true,
+        cursorStyle: 'bar',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontSize: 12,
+        lineHeight: 1.25,
+        theme: {
+          background: '#050608',
+          foreground: '#c9d1d9',
+          cursor: '#58a6ff',
+          cursorAccent: '#050608',
+          selectionBackground: 'rgba(56, 139, 253, 0.35)',
+          selectionForeground: '#ffffff',
+          black: '#0d1117',
+          red: '#ff7b72',
+          green: '#3fb950',
+          yellow: '#d29922',
+          blue: '#58a6ff',
+          magenta: '#bc8cff',
+          cyan: '#39c5cf',
+          white: '#b1bac4',
+          brightBlack: '#6e7681',
+          brightRed: '#ffa198',
+          brightGreen: '#56d364',
+          brightYellow: '#e3b341',
+          brightBlue: '#79c0ff',
+          brightMagenta: '#d2a8ff',
+          brightCyan: '#56d4dd',
+          brightWhite: '#f0f6fc',
+        },
+        allowTransparency: true,
+        convertEol: true,
+        scrollback: 5000,
+      });
+
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(terminalContainerRef.current);
+      xtermRef.current = term;
+      fitAddonRef.current = fitAddon;
+
+      term.onData((data) => {
+        const active = sessionRef.current;
+        if (!active) return;
+        void terminal.write(active.sessionId, data).catch(() => undefined);
+      });
+
+      // Keyboard shortcuts: ⌘C to copy selection, ⌘V to paste, ⌘K to clear
+      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && term.hasSelection()) {
+          void window.cuppet.native.copyText(term.getSelection()).catch(() => undefined);
+          return false;
+        }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+          term.clear();
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Fit on open and schedule a second fit once layout stabilizes
+    requestAnimationFrame(() => {
+      try {
+        fitAddonRef.current?.fit();
+        xtermRef.current?.focus();
+        const active = sessionRef.current;
+        if (active && xtermRef.current && xtermRef.current.cols > 0 && xtermRef.current.rows > 0) {
+          void terminal.resize(active.sessionId, xtermRef.current.cols, xtermRef.current.rows).catch(() => undefined);
+        }
+      } catch {}
+    });
+  }, [open, terminal]);
+
+  // ResizeObserver for automatic terminal resizing
+  useEffect(() => {
+    const node = terminalContainerRef.current;
+    if (!node || !open || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      if (!xtermRef.current || !fitAddonRef.current) return;
+      try {
+        fitAddonRef.current.fit();
+        const active = sessionRef.current;
+        if (active && xtermRef.current.cols > 0 && xtermRef.current.rows > 0) {
+          void terminal.resize(active.sessionId, xtermRef.current.cols, xtermRef.current.rows).catch(() => undefined);
+        }
+      } catch {}
+    });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [open, terminal]);
+
+  // ⌘J shortcut to toggle terminal
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'j') return;
@@ -129,7 +229,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     const generation = ++startGeneration.current;
     setStatus('starting');
     try {
-      const next = await terminal.start(projectId);
+      const cols = xtermRef.current?.cols || 80;
+      const rows = xtermRef.current?.rows || 24;
+      const next = await terminal.start(projectId, { cols, rows });
       const stale = generation !== startGeneration.current || projectIdRef.current !== projectId;
       if (stale) {
         await terminal.stop(next.sessionId).catch(() => undefined);
@@ -138,88 +240,11 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       setSession(next);
       sessionRef.current = next;
       setStatus('ready');
+      xtermRef.current?.focus();
     } catch (reason) {
       if (generation !== startGeneration.current || projectIdRef.current !== projectId) return;
-      append('stderr', `${cleanError(reason)}\n`);
+      xtermRef.current?.write(`\r\n\x1b[31m${cleanError(reason)}\x1b[0m\r\n`);
       setStatus('error');
-    }
-  }
-
-  async function submit() {
-    const command = input.trimEnd();
-    const active = sessionRef.current;
-    if (!active || status !== 'ready') return;
-    if (!command.trim()) {
-      await terminal.write(active.sessionId, '\n');
-      setInput('');
-      return;
-    }
-    append('command', `❯ ${command}\n`);
-    setHistory((current) => [command, ...current.filter((item) => item !== command)].slice(0, MAX_HISTORY));
-    setHistoryIndex(-1);
-    setInput('');
-    try {
-      await terminal.write(active.sessionId, `${command}\n`);
-    } catch (reason) {
-      append('stderr', `${cleanError(reason)}\n`);
-      setStatus('error');
-    }
-  }
-
-  function handleTerminalEvent(event: TerminalEvent) {
-    if (event.type === 'output' && event.data) {
-      append(event.stream === 'stderr' ? 'stderr' : 'stdout', stripAnsi(event.data));
-      return;
-    }
-    if (event.type === 'exit') {
-      setStatus('exited');
-      setSession(null);
-      sessionRef.current = null;
-      return;
-    }
-    if (event.type === 'error') {
-      append('stderr', `${event.message || 'Terminal error'}\n`);
-      setStatus('error');
-    }
-  }
-
-  function append(kind: OutputChunk['kind'], text: string) {
-    if (!text) return;
-    setOutput((current) => trimOutput([...current, { id: nextId.current++, kind, text }]));
-  }
-
-  function onInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void submit();
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      if (!history.length) return;
-      event.preventDefault();
-      const next = Math.min(history.length - 1, historyIndex + 1);
-      setHistoryIndex(next);
-      setInput(history[next] ?? '');
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      const next = historyIndex - 1;
-      if (next < 0) {
-        setHistoryIndex(-1);
-        setInput('');
-      } else {
-        setHistoryIndex(next);
-        setInput(history[next] ?? '');
-      }
-      return;
-    }
-    if (event.key === 'c' && event.ctrlKey && !event.metaKey) {
-      const active = sessionRef.current;
-      if (!active) return;
-      event.preventDefault();
-      append('command', '^C\n');
-      void terminal.interrupt(active.sessionId).catch((reason) => append('stderr', `${cleanError(reason)}\n`));
     }
   }
 
@@ -232,41 +257,11 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
 
       {open && (
         <div className="project-terminal-body">
-          <div ref={outputRef} className="project-terminal-output" role="log">
-            {output.map((item) => <span key={item.id} className={`terminal-output-${item.kind}`}>{item.text}</span>)}
-          </div>
-          <div className="project-terminal-input-row">
-            <span className="project-terminal-prompt" aria-hidden="true">❯</span>
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={onInputKeyDown}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoComplete="off"
-              aria-label="Terminal command"
-              disabled={status !== 'ready'}
-            />
-          </div>
+          <div ref={terminalContainerRef} className="project-terminal-xterm-container" />
         </div>
       )}
     </section>
   );
-}
-
-function trimOutput(chunks: OutputChunk[]) {
-  let total = chunks.reduce((sum, item) => sum + item.text.length, 0);
-  let index = 0;
-  while (total > MAX_CHARS && index < chunks.length - 1) {
-    total -= chunks[index].text.length;
-    index += 1;
-  }
-  return index ? chunks.slice(index) : chunks;
-}
-
-function stripAnsi(value: string) {
-  return value.replace(/[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g, '');
 }
 
 function cleanError(error: unknown) {
