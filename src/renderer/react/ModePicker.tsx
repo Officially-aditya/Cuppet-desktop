@@ -58,8 +58,8 @@ export function ModePicker({ value, onChange, disabled = false }: Props) {
         ref={trigger}
         type="button"
         className="composer-mode-trigger"
-        aria-label="Mode"
-        title={`Mode: ${selected.label}`}
+        aria-label="Cuppet mode"
+        title={`Cuppet mode: ${selected.label}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={`${id}-modelist`}
@@ -91,8 +91,8 @@ export function ModePicker({ value, onChange, disabled = false }: Props) {
       </button>
 
       {open && (
-        <div id={`${id}-modelist`} className="composer-mode-menu" role="listbox" aria-label="Composer mode">
-          <div className="composer-mode-menu-header">Composer mode</div>
+        <div id={`${id}-modelist`} className="composer-mode-menu" role="listbox" aria-label="Cuppet mode">
+          <div className="composer-mode-menu-header">Cuppet mode</div>
           {MODE_OPTIONS.map((option, index) => {
             const isSelected = option.value === value;
             return (
