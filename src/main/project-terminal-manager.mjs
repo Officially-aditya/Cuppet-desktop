@@ -346,13 +346,16 @@ env['COLORTERM'] = 'truecolor'
 
 pid, master_fd = pty.fork()
 if pid == 0:
+    try: os.close(3)
+    except Exception: pass
     os.execlpe(shell, shell, '-l', env)
 
 fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
 
+ctrl_buf = b''
 try:
     while True:
-        rfds, _, _ = select.select([0, master_fd], [], [])
+        rfds, _, _ = select.select([0, 3, master_fd], [], [])
         if master_fd in rfds:
             try:
                 data = os.read(master_fd, 4096)
@@ -365,44 +368,55 @@ try:
             try:
                 data = os.read(0, 4096)
                 if not data: break
-                if b'\\x1b]99;resize;' in data:
-                    parts = data.split(b'\\x1b]99;resize;')
-                    if parts[0]: os.write(master_fd, parts[0])
-                    for part in parts[1:]:
-                        if b'\\x07' in part:
-                            cmd, rest = part.split(b'\\x07', 1)
+                os.write(master_fd, data)
+            except OSError:
+                break
+        if 3 in rfds:
+            try:
+                cdata = os.read(3, 1024)
+                if not cdata:
+                    pass
+                else:
+                    ctrl_buf += cdata
+                    while b'\\n' in ctrl_buf:
+                        line, ctrl_buf = ctrl_buf.split(b'\\n', 1)
+                        line = line.strip()
+                        if not line: continue
+                        parts = line.split(b';')
+                        if len(parts) == 2:
                             try:
-                                c_str, r_str = cmd.decode('utf-8').split(';')
-                                new_c, new_r = int(c_str), int(r_str)
+                                new_c, new_r = int(parts[0]), int(parts[1])
                                 fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', new_r, new_c, 0, 0))
                                 try: os.kill(pid, signal.SIGWINCH)
                                 except ProcessLookupError: pass
                             except Exception: pass
-                            if rest: os.write(master_fd, rest)
-                        else:
-                            os.write(master_fd, b'\\x1b]99;resize;' + part)
-                else:
-                    os.write(master_fd, data)
             except OSError:
-                break
+                pass
 finally:
     try: os.close(master_fd)
+    except Exception: pass
+    try: os.close(3)
     except Exception: pass
 `;
 
   const child = spawn('python3', ['-c', pyCode, String(cols), String(rows), shell, cwd], {
     cwd,
     env,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
+
+  child.stdin?.on('error', () => {});
+  child.stdio?.[3]?.on('error', () => {});
 
   return {
     write(data) {
       if (child.stdin?.writable) child.stdin.write(data);
     },
     resize(newCols, newRows) {
-      if (child.stdin?.writable) child.stdin.write(`\\x1b]99;resize;${newCols};${newRows}\\x07`);
+      if (child.stdio?.[3]?.writable) {
+        child.stdio[3].write(`${newCols};${newRows}\n`);
+      }
     },
     onData(cb) {
       child.stdout?.on('data', (chunk) => cb(chunk));
@@ -411,6 +425,7 @@ finally:
       child.on('exit', (exitCode, signal) => cb({ exitCode, signal }));
     },
     kill(signal) {
+      try { child.stdio?.[3]?.end(); } catch {}
       child.kill(signal);
     },
   };
