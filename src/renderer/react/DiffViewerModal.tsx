@@ -249,18 +249,29 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                   </div>
                 ) : (
                   <div className={`diff-lines-container${wrapLines ? ' diff-wrap' : ''}`}>
-                    {activeFile.lines.map((line, lineIndex) => (
-                      <div key={lineIndex} className={`diff-line ${line.type}`}>
-                        <div className="diff-line-gutter">
-                          <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
-                          <span className="diff-line-num-new">{line.newNum ?? ''}</span>
+                    {activeFile.lines.map((line, lineIndex) => {
+                      if (line.type === 'hunk') {
+                        const formatted = formatHunkText(line.text);
+                        if (!formatted) return null;
+                        return (
+                          <div key={lineIndex} className="diff-line hunk">
+                            <span className="diff-line-text">{formatted}</span>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={lineIndex} className={`diff-line ${line.type}`}>
+                          <div className="diff-line-gutter">
+                            <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
+                            <span className="diff-line-num-new">{line.newNum ?? ''}</span>
+                          </div>
+                          <span className="diff-line-sign">
+                            {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
+                          </span>
+                          <span className="diff-line-text">{line.text}</span>
                         </div>
-                        <span className="diff-line-sign">
-                          {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
-                        </span>
-                        <span className="diff-line-text">{line.text}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>
@@ -304,6 +315,33 @@ function EmptyFileDiffState({ file, onOpenInEditor }: { file: ParsedFileDiff; on
   );
 }
 
+function formatHunkText(text: string): string | null {
+  if (!text) return null;
+  // Match standard hunk header: @@ -A,B +C,D @@ context
+  const match = text.match(/^@@\s*-(?:\d+)(?:,\d+)?\s*\+(?:\d+)(?:,\d+)?\s*@@(?:\s*(.+))?$/);
+  if (match) {
+    const context = match[1]?.trim();
+    if (context && context !== '...' && !context.startsWith('checked whole-file')) return context;
+    const rangeMatch = text.match(/-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?/);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[3] || rangeMatch[1], 10);
+      const count = parseInt(rangeMatch[4] || rangeMatch[2] || '1', 10);
+      // Suppress when at the start of the file or dummy
+      if (start <= 1 && (count <= 1 || count === 0)) return null;
+      if (start > 1) {
+        return count > 1 ? `Lines ${start}–${start + count - 1}` : `Line ${start}`;
+      }
+    }
+    return null;
+  }
+  // If it's something like "@@ edit @@" or "@@ replace_node @@" or "@@ -1 +1 @@"
+  const clean = text.replace(/^@@\s*|\s*@@$/g, '').trim();
+  if (!clean || clean === '-1 +1' || clean === 'edit' || clean === 'apply' || clean === 'checked whole-file projection' || /^-?\d+.*$/.test(clean)) {
+    return null;
+  }
+  return clean;
+}
+
 function buildSplitRows(lines: ParsedDiffLine[]): SplitRow[] {
   const rows: SplitRow[] = [];
   let delBuffer: ParsedDiffLine[] = [];
@@ -332,7 +370,10 @@ function buildSplitRows(lines: ParsedDiffLine[]): SplitRow[] {
   for (const line of lines) {
     if (line.type === 'hunk') {
       flushBuffers();
-      rows.push({ type: 'hunk', hunkText: line.text });
+      const formatted = formatHunkText(line.text);
+      if (formatted) {
+        rows.push({ type: 'hunk', hunkText: formatted });
+      }
     } else if (line.type === 'del') {
       delBuffer.push(line);
     } else if (line.type === 'add') {

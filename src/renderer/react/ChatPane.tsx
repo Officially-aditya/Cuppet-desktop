@@ -411,9 +411,11 @@ function MessageView({
         const oldText = String(args.old_text ?? '');
         const newText = String(args.new_text ?? '');
         if (p && (oldText || newText)) {
-          const oldLines = oldText ? oldText.split('\n').map((l) => `-${l}`).join('\n') : '';
-          const newLines = newText ? newText.split('\n').map((l) => `+${l}`).join('\n') : '';
-          const chunk = `--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
+          const oldList = oldText ? oldText.split('\n') : [];
+          const newList = newText ? newText.split('\n') : [];
+          const oldLines = oldList.map((l) => `-${l}`).join('\n');
+          const newLines = newList.map((l) => `+${l}`).join('\n');
+          const chunk = `--- a/${p}\n+++ b/${p}\n@@ -1,${oldList.length} +1,${newList.length} @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
           diffAccumulator += (diffAccumulator ? '\n' : '') + chunk;
           const file = filesMap.get(p);
           if (file) file.diff = chunk;
@@ -438,9 +440,11 @@ function MessageView({
           const expected = String(op.target?.expected_source || op.expected_source || op.old_text || '');
           const next = String(op.source || op.new_source || op.new_text || '');
           if (p && (expected || next)) {
-            const oldLines = expected ? expected.split('\n').map((l) => `-${l}`).join('\n') : '';
-            const newLines = next ? next.split('\n').map((l) => `+${l}`).join('\n') : '';
-            const chunk = `--- a/${p}\n+++ b/${p}\n@@ ${op.op || 'edit'} @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
+            const oldList = expected ? expected.split('\n') : [];
+            const newList = next ? next.split('\n') : [];
+            const oldLines = oldList.map((l) => `-${l}`).join('\n');
+            const newLines = newList.map((l) => `+${l}`).join('\n');
+            const chunk = `--- a/${p}\n+++ b/${p}\n@@ -1,${oldList.length} +1,${newList.length} @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
             diffAccumulator += (diffAccumulator ? '\n' : '') + chunk;
             const file = filesMap.get(p);
             if (file && !file.diff) file.diff = chunk;
