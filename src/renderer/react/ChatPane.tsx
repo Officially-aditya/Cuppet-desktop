@@ -555,12 +555,14 @@ function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff
 function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const isFailed = item.status === 'error';
   const args = parseToolArguments(item.argumentsJson);
   const targets = toolTargets(item.tool, args);
   const command = toolCommand(args, false);
-  const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details);
+  const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details, item.status);
   const rawDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
   const isEdit = item.tool === 'tst_edit_batch' || item.tool === 'workspace_edit' || item.tool === 'workspace_write';
+  const showCodeBlock = Boolean(item.details) && !isFailed && !rawDiff;
 
   const primaryChip = command
     ? (command.length > 40 ? `${command.slice(0, 38)}…` : command)
@@ -601,8 +603,35 @@ function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?
 
       {open && (
         <div className="thread-tool-detail">
-          {detail && <div>{detail.split('\n').map((line, index) => <div key={`${item.id}:detail:${index}`}>{line}</div>)}</div>}
-          {item.details && (
+          {detail && (
+            <div className="thread-tool-detail-lines">
+              {detail.split('\n').map((line, index) => {
+                if (line.startsWith('Result: ')) {
+                  return (
+                    <div key={`${item.id}:detail:${index}`} className={`thread-tool-result-line${isFailed ? ' error' : ''}`}>
+                      <span className="thread-tool-detail-key">Result: </span>
+                      <span className="thread-tool-detail-value">{line.slice(8)}</span>
+                    </div>
+                  );
+                }
+                const colonIdx = line.indexOf(': ');
+                if (colonIdx > 0) {
+                  return (
+                    <div key={`${item.id}:detail:${index}`}>
+                      <span className="thread-tool-detail-key">{line.slice(0, colonIdx + 2)}</span>
+                      <span>{line.slice(colonIdx + 2)}</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={`${item.id}:detail:${index}`} className={isFailed ? 'thread-tool-result-line error' : undefined}>
+                    {line}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {showCodeBlock && (
             <div className="thread-tool-code-block">
               {item.details}
             </div>
@@ -881,7 +910,7 @@ function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceToo
   return phrase(`${name}…`, `${name} completed`, `${name} failed`);
 }
 
-function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDetails?: string) {
+function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDetails?: string, status?: string) {
   const args = parseToolArguments(argumentsJson);
   const lines: string[] = [];
   const targets = toolTargets(toolName, args);
@@ -894,7 +923,14 @@ function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDeta
   if (command) lines.push(`Command: ${command}`);
   const action = typeof args.action === 'string' ? compactActivityText(args.action) : '';
   if (action && !lines.some((line) => line.includes(action))) lines.push(`Action: ${action}`);
-  if (runtimeDetails) lines.push(`Result: ${compactActivityText(runtimeDetails)}`);
+  if (runtimeDetails) {
+    if (status === 'error') {
+      const cleanError = runtimeDetails.trim().replace(/[\r\n\t]+/g, ' ');
+      lines.push(`Result: ${cleanError}`);
+    } else if (!runtimeDetails.includes('--- ') && !runtimeDetails.includes('+++ ') && runtimeDetails.length <= 160) {
+      lines.push(`Result: ${runtimeDetails.trim().replace(/[\r\n\t]+/g, ' ')}`);
+    }
+  }
   if (!lines.length && toolName) lines.push(`Tool: ${humanToolLabel(toolName)}`);
   return lines.join('\n');
 }
