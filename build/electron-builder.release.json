@@ -15,6 +15,7 @@
     "dist-renderer/**/*",
     "src/remote-app/**/*",
     "build/icon.png",
+    "build/icon-macos.png",
     "package.json"
   ],
   "extraResources": [
