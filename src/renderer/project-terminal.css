@@ -25,10 +25,18 @@
   height: 31px;
 }
 
+.project-terminal.collapsed .project-terminal-body {
+  display: none;
+}
+
 .project-terminal.open {
   height: 250px;
   display: flex;
   flex-direction: column;
+}
+
+.project-terminal.open .project-terminal-body {
+  display: flex;
 }
 
 .project-terminal-bar {
