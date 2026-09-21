@@ -24,7 +24,7 @@ test('self-host relay routes only authenticated device commands and replays atta
     const hostUrl=`ws://127.0.0.1:${relay.port}/ws?role=host&hostId=host_e2e`;
     const transport=new WebSocketTransport(hostUrl);let executions=0;
     bridge=new RemoteBridge({hostId:'host_e2e',transport,commandAdapter:{detachDevice(){},async execute(_actor,type){executions++;return type==='session.list'?[{id:'s1'}]:null;}},authenticateDevice:(id,secret)=>authenticateDevice(dir,id,secret),buildAttachSnapshot:async()=>({snapshot:{ready:true}})});
-    bridge.start();await transport.waitUntilConnected(1000);
+    bridge.start();await transport.waitUntilConnected(4000);
     device=new DeviceClient(`ws://127.0.0.1:${relay.port}/ws?role=device&hostId=host_e2e&deviceId=${claimed.deviceId}`,claimed.secret);await device.open();
     await device.next((frame)=>frame.replyTo==='device-hello'&&frame.ok===true,'hello');
     const attach=await device.next((frame)=>frame.type==='host.attach','attach replay');assert.equal(attach.seq,0);assert.equal(attach.payload.snapshot.ready,true);

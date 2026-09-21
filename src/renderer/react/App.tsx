@@ -397,6 +397,7 @@ export function App() {
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
       {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
       <ShellPanelControls
+        project={activeProject}
         state={{
           leftAvailable: true,
           leftOpen: panels.sidebar,

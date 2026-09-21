@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ProjectTerminal } from './ProjectTerminal';
+import { DiffViewerModal, type DiffFile } from './DiffViewerModal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -59,6 +60,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+  const [diffModal, setDiffModal] = useState<{ files: DiffFile[]; rawDiff?: string } | null>(null);
   const transcript = useClientTranscript(session);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -260,13 +262,21 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
           <div className="empty-state"><img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
-        ) : stableMessages.map((message) => <MessageView key={message.id} message={message} trace={traceForMessage(transcript, message.id)} />)}
+        ) : stableMessages.map((message) => (
+          <MessageView
+            key={message.id}
+            message={message}
+            trace={traceForMessage(transcript, message.id)}
+            onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
+          />
+        ))}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView
             key={runningAssistant.id}
             message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
             trace={runningTrace}
             live
+            onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
           />
         )}
       </section>
@@ -339,11 +349,29 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
         </form>
       </footer>
       <ProjectTerminal project={project} open={terminalOpen} onOpenChange={onTerminalOpenChange} />
+      {diffModal && (
+        <DiffViewerModal
+          files={diffModal.files}
+          rawDiff={diffModal.rawDiff}
+          projectId={project?.id}
+          onClose={() => setDiffModal(null)}
+        />
+      )}
     </main>
   );
 }
 
-function MessageView({ message, trace = [], live = false }: { message: Session['messages'][number]; trace?: TraceItem[]; live?: boolean }) {
+function MessageView({
+  message,
+  trace = [],
+  live = false,
+  onInspectDiff,
+}: {
+  message: Session['messages'][number];
+  trace?: TraceItem[];
+  live?: boolean;
+  onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
+}) {
   const [traceOpen, setTraceOpen] = useState(live);
   const [copied, setCopied] = useState(false);
   const responseRef = useRef<HTMLDivElement | null>(null);
@@ -352,6 +380,37 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   const content = String(message.content ?? '');
   const hasTrace = assistant && trace.length > 0;
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
+
+  const { editedFiles, rawDiff } = useMemo(() => {
+    if (!assistant) return { editedFiles: [] as DiffFile[], rawDiff: '' };
+    const filesMap = new Map<string, DiffFile>();
+    let diffAccumulator = '';
+
+    for (const item of trace) {
+      if (item.type !== 'tool') continue;
+      const normalized = item.tool.toLowerCase();
+      const isEdit = normalized === 'tst_edit_batch' || normalized === 'workspace_edit' || normalized === 'workspace_write';
+      if (!isEdit) continue;
+
+      const args = parseToolArguments(item.argumentsJson);
+      const targets = toolTargets(item.tool, args);
+      for (const target of targets) {
+        if (!filesMap.has(target)) {
+          filesMap.set(target, {
+            path: target,
+            status: normalized === 'workspace_write' ? 'added' : 'modified',
+          });
+        }
+      }
+
+      const outputText = item.details || '';
+      if (outputText.includes('--- ') && outputText.includes('+++ ')) {
+        diffAccumulator += (diffAccumulator ? '\n' : '') + outputText;
+      }
+    }
+
+    return { editedFiles: Array.from(filesMap.values()), rawDiff: diffAccumulator };
+  }, [assistant, trace]);
 
   useEffect(() => {
     if (!live) setTraceOpen(false);
@@ -387,11 +446,36 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
       {assistant ? (
         content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
         <div className="message-content">{content}</div>
+      )}
+      {editedFiles.length > 0 && !live && (
+        <div className="turn-diff-card" aria-label="Turn code changes">
+          <div className="turn-diff-info">
+            <svg className="turn-diff-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M5.5 4 2 8l3.5 4M10.5 4l3.5 4-3.5 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div>
+              <span className="turn-diff-label">
+                {editedFiles.length} {editedFiles.length === 1 ? 'file' : 'files'} modified
+              </span>
+              <span className="turn-diff-files-preview">
+                {' · ' + editedFiles.slice(0, 3).map((f) => f.path.split('/').pop()).join(', ') + (editedFiles.length > 3 ? ` +${editedFiles.length - 3}` : '')}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="turn-diff-inspect-btn"
+            title="Inspect changes in diff viewer"
+            onClick={() => onInspectDiff?.(editedFiles, rawDiff)}
+          >
+            Inspect changes
+          </button>
+        </div>
       )}
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}
       {canCopy && (
@@ -405,31 +489,154 @@ function MessageView({ message, trace = [], live = false }: { message: Session['
   );
 }
 
-function TraceView({ trace }: { trace: TraceItem[] }) {
+function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
         <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
       ) : (
-        <ToolTraceRow key={item.id} item={item} />
+        <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
       ))}
     </div>
   );
 }
 
-function ToolTraceRow({ item }: { item: TraceTool }) {
+function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const args = parseToolArguments(item.argumentsJson);
+  const targets = toolTargets(item.tool, args);
+  const command = toolCommand(args, false);
   const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details);
+  const rawDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
+  const isEdit = item.tool === 'tst_edit_batch' || item.tool === 'workspace_edit' || item.tool === 'workspace_write';
+
+  const primaryChip = command
+    ? (command.length > 40 ? `${command.slice(0, 38)}…` : command)
+    : targets.length > 0
+      ? (targets[0].split('/').pop() + (targets.length > 1 ? ` +${targets.length - 1}` : ''))
+      : null;
+
+  const copyDetails = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const text = item.details || item.argumentsJson;
+    if (!text) return;
+    try {
+      await window.cuppet.native.copyText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
     <div className={`thread-tool-row ${item.status}`}>
-      <button type="button" className="thread-tool-summary" aria-expanded={open} onClick={() => detail && setOpen((current) => !current)}>
-        <span className="thread-tool-status" aria-hidden="true">{item.status === 'running' ? '●' : item.status === 'error' ? '!' : '✓'}</span>
-        <span className="thread-tool-label">{item.label}</span>
-        {detail ? <span className="thread-tool-chevron" aria-hidden="true">{open ? '−' : '+'}</span> : null}
+      <button type="button" className="thread-tool-summary" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <div className="thread-tool-icon">
+          <ToolIcon tool={item.tool} />
+        </div>
+        <div className="thread-tool-label">
+          <span>{humanToolLabel(item.tool)}</span>
+          {primaryChip && <span className="thread-tool-chip" title={command || targets.join(', ')}>{primaryChip}</span>}
+        </div>
+        <span className={`thread-tool-badge ${item.status}`}>
+          {item.status === 'running' ? 'Running' : item.status === 'error' ? 'Failed' : 'Done'}
+        </span>
+        <span className={`thread-tool-chevron${open ? ' open' : ''}`} aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" width="12" height="12"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </span>
       </button>
-      {open && detail ? <div className="thread-tool-detail">{detail.split('\n').map((line, index) => <div key={`${item.id}:detail:${index}`}>{line}</div>)}</div> : null}
+
+      {open && (
+        <div className="thread-tool-detail">
+          {detail && <div>{detail.split('\n').map((line, index) => <div key={`${item.id}:detail:${index}`}>{line}</div>)}</div>}
+          {item.details && (
+            <div className="thread-tool-code-block">
+              {item.details}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            {isEdit && onInspectDiff && (
+              <button
+                type="button"
+                className="turn-diff-inspect-btn"
+                onClick={() => {
+                  const files: DiffFile[] = targets.map((p) => ({ path: p, status: 'modified' }));
+                  onInspectDiff(files, rawDiff);
+                }}
+              >
+                Inspect diff
+              </button>
+            )}
+            <button
+              type="button"
+              className="diff-action-button"
+              style={{ fontSize: '10.5px', padding: '3px 8px' }}
+              onClick={copyDetails}
+            >
+              {copied ? 'Copied' : 'Copy output'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function ToolIcon({ tool }: { tool: string }) {
+  const normalized = tool.toLowerCase();
+  if (normalized === 'bash' || /shell|terminal|command|exec/.test(normalized)) {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <path d="m3 4.5 3.5 3.5L3 11.5M8 11.5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  if (normalized === 'tst_edit_batch' || normalized === 'workspace_edit' || /(^|[_-])(edit|patch)($|[_-])/.test(normalized)) {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <path d="M11 2.5 13.5 5 5 13.5H2.5V11L11 2.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  if (normalized === 'tst_read' || normalized === 'workspace_read' || normalized === 'workspace_write') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <path d="M3.5 2.5h6l3.5 3.5v7.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="M9.5 2.5v3.5h3.5" stroke="currentColor" strokeWidth="1.3"/>
+      </svg>
+    );
+  }
+  if (normalized === 'tst_explore' || normalized === 'cuppet_memory_search' || /search|grep|find|explore/.test(normalized)) {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="m10.5 10.5 3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+      </svg>
+    );
+  }
+  if (normalized === 'tst_validate' || /test|verify|validate|lint|check/.test(normalized)) {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <path d="M8 2.5 3 4.5v4.5c0 3 2.5 5.5 5 6 2.5-.5 5-3 5-6V4.5L8 2.5Z" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="m6 8 1.5 1.5 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  if (normalized === 'question') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+        <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5.5l-3 3V3.5Z" stroke="currentColor" strokeWidth="1.3"/>
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
   );
 }
 

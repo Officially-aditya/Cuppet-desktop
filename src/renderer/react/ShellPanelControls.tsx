@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import type { Project } from '../types';
 
 type PanelState = {
   leftAvailable: boolean;
@@ -10,13 +11,14 @@ type PanelState = {
 };
 
 type Props = {
+  project?: Project | null;
   state: PanelState;
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onToggleBottom: () => void;
 };
 
-export function ShellPanelControls({ state, onToggleLeft, onToggleRight, onToggleBottom }: Props) {
+export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight, onToggleBottom }: Props) {
   const isMac = window.cuppet.native.platform === 'darwin';
   useEffect(() => {
     if (!isMac) return;
@@ -39,6 +41,25 @@ export function ShellPanelControls({ state, onToggleLeft, onToggleRight, onToggl
             <LeftPanelIcon />
           </button>
         </div>
+
+        {project && (
+          <div className="shell-panel-header-center">
+            <span className="project-header-name" title={project.path || project.name}>
+              {project.name}
+            </span>
+            {project.branch && (
+              <span className="project-branch-badge" title={`Git branch: ${project.branch}`}>
+                <GitBranchIcon />
+                <span>{project.branch}</span>
+              </span>
+            )}
+            {project.dirty && (
+              <span className="project-dirty-indicator" title="Uncommitted changes in workspace" aria-label="Uncommitted changes">
+                ●
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="shell-panel-controls shell-panel-controls-right">
           <button
@@ -64,7 +85,16 @@ export function ShellPanelControls({ state, onToggleLeft, onToggleRight, onToggl
         </div>
       </header>
     );
-  }, [isMac, state, onToggleLeft, onToggleRight, onToggleBottom]);
+  }, [isMac, project, state, onToggleLeft, onToggleRight, onToggleBottom]);
+}
+
+function GitBranchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M4.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM4.5 14a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM11.5 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M4.5 5v6M11.5 7c0 2-2 3-5 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
 }
 
 function LeftPanelIcon() {
