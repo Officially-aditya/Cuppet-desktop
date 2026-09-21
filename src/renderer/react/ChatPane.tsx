@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
+import { ModePicker } from './ModePicker';
 import { ProjectTerminal } from './ProjectTerminal';
 import { DiffViewerModal, type DiffFile, CopyIcon, CheckIcon } from './DiffViewerModal';
 import { renderMarkdown } from './markdown';
@@ -356,17 +357,7 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
-            <select
-              className="composer-mode-select"
-              aria-label="Mode"
-              title="Mode"
-              value={activeMode}
-              onChange={(event) => void onModeChange(event.currentTarget.value as ComposerMode)}
-            >
-              <option value="build">Build</option>
-              <option value="plan">Plan</option>
-              <option value="orchestrate">Orchestrate</option>
-            </select>
+            <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
             {running ? (

@@ -1,39 +1,151 @@
-/* Keep the composer mode picker visually aligned with the model picker trigger. */
-.composer-mode-select{
-  width:auto;
-  min-width:0;
-  height:30px;
-  min-height:30px;
-  flex:0 0 auto;
-  border:0;
-  border-radius:7px;
-  background-color:transparent;
-  color:#8993a0;
-  padding:5px 24px 5px 7px;
-  font-size:11px;
-  line-height:20px;
-  outline:0;
-  box-shadow:none;
-  cursor:pointer;
-  -webkit-appearance:none;
-  appearance:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='m2.25 3.5 2.75 2.75L7.75 3.5' fill='none' stroke='%236f7986' stroke-width='1.15' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-position:right 8px center;
-  background-size:9px 9px;
-  background-repeat:no-repeat;
-  transition:background-color .12s ease,color .12s ease,box-shadow .12s ease;
+/* Custom Cuppet composer mode picker */
+.composer-mode-picker {
+  position: relative;
+  flex: 0 0 auto;
 }
-.composer-mode-select:hover{
-  border:0;
-  background-color:#20262e;
-  color:#e7ebf0;
+
+.composer-mode-trigger {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background-color: transparent;
+  color: #8993a0;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 20px;
+  outline: 0;
+  box-shadow: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
 }
-.composer-mode-select:focus,
-.composer-mode-select:focus-visible{
-  border:0;
-  background-color:transparent;
-  color:#e7ebf0;
-  outline:0;
-  box-shadow:0 0 0 2px rgba(130,145,165,.16);
+
+.composer-mode-trigger:hover,
+.composer-mode-picker.open .composer-mode-trigger {
+  background-color: #20262e;
+  color: #e7ebf0;
 }
-.composer-mode-select:disabled{opacity:.45;cursor:not-allowed}
+
+.composer-mode-trigger:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(130, 145, 165, .16);
+}
+
+.composer-mode-trigger:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.composer-mode-label {
+  font-weight: 550;
+}
+
+.composer-mode-chevron {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  color: #6f7986;
+  transition: transform .12s ease;
+}
+
+.composer-mode-picker.open .composer-mode-chevron {
+  transform: rotate(180deg);
+}
+
+.composer-mode-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 270;
+  width: 240px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(16, 20, 26, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  animation: cuppet-dropdown-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.composer-mode-menu-header {
+  padding: 4px 8px 6px;
+  color: #687382;
+  font-size: 9.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.composer-mode-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #cbd2dc;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color .1s ease, color .1s ease;
+}
+
+.composer-mode-option:hover,
+.composer-mode-option.active {
+  background: rgba(255, 255, 255, 0.07);
+  color: #f0f6fc;
+}
+
+.composer-mode-option.selected {
+  color: #ffffff;
+}
+
+.composer-mode-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-mode-option-text strong {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #e8ecf1;
+}
+
+.composer-mode-option-text small {
+  font-size: 10px;
+  color: #737e8b;
+  line-height: 1.35;
+}
+
+.composer-mode-option:hover .composer-mode-option-text small,
+.composer-mode-option.active .composer-mode-option-text small {
+  color: #8f9aa7;
+}
+
+.composer-mode-check {
+  flex: 0 0 auto;
+  color: #58a6ff;
+}
+
+@keyframes cuppet-dropdown-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

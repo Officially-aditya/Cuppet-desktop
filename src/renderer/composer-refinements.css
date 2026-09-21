@@ -62,8 +62,8 @@
 .composer-pause-button svg{width:18px;height:18px}
 
 /* Native-free inline chat rename surface. */
-.sidebar-rename-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.52)}
-.sidebar-rename-dialog{width:min(360px,calc(100vw - 40px));display:grid;gap:10px;padding:14px;border:1px solid #303741;border-radius:11px;background:#11161c;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.sidebar-rename-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px;background:rgba(4,6,9,.76);backdrop-filter:blur(14px) saturate(130%);-webkit-backdrop-filter:blur(14px) saturate(130%);animation:cuppet-backdrop-fade .18s ease-out}
+.sidebar-rename-dialog{width:min(360px,calc(100vw - 40px));display:grid;gap:10px;padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(17,22,28,.98);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 28px 70px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);animation:cuppet-modal-scale .2s cubic-bezier(.16,1,.3,1)}
 .sidebar-rename-dialog label{color:#e7ebf0;font-size:12px;font-weight:600}
 .sidebar-rename-dialog input{width:100%}
 .sidebar-rename-actions{display:flex;justify-content:flex-end;gap:7px}

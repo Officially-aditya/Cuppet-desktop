@@ -5,13 +5,16 @@
   height: min(780px, calc(100vh - 56px));
   display: flex;
   flex-direction: column;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background: rgba(13, 17, 23, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.06);
   overflow: hidden;
   color: #c9d1d9;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  animation: cuppet-modal-scale 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .diff-modal-header {
