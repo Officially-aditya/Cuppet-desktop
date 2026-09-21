@@ -60,7 +60,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cuppet.desktop.sidebar-collapsed') === '1');
-  const [memoryOpen, setMemoryOpen] = useState(true);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const sessions = useClientSessions();
   const running = useClientRunState();

@@ -57,7 +57,7 @@ const ROOT_NODE_PATH = '__cuppet_root__';
 
 export function TstMemorySidebar({ sessionId, projectName, running = false, open: openProp, onOpenChange }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(true);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
   const setOpen = useCallback((value: boolean | ((current: boolean) => boolean)) => {
     const next = typeof value === 'function' ? value(openProp ?? uncontrolledOpen) : value;
@@ -82,18 +82,19 @@ export function TstMemorySidebar({ sessionId, projectName, running = false, open
   }, [sessionId]);
 
   useEffect(() => {
+    if (!open) return;
     setSelectedPath(null);
     void refresh();
-  }, [refresh]);
+  }, [open, refresh]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !open) return;
     const interval = window.setInterval(() => void refresh(true), running ? 1800 : 7500);
     return () => window.clearInterval(interval);
-  }, [refresh, running, sessionId]);
+  }, [open, refresh, running, sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !open) return;
     let timer: number | null = null;
     const unsubscribe = window.cuppet.onEvent((event: any) => {
       if (!event || (event.sessionId && event.sessionId !== sessionId)) return;
@@ -106,18 +107,9 @@ export function TstMemorySidebar({ sessionId, projectName, running = false, open
       if (timer) window.clearTimeout(timer);
       unsubscribe?.();
     };
-  }, [refresh, sessionId]);
+  }, [open, refresh, sessionId]);
 
-  if (!sessionId) return null;
-
-  if (!open) {
-    return (
-      <button type="button" className="memory-sidebar-rail" title="Show TST memory" aria-label="Show TST memory" onClick={() => setOpen(true)}>
-        <MemoryIcon />
-        <span>Memory</span>
-      </button>
-    );
-  }
+  if (!sessionId || !open) return null;
 
   const files = Array.isArray(snapshot?.files) ? snapshot!.files! : [];
   const edits = Array.isArray(snapshot?.editedFiles) ? snapshot!.editedFiles! : [];
