@@ -56,7 +56,7 @@ export function App() {
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
   const [modal, setModal] = useState<ModalName>(null);
-  const [settingsSection, setSettingsSection] = useState('account');
+  const [settingsSection, setSettingsSection] = useState('general');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cuppet.desktop.sidebar-collapsed') === '1');
@@ -362,7 +362,7 @@ export function App() {
         onNewProjectChat={(projectId) => startDraft(projectId)}
         onSearch={() => setModal('search')}
         onRemote={() => setModal('remote')}
-        onSettings={() => { setSettingsSection('account'); setModal('settings'); }}
+        onSettings={() => { setSettingsSection('general'); setModal('settings'); }}
         onAddProject={() => setModal('add-project')}
         onProject={selectProject}
         onSession={openSession}

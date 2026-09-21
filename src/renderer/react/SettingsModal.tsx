@@ -31,7 +31,7 @@ type Props = {
 };
 
 export function SettingsModal({ provider, initialSection, onClose, onSaved, onOpenRemote, onError }: Props) {
-  const [section, setSection] = useState(SECTION_META[initialSection] ? initialSection : 'account');
+  const [section, setSection] = useState(SECTION_META[initialSection] ? initialSection : 'general');
   const [current, setCurrent] = useState<ProviderSettings | null>(provider);
   const [providerID, setProviderID] = useState(provider?.providerID || provider?.primary?.providerID || provider?.presetID || 'openai');
   const [apiKey, setApiKey] = useState('');
@@ -204,7 +204,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     notifyProviderSettingsChanged();
   }, [onSaved]);
 
-  const [title, description] = SECTION_META[section] ?? SECTION_META.account;
+  const [title, description] = SECTION_META[section] ?? SECTION_META.general;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
