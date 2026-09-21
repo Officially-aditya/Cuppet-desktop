@@ -109,8 +109,7 @@ export class ToolRuntime {
         return permission;
       } });
       const output = capText(result.output ?? '', MAX_TOOL_OUTPUT);
-      this.#db.finishToolExecution(executionId, { status: 'complete', output, permissionSource });
-      this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation) });
+      this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), output, message: output });
       if (result.details?.prepared !== true) await this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? '').catch(() => undefined);
       return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {

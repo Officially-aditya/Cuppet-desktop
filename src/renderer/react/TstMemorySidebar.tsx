@@ -152,19 +152,30 @@ export function TstMemorySidebar({ sessionId, projectName, running = false, open
       </div>
 
       <div className="memory-graph-stage">
-        {snapshot?.available === false ? (
+        <button
+          type="button"
+          className="memory-floating-close-button"
+          aria-label="Close project graph"
+          title="Close project graph"
+          onClick={() => setOpen(false)}
+        >
+          ×
+        </button>
+        {snapshot?.available === false && !edits.length ? (
           <div className="memory-graph-empty">
             <MemoryIcon />
             <strong>TST graph unavailable</strong>
             <span>{snapshot.reason || 'Open a project-bound chat to visualize memory.'}</span>
+            <button type="button" className="memory-dismiss-btn" onClick={() => setOpen(false)}>Close graph</button>
           </div>
         ) : files.length || edits.length ? (
-          <MemoryGraphCanvas files={files} edits={edits} selectedPath={selectedPath} onSelect={setSelectedPath} />
+          <MemoryGraphCanvas files={files.length > 0 ? files : edits.map((e) => e.path)} edits={edits} selectedPath={selectedPath} onSelect={setSelectedPath} />
         ) : (
           <div className="memory-graph-empty">
             <MemoryIcon />
             <strong>{loading ? 'Loading project memory…' : 'Building project memory…'}</strong>
             <span>Nodes appear as TST indexes files and Cuppet touches the workspace.</span>
+            <button type="button" className="memory-dismiss-btn" onClick={() => setOpen(false)}>Close graph</button>
           </div>
         )}
         <div className="memory-graph-legend" aria-hidden="true">

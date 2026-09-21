@@ -32,6 +32,7 @@ type Props = {
   onArchiveSession: (session: Session) => void | Promise<void>;
   onDeleteSession: (session: Session) => void | Promise<void>;
   onOpenProjectGraph?: (projectId: string) => void;
+  isGraphOpen?: boolean;
 };
 
 export function Sidebar(props: Props) {
@@ -384,7 +385,9 @@ function ContextMenu(props: Props & { menu: { kind: 'project' | 'session'; id: s
     <div className="nav-context-menu react-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
       {project && <>
         {onOpenProjectGraph && (
-          <button type="button" onClick={() => run(() => onOpenProjectGraph(project.id))}>Project graph</button>
+          <button type="button" onClick={() => run(() => onOpenProjectGraph(project.id))}>
+            {props.isGraphOpen && props.selectedProjectId === project.id ? 'Hide project graph' : 'Show project graph'}
+          </button>
         )}
         <button type="button" onClick={() => run(() => onRenameProject(project))}>Rename project</button>
         <hr />

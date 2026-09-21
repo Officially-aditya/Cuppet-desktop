@@ -406,6 +406,46 @@ function MessageView({
       const outputText = item.details || '';
       if (outputText.includes('--- ') && outputText.includes('+++ ')) {
         diffAccumulator += (diffAccumulator ? '\n' : '') + outputText;
+      } else if (normalized === 'workspace_edit') {
+        const p = String(args.path || targets[0] || '');
+        const oldText = String(args.old_text ?? '');
+        const newText = String(args.new_text ?? '');
+        if (p && (oldText || newText)) {
+          const oldLines = oldText ? oldText.split('\n').map((l) => `-${l}`).join('\n') : '';
+          const newLines = newText ? newText.split('\n').map((l) => `+${l}`).join('\n') : '';
+          const chunk = `--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
+          diffAccumulator += (diffAccumulator ? '\n' : '') + chunk;
+          const file = filesMap.get(p);
+          if (file) file.diff = chunk;
+        }
+      } else if (normalized === 'workspace_write') {
+        const p = String(args.path || targets[0] || '');
+        const content = String(args.content ?? '');
+        if (p) {
+          const lines = content.split('\n').map((l) => `+${l}`).join('\n');
+          const chunk = `--- /dev/null\n+++ b/${p}\n@@ -0,0 +1,${lines.length} @@\n${lines}`;
+          diffAccumulator += (diffAccumulator ? '\n' : '') + chunk;
+          const file = filesMap.get(p);
+          if (file) {
+            file.diff = chunk;
+            file.status = 'added';
+          }
+        }
+      } else if (normalized === 'tst_edit_batch') {
+        const operations = Array.isArray(args.operations) ? args.operations : [];
+        for (const op of operations) {
+          const p = String(op.target?.path || op.path || '');
+          const expected = String(op.target?.expected_source || op.expected_source || op.old_text || '');
+          const next = String(op.source || op.new_source || op.new_text || '');
+          if (p && (expected || next)) {
+            const oldLines = expected ? expected.split('\n').map((l) => `-${l}`).join('\n') : '';
+            const newLines = next ? next.split('\n').map((l) => `+${l}`).join('\n') : '';
+            const chunk = `--- a/${p}\n+++ b/${p}\n@@ ${op.op || 'edit'} @@\n${oldLines}${oldLines && newLines ? '\n' : ''}${newLines}`;
+            diffAccumulator += (diffAccumulator ? '\n' : '') + chunk;
+            const file = filesMap.get(p);
+            if (file && !file.diff) file.diff = chunk;
+          }
+        }
       }
     }
 

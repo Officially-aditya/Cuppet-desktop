@@ -201,64 +201,54 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                   </div>
                 </div>
 
-                {viewMode === 'split' ? (
+                {activeFile.lines.length === 0 ? (
+                  <EmptyFileDiffState file={activeFile} onOpenInEditor={projectId ? openInEditor : undefined} />
+                ) : viewMode === 'split' ? (
                   <div className="diff-split-container">
                     <div className="diff-split-header-row">
                       <div className="diff-split-col-header diff-split-left-header">Base (Original)</div>
                       <div className="diff-split-col-header diff-split-right-header">Modified (Current)</div>
                     </div>
                     <div className="diff-split-lines">
-                      {splitRows.length > 0 ? (
-                        splitRows.map((row, rowIdx) => {
-                          if (row.type === 'hunk') {
-                            return (
-                              <div key={rowIdx} className="diff-split-hunk-row">
-                                <span className="diff-split-hunk-text">{row.hunkText}</span>
-                              </div>
-                            );
-                          }
+                      {splitRows.map((row, rowIdx) => {
+                        if (row.type === 'hunk') {
                           return (
-                            <div key={rowIdx} className="diff-split-row">
-                              <div className={`diff-split-cell diff-split-left ${row.left?.type || 'empty'}`}>
-                                <span className="diff-split-num">{row.left?.num ?? ''}</span>
-                                <span className="diff-split-sign">{row.left?.type === 'del' ? '−' : ''}</span>
-                                <span className="diff-split-code">{row.left?.text ?? ''}</span>
-                              </div>
-                              <div className={`diff-split-cell diff-split-right ${row.right?.type || 'empty'}`}>
-                                <span className="diff-split-num">{row.right?.num ?? ''}</span>
-                                <span className="diff-split-sign">{row.right?.type === 'add' ? '+' : ''}</span>
-                                <span className="diff-split-code">{row.right?.text ?? ''}</span>
-                              </div>
+                            <div key={rowIdx} className="diff-split-hunk-row">
+                              <span className="diff-split-hunk-text">{row.hunkText}</span>
                             </div>
                           );
-                        })
-                      ) : (
-                        <div className="diff-empty-state">
-                          <span>No line diff available for this file.</span>
-                        </div>
-                      )}
+                        }
+                        return (
+                          <div key={rowIdx} className="diff-split-row">
+                            <div className={`diff-split-cell diff-split-left ${row.left?.type || 'empty'}`}>
+                              <span className="diff-split-num">{row.left?.num ?? ''}</span>
+                              <span className="diff-split-sign">{row.left?.type === 'del' ? '−' : ''}</span>
+                              <span className="diff-split-code">{row.left?.text ?? ''}</span>
+                            </div>
+                            <div className={`diff-split-cell diff-split-right ${row.right?.type || 'empty'}`}>
+                              <span className="diff-split-num">{row.right?.num ?? ''}</span>
+                              <span className="diff-split-sign">{row.right?.type === 'add' ? '+' : ''}</span>
+                              <span className="diff-split-code">{row.right?.text ?? ''}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
                   <div className="diff-lines-container">
-                    {activeFile.lines.length > 0 ? (
-                      activeFile.lines.map((line, lineIndex) => (
-                        <div key={lineIndex} className={`diff-line ${line.type}`}>
-                          <div className="diff-line-gutter">
-                            <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
-                            <span className="diff-line-num-new">{line.newNum ?? ''}</span>
-                          </div>
-                          <span className="diff-line-sign">
-                            {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
-                          </span>
-                          <span className="diff-line-text">{line.text}</span>
+                    {activeFile.lines.map((line, lineIndex) => (
+                      <div key={lineIndex} className={`diff-line ${line.type}`}>
+                        <div className="diff-line-gutter">
+                          <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
+                          <span className="diff-line-num-new">{line.newNum ?? ''}</span>
                         </div>
-                      ))
-                    ) : (
-                      <div className="diff-empty-state">
-                        <span>No line diff available for this file.</span>
+                        <span className="diff-line-sign">
+                          {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
+                        </span>
+                        <span className="diff-line-text">{line.text}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </>
@@ -269,6 +259,34 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
             )}
           </section>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyFileDiffState({ file, onOpenInEditor }: { file: ParsedFileDiff; onOpenInEditor?: () => void }) {
+  return (
+    <div className="diff-empty-state">
+      <div style={{ textAlign: 'center', padding: '32px 20px', maxWidth: '640px' }}>
+        <div style={{ fontSize: '15px', fontWeight: 600, color: '#f0f6fc', marginBottom: '8px' }}>
+          {file.status === 'added' ? 'New file created' : file.status === 'deleted' ? 'File deleted' : 'File modified'}
+        </div>
+        <p style={{ fontSize: '12px', color: '#8b949e', lineHeight: '1.6', margin: '0 0 16px' }}>
+          {file.raw
+            ? 'Detailed unified diff lines were not formatted, but raw content is shown below.'
+            : 'This file was modified in this turn. You can open it in your code editor to view the full file.'}
+        </p>
+        {file.raw && (
+          <div style={{ textAlign: 'left', background: '#090d12', border: '1px solid #21262d', borderRadius: '6px', padding: '10px 12px', overflow: 'auto', maxHeight: '300px', marginBottom: '16px' }}>
+            <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', color: '#c9d1d9', whiteSpace: 'pre-wrap' }}>{file.raw}</pre>
+          </div>
+        )}
+        {onOpenInEditor && (
+          <button type="button" className="diff-action-button" onClick={onOpenInEditor}>
+            <CodeIcon />
+            <span>Open {file.path.split('/').pop()} in editor</span>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -329,8 +347,9 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
     const chunks = raw.split(/(?=^--- )/m);
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
-      const pathMatch = chunk.match(/^--- [ab]\/(.*?)(?:\n|\r\n)\+\+\+ [ab]\/(.*?)(?:\n|\r\n)/m);
-      const filePath = pathMatch ? (pathMatch[2] || pathMatch[1]) : '';
+      const pathMatch = chunk.match(/--- (?:[ab]\/)?(\S+)[^\n\r]*[\r\n]+\+\+\+ (?:[ab]\/)?(\S+)/);
+      const rawPath = pathMatch ? (pathMatch[2] === '/dev/null' ? pathMatch[1] : pathMatch[2]) : '';
+      const filePath = rawPath.replace(/^[ab]\//, '');
       if (!filePath) continue;
 
       const lines = chunk.split(/\r?\n/);
@@ -347,6 +366,9 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
           if (match) {
             oldNum = parseInt(match[1], 10);
             newNum = parseInt(match[2], 10);
+          } else {
+            if (oldNum === 0) oldNum = 1;
+            if (newNum === 0) newNum = 1;
           }
           parsedLines.push({ type: 'hunk', text: line });
         } else if (line.startsWith('+')) {
@@ -372,7 +394,19 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
   }
 
   for (const item of fileList) {
-    if (!result.some((file) => file.path === item.path)) {
+    const existing = result.find((file) => file.path === item.path);
+    if (!existing) {
+      if (item.diff) {
+        const sub = parseDiff(item.diff, []);
+        if (sub.length > 0 && sub[0].lines.length > 0) {
+          result.push({
+            ...sub[0],
+            path: item.path,
+            status: item.status || sub[0].status,
+          });
+          continue;
+        }
+      }
       result.push({
         path: item.path,
         status: item.status || 'modified',

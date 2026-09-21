@@ -1,8 +1,15 @@
 .cuppet-shell-header .react-app{position:relative;padding-top:38px}
 .shell-panel-header{position:fixed;z-index:40;top:0;left:0;right:0;height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 76px;border-bottom:1px solid rgba(255,255,255,.055);background:rgba(8,10,13,.94);backdrop-filter:blur(16px);-webkit-app-region:drag;user-select:none}
-.shell-panel-header-center{display:flex;align-items:center;gap:8px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:#c9d1d9;-webkit-app-region:no-drag}
+.shell-panel-header-center{position:relative;display:flex;align-items:center;gap:8px;max-width:420px;font-size:11.5px;color:#c9d1d9;-webkit-app-region:no-drag}
 .project-header-name{font-weight:600;color:#f0f6fc}
-.project-header-button{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;margin:0;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;cursor:pointer;transition:background .1s ease,color .1s ease}.project-header-button:hover{background:rgba(255,255,255,.08);color:#fff}
+.project-header-button{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;margin:0;border:1px solid transparent;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer;transition:background .1s ease,color .1s ease,border-color .1s ease}
+.project-header-button:hover,.project-header-button.active{background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.1)}
+.project-header-chevron{transition:transform .14s ease;color:#8b949e}
+.project-header-chevron.open{transform:rotate(180deg)}
+.project-header-dropdown{position:absolute;top:32px;left:0;min-width:190px;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.6);padding:4px;z-index:100}
+.project-header-dropdown button{width:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;border-radius:6px;background:transparent;color:#c9d1d9;font-size:12px;text-align:left;cursor:pointer}
+.project-header-dropdown button:hover{background:#21262d;color:#f0f6fc}
+.project-header-dropdown svg{width:14px;height:14px;color:#8b949e;flex-shrink:0}
 .project-branch-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:4px;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px}
 .project-branch-badge svg{width:12px;height:12px;color:#58a6ff}
 .project-dirty-indicator{color:#d29922;font-size:10px;line-height:1}
@@ -31,9 +38,14 @@
 .cuppet-shell-header .memory-inspector-label{display:none}
 .cuppet-shell-header .memory-node-inspector strong{font-size:10px;line-height:14px;color:#d5e0ee}
 .cuppet-shell-header .memory-inspector-meta{margin-top:3px;font-size:8.5px;color:#738095}
-.cuppet-shell-header .memory-graph-empty svg,
-.cuppet-shell-header .memory-graph-empty span{display:none}
-.cuppet-shell-header .memory-graph-empty strong{font-size:10px;font-weight:500;color:#687383}
+.cuppet-shell-header .memory-graph-empty svg{display:none}
+.cuppet-shell-header .memory-graph-empty strong{font-size:11px;font-weight:600;color:#c9d1d9}
+.cuppet-shell-header .memory-graph-empty span{font-size:10px;color:#8b949e;line-height:1.4}
+
+.memory-floating-close-button{position:absolute;top:8px;right:8px;z-index:25;width:24px;height:24px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(13,17,23,.88);color:#8b949e;font-size:16px;line-height:1;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
+.memory-floating-close-button:hover{background:#21262d;color:#f0f6fc;border-color:rgba(255,255,255,.25)}
+.memory-dismiss-btn{margin-top:10px;padding:4px 12px;border:1px solid #30363d;border-radius:6px;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;transition:background .12s ease,color .12s ease}
+.memory-dismiss-btn:hover{background:#30363d;color:#f0f6fc}
 
 /* Terminal: no duplicate bottom disclosure bar. The titlebar button owns visibility. */
 .cuppet-shell-header .project-terminal.collapsed{height:0!important;border-top:0!important;overflow:hidden}
