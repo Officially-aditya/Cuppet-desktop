@@ -31,6 +31,7 @@ type Props = {
   onRenameSession: (session: Session) => void | Promise<void>;
   onArchiveSession: (session: Session) => void | Promise<void>;
   onDeleteSession: (session: Session) => void | Promise<void>;
+  onOpenProjectGraph?: (projectId: string) => void;
 };
 
 export function Sidebar(props: Props) {
@@ -370,7 +371,8 @@ function SessionRow({ session, title, active, onOpen, onMenu }: { session: Sessi
   );
 }
 
-function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onArchiveSession, onDeleteSession, onStartRenameSession }: Props & { menu: { kind: 'project' | 'session'; id: string; x: number; y: number }; onClose: () => void; onStartRenameSession: (session: Session) => void }) {
+function ContextMenu(props: Props & { menu: { kind: 'project' | 'session'; id: string; x: number; y: number }; onClose: () => void; onStartRenameSession: (session: Session) => void }) {
+  const { menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onArchiveSession, onDeleteSession, onStartRenameSession, onOpenProjectGraph } = props;
   const project = menu.kind === 'project' ? projects.find((item) => item.id === menu.id) : null;
   const session = menu.kind === 'session' ? sessions.find((item) => item.id === menu.id) : null;
   const run = (action: () => void | Promise<void>) => {
@@ -381,6 +383,9 @@ function ContextMenu({ menu, onClose, projects, sessions, onRenameProject, onRem
   return (
     <div className="nav-context-menu react-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
       {project && <>
+        {onOpenProjectGraph && (
+          <button type="button" onClick={() => run(() => onOpenProjectGraph(project.id))}>Project graph</button>
+        )}
         <button type="button" onClick={() => run(() => onRenameProject(project))}>Rename project</button>
         <hr />
         <button type="button" className="danger" onClick={() => run(() => onRemoveProject(project))}>Remove project</button>

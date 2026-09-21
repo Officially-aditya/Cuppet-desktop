@@ -29,15 +29,31 @@ type ParsedFileDiff = {
   raw: string;
 };
 
+type SplitCell = {
+  num?: number;
+  text: string;
+  type: 'del' | 'add' | 'ctx' | 'empty';
+};
+
+type SplitRow = {
+  type: 'hunk' | 'line';
+  hunkText?: string;
+  left?: SplitCell;
+  right?: SplitCell;
+};
+
 export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Props) {
   const parsedFiles = useMemo(() => parseDiff(rawDiff, files), [rawDiff, files]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
   const [copied, setCopied] = useState(false);
 
   const activeFile: ParsedFileDiff | null = parsedFiles[selectedIndex] ?? parsedFiles[0] ?? null;
 
   const totalAdditions = useMemo(() => parsedFiles.reduce((sum, file) => sum + file.additions, 0), [parsedFiles]);
   const totalDeletions = useMemo(() => parsedFiles.reduce((sum, file) => sum + file.deletions, 0), [parsedFiles]);
+
+  const splitRows = useMemo(() => (activeFile ? buildSplitRows(activeFile.lines) : []), [activeFile]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -102,6 +118,27 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
           </div>
 
           <div className="diff-modal-actions">
+            <div className="diff-view-mode-toggle" role="radiogroup" aria-label="Diff view mode">
+              <button
+                type="button"
+                className={`diff-toggle-btn${viewMode === 'split' ? ' active' : ''}`}
+                role="radio"
+                aria-checked={viewMode === 'split'}
+                onClick={() => setViewMode('split')}
+              >
+                Split
+              </button>
+              <button
+                type="button"
+                className={`diff-toggle-btn${viewMode === 'unified' ? ' active' : ''}`}
+                role="radio"
+                aria-checked={viewMode === 'unified'}
+                onClick={() => setViewMode('unified')}
+              >
+                Unified
+              </button>
+            </div>
+
             {projectId && activeFile && (
               <button
                 type="button"
@@ -164,26 +201,66 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                   </div>
                 </div>
 
-                <div className="diff-lines-container">
-                  {activeFile.lines.length > 0 ? (
-                    activeFile.lines.map((line, lineIndex) => (
-                      <div key={lineIndex} className={`diff-line ${line.type}`}>
-                        <div className="diff-line-gutter">
-                          <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
-                          <span className="diff-line-num-new">{line.newNum ?? ''}</span>
-                        </div>
-                        <span className="diff-line-sign">
-                          {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
-                        </span>
-                        <span className="diff-line-text">{line.text}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="diff-empty-state">
-                      <span>No line diff available for this file.</span>
+                {viewMode === 'split' ? (
+                  <div className="diff-split-container">
+                    <div className="diff-split-header-row">
+                      <div className="diff-split-col-header diff-split-left-header">Base (Original)</div>
+                      <div className="diff-split-col-header diff-split-right-header">Modified (Current)</div>
                     </div>
-                  )}
-                </div>
+                    <div className="diff-split-lines">
+                      {splitRows.length > 0 ? (
+                        splitRows.map((row, rowIdx) => {
+                          if (row.type === 'hunk') {
+                            return (
+                              <div key={rowIdx} className="diff-split-hunk-row">
+                                <span className="diff-split-hunk-text">{row.hunkText}</span>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={rowIdx} className="diff-split-row">
+                              <div className={`diff-split-cell diff-split-left ${row.left?.type || 'empty'}`}>
+                                <span className="diff-split-num">{row.left?.num ?? ''}</span>
+                                <span className="diff-split-sign">{row.left?.type === 'del' ? '−' : ''}</span>
+                                <span className="diff-split-code">{row.left?.text ?? ''}</span>
+                              </div>
+                              <div className={`diff-split-cell diff-split-right ${row.right?.type || 'empty'}`}>
+                                <span className="diff-split-num">{row.right?.num ?? ''}</span>
+                                <span className="diff-split-sign">{row.right?.type === 'add' ? '+' : ''}</span>
+                                <span className="diff-split-code">{row.right?.text ?? ''}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="diff-empty-state">
+                          <span>No line diff available for this file.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="diff-lines-container">
+                    {activeFile.lines.length > 0 ? (
+                      activeFile.lines.map((line, lineIndex) => (
+                        <div key={lineIndex} className={`diff-line ${line.type}`}>
+                          <div className="diff-line-gutter">
+                            <span className="diff-line-num-old">{line.oldNum ?? ''}</span>
+                            <span className="diff-line-num-new">{line.newNum ?? ''}</span>
+                          </div>
+                          <span className="diff-line-sign">
+                            {line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''}
+                          </span>
+                          <span className="diff-line-text">{line.text}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="diff-empty-state">
+                        <span>No line diff available for this file.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div className="diff-empty-state">
@@ -197,12 +274,58 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
   );
 }
 
+function buildSplitRows(lines: ParsedDiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let delBuffer: ParsedDiffLine[] = [];
+  let addBuffer: ParsedDiffLine[] = [];
+
+  const flushBuffers = () => {
+    if (delBuffer.length === 0 && addBuffer.length === 0) return;
+    const count = Math.max(delBuffer.length, addBuffer.length);
+    for (let i = 0; i < count; i++) {
+      const del = delBuffer[i];
+      const add = addBuffer[i];
+      rows.push({
+        type: 'line',
+        left: del
+          ? { num: del.oldNum, text: del.text, type: 'del' }
+          : { text: '', type: 'empty' },
+        right: add
+          ? { num: add.newNum, text: add.text, type: 'add' }
+          : { text: '', type: 'empty' },
+      });
+    }
+    delBuffer = [];
+    addBuffer = [];
+  };
+
+  for (const line of lines) {
+    if (line.type === 'hunk') {
+      flushBuffers();
+      rows.push({ type: 'hunk', hunkText: line.text });
+    } else if (line.type === 'del') {
+      delBuffer.push(line);
+    } else if (line.type === 'add') {
+      addBuffer.push(line);
+    } else if (line.type === 'ctx') {
+      flushBuffers();
+      rows.push({
+        type: 'line',
+        left: { num: line.oldNum, text: line.text, type: 'ctx' },
+        right: { num: line.newNum, text: line.text, type: 'ctx' },
+      });
+    }
+  }
+
+  flushBuffers();
+  return rows;
+}
+
 function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
   const result: ParsedFileDiff[] = [];
   const raw = rawDiff.trim();
 
   if (raw) {
-    // Standard git / unified diff chunks split by '--- '
     const chunks = raw.split(/(?=^--- )/m);
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
@@ -248,7 +371,6 @@ function parseDiff(rawDiff: string, fileList: DiffFile[]): ParsedFileDiff[] {
     }
   }
 
-  // Merge any files from fileList not found in the raw diff
   for (const item of fileList) {
     if (!result.some((file) => file.path === item.path)) {
       result.push({

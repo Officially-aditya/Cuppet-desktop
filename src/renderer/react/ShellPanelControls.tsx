@@ -4,8 +4,8 @@ import type { Project } from '../types';
 type PanelState = {
   leftAvailable: boolean;
   leftOpen: boolean;
-  rightAvailable: boolean;
-  rightOpen: boolean;
+  rightAvailable?: boolean;
+  rightOpen?: boolean;
   bottomAvailable: boolean;
   bottomOpen: boolean;
 };
@@ -14,7 +14,7 @@ type Props = {
   project?: Project | null;
   state: PanelState;
   onToggleLeft: () => void;
-  onToggleRight: () => void;
+  onToggleRight?: () => void;
   onToggleBottom: () => void;
 };
 
@@ -25,6 +25,7 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
     document.documentElement.classList.add('cuppet-shell-header');
     return () => document.documentElement.classList.remove('cuppet-shell-header');
   }, [isMac]);
+
   return useMemo(() => {
     if (!isMac) return null;
     return (
@@ -44,9 +45,17 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
 
         {project && (
           <div className="shell-panel-header-center">
-            <span className="project-header-name" title={project.path || project.name}>
-              {project.name}
-            </span>
+            <button
+              type="button"
+              className="project-header-button"
+              title={`Project: ${project.name}${onToggleRight ? ' · Click for project graph' : ''}`}
+              aria-label={`Project: ${project.name}${onToggleRight ? ' · Click for project graph' : ''}`}
+              onClick={onToggleRight}
+            >
+              <span className="project-header-name">
+                {project.name}
+              </span>
+            </button>
             {project.branch && (
               <span className="project-branch-badge" title={`Git branch: ${project.branch}`}>
                 <GitBranchIcon />
@@ -62,16 +71,6 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
         )}
 
         <div className="shell-panel-controls shell-panel-controls-right">
-          <button
-            type="button"
-            className={`shell-panel-button${state.rightOpen ? ' active' : ''}`}
-            aria-label={state.rightOpen ? 'Hide project graph' : 'Show project graph'}
-            title={state.rightOpen ? 'Hide project graph' : 'Show project graph'}
-            disabled={!state.rightAvailable}
-            onClick={onToggleRight}
-          >
-            <RightPanelIcon />
-          </button>
           <button
             type="button"
             className={`shell-panel-button${state.bottomOpen ? ' active' : ''}`}
@@ -99,10 +98,6 @@ function GitBranchIcon() {
 
 function LeftPanelIcon() {
   return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="13" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.25"/><path d="M7 3v12" stroke="currentColor" strokeWidth="1.25"/></svg>;
-}
-
-function RightPanelIcon() {
-  return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="13" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.25"/><path d="M11 3v12" stroke="currentColor" strokeWidth="1.25"/></svg>;
 }
 
 function BottomPanelIcon() {

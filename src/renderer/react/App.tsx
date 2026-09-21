@@ -371,6 +371,10 @@ export function App() {
         onRenameSession={renameSession}
         onArchiveSession={archiveSession}
         onDeleteSession={deleteSession}
+        onOpenProjectGraph={(projectId) => {
+          selectProject(projectId);
+          setMemoryOpen(true);
+        }}
       />
       <ChatPane
         session={active}

@@ -453,7 +453,20 @@ function MessageView({
         <div className="message-content">{content}</div>
       )}
       {editedFiles.length > 0 && !live && (
-        <div className="turn-diff-card" aria-label="Turn code changes">
+        <div
+          role="button"
+          tabIndex={0}
+          className="turn-diff-card"
+          aria-label={`Inspect ${editedFiles.length} modified ${editedFiles.length === 1 ? 'file' : 'files'}`}
+          title="Click to view code changes in split diff viewer"
+          onClick={() => onInspectDiff?.(editedFiles, rawDiff)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onInspectDiff?.(editedFiles, rawDiff);
+            }
+          }}
+        >
           <div className="turn-diff-info">
             <svg className="turn-diff-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M5.5 4 2 8l3.5 4M10.5 4l3.5 4-3.5 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -467,14 +480,11 @@ function MessageView({
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            className="turn-diff-inspect-btn"
-            title="Inspect changes in diff viewer"
-            onClick={() => onInspectDiff?.(editedFiles, rawDiff)}
-          >
-            Inspect changes
-          </button>
+          <span className="turn-diff-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+              <path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
         </div>
       )}
       {status && <div className={`message-status${message.status === 'error' ? ' error' : ''}`}>{status}</div>}

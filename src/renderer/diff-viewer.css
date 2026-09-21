@@ -1,8 +1,8 @@
-/* Unified Diff Viewer Styling for Cuppet Desktop (inspired by T3 Code / GitHub) */
+/* Diff Viewer Styling for Cuppet Desktop (Unified & Split View) */
 
 .diff-modal-dialog {
-  width: min(1040px, calc(100vw - 48px));
-  height: min(760px, calc(100vh - 56px));
+  width: min(1200px, calc(100vw - 40px));
+  height: min(780px, calc(100vh - 56px));
   display: flex;
   flex-direction: column;
   background: #0d1117;
@@ -63,6 +63,38 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.diff-view-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.diff-toggle-btn {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b949e;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.diff-toggle-btn:hover {
+  color: #f0f6fc;
+}
+
+.diff-toggle-btn.active {
+  background: #21262d;
+  color: #f0f6fc;
+  font-weight: 600;
 }
 
 .diff-action-button {
@@ -229,6 +261,7 @@
   color: #f0f6fc;
 }
 
+/* Unified Diff Lines */
 .diff-lines-container {
   flex: 1;
   min-height: 0;
@@ -252,50 +285,59 @@
 
 .diff-line-gutter {
   display: flex;
-  user-select: none;
   flex-shrink: 0;
-  width: 90px;
-  color: #484f58;
-  text-align: right;
-  padding: 0 10px;
-  background: rgba(0, 0, 0, 0.15);
+  user-select: none;
+  background: #090d12;
+  border-right: 1px solid #21262d;
+  font-size: 11px;
+  color: #6e7681;
 }
 
 .diff-line-num-old,
 .diff-line-num-new {
-  width: 38px;
-  display: inline-block;
+  width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  line-height: 20px;
+}
+
+.diff-line-num-old {
+  border-right: 1px solid #1c2128;
 }
 
 .diff-line-sign {
-  width: 22px;
-  text-align: center;
+  width: 20px;
   flex-shrink: 0;
+  text-align: center;
   user-select: none;
   font-weight: 600;
+  line-height: 20px;
 }
 
 .diff-line-text {
   flex: 1;
-  padding-right: 16px;
+  padding: 0 8px 0 4px;
   white-space: pre;
+  line-height: 20px;
 }
 
-/* Line Variants */
 .diff-line.hunk {
   background: rgba(56, 139, 253, 0.1);
   color: #79c0ff;
-  margin: 6px 0;
+  font-size: 11px;
+  font-style: italic;
+  padding: 3px 12px;
+  border-top: 1px solid rgba(56, 139, 253, 0.2);
+  border-bottom: 1px solid rgba(56, 139, 253, 0.2);
 }
 
-.diff-line.hunk .diff-line-gutter {
-  color: #58a6ff;
-  opacity: 0.6;
+.diff-line.ctx {
+  color: #c9d1d9;
 }
 
 .diff-line.add {
   background: rgba(46, 160, 67, 0.15);
-  color: #7ee787;
+  color: #aff5b4;
 }
 
 .diff-line.add .diff-line-gutter {
@@ -321,6 +363,147 @@
   color: #f85149;
 }
 
+/* Split View Layout */
+.diff-split-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diff-split-header-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.diff-split-col-header {
+  padding: 6px 14px;
+}
+
+.diff-split-left-header {
+  border-right: 1px solid #21262d;
+}
+
+.diff-split-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+  background: #0d1117;
+}
+
+.diff-split-hunk-row {
+  padding: 4px 12px;
+  background: rgba(56, 139, 253, 0.1);
+  color: #79c0ff;
+  font-size: 11px;
+  font-style: italic;
+  border-top: 1px solid rgba(56, 139, 253, 0.2);
+  border-bottom: 1px solid rgba(56, 139, 253, 0.2);
+}
+
+.diff-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: 100%;
+  width: max-content;
+}
+
+.diff-split-row:hover {
+  filter: brightness(1.06);
+}
+
+.diff-split-cell {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border-right: 1px solid #21262d;
+}
+
+.diff-split-cell:last-child {
+  border-right: none;
+}
+
+.diff-split-num {
+  width: 44px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  text-align: right;
+  color: #6e7681;
+  background: #090d12;
+  border-right: 1px solid #21262d;
+  user-select: none;
+}
+
+.diff-split-sign {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+}
+
+.diff-split-code {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px 0 4px;
+  white-space: pre;
+  color: #c9d1d9;
+}
+
+/* Split cell states */
+.diff-split-cell.del {
+  background: rgba(248, 81, 73, 0.14);
+}
+
+.diff-split-cell.del .diff-split-num {
+  background: rgba(248, 81, 73, 0.22);
+  color: #f85149;
+}
+
+.diff-split-cell.del .diff-split-sign {
+  color: #f85149;
+}
+
+.diff-split-cell.del .diff-split-code {
+  color: #ffa198;
+}
+
+.diff-split-cell.add {
+  background: rgba(46, 160, 67, 0.14);
+}
+
+.diff-split-cell.add .diff-split-num {
+  background: rgba(46, 160, 67, 0.22);
+  color: #3fb950;
+}
+
+.diff-split-cell.add .diff-split-sign {
+  color: #3fb950;
+}
+
+.diff-split-cell.add .diff-split-code {
+  color: #aff5b4;
+}
+
+.diff-split-cell.empty {
+  background: #090d12;
+}
+
+.diff-split-cell.empty .diff-split-num {
+  background: #070a0e;
+}
+
 .diff-empty-state {
   display: grid;
   place-items: center;
@@ -329,18 +512,36 @@
   font-size: 13px;
 }
 
-/* Turn Diff Summary in Chat Message */
+/* Turn Diff Summary in Chat Message - Clickable row */
 .turn-diff-card {
   margin: 8px 0;
-  padding: 8px 12px;
+  padding: 8px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: #11161d;
-  border: 1px solid #272f3a;
+  background: #0d1117;
+  border: 1px solid #21262d;
   border-radius: 8px;
   font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.turn-diff-card:hover {
+  background: #161b22;
+  border-color: #38414e;
+}
+
+.turn-diff-card:active {
+  background: #1c222b;
+}
+
+.turn-diff-card:focus-visible {
+  outline: 0;
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
 }
 
 .turn-diff-info {
@@ -367,23 +568,17 @@
   font-size: 11px;
 }
 
-.turn-diff-inspect-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 500;
-  color: #58a6ff;
-  background: rgba(56, 139, 253, 0.1);
-  border: 1px solid rgba(56, 139, 253, 0.28);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+.turn-diff-chevron {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: #6e7681;
+  flex-shrink: 0;
+  transition: transform 0.12s ease, color 0.12s ease;
 }
 
-.turn-diff-inspect-btn:hover {
-  background: rgba(56, 139, 253, 0.2);
-  border-color: #58a6ff;
-  color: #79c0ff;
+.turn-diff-card:hover .turn-diff-chevron {
+  color: #c9d1d9;
+  transform: translateX(2px);
 }
