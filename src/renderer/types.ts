@@ -393,7 +393,18 @@ export type CuppetApi = {
     models: (options?: { model?: string }) => Promise<ProviderModelCatalog>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
+  sandbox: {
+    status: () => Promise<SandboxStatus>;
+  };
   onEvent: (handler: (event: RuntimeEvent) => void) => () => void;
+};
+
+export type SandboxStatus = {
+  available: boolean;
+  driverName: string;
+  platform: string;
+  networkIsolation: boolean;
+  credentialProtection: boolean;
 };
 
 declare global { interface Window { cuppet: CuppetApi } }

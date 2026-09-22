@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, Session, TokenUsageSummary } from '../types';
+import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, SandboxStatus, Session, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
@@ -9,6 +9,7 @@ import { providerStatusPresentation } from './provider-status-presentation';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
+  security: ['Security & Sandbox', 'Inspect local OS kernel sandbox containment and credential protection.'],
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
@@ -44,6 +45,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   const [usageLoading, setUsageLoading] = useState(false);
   const [compact, setCompact] = useState(localStorage.getItem(PREF_COMPACT) === '1');
   const [reduceMotion, setReduceMotion] = useState(localStorage.getItem(PREF_MOTION) === '1');
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
 
   const presets = current?.presets ?? provider?.presets ?? [];
   const selected = useMemo(() => presets.find((item) => item.id === providerID) ?? null, [presets, providerID]);
@@ -82,9 +84,20 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     finally { setUsageLoading(false); }
   }, [onError]);
 
-  useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); }, [refresh, refreshCodex, refreshDevices]);
+  const refreshSandbox = useCallback(async () => {
+    try {
+      if (window.cuppet.sandbox?.status) {
+        setSandboxStatus(await window.cuppet.sandbox.status());
+      }
+    } catch {
+      setSandboxStatus(null);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); void refreshSandbox(); }, [refresh, refreshCodex, refreshDevices, refreshSandbox]);
   useEffect(() => { void refreshCliStatus(); }, [refreshCliStatus]);
   useEffect(() => { if (section === 'usage') void refreshUsage(); }, [refreshUsage, section]);
+  useEffect(() => { if (section === 'security') void refreshSandbox(); }, [refreshSandbox, section]);
 
   useEffect(() => {
     document.body.classList.toggle('compact-sidebar', compact);
@@ -220,6 +233,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
               {section === 'general' && <GeneralPanel />}
+              {section === 'security' && <SecurityPanel sandboxStatus={sandboxStatus} />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={activateProvider} onApiKey={setApiKey} onApiKeyCommit={persistApiKey} onReset={resetProvider} onModelSaved={modelSaved} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
@@ -464,6 +478,66 @@ function UsageStat({ label, value, strong = false }: { label: string; value: str
 
 function DevicesPanel({ devices, onOpenRemote }: { devices: RemoteDevice[]; onOpenRemote: () => void }) {
   return <div className="settings-card"><div className="settings-card-heading"><div><h3>Connected devices</h3><p>Devices paired through Cuppet Remote.</p></div><button type="button" className="ghost-button settings-action-button" onClick={onOpenRemote}>Open Remote</button></div><div className="settings-device-list">{devices.length ? devices.map((device) => <div className="settings-row" key={device.deviceId}><div><strong>{device.name || 'Cuppet device'}</strong><span>{device.deviceId.slice(0, 18)}</span></div></div>) : <div className="settings-empty">No paired devices.</div>}</div></div>;
+}
+
+function SecurityPanel({ sandboxStatus }: { sandboxStatus: SandboxStatus | null }) {
+  const driverLabel = sandboxStatus
+    ? sandboxStatus.driverName === 'mac-seatbelt'
+      ? 'macOS Seatbelt (sandbox-exec)'
+      : sandboxStatus.driverName === 'linux-bwrap'
+        ? 'Linux Bubblewrap (bwrap)'
+        : sandboxStatus.available
+          ? sandboxStatus.driverName
+          : 'None (Unsandboxed)'
+    : 'Checking…';
+
+  const isEnforced = Boolean(sandboxStatus?.available);
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-heading">
+        <div>
+          <h3>Kernel Sandbox Containment</h3>
+          <p>Local OS-level security boundaries applied to child commands and tools executed by Cuppet.</p>
+        </div>
+        <span className={`settings-status-pill${isEnforced ? '' : ' muted'}`}>
+          {isEnforced ? 'Enforced' : sandboxStatus ? 'Inactive' : 'Checking…'}
+        </span>
+      </div>
+
+      <div className="settings-row">
+        <div>
+          <strong>Sandboxing Engine</strong>
+          <span>{driverLabel}</span>
+        </div>
+        <span className="settings-value">{isEnforced ? 'Active' : 'Not Active'}</span>
+      </div>
+
+      <div className="settings-row">
+        <div>
+          <strong>File Write Confinement</strong>
+          <span>Restricted to project root and temporary directories. Modification of system or parent paths is blocked.</span>
+        </div>
+        <span className="settings-value">{isEnforced ? 'Project Root' : 'Unconfined'}</span>
+      </div>
+
+      <div className="settings-row">
+        <div>
+          <strong>Credential & Keychain Protection</strong>
+          <span>Strictly blocks child process reads to sensitive locations: ~/.ssh, ~/.aws, ~/.gnupg, and Keychain files.</span>
+        </div>
+        <span className="settings-value">{sandboxStatus?.credentialProtection ? 'Protected' : 'Standard'}</span>
+      </div>
+
+      <div className="settings-row">
+        <div>
+          <strong>Environment Sanitization</strong>
+          <span>Child processes receive a scrubbed environment allowlist. Cloud API keys, auth tokens, and sensitive env variables are automatically stripped.</span>
+        </div>
+        <span className="settings-value">Always Active</span>
+      </div>
+    </div>
+  );
 }
 
 function PrivacyPanel() {

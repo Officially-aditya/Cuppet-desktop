@@ -118,6 +118,9 @@ contextBridge.exposeInMainWorld('cuppet', {
     models: (options = {}) => ipcRenderer.invoke('cuppet:settings:models', options),
     save: (value) => ipcRenderer.invoke('cuppet:settings:save', value),
   },
+  sandbox: {
+    status: () => ipcRenderer.invoke('cuppet:sandbox:status'),
+  },
   onEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, payload) => callback(payload);

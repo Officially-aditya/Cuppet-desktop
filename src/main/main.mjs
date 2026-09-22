@@ -7,6 +7,7 @@ import { ProviderSettingsStore } from './provider-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
 import { ProjectTerminalManager } from './project-terminal-manager.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
+import { SandboxManager } from '../runtime/sandbox/sandbox-manager.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -129,6 +130,8 @@ function registerIpc() {
 
   ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
   ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
+  const sandbox = new SandboxManager();
+  ipcMain.handle('cuppet:sandbox:status', () => sandbox.getCapabilities());
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
   ipcMain.handle('cuppet:settings:models', (_event, value) => request('provider.models', {
     provider: settings.runtimeValue(),
