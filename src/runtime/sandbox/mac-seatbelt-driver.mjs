@@ -15,6 +15,20 @@ export async function buildMacSeatbeltProfile(policy) {
   const rawRoot = resolve(policy.projectRoot);
   const rawLiteral = JSON.stringify(rawRoot);
 
+  if (policy.fullAccess) {
+    return [
+      '(version 1)',
+      '(allow default)',
+      '(deny file-write-unlink)',
+      `(allow file-write-unlink (literal ${rootLiteral}))`,
+      `(allow file-write-unlink (subpath ${rootLiteral}))`,
+      ...(rawLiteral !== rootLiteral ? [
+        `(allow file-write-unlink (literal ${rawLiteral}))`,
+        `(allow file-write-unlink (subpath ${rawLiteral}))`,
+      ] : []),
+    ].join('\n');
+  }
+
   const writeAllowClauses = [
     `(allow file-write* (literal ${rootLiteral}))`,
     `(allow file-write* (subpath ${rootLiteral}))`,

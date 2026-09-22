@@ -4,6 +4,9 @@ import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isSafeAutoBashCommand } from './permissions.mjs';
 import { BackgroundProcessManager } from './background-process-manager.mjs';
+import { SandboxManager } from './sandbox/sandbox-manager.mjs';
+import { sanitizeEnvironment } from './sandbox/env-sanitizer.mjs';
+import { buildMacSeatbeltProfile } from './sandbox/mac-seatbelt-driver.mjs';
 
 const MAX_TOOL_STEPS = 64;
 const MAX_TOOL_OUTPUT = 128 * 1024;
@@ -14,9 +17,9 @@ const MAX_BATCH_READS = 12;
 const MAX_VALIDATION_COMMANDS = 8;
 
 export class ToolRuntime {
-  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #graphCache = new Map();
+  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #graphCache = new Map();
 
-  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, emit = () => {} }) {
+  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, sandboxManager = null, emit = () => {} }) {
     this.#tst = tst;
     this.#plans = planStore;
     this.#permissions = permissions;
@@ -26,6 +29,7 @@ export class ToolRuntime {
     this.#writer = writer;
     this.#externalTools = externalTools;
     this.#backgroundProcesses = backgroundProcesses ?? new BackgroundProcessManager();
+    this.#sandbox = sandboxManager ?? new SandboxManager();
     this.#emit = emit;
   }
 
@@ -170,11 +174,17 @@ export class ToolRuntime {
       if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
       const permission = await authorize({ action: 'bash', resources: [command], description: `Start background process in project: ${command.slice(0, 300)}` });
       if (signal?.aborted) throw abortError();
-      const spawnSpec = await shellSpawnSpec(command, projectRoot, permission.source === 'session-full-access');
+      const spawnSpec = await this.#sandbox.getSpawnSpec(command, {
+        projectRoot,
+        protectSensitiveCredentials: true,
+        offline: false,
+      }, { enabled: true });
       const started = await this.#backgroundProcesses.start({
-        ...spawnSpec,
+        command: spawnSpec.command,
+        args: spawnSpec.args,
+        shell: spawnSpec.shell,
         cwd: projectRoot,
-        env: safeShellEnvironment(),
+        env: spawnSpec.env,
         projectRoot,
         label: String(args.label ?? '').slice(0, 120),
       });
@@ -397,14 +407,22 @@ export class ToolRuntime {
     return this.#mutating(projectRoot, () => this.#bash(projectRoot, args, authorize, signal, mode));
   }
 
-  async #bash(projectRoot, args, authorize, signal) {
+  async #bash(projectRoot, args, authorize, signal, mode = 'build') {
     if (!projectRoot) throw new Error('bash requires a project-bound session');
     const command = String(args.command ?? '').trim();
     if (!command) throw new Error('command is required');
     if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
     const permission = await authorize({ action: 'bash', resources: [command], description: `Run shell command in project: ${command.slice(0, 300)}` });
     const timeoutMs = clamp(Number(args.timeout_ms) || 30000, 1000, 120000);
-    const executed = await runShell(command, projectRoot, timeoutMs, signal, { fullAccess: permission.source === 'session-full-access' });
+    const executed = await this.#sandbox.execute(command, projectRoot, {
+      projectRoot,
+      offline: mode === 'plan',
+      protectSensitiveCredentials: true,
+    }, {
+      timeoutMs,
+      signal,
+      enabled: true,
+    });
     const changed = isSafeAutoBashCommand(command) ? [] : await gitChangedPaths(projectRoot).catch(() => []);
     const output = [executed.stdout ? `stdout:\n${executed.stdout}` : '', executed.stderr ? `stderr:\n${executed.stderr}` : '', `exit code: ${executed.code}`].filter(Boolean).join('\n');
     if (executed.code !== 0) throw new Error(output);
@@ -613,70 +631,26 @@ async function suggestValidationCommands(projectRoot) {
   return [...new Set(suggestions)].slice(0, MAX_VALIDATION_COMMANDS);
 }
 
-export async function runShell(command, cwd, timeoutMs, signal, { fullAccess = false } = {}) {
-  const spawnSpec = await shellSpawnSpec(command, cwd, fullAccess);
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(spawnSpec.command, spawnSpec.args, { cwd, shell: spawnSpec.shell, env: safeShellEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = ''; let stderr = ''; let settled = false; let exited = false; let stdoutEnded = false; let stderrEnded = false; let exitCode = null; let killedSignal = null; let drainTimer = null; let forceTimer = null; let timedOut = false;
-    const append = (target, chunk) => capText(target + chunk.toString('utf8'), MAX_TOOL_OUTPUT);
-    const cleanup = () => { clearTimeout(timer); clearTimeout(drainTimer); clearTimeout(forceTimer); signal?.removeEventListener('abort', abortListener); };
-    const finish = () => {
-      if (settled || !exited) return;
-      settled = true; cleanup();
-      if (!stdoutEnded) child.stdout?.unref?.();
-      if (!stderrEnded) child.stderr?.unref?.();
-      if (signal?.aborted) return reject(abortError());
-      if (killedSignal && exitCode === null) return reject(new Error(`Command terminated by ${killedSignal}${timedOut ? ' (timeout)' : ''}`));
-      resolvePromise({ code: exitCode ?? 1, stdout, stderr });
-    };
-    const maybeFinish = () => { if (exited && stdoutEnded && stderrEnded) finish(); };
-    child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
-    child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
-    child.stdout.once('end', () => { stdoutEnded = true; maybeFinish(); });
-    child.stderr.once('end', () => { stderrEnded = true; maybeFinish(); });
-    const terminate = (timeout = false) => {
-      timedOut ||= timeout;
-      try { child.kill('SIGTERM'); } catch {}
-      forceTimer ??= setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 1000);
-      forceTimer.unref?.();
-    };
-    const timer = setTimeout(() => terminate(true), timeoutMs);
-    timer.unref?.();
-    const abortListener = () => terminate(false);
-    signal?.addEventListener('abort', abortListener, { once: true });
-    child.once('error', (error) => { if (settled) return; settled = true; cleanup(); reject(error); });
-    child.once('exit', (code, signalName) => {
-      if (settled) return;
-      exited = true; exitCode = code; killedSignal = signalName;
-      if (stdoutEnded && stderrEnded) return finish();
-      drainTimer = setTimeout(finish, 250);
-      drainTimer.unref?.();
-    });
+export async function runShell(command, cwd, timeoutMs, signal, { fullAccess = false, offline = false, protectSensitiveCredentials = true } = {}) {
+  const manager = new SandboxManager();
+  return manager.execute(command, cwd, {
+    projectRoot: cwd,
+    fullAccess,
+    offline,
+    protectSensitiveCredentials,
+  }, {
+    timeoutMs,
+    signal,
+    enabled: true,
   });
 }
-async function shellSpawnSpec(command, cwd, fullAccess) {
-  if (!fullAccess || process.platform !== 'darwin') return { command, args: [], shell: true };
-  return {
-    command: '/usr/bin/sandbox-exec',
-    args: ['-p', await fullAccessMacSandboxProfile(cwd), '/bin/sh', '-lc', command],
-    shell: false,
-  };
-}
+
 export async function fullAccessMacSandboxProfile(projectRoot) {
-  const root = await realpath(projectRoot).catch(() => resolve(projectRoot));
-  const literal = JSON.stringify(root);
-  return [
-    '(version 1)',
-    '(allow default)',
-    '(deny file-write-unlink)',
-    `(allow file-write-unlink (literal ${literal}))`,
-    `(allow file-write-unlink (subpath ${literal}))`,
-  ].join('\n');
+  return buildMacSeatbeltProfile({ projectRoot, protectSensitiveCredentials: false, offline: false });
 }
-function safeShellEnvironment() {
-  const output = { ...process.env };
-  for (const key of Object.keys(output)) if (/^CUPPET_.*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(key)) delete output[key];
-  return output;
+
+export function safeShellEnvironment(sourceEnv = process.env, overrides = {}) {
+  return sanitizeEnvironment(sourceEnv, overrides);
 }
 async function gitChangedPaths(cwd) {
   const result = await runShell('git status --porcelain=v1 -z', cwd, 10000);
