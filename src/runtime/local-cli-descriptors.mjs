@@ -5,9 +5,10 @@ const DESCRIPTORS = Object.freeze({
     mcpToolBridge: true,
     // OpenCode ACP is documented to use the credentials/configuration already
     // available to the normal CLI process. Preserve that authority verbatim.
-    // Cuppet constrains native execution through the dedicated permission overlay
-    // and supplies its own tools through the session-scoped MCP bridge; it must not
-    // rewrite OPENCODE_CONFIG_CONTENT or force a synthetic agent/mode.
+    // Cuppet constrains native execution through the ACP host bridge and supplies
+    // its own tools through the session-scoped MCP bridge; it must not inject
+    // OPENCODE_PERMISSION or rewrite OPENCODE_CONFIG_CONTENT which causes OpenCode's
+    // Console backend to reject free tier models.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({
@@ -138,28 +139,5 @@ function openCodeAcpEnvironment(inherited = process.env) {
   return {
     ...inherited,
     OPENCODE_DISABLE_AUTOUPDATE: '1',
-    OPENCODE_PERMISSION: JSON.stringify(openCodeCuppetPermissions()),
-  };
-}
-
-function openCodeCuppetPermissions() {
-  return {
-    '*': 'deny',
-    read: 'deny',
-    edit: 'deny',
-    glob: 'deny',
-    grep: 'deny',
-    list: 'deny',
-    bash: 'deny',
-    task: 'deny',
-    todowrite: 'deny',
-    question: 'deny',
-    webfetch: 'deny',
-    websearch: 'deny',
-    lsp: 'deny',
-    skill: 'deny',
-    external_directory: 'deny',
-    'cuppet-runtime_*': 'allow',
-    'cuppet_runtime_*': 'allow',
   };
 }

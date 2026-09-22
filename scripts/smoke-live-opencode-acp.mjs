@@ -25,12 +25,7 @@ assert.equal(environment.OPENCODE_CONFIG_CONTENT, inlineConfig, 'OpenCode inline
 assert.equal(environment.OPENCODE_SERVER_PASSWORD, 'provider-owned-secret-placeholder', 'OpenCode inherited auth environment was dropped');
 assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
 assert.equal(environment.CUPPET_OPENCODE_AGENT_ID, undefined, 'synthetic OpenCode agent authority leaked back into ACP');
-const permissions = JSON.parse(environment.OPENCODE_PERMISSION || '{}');
-for (const native of ['*', 'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill', 'external_directory']) {
-  assert.equal(permissions[native], 'deny', `OpenCode native ${native} permission is not denied`);
-}
-assert.equal(permissions['cuppet-runtime_*'], 'allow');
-assert.equal(permissions['cuppet_runtime_*'], 'allow');
+assert.equal(environment.OPENCODE_PERMISSION, undefined, 'OPENCODE_PERMISSION must not be injected as it breaks free tier');
 
 const projectRoot = await mkdtemp(join(tmpdir(), 'cuppet-opencode-acp-'));
 const toolSession = new CuppetMcpToolSession({ sessionId: 'live-smoke', backendId: 'opencode' });

@@ -26,7 +26,7 @@ test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge wi
   assert.equal(descriptor.requiredSessionSettings, undefined);
 });
 
-test('OpenCode ACP preserves CLI-owned config and auth while enforcing the native-tool permission overlay', () => {
+test('OpenCode ACP preserves CLI-owned config and auth without injecting artificial permissions', () => {
   const descriptor = localCliDescriptor('opencode');
   const configContent = `{
     // OpenCode owns this inline config, including JSONC syntax.
@@ -36,12 +36,10 @@ test('OpenCode ACP preserves CLI-owned config and auth while enforcing the nativ
   }`;
   const environment = descriptor.environment({
     OPENCODE_CONFIG_CONTENT: configContent,
-    OPENCODE_PERMISSION: JSON.stringify({ bash: 'allow', custom_tool: 'allow' }),
     OPENCODE_SERVER_PASSWORD: 'terminal-owned-password',
     OPENCODE_SERVER_USERNAME: 'terminal-owned-user',
     CUSTOM_PROVIDER_TOKEN: 'terminal-owned-token',
   });
-  const permission = JSON.parse(environment.OPENCODE_PERMISSION);
 
   assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
   assert.equal(environment.OPENCODE_CONFIG_CONTENT, configContent);
@@ -49,13 +47,7 @@ test('OpenCode ACP preserves CLI-owned config and auth while enforcing the nativ
   assert.equal(environment.OPENCODE_SERVER_PASSWORD, 'terminal-owned-password');
   assert.equal(environment.OPENCODE_SERVER_USERNAME, 'terminal-owned-user');
   assert.equal(environment.CUSTOM_PROVIDER_TOKEN, 'terminal-owned-token');
-
-  for (const native of ['*', 'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill', 'external_directory']) {
-    assert.equal(permission[native], 'deny');
-  }
-  assert.equal(permission['cuppet-runtime_*'], 'allow');
-  assert.equal(permission['cuppet_runtime_*'], 'allow');
-  assert.equal(permission.custom_tool, undefined);
+  assert.equal(environment.OPENCODE_PERMISSION, undefined);
 });
 
 test('OpenCode ACP never parses or rewrites inherited inline config', () => {

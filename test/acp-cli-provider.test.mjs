@@ -67,7 +67,7 @@ test('provider descriptors use their current official transport entrypoints', ()
   assert.equal(localCliDescriptor('antigravity')?.transport, 'managed-acp');
 });
 
-test('OpenCode ACP preserves user inline config instead of forcing a synthetic Cuppet mode', () => {
+test('OpenCode ACP preserves user inline config without injecting artificial permissions', () => {
   const descriptor = localCliDescriptor('opencode');
   const originalConfig = '{"provider":{"anthropic":{"options":{"baseURL":"https://example.invalid"}}}}';
   const environment = descriptor.environment({
@@ -79,10 +79,7 @@ test('OpenCode ACP preserves user inline config instead of forcing a synthetic C
   assert.equal(environment.CUPPET_OPENCODE_AGENT_ID, undefined);
   assert.equal(descriptor.requiredSessionSettings, undefined);
   assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, '1');
-  const permission = JSON.parse(environment.OPENCODE_PERMISSION);
-  assert.equal(permission['*'], 'deny');
-  assert.equal(permission['cuppet-runtime_*'], 'allow');
-  assert.equal(permission['cuppet_runtime_*'], 'allow');
+  assert.equal(environment.OPENCODE_PERMISSION, undefined);
 });
 
 test('stale persisted ACP model and effort fall back to provider defaults instead of bricking startup', async () => {
