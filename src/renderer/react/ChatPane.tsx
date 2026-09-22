@@ -708,7 +708,7 @@ function ToolIcon({ tool }: { tool: string }) {
       </svg>
     );
   }
-  if (normalized === 'tst_read' || normalized === 'workspace_read' || normalized === 'workspace_write') {
+  if (normalized === 'tst_read' || normalized === 'workspace_read' || normalized === 'workspace_write' || /(^|[_-])(read|write|file)($|[_-])/.test(normalized)) {
     return (
       <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
         <path d="M3.5 2.5h6l3.5 3.5v7.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3"/>
@@ -716,7 +716,7 @@ function ToolIcon({ tool }: { tool: string }) {
       </svg>
     );
   }
-  if (normalized === 'tst_explore' || normalized === 'cuppet_memory_search' || /search|grep|find|explore/.test(normalized)) {
+  if (normalized === 'tst_explore' || normalized === 'cuppet_memory_search' || /search|grep|find|explore|glob|locate/.test(normalized)) {
     return (
       <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
         <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3"/>
@@ -996,6 +996,7 @@ function toolCommand(args: Record<string, unknown>, compact = true) {
 
 function humanToolLabel(value: string) {
   const normalized = String(value || 'tool')
+    .replace(/^cuppet[_-]runtime[_-]/, '')
     .replace(/^cuppet[_-]/, '')
     .replace(/^tst[_-]/, 'TST ')
     .replace(/^workspace[_-]/, '')

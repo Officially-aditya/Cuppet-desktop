@@ -31,10 +31,13 @@ export class AcpActivityNormalizer {
     if (!callId) return null;
     const status = normalizeName(source.status);
     const previous = this.#toolStates.get(callId);
-    const tool = text(source.title) || text(source.kind) || previous?.tool || 'agent-tool';
-    const argumentsJson = boundedJson(source.rawInput ?? source.raw_input ?? source.input ?? {}, 20_000);
+    let tool = previous?.tool || text(source.title) || text(source.kind) || 'agent-tool';
+    if (tool.startsWith('cuppet-runtime_')) tool = tool.slice('cuppet-runtime_'.length);
+    const label = text(source.title) || tool;
+    const rawInput = source.rawInput ?? source.raw_input ?? source.input;
+    const argumentsJson = boundedJson(rawInput && Object.keys(record(rawInput)).length ? rawInput : (previous?.argumentsJson ? JSON.parse(previous.argumentsJson) : rawInput ?? {}), 20_000);
     const details = boundedDetail(source.content ?? source.rawOutput ?? source.raw_output ?? source.output, 8_000);
-    const base = { callId, tool, label: tool, ...(argumentsJson ? { argumentsJson } : {}), ...(details ? { details } : {}) };
+    const base = { callId, tool, label, ...(argumentsJson ? { argumentsJson } : {}), ...(details ? { details } : {}) };
 
     if (TERMINAL_STATUSES.has(status)) {
       this.#toolStates.delete(callId);
@@ -45,13 +48,31 @@ export class AcpActivityNormalizer {
     }
 
     const type = previous ? 'activity.tool.updated' : 'activity.tool.opened';
-    this.#toolStates.set(callId, { tool, status });
+    this.#toolStates.set(callId, { tool, status, argumentsJson });
     return providerActivity(type, base);
   }
 }
 
 function contentText(value) { if (typeof value === 'string') return value; if (Array.isArray(value)) return value.map(contentText).join(''); return typeof value?.text === 'string' ? value.text : ''; }
-function boundedDetail(value, limit) { const raw = typeof value === 'string' ? value : value == null ? '' : safeJson(value); return tail(raw.trim(), limit); }
+function boundedDetail(value, limit) { const raw = extractDetailText(value); return tail(raw.trim(), limit); }
+function extractDetailText(value) {
+  if (typeof value === 'string') return value;
+  if (!value) return '';
+  if (Array.isArray(value)) {
+    const texts = value.map((item) => {
+      if (typeof item === 'string') return item;
+      if (item?.content) return extractDetailText(item.content);
+      if (typeof item?.text === 'string') return item.text;
+      return safeJson(item);
+    }).filter(Boolean);
+    return texts.join('\n');
+  }
+  if (typeof value === 'object') {
+    if (value.content) return extractDetailText(value.content);
+    if (typeof value.text === 'string') return value.text;
+  }
+  return safeJson(value);
+}
 function boundedJson(value, limit) { return tail(safeJson(value && typeof value === 'object' ? value : { value: String(value ?? '') }), limit); }
 function safeJson(value) { try { return JSON.stringify(value); } catch { return ''; } }
 function tail(value, limit) { if (!value) return ''; return value.length <= limit ? value : `[Earlier output truncated by Cuppet]\n${value.slice(-limit)}`; }

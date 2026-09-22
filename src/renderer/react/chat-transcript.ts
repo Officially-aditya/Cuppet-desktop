@@ -95,7 +95,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   const sequence = finiteSequence(event.sequence);
 
   if (event.source === 'provider' && activityType === 'activity.reasoning.delta') {
-    const segment = typeof activity.text === 'string' ? activity.text.trim() : '';
+    const segment = typeof activity.text === 'string' ? activity.text : '';
     if (!segment) return state;
     return updateMessageState(state, messageId, (current) => {
       const items = appendReasoning(current.items, segment, sequence);
@@ -103,7 +103,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
     });
   }
 
-  if (event.source === 'execution' && activityType.startsWith('activity.tool.')) {
+  if ((event.source === 'execution' || event.source === 'provider') && activityType.startsWith('activity.tool.')) {
     return updateMessageState(state, messageId, (current) => ({
       ...current,
       items: updateTool(current.items, activity, sequence),
@@ -153,14 +153,19 @@ function reasoningCanMerge(last: TranscriptReasoning, sequence: number | null) {
 
 function updateTool(items: TranscriptItem[], activity: Record<string, any>, sequence: number | null): TranscriptItem[] {
   const id = text(activity.executionId) || text(activity.callId) || `tool-${sequence ?? nextSequence(items)}`;
-  const existingIndex = items.findIndex((item) => item.type === 'tool' && item.id === id);
+  const toolName = text(activity.tool) || 'agent-tool';
+  const existingIndex = items.findIndex((item) => item.type === 'tool' && (
+    item.id === id || (item.status === 'running' && item.tool === toolName)
+  ));
   const existing = existingIndex >= 0 ? items[existingIndex] as TranscriptTool : null;
-  const tool = text(activity.tool) || existing?.tool || 'agent-tool';
-  const argumentsJson = typeof activity.argumentsJson === 'string' ? activity.argumentsJson : existing?.argumentsJson ?? '{}';
+  const tool = toolName || existing?.tool || 'agent-tool';
+  const argumentsJson = typeof activity.argumentsJson === 'string' && activity.argumentsJson !== '{}'
+    ? activity.argumentsJson
+    : existing?.argumentsJson ?? (typeof activity.argumentsJson === 'string' ? activity.argumentsJson : '{}');
   const closed = activity.type === 'activity.tool.closed';
   const status: TranscriptTool['status'] = closed ? (activity.status === 'success' ? 'complete' : 'error') : 'running';
   const patch: TranscriptTool = {
-    id,
+    id: existing?.id ?? id,
     type: 'tool',
     status,
     tool,
@@ -187,13 +192,10 @@ function boundItems(items: TranscriptItem[]) {
 }
 
 function mergeReasoningText(previous: string, incoming: string) {
-  const before = previous.trim();
-  const next = incoming.trim();
-  if (!before) return next;
-  if (!next || next === before || before.endsWith(next)) return before;
-  if (next.startsWith(before)) return next;
-  const separator = /\s$/.test(previous) || /^\s/.test(incoming) || /^[,.;:!?)}\]]/.test(next) ? '' : ' ';
-  return `${previous}${separator}${incoming}`;
+  if (!previous) return incoming;
+  if (!incoming) return previous;
+  if (incoming.startsWith(previous)) return incoming;
+  return `${previous}${incoming}`;
 }
 
 function nextSequence(items: TranscriptItem[]) {

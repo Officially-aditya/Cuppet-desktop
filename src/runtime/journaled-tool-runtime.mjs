@@ -172,18 +172,28 @@ class ToolMutationCapture {
     if (this.#failure) throw this.#failure;
     const finalDelta = typeof options?.onDelta === 'function' ? options.onDelta : async () => {};
     let pendingText = '';
-    const previewDelta = (delta) => {
+    let streamedAny = false;
+    const isDeferred = this.#previewPolicy === 'defer-unclassified';
+
+    const handleDelta = async (delta) => {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
       if (!text) return;
-      pendingText += text;
-      if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
+      streamedAny = true;
+      if (isDeferred) {
+        pendingText += text;
+      } else {
+        await finalDelta(text);
+      }
     };
+
     const flushReasoning = async () => {
+      if (!isDeferred) return;
       const segment = pendingText.trim();
       if (segment) await this.#onReasoning(segment);
       pendingText = '';
       this.#onPreview('');
     };
+
     const executeTool = typeof options?.executeTool === 'function'
       ? async (call) => {
           await flushReasoning();
@@ -202,13 +212,13 @@ class ToolMutationCapture {
       response = await this.#adapter.stream(messages, {
         ...options,
         tools: providerTools,
-        onDelta: previewDelta,
+        onDelta: handleDelta,
         onActivity: async (activity) => this.#onActivity(activity),
         ...(executeTool ? { executeTool } : {}),
       });
     } catch (error) {
       const stopped = options?.signal?.aborted || error?.name === 'AbortError';
-      if (stopped && this.#previewPolicy !== 'defer-unclassified' && pendingText) {
+      if (stopped && isDeferred && pendingText) {
         await finalDelta(pendingText, { stoppedPartial: true });
         pendingText = '';
       }
@@ -245,10 +255,14 @@ class ToolMutationCapture {
       }
       return this.stream(conversation, options);
     }
-    if (!pendingText && typeof response?.text === 'string') pendingText = response.text;
-    if (pendingText) await finalDelta(pendingText);
-    pendingText = '';
-    this.#onPreview('');
+    if (isDeferred) {
+      if (!pendingText && !streamedAny && typeof response?.text === 'string') pendingText = response.text;
+      if (pendingText) await finalDelta(pendingText);
+      pendingText = '';
+      this.#onPreview('');
+    } else if (!streamedAny && typeof response?.text === 'string' && response.text) {
+      await finalDelta(response.text);
+    }
     return response;
   }
 
