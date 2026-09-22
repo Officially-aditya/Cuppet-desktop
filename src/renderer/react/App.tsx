@@ -21,7 +21,6 @@ import { SearchModal } from './SearchModal';
 import { RemoteModal } from './RemoteModal';
 import { SettingsModal } from './SettingsModal';
 import { PermissionModal } from './PermissionModal';
-import { QuestionModal } from './QuestionModal';
 import { Toast } from './Toast';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -446,6 +445,8 @@ export function App() {
         onSend={send}
         onStop={stop}
         onModeChange={changeMode}
+        question={question}
+        onAnswerQuestion={answerQuestion}
       />
       {active?.projectId && <TstMemorySidebar sessionId={active.id} projectName={activeProject?.name} running={activeRunning} open={panels.memory} onOpenChange={setMemoryOpen} />}
 
@@ -455,7 +456,6 @@ export function App() {
       {modal === 'remote' && <RemoteModal onClose={() => setModal(null)} onError={showToast} />}
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={hydrateClientProviderSettings} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       {permission && <PermissionModal request={permission} onResolve={resolvePermission} />}
-      {question && <QuestionModal request={question} onAnswer={answerQuestion} />}
       <ShellPanelControls
         project={activeProject}
         state={{

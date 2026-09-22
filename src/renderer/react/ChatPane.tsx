@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Attachment, CommandDefinition, CommandResult, Project, QueuedTurn, Session } from '../types';
+import type { Attachment, CommandDefinition, CommandResult, Project, QueuedTurn, QuestionRequest, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { ProjectTerminal } from './ProjectTerminal';
 import { DiffViewerModal, type DiffFile, CopyIcon, CheckIcon } from './DiffViewerModal';
+import { QuestionInline } from './QuestionModal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -55,6 +56,8 @@ type Props = {
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
   onModeChange: (mode: ComposerMode) => void | Promise<void>;
+  question?: QuestionRequest | null;
+  onAnswerQuestion?: (answers: string[][] | null) => void | Promise<void>;
 };
 
 export function ChatPane({
@@ -73,6 +76,8 @@ export function ChatPane({
   onSend,
   onStop,
   onModeChange,
+  question,
+  onAnswerQuestion,
 }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -351,6 +356,11 @@ export function ChatPane({
       </section>
 
       <footer className="composer-wrap react-composer-wrap">
+        {question && (
+          <div className="question-messages-container" aria-label="Questions from Cuppet">
+            <QuestionInline request={question} onAnswer={onAnswerQuestion || (() => {})} />
+          </div>
+        )}
         {queuedTurns.length > 0 && (
           <div className="queued-messages-container" aria-label="Queued messages">
             {queuedTurns.map((turn, index) => (
