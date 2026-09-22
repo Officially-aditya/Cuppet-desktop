@@ -26,3 +26,16 @@
   opacity:0;
   visibility:hidden;
 }
+
+.session-pulsing-dots {
+  display: inline-block;
+  min-width: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0.5px;
+  color: #8c97a7;
+  text-align: right;
+}
+
