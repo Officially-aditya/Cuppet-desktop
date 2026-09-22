@@ -119,6 +119,8 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const effortState = modelEffortState(providerID, configuredModel, settings, advertised);
   const effortOptions = effortState.options;
   const explicitEffort = selectedEffort(slot, providerID, settings);
+  const defaultEffort = effortState.defaultEffort?.trim() || '';
+  const defaultInOptions = Boolean(defaultEffort && effortOptions.some((item) => item.toLowerCase() === defaultEffort.toLowerCase()));
   const resolvedModelLabel = useMemo(() => {
     const presetDefaultID = String(providerPreset?.model ?? '').trim();
     if (presetDefaultID && configuredModel === presetDefaultID && advertised.defaultModel) {
@@ -167,11 +169,11 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setError('');
     try {
       const current = settings ?? await refreshClientProviderSettings();
-      const currentProvider = current.primary?.providerID || current.providerID || '';
+      const currentProvider = providerID || current.providerID;
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
       let candidateAdvertised = advertised;
-      const refreshCandidate = advertised.providerID === currentProvider
+      const refreshCandidate = currentProvider === advertised.providerID
         && advertised.modelDependentSettings === true
         && advertised.configuredModel !== id;
       if (refreshCandidate) {
@@ -322,30 +324,38 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
           ) : (
             <>
               <button type="button" className="model-picker-back" onClick={() => setStage('models')}>← Models</button>
-              <div className="model-picker-provider">{displayModel} · Effort</div>
-              <button
-                type="button"
-                role="option"
-                aria-selected={!explicitEffort}
-                className={`model-picker-effort-option${!explicitEffort ? ' selected' : ''}`}
-                onClick={() => void chooseEffort('default')}
-              >
-                <span>Default{effortState.defaultEffort ? ` · ${formatEffort(effortState.defaultEffort)}` : ''}</span>
-                {!explicitEffort && <span aria-hidden="true">✓</span>}
-              </button>
-              {effortOptions.map((effort) => (
+              <div className="model-picker-provider" title={displayModel}>{displayModel} · Effort</div>
+              {!defaultInOptions && (
                 <button
                   type="button"
                   role="option"
-                  aria-selected={explicitEffort === effort}
-                  className={`model-picker-effort-option${explicitEffort === effort ? ' selected' : ''}`}
-                  key={effort}
-                  onClick={() => void chooseEffort(effort)}
+                  aria-selected={!explicitEffort || explicitEffort.toLowerCase() === 'default'}
+                  className={`model-picker-effort-option${(!explicitEffort || explicitEffort.toLowerCase() === 'default') ? ' selected' : ''}`}
+                  onClick={() => void chooseEffort('default')}
                 >
-                  <span>{formatEffort(effort)}</span>
-                  {explicitEffort === effort && <span aria-hidden="true">✓</span>}
+                  <span>Default{defaultEffort ? ` · ${formatEffort(defaultEffort)}` : ''}</span>
+                  {(!explicitEffort || explicitEffort.toLowerCase() === 'default') && <span aria-hidden="true">✓</span>}
                 </button>
-              ))}
+              )}
+              {effortOptions.map((effort) => {
+                const isDefault = defaultInOptions && effort.toLowerCase() === defaultEffort.toLowerCase();
+                const isSelected = isDefault
+                  ? (!explicitEffort || explicitEffort.toLowerCase() === 'default' || explicitEffort.toLowerCase() === effort.toLowerCase())
+                  : explicitEffort.toLowerCase() === effort.toLowerCase();
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`model-picker-effort-option${isSelected ? ' selected' : ''}`}
+                    key={effort}
+                    onClick={() => void chooseEffort(isDefault ? 'default' : effort)}
+                  >
+                    <span>{formatEffort(effort)}{isDefault ? ' · Default' : ''}</span>
+                    {isSelected && <span aria-hidden="true">✓</span>}
+                  </button>
+                );
+              })}
             </>
           )}
           {error && <div className="model-picker-error" role="status">{error}</div>}
@@ -360,14 +370,17 @@ function modelEffortState(providerID: string, modelID: string, settings: Provide
     && advertised.modelDependentSettings === true
     && advertised.configuredModel === modelID;
   if (exactLiveSnapshot) {
+    const rawOptions = advertised.reasoning?.options?.map((item) => item.id) ?? [];
+    const currentValue = advertised.reasoning?.currentValue || '';
     return {
-      options: advertised.reasoning?.options?.map((item) => item.id) ?? [],
-      defaultEffort: advertised.reasoning?.currentValue || '',
+      options: rawOptions.filter((id) => id.toLowerCase() !== 'default'),
+      defaultEffort: currentValue.toLowerCase() !== 'default' ? currentValue : '',
     };
   }
   const model = settings?.models?.find((item) => item.providerID === providerID && item.modelID === modelID);
+  const rawVariants = model?.variants ?? [];
   return {
-    options: model?.variants ?? [],
+    options: rawVariants.filter((id) => id.toLowerCase() !== 'default'),
     defaultEffort: '',
   };
 }
@@ -388,6 +401,10 @@ function effortForModel(slot: ModelSlot, providerID: string, modelID: string, se
 function formatEffort(value: string) {
   const effort = value.trim();
   if (!effort) return 'Default';
+  const lower = effort.toLowerCase();
+  if (lower === 'xhigh' || lower === 'x-high' || lower === 'extra-high' || lower === 'extra_high') {
+    return 'Extra High';
+  }
   return effort.split(/[-_]/g).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 

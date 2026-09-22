@@ -223,7 +223,7 @@ input[type="checkbox"]:disabled,input[type="radio"]:disabled{opacity:.5;cursor:n
   scrollbar-width:thin;
   scrollbar-color:#252b32 transparent;
 }
-.model-picker-provider{padding:5px 8px 6px;color:#687382;font-size:9px;font-weight:650;text-transform:uppercase;letter-spacing:.07em}
+.model-picker-provider{padding:5px 8px 6px;color:#687382;font-size:9px;font-weight:650;text-transform:uppercase;letter-spacing:.07em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .model-picker-option{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;border:0;border-radius:7px;background:transparent;color:#d6dce4;padding:7px 8px;text-align:left}
 .model-picker-option:hover,.model-picker-option.selected{background:#1a2027;color:#f2f4f7}
 .model-picker-option:disabled{opacity:.5;cursor:not-allowed}
