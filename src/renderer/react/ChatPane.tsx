@@ -417,7 +417,12 @@ function MessageView({
     for (const item of trace) {
       if (item.type !== 'tool') continue;
       const normalized = item.tool.toLowerCase();
-      const isEdit = normalized === 'tst_edit_batch' || normalized === 'workspace_edit' || normalized === 'workspace_write';
+      const itemDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
+      const isEdit = normalized === 'tst_edit_batch' ||
+                     normalized === 'workspace_edit' ||
+                     normalized === 'workspace_write' ||
+                     /(^|[_-])(edit|patch|write|diff)($|[_-])/.test(normalized) ||
+                     Boolean(itemDiff);
       if (!isEdit) continue;
 
       const args = parseToolArguments(item.argumentsJson);
@@ -426,18 +431,22 @@ function MessageView({
         if (!filesMap.has(target)) {
           filesMap.set(target, {
             path: target,
-            status: normalized === 'workspace_write' ? 'added' : 'modified',
+            status: normalized.includes('write') ? 'added' : 'modified',
           });
         }
       }
 
       const outputText = item.details || '';
-      if (outputText.includes('--- ') && outputText.includes('+++ ')) {
-        diffAccumulator += (diffAccumulator ? '\n' : '') + outputText;
-      } else if (normalized === 'workspace_edit') {
+      if (itemDiff) {
+        diffAccumulator += (diffAccumulator ? '\n' : '') + itemDiff;
+        for (const target of targets) {
+          const file = filesMap.get(target);
+          if (file && !file.diff) file.diff = itemDiff;
+        }
+      } else if (normalized === 'workspace_edit' || /(^|[_-])edit($|[_-])/.test(normalized)) {
         const p = String(args.path || targets[0] || '');
-        const oldText = String(args.old_text ?? '');
-        const newText = String(args.new_text ?? '');
+        const oldText = String(args.old_text ?? args.oldText ?? '');
+        const newText = String(args.new_text ?? args.newText ?? '');
         if (p && (oldText || newText)) {
           const oldList = oldText ? oldText.split('\n') : [];
           const newList = newText ? newText.split('\n') : [];
@@ -448,7 +457,7 @@ function MessageView({
           const file = filesMap.get(p);
           if (file) file.diff = chunk;
         }
-      } else if (normalized === 'workspace_write') {
+      } else if (normalized === 'workspace_write' || /(^|[_-])write($|[_-])/.test(normalized)) {
         const p = String(args.path || targets[0] || '');
         const content = String(args.content ?? '');
         if (p) {
@@ -514,13 +523,13 @@ function MessageView({
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
       {assistant ? (
         content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
       ) : (
         <div className="message-content">{content}</div>
       )}
-      {editedFiles.length > 0 && !live && (
+      {editedFiles.length > 0 && (
         <div
           role="button"
           tabIndex={0}
@@ -575,20 +584,20 @@ function MessageView({
   );
 }
 
-function TraceView({ trace }: { trace: TraceItem[] }) {
+function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
         <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
       ) : (
-        <ToolTraceRow key={item.id} item={item} />
+        <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
       ))}
     </div>
   );
 }
 
-function ToolTraceRow({ item }: { item: TraceTool }) {
+function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const isFailed = item.status === 'error';
@@ -597,9 +606,13 @@ function ToolTraceRow({ item }: { item: TraceTool }) {
   const command = toolCommand(args, false);
   const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details, item.status);
   const rawDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
-  const isEdit = item.tool === 'tst_edit_batch' || item.tool === 'workspace_edit' || item.tool === 'workspace_write';
+  const isEdit = item.tool === 'tst_edit_batch' ||
+                 item.tool === 'workspace_edit' ||
+                 item.tool === 'workspace_write' ||
+                 /(^|[_-])(edit|patch|write|diff)($|[_-])/.test(item.tool.toLowerCase()) ||
+                 Boolean(rawDiff);
   const hasInlineResult = detail.split('\n').some((line) => line.startsWith('Result: '));
-  const showCodeBlock = Boolean(item.details) && !isFailed && !rawDiff && !hasInlineResult;
+  const showCodeBlock = Boolean(item.details) && !isFailed && (!hasInlineResult || Boolean(rawDiff));
 
   const primaryChip = command
     ? (command.length > 40 ? `${command.slice(0, 38)}…` : command)
@@ -667,10 +680,46 @@ function ToolTraceRow({ item }: { item: TraceTool }) {
           )}
           {showCodeBlock && (
             <div className="thread-tool-code-block">
-              {item.details}
+              {rawDiff ? (
+                item.details?.split('\n').map((line, i) => {
+                  const color = line.startsWith('+') && !line.startsWith('+++')
+                    ? '#3fb950'
+                    : line.startsWith('-') && !line.startsWith('---')
+                      ? '#f85149'
+                      : line.startsWith('@@')
+                        ? '#8b949e'
+                        : undefined;
+                  return (
+                    <div key={i} style={color ? { color } : undefined}>
+                      {line}
+                    </div>
+                  );
+                })
+              ) : (
+                item.details
+              )}
             </div>
           )}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+            {(rawDiff || isEdit) && onInspectDiff && (
+              <button
+                type="button"
+                className="tool-diff-button"
+                aria-label="Inspect diff"
+                title="Inspect diff in split viewer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const files: DiffFile[] = targets.map((p) => ({
+                    path: p,
+                    status: item.tool.includes('write') ? 'added' : 'modified',
+                    diff: rawDiff || undefined,
+                  }));
+                  onInspectDiff(files, rawDiff);
+                }}
+              >
+                Inspect diff
+              </button>
+            )}
             <button
               type="button"
               className={`tool-copy-button${copied ? ' copied' : ''}`}

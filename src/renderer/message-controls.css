@@ -31,4 +31,6 @@
 .tool-copy-button{display:inline-grid;place-items:center;width:20px;height:20px;padding:0;border:none;border-radius:4px;background:transparent;color:#6e7681;cursor:pointer;transition:color .12s ease}
 .tool-copy-button:hover{color:#f0f6fc}
 .tool-copy-button.copied{color:#8b949e}
+.tool-diff-button{display:inline-flex;align-items:center;padding:0;border:none;background:transparent;color:#58a6ff;font-size:11px;cursor:pointer;text-decoration:underline;text-underline-offset:2px;transition:opacity .12s ease}
+.tool-diff-button:hover{opacity:.8}
 .message-copy-button.copied{opacity:1!important;pointer-events:auto!important;color:#8b949e}
