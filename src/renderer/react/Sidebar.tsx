@@ -150,13 +150,48 @@ export function Sidebar(props: Props) {
     });
   };
 
+  const [hoveredSession, setHoveredSession] = useState<{ id: string; title: string; x: number; y: number; isBottom: boolean } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSessionHoverStart = (session: Session, displayTitle: string, event: React.MouseEvent) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHoveredSession(null);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const isBottom = rect.bottom + 60 > window.innerHeight;
+    hoverTimer.current = setTimeout(() => {
+      setHoveredSession({
+        id: session.id,
+        title: displayTitle,
+        x: rect.left,
+        y: isBottom ? rect.top : rect.bottom,
+        isBottom,
+      });
+    }, 500);
+  };
+
+  const handleSessionHoverEnd = () => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+    setHoveredSession(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    };
+  }, []);
+
   const openMenu = (event: React.MouseEvent, kind: 'project' | 'session', id: string) => {
     event.preventDefault();
     event.stopPropagation();
+    handleSessionHoverEnd();
     setMenu({ kind, id, x: Math.min(event.clientX || event.currentTarget.getBoundingClientRect().right, window.innerWidth - 200), y: Math.min(event.clientY || event.currentTarget.getBoundingClientRect().bottom, window.innerHeight - 180) });
   };
 
   const beginRenameSession = (session: Session) => {
+    handleSessionHoverEnd();
     setMenu(null);
     setRenameSession(session);
     setRenameValue(titleOverrides[session.id] || session.title || 'New chat');
@@ -183,6 +218,7 @@ export function Sidebar(props: Props) {
   };
 
   const toggleSidebar = () => {
+    handleSessionHoverEnd();
     setCollapsed((current) => !current);
     setMenu(null);
   };
@@ -240,7 +276,7 @@ export function Sidebar(props: Props) {
           <button type="button" className="project-add-button" aria-label="Add project" title="Add project" onClick={props.onAddProject}>+</button>
         </div>
 
-        <div className="project-list" aria-label="Projects and conversations">
+        <div className="project-list" aria-label="Projects and conversations" onScroll={handleSessionHoverEnd}>
           {props.projects.map((project) => {
             const projectActive = props.activeSessionId === null && props.selectedProjectId === project.id;
             const projectSessions = sessionsByProject.get(project.id) ?? [];
@@ -271,7 +307,16 @@ export function Sidebar(props: Props) {
                   <button type="button" className="project-menu-button" aria-label={`Actions for ${project.name}`} title={`Actions for ${project.name}`} onClick={(event) => openMenu(event, 'project', project.id)}>⋯</button>
                 </div>
                 {visibleProjectSessions.map((session) => (
-                  <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+                  <SessionRow
+                    key={session.id}
+                    session={session}
+                    title={titleOverrides[session.id]}
+                    active={props.activeSessionId === session.id}
+                    onOpen={props.onSession}
+                    onMenu={openMenu}
+                    onHoverStart={handleSessionHoverStart}
+                    onHoverEnd={handleSessionHoverEnd}
+                  />
                 ))}
                 {projectSessions.length > MAX_VISIBLE_CHATS && (
                   <button
@@ -289,7 +334,16 @@ export function Sidebar(props: Props) {
             <section className="project-group general-group">
               <div className="general-label">General</div>
               {props.generalSessions.map((session) => (
-                <SessionRow key={session.id} session={session} title={titleOverrides[session.id]} active={props.activeSessionId === session.id} onOpen={props.onSession} onMenu={openMenu} />
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  title={titleOverrides[session.id]}
+                  active={props.activeSessionId === session.id}
+                  onOpen={props.onSession}
+                  onMenu={openMenu}
+                  onHoverStart={handleSessionHoverStart}
+                  onHoverEnd={handleSessionHoverEnd}
+                />
               ))}
             </section>
           )}
@@ -355,19 +409,69 @@ export function Sidebar(props: Props) {
           </form>
         </div>
       )}
+
+      {hoveredSession && (
+        <div
+          className="session-title-tooltip"
+          role="tooltip"
+          style={{
+            left: Math.max(10, Math.min(hoveredSession.x, window.innerWidth - 320)),
+            ...(hoveredSession.isBottom
+              ? { bottom: window.innerHeight - hoveredSession.y + 4 }
+              : { top: hoveredSession.y + 4 }),
+          }}
+        >
+          {hoveredSession.title}
+        </div>
+      )}
     </aside>
   );
 }
 
-function SessionRow({ session, title, active, onOpen, onMenu }: { session: Session; title?: string; active: boolean; onOpen: (id: string) => void | Promise<void>; onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void }) {
+function SessionRow({
+  session,
+  title,
+  active,
+  onOpen,
+  onMenu,
+  onHoverStart,
+  onHoverEnd,
+}: {
+  session: Session;
+  title?: string;
+  active: boolean;
+  onOpen: (id: string) => void | Promise<void>;
+  onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void;
+  onHoverStart: (session: Session, displayTitle: string, event: React.MouseEvent) => void;
+  onHoverEnd: () => void;
+}) {
   const displayTitle = title || session.title || 'New chat';
   return (
     <div className="session-row" onContextMenu={(event) => onMenu(event, 'session', session.id)}>
-      <button type="button" className={`session-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} onClick={() => void onOpen(session.id)}>
+      <button
+        type="button"
+        className={`session-item${active ? ' active' : ''}`}
+        aria-current={active ? 'page' : undefined}
+        onClick={() => {
+          onHoverEnd();
+          void onOpen(session.id);
+        }}
+        onMouseEnter={(event) => onHoverStart(session, displayTitle, event)}
+        onMouseLeave={onHoverEnd}
+        onPointerDown={onHoverEnd}
+      >
         <div className="session-title">{displayTitle}</div>
         <div className="session-meta">{session.lastStatus === 'streaming' ? 'Generating…' : relativeTime(session.updatedAt)}</div>
       </button>
-      <button type="button" className="session-menu-button" aria-label={`Actions for ${displayTitle}`} onClick={(event) => onMenu(event, 'session', session.id)}>⋯</button>
+      <button
+        type="button"
+        className="session-menu-button"
+        aria-label={`Actions for ${displayTitle}`}
+        onClick={(event) => {
+          onHoverEnd();
+          onMenu(event, 'session', session.id);
+        }}
+      >⋯</button>
     </div>
   );
 }
