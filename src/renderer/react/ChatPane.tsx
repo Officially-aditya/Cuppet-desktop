@@ -598,7 +598,8 @@ function ToolTraceRow({ item }: { item: TraceTool }) {
   const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details, item.status);
   const rawDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
   const isEdit = item.tool === 'tst_edit_batch' || item.tool === 'workspace_edit' || item.tool === 'workspace_write';
-  const showCodeBlock = Boolean(item.details) && !isFailed && !rawDiff;
+  const hasInlineResult = detail.split('\n').some((line) => line.startsWith('Result: '));
+  const showCodeBlock = Boolean(item.details) && !isFailed && !rawDiff && !hasInlineResult;
 
   const primaryChip = command
     ? (command.length > 40 ? `${command.slice(0, 38)}…` : command)
