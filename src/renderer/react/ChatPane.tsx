@@ -700,26 +700,7 @@ function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?
               )}
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-            {(rawDiff || isEdit) && onInspectDiff && (
-              <button
-                type="button"
-                className="tool-diff-button"
-                aria-label="Inspect diff"
-                title="Inspect diff in split viewer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const files: DiffFile[] = targets.map((p) => ({
-                    path: p,
-                    status: item.tool.includes('write') ? 'added' : 'modified',
-                    diff: rawDiff || undefined,
-                  }));
-                  onInspectDiff(files, rawDiff);
-                }}
-              >
-                Inspect diff
-              </button>
-            )}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
             <button
               type="button"
               className={`tool-copy-button${copied ? ' copied' : ''}`}
