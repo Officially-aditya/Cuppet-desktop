@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('cuppet', {
     stop: (sessionId) => ipcRenderer.invoke('cuppet:session:stop', sessionId),
     undoStatus: (sessionId) => ipcRenderer.invoke('cuppet:session:undo:status', sessionId),
     undo: (sessionId) => ipcRenderer.invoke('cuppet:session:undo', sessionId),
+    queueList: (sessionId) => ipcRenderer.invoke('cuppet:session:queue:list', sessionId),
+    queueCancel: (queueId, sessionId) => ipcRenderer.invoke('cuppet:session:queue:cancel', queueId, sessionId),
   },
   projects: {
     list: () => ipcRenderer.invoke('cuppet:project:list'),

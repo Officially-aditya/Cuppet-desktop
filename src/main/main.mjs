@@ -97,6 +97,8 @@ function registerIpc() {
   ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
   ipcMain.handle('cuppet:session:undo:status', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
   ipcMain.handle('cuppet:session:undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:queue:list', (_event, sessionId) => request('session.queue.list', { sessionId: boundedId(sessionId) }));
+  ipcMain.handle('cuppet:session:queue:cancel', (_event, queueId, sessionId) => request('session.queue.cancel', { queueId: boundedId(queueId), sessionId: boundedId(sessionId) }));
 
   ipcMain.handle('cuppet:project:list', () => request('project.list'));
   ipcMain.handle('cuppet:project:get', (_event, projectId) => request('project.get', { projectId }));

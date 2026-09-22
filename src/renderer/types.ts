@@ -56,6 +56,20 @@ export type Attachment = {
   path?: string;
 };
 
+export type QueuedTurn = {
+  id: string;
+  sessionId: string;
+  params: {
+    text?: string;
+    attachments?: Attachment[];
+    [key: string]: unknown;
+  };
+  status?: string;
+  error?: string | null;
+  queuedAt: number;
+  updatedAt?: number;
+};
+
 export type SearchResult = {
   sessionId: string;
   projectId?: string | null;
@@ -353,6 +367,8 @@ export type CuppetApi = {
     stop: (sessionId: string) => Promise<any>;
     undoStatus: (sessionId: string) => Promise<any>;
     undo: (sessionId: string) => Promise<any>;
+    queueList: (sessionId: string) => Promise<QueuedTurn[]>;
+    queueCancel: (queueId: string, sessionId?: string) => Promise<{ cancelled: boolean }>;
   };
   projects: {
     list: () => Promise<Project[]>;

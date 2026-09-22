@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Attachment, CommandDefinition, CommandResult, Project, Session } from '../types';
+import type { Attachment, CommandDefinition, CommandResult, Project, QueuedTurn, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { ProjectTerminal } from './ProjectTerminal';
@@ -49,13 +49,31 @@ type Props = {
   commands: CommandDefinition[];
   activity: ActivityEntry[];
   terminalOpen?: boolean;
+  queuedTurns?: QueuedTurn[];
+  onCancelQueued?: (queueId: string) => void | Promise<void>;
   onTerminalOpenChange?: (open: boolean) => void;
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
   onModeChange: (mode: ComposerMode) => void | Promise<void>;
 };
 
-export function ChatPane({ session, draft, project, mode, activeMode, running, commands, activity: _activity, terminalOpen, onTerminalOpenChange, onSend, onStop, onModeChange }: Props) {
+export function ChatPane({
+  session,
+  draft,
+  project,
+  mode,
+  activeMode,
+  running,
+  commands,
+  activity: _activity,
+  terminalOpen,
+  queuedTurns = [],
+  onCancelQueued,
+  onTerminalOpenChange,
+  onSend,
+  onStop,
+  onModeChange,
+}: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [selected, setSelected] = useState(0);
@@ -230,6 +248,22 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
     });
   };
 
+  const handleEditQueued = (turn: QueuedTurn) => {
+    const text = String(turn.params?.text ?? '');
+    const turnAttachments = Array.isArray(turn.params?.attachments) ? turn.params.attachments : [];
+    setValue(text);
+    if (turnAttachments.length) setAttachments(turnAttachments);
+    if (onCancelQueued) void onCancelQueued(turn.id);
+    requestAnimationFrame(() => {
+      const node = textarea.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(node.value.length, node.value.length);
+        resize(node);
+      }
+    });
+  };
+
   const chooseBrowserControl = () => {
     setValue((current) => insertBrowserControlMention(current));
     requestAnimationFrame(() => {
@@ -265,19 +299,16 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
         setSelected((current) => (current - 1 + palette.length) % palette.length);
         return;
       }
-      if (event.key === 'Escape') {
+      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
-        setValue(value.includes(' ') ? value : '');
+        const item = palette[selected] ?? palette[0];
+        if (item) void choose(item);
         return;
       }
-      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-        const item = palette[selected];
-        const exact = item?.slash ? exactSlash(value, item) : false;
-        if (item && !exact) {
-          event.preventDefault();
-          void choose(item);
-          return;
-        }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setSelected(0);
+        return;
       }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -320,6 +351,20 @@ export function ChatPane({ session, draft, project, mode, activeMode, running, c
       </section>
 
       <footer className="composer-wrap react-composer-wrap">
+        {queuedTurns.length > 0 && (
+          <div className="queued-messages-container" aria-label="Queued messages">
+            {queuedTurns.map((turn, index) => (
+              <QueuedTurnBar
+                key={turn.id}
+                turn={turn}
+                index={index}
+                total={queuedTurns.length}
+                onCancel={() => void onCancelQueued?.(turn.id)}
+                onEdit={() => handleEditQueued(turn)}
+              />
+            ))}
+          </div>
+        )}
         {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
         {integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery) && !hasBrowserControlMention(value) && <IntegrationMentionPalette onChoose={chooseBrowserControl} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
@@ -1128,4 +1173,65 @@ function statusLabel(status: string) {
   if (status === 'interrupted') return 'Interrupted by restart';
   if (status === 'error') return 'Generation failed';
   return status;
+}
+
+function QueuedTurnBar({
+  turn,
+  index,
+  total,
+  onCancel,
+  onEdit,
+}: {
+  turn: QueuedTurn;
+  index: number;
+  total: number;
+  onCancel: () => void;
+  onEdit: () => void;
+}) {
+  const text = String(turn.params?.text ?? '');
+  const attachments = Array.isArray(turn.params?.attachments) ? turn.params.attachments : [];
+  const label = total > 1 ? `Queued message (#${index + 1})` : 'Queued message';
+
+  return (
+    <div className="queued-turn-bar" role="status" aria-label={label}>
+      <div className="queued-turn-copy">
+        <div className="queued-turn-title">
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 2" />
+            <path d="M8 4.5v3.8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          <span>{label}</span>
+          <span className="queued-turn-subtitle">· will send when Cuppet finishes</span>
+        </div>
+        <div className="queued-turn-content" title={text || undefined}>
+          {text || (attachments.length ? 'Files only' : 'Empty prompt')}
+        </div>
+        {attachments.length > 0 && (
+          <div className="queued-turn-attachments">
+            📎 {attachments.length} {attachments.length === 1 ? 'file' : 'files'} attached
+          </div>
+        )}
+      </div>
+      <div className="queued-turn-actions">
+        <button
+          type="button"
+          className="queued-turn-button"
+          aria-label="Edit queued message"
+          title="Put back into input box"
+          onClick={onEdit}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          className="queued-turn-button danger"
+          aria-label="Cancel queued message"
+          title="Delete queued message"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }

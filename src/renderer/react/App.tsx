@@ -7,6 +7,7 @@ import type {
   PermissionRequest,
   Project,
   QuestionRequest,
+  QueuedTurn,
   RuntimeEvent,
   Session,
 } from '../types';
@@ -55,6 +56,7 @@ export function App() {
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
+  const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([]);
   const [modal, setModal] = useState<ModalName>(null);
   const [settingsSection, setSettingsSection] = useState('general');
   const [toast, setToast] = useState<string | null>(null);
@@ -177,11 +179,36 @@ export function App() {
     if (event.type === 'permission.resolved' && permission?.id === event.requestId) setPermission(null);
     if (event.type === 'question.requested' && event.request) setQuestion(event.request);
     if (event.type === 'question.resolved' && question?.id === event.requestId) setQuestion(null);
+
+    if (event.type === 'queue.queued' && activeSessionId && event.sessionId === activeSessionId) {
+      void window.cuppet.sessions.queueList(activeSessionId).then((list) => {
+        if (Array.isArray(list)) setQueuedTurns(list);
+      }).catch(() => undefined);
+    }
+    if ((event.type === 'queue.dispatched' || event.type === 'queue.cancelled') && event.sessionId === activeSessionId) {
+      setQueuedTurns((current) => current.filter((item) => item.id !== event.queueId));
+    }
   }, [activeSessionId, openSession, permission?.id, question?.id, refreshLists, showToast]);
 
   useEffect(() => window.cuppet.onEvent((event) => {
     void handleEvent(event);
   }), [handleEvent]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setQueuedTurns([]);
+      return;
+    }
+    let cancelled = false;
+    window.cuppet.sessions.queueList(activeSessionId)
+      .then((list) => {
+        if (!cancelled && Array.isArray(list)) setQueuedTurns(list);
+      })
+      .catch(() => {
+        if (!cancelled) setQueuedTurns([]);
+      });
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
 
   const selectProject = useCallback(async (projectId: string) => {
     const project = projects.find((item) => item.id === projectId);
@@ -205,6 +232,16 @@ export function App() {
     }
     return result;
   }, [activeSessionId, commands, ensureActiveSession]);
+
+  const cancelQueued = useCallback(async (queueId: string) => {
+    if (!activeSessionId) return;
+    try {
+      await window.cuppet.sessions.queueCancel(queueId, activeSessionId);
+      setQueuedTurns((current) => current.filter((item) => item.id !== queueId));
+    } catch (error) {
+      showToast(error);
+    }
+  }, [activeSessionId, showToast]);
 
   const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue', attachments: Attachment[] = []) => {
     const trimmed = text.trim();
@@ -234,7 +271,19 @@ export function App() {
         if (deliveryMode === 'steer' && !attachments.length) {
           await window.cuppet.commands.execute(session.id, { id: 'cuppet.steer.interrupt', input: { text: value.slice(0, 8192) } });
         } else {
-          await window.cuppet.sessions.send(session.id, value, attachments);
+          const res = await window.cuppet.sessions.send(session.id, value, attachments);
+          if (res?.queued) {
+            setQueuedTurns((current) => [
+              ...current,
+              {
+                id: res.queueId || `queue_${Date.now()}`,
+                sessionId: session.id,
+                params: { text: value, attachments },
+                status: 'queued',
+                queuedAt: Date.now(),
+              },
+            ]);
+          }
         }
         return { clear: true };
       }
@@ -391,6 +440,8 @@ export function App() {
         commands={commands}
         activity={[]}
         terminalOpen={panels.terminal}
+        queuedTurns={queuedTurns}
+        onCancelQueued={cancelQueued}
         onTerminalOpenChange={setTerminalOpen}
         onSend={send}
         onStop={stop}

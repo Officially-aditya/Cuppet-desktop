@@ -281,6 +281,27 @@ export class TurnStore {
     });
   }
 
+  cancelQueue(queueId, now = Date.now()) {
+    const id = requiredText(queueId, 'queue id');
+    return this.#transaction(() => {
+      const row = this.#db.prepare(`
+        SELECT queue_id AS id, session_id AS sessionId, queued_at AS queuedAt
+        FROM queued_turns WHERE queue_id=?
+      `).get(id);
+      if (!row) return false;
+      const result = this.#db.prepare('DELETE FROM queued_turns WHERE queue_id=?').run(id);
+      if (result.changes === 0) return false;
+      this.#appendEvent({
+        sessionId: String(row.sessionId),
+        queueId: id,
+        type: 'queue.cancelled',
+        payload: { status: 'cancelled', queuedAt: Number(row.queuedAt) || 0 },
+        createdAt: now,
+      });
+      return true;
+    });
+  }
+
   failQueue(queueId, error, now = Date.now()) {
     const id = requiredText(queueId, 'queue id');
     const message = cleanError(error);
