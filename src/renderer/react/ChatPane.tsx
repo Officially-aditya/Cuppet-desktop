@@ -630,9 +630,6 @@ function ToolTraceRow({ item }: { item: TraceTool }) {
           <span>{humanToolLabel(item.tool)}</span>
           {primaryChip && <span className="thread-tool-chip" title={command || targets.join(', ')}>{primaryChip}</span>}
         </div>
-        <span className={`thread-tool-badge ${item.status}`}>
-          {item.status === 'running' ? 'Running' : item.status === 'error' ? 'Failed' : 'Done'}
-        </span>
         <span className={`thread-tool-chevron${open ? ' open' : ''}`} aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" width="12" height="12"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </span>
