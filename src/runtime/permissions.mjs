@@ -104,7 +104,8 @@ export class PermissionBroker {
   async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal, fingerprintKey = '' }) {
     const normalized = resources.slice(0, 16).map((value) => String(value).slice(0, 1024));
     const boundedFingerprintKey = String(fingerprintKey ?? '').slice(0, 512);
-    const immediate = await immediateDecision({ action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId), fullAccess: this.#fullSessions.has(sessionId) });
+    const isFull = Boolean(this.#fullSessions.has(sessionId));
+    const immediate = await immediateDecision({ action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId), fullAccess: isFull });
     if (immediate.effect === 'allow') return { allowed: true, source: immediate.source };
     if (immediate.effect === 'deny') throw new PermissionDeniedError(immediate.reason, { code: immediate.code });
 

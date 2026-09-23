@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
@@ -307,4 +307,172 @@ test('tst_explore and cuppet_memory_search return clean messages when session ha
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('workspace_edit accepts lenient aliases for oldText and newText', async () => {
+  const { dir, root, db, broker, toolRuntime } = await fixture();
+  try {
+    broker.setAuto('s1', true);
+    await writeFile(join(root, 'src', 'greet.js'), 'const greeting = "hello";\n');
+    const adapter = scriptedAdapter([
+      {
+        toolCalls: [
+          {
+            id: 'call_edit',
+            name: 'workspace_edit',
+            arguments: '{"path":"src/greet.js","oldText":"\\"hello\\"","newText":"\\"world\\""}',
+          },
+        ],
+      },
+      {
+        delta: 'done',
+        assertMessages(messages) {
+          const tool = messages.find((m) => m.role === 'tool');
+          assert.match(tool.content, /Edited src\/greet\.js/);
+        },
+      },
+    ]);
+    await toolRuntime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'update greeting' }],
+      sessionId: 's1',
+      projectId: 'p1',
+      projectRoot: root,
+      mode: 'build',
+      signal: new AbortController().signal,
+      onDelta: async () => {},
+    });
+    assert.equal(await readFile(join(root, 'src', 'greet.js'), 'utf8'), 'const greeting = "world";\n');
+  } finally {
+    await toolRuntime.close();
+    broker.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('tst_explore search suppresses unsupported edit targets error banner', async () => {
+  const fakeTst = {
+    configured: true,
+    async graphLocate(query) {
+      return { query, matches: [{ path: 'src/app.js', line: 1, column: 1, kind: 'function', symbol: 'main' }] };
+    },
+  };
+  const fakeBatchEdits = {
+    async resolveTargets() {
+      throw new Error('Connected TST daemon does not support revision-bound edit targets.');
+    },
+  };
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-c1-tools-'));
+  const root = join(dir, 'project');
+  await mkdir(join(root, 'src'), { recursive: true });
+  const db = new ConversationDatabase(join(dir, 'db.sqlite3'));
+  db.createProject({ id: 'p1', name: 'Project', canonicalPath: root });
+  db.createSession({ id: 's1', projectId: 'p1' });
+  const broker = new PermissionBroker();
+  const toolRuntime = new ToolRuntime({
+    tst: fakeTst,
+    batchEdits: fakeBatchEdits,
+    planStore: { async toolResult() { return null; } },
+    permissions: broker,
+    db,
+  });
+  try {
+    const adapter = scriptedAdapter([
+      {
+        toolCalls: [
+          { id: 'call_search', name: 'tst_explore', arguments: '{"mode":"search","query":"main"}' },
+        ],
+      },
+      {
+        delta: 'done',
+        assertMessages(messages) {
+          const tool = messages.find((m) => m.role === 'tool');
+          assert.match(tool.content, /UNTRUSTED CUPPET CODE GRAPH RESULTS/);
+          assert.match(tool.content, /Locate main: 1 match/);
+          assert.doesNotMatch(tool.content, /EDIT TARGETS unavailable/);
+        },
+      },
+    ]);
+    await toolRuntime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'locate main' }],
+      sessionId: 's1',
+      projectId: 'p1',
+      projectRoot: root,
+      mode: 'build',
+      signal: new AbortController().signal,
+      onDelta: async () => {},
+    });
+  } finally {
+    await toolRuntime.close();
+    broker.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('session in full access mode runs bash with fullAccess policy enabled', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-tool-fullaccess-'));
+  const root = join(dir, 'project');
+  await mkdir(root, { recursive: true });
+  const db = new ConversationDatabase(join(dir, 'db.sqlite3'));
+  db.createProject({ id: 'p1', name: 'Project', canonicalPath: root });
+  db.createSession({ id: 's1', projectId: 'p1' });
+  const broker = new PermissionBroker();
+  broker.setAuto('s1', 'full');
+
+  let executedPolicy = null;
+  const mockSandbox = {
+    async execute(command, cwd, policy, options) {
+      executedPolicy = policy;
+      return { code: 0, stdout: 'ok', stderr: '', driverName: 'mock' };
+    },
+  };
+
+  const toolRuntime = new ToolRuntime({
+    tst: { configured: false },
+    planStore: { async toolResult() { return null; } },
+    permissions: broker,
+    db,
+    sandboxManager: mockSandbox,
+  });
+
+  try {
+    const adapter = scriptedAdapter([
+      {
+        toolCalls: [
+          { id: 'call_bash', name: 'bash', arguments: '{"command":"git push origin main"}' },
+        ],
+      },
+      {
+        delta: 'done',
+        assertMessages(messages) {
+          const tool = messages.find((m) => m.role === 'tool');
+          assert.match(tool.content, /stdout:\nok/);
+        },
+      },
+    ]);
+
+    await toolRuntime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'push commits' }],
+      sessionId: 's1',
+      projectId: 'p1',
+      projectRoot: root,
+      mode: 'build',
+      signal: new AbortController().signal,
+      onDelta: async () => {},
+    });
+
+    assert.equal(executedPolicy?.fullAccess, true);
+    assert.equal(executedPolicy?.protectSensitiveCredentials, false);
+  } finally {
+    await toolRuntime.close();
+    broker.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
 

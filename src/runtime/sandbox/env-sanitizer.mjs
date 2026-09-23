@@ -42,18 +42,37 @@ const SENSITIVE_KEY_PATTERN = /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AU
 
 const SENSITIVE_PREFIX_PATTERN = /^(?:AWS_|GITHUB_|GH_|OPENAI_|ANTHROPIC_|GEMINI_|AZURE_|GOOGLE_|CUPPET_|STRIPE_|SSH_|SLACK_|DISCORD_|DATABASE_|DB_|POSTGRES_|MYSQL_|MONGO_|CLOUDFLARE_)/i;
 
+const CREDENTIAL_ENV_KEYS = new Set([
+  'SSH_AUTH_SOCK',
+  'GITHUB_TOKEN',
+  'GH_TOKEN',
+  'GIT_AUTHOR_NAME',
+  'GIT_AUTHOR_EMAIL',
+  'GIT_COMMITTER_NAME',
+  'GIT_COMMITTER_EMAIL',
+]);
+
 /**
  * Sanitizes an environment object for safe sandbox process execution.
  *
  * @param {Record<string, string | undefined>} [sourceEnv=process.env]
  * @param {Record<string, string>} [overrides={}]
+ * @param {{ fullAccess?: boolean }} [options={}]
  * @returns {Record<string, string>}
  */
-export function sanitizeEnvironment(sourceEnv = process.env, overrides = {}) {
+export function sanitizeEnvironment(sourceEnv = process.env, overrides = {}, { fullAccess = false } = {}) {
   const sanitized = {};
 
   for (const [key, value] of Object.entries(sourceEnv)) {
     if (value === undefined || value === null) continue;
+
+    if (fullAccess) {
+      if (/^CUPPET_/i.test(key) && !overrides[key]) continue;
+      if (CREDENTIAL_ENV_KEYS.has(key)) {
+        sanitized[key] = String(value);
+        continue;
+      }
+    }
 
     // Check against safe allowlist
     const isAllowlisted = SAFE_ENV_ALLOWLIST.has(key);
@@ -71,6 +90,7 @@ export function sanitizeEnvironment(sourceEnv = process.env, overrides = {}) {
   if (!sanitized.PATH && sourceEnv.PATH) sanitized.PATH = sourceEnv.PATH;
   if (!sanitized.HOME && sourceEnv.HOME) sanitized.HOME = sourceEnv.HOME;
   if (!sanitized.TMPDIR) sanitized.TMPDIR = sourceEnv.TMPDIR || '/tmp';
+  if (!sanitized.GIT_TERMINAL_PROMPT) sanitized.GIT_TERMINAL_PROMPT = '0';
 
   // Apply explicit overrides if provided
   if (overrides && typeof overrides === 'object') {

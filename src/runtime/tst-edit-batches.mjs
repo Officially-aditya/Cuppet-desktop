@@ -65,7 +65,7 @@ export class TstBatchEditManager {
       try {
         await stageOperation({ root, operation, index, files });
       } catch (error) {
-        conflicts.push({ index, op: operation.op, path: operation.path ?? operation.target?.path ?? null, error: cleanError(error) });
+        conflicts.push({ index, step: index + 1, op: operation.op, path: operation.path ?? operation.target?.path ?? null, error: cleanError(error) });
       }
     }
     if (conflicts.length) throw batchConflict('Batch target validation failed; nothing was written.', conflicts);
@@ -77,9 +77,19 @@ export class TstBatchEditManager {
       try {
         finalizeFileEdits(file);
         if (file.after.length > MAX_FILE_BYTES) throw new Error(`staged file exceeds ${MAX_FILE_BYTES} byte limit`);
-        const parse = await this.#tst.parseStaged(file.path, file.exists ? file.baseHash : null, file.after.toString('utf8'));
+        let parse;
+        try {
+          parse = await this.#tst.parseStaged(file.path, file.exists ? file.baseHash : null, file.after.toString('utf8'));
+        } catch (error) {
+          const msg = cleanError(error);
+          if (/does not support staged parsing|not supported/i.test(msg)) {
+            parse = { supported: false, reason: 'unsupported_by_daemon' };
+          } else {
+            throw error;
+          }
+        }
         file.parse = parse;
-        if (parse.supported && Number(parse.introduced_syntax_errors || 0) > 0) {
+        if (parse?.supported && Number(parse.introduced_syntax_errors || 0) > 0) {
           parseFailures.push({ path: file.path, introduced: parse.introduced_syntax_errors, base: parse.base_diagnostics ?? [], staged: parse.staged_diagnostics ?? [] });
         }
         stagedFiles.push(file);
@@ -228,28 +238,41 @@ async function stageOperation({ root, operation, index, files }) {
     const expected = Buffer.from(target.expected_source, 'utf8');
     if (!file.before.subarray(target.start_byte, target.end_byte).equals(expected)) throw new Error(`target source changed for ${target.target_id}`);
     let start = target.start_byte; let end = target.end_byte; let replacement;
-    if (operation.op === 'replace_node') replacement = Buffer.from(String(operation.content ?? ''), 'utf8');
+    const rawContent = operation.content ?? operation.replacement ?? operation.text ?? '';
+    if (operation.op === 'replace_node') replacement = Buffer.from(String(rawContent), 'utf8');
     else if (operation.op === 'delete_node') replacement = Buffer.alloc(0);
-    else if (operation.op === 'insert_before_node') { start = target.start_byte; end = start; replacement = Buffer.from(String(operation.content ?? ''), 'utf8'); }
-    else { start = target.end_byte; end = start; replacement = Buffer.from(String(operation.content ?? ''), 'utf8'); }
+    else if (operation.op === 'insert_before_node') { start = target.start_byte; end = start; replacement = Buffer.from(String(rawContent), 'utf8'); }
+    else { start = target.end_byte; end = start; replacement = Buffer.from(String(rawContent), 'utf8'); }
     addEdit(file, { index, start, end, replacement, description: `${operation.op}:${target.symbol}` });
     return;
   }
   if (operation.op === 'replace_text') {
-    const file = await ensureFile(root, operation.path, files, { mustExist: true });
-    if (operation.expected_hash && file.baseHash !== operation.expected_hash) throw new Error(`stale expected_hash for ${file.path}`);
-    const needle = Buffer.from(String(operation.old_text ?? ''), 'utf8');
-    if (!needle.length) throw new Error('replace_text old_text is required');
+    const targetPath = operation.path ?? operation.file_path ?? operation.filePath ?? operation.file;
+    const file = await ensureFile(root, targetPath, files, { mustExist: true });
+    const expectedHash = operation.expected_hash ?? operation.expectedHash;
+    if (expectedHash && file.baseHash !== expectedHash) {
+      const note = String(expectedHash).length !== 64 ? ' (note: Cuppet uses 64-char SHA-256 content hashes, not Git SHA-1)' : '';
+      throw new Error(`stale expected_hash for ${file.path}${note}`);
+    }
+    const rawOld = operation.old_text ?? operation.oldText ?? operation.oldtext ?? operation.search ?? operation.needle;
+    const needle = Buffer.from(String(rawOld ?? ''), 'utf8');
+    if (!needle.length) {
+      const keys = Object.keys(operation).filter((k) => operation[k] !== undefined && !['op', 'path', 'file_path', 'filePath', 'file'].includes(k));
+      throw new Error(`replace_text old_text is required${keys.length ? ` (received keys: [${keys.join(', ')}])` : ''}`);
+    }
     const positions = allOccurrences(file.before, needle);
     if (positions.length !== 1) throw new Error(`replace_text matched ${positions.length} times; exactly one match is required inside a batch`);
-    addEdit(file, { index, start: positions[0], end: positions[0] + needle.length, replacement: Buffer.from(String(operation.new_text ?? ''), 'utf8'), description: 'replace_text' });
+    const rawNew = operation.new_text ?? operation.newText ?? operation.newtext ?? operation.replacement ?? operation.replace;
+    addEdit(file, { index, start: positions[0], end: positions[0] + needle.length, replacement: Buffer.from(String(rawNew ?? ''), 'utf8'), description: 'replace_text' });
     return;
   }
   if (operation.op === 'create_file') {
-    const file = await ensureFile(root, operation.path, files, { mustExist: false });
+    const targetPath = operation.path ?? operation.file_path ?? operation.filePath ?? operation.file;
+    const file = await ensureFile(root, targetPath, files, { mustExist: false });
     if (file.exists) throw new Error(`create_file target already exists: ${file.path}`);
     if (file.edits.length) throw new Error(`multiple create operations for ${file.path}`);
-    addEdit(file, { index, start: 0, end: 0, replacement: Buffer.from(String(operation.content ?? ''), 'utf8'), description: 'create_file' });
+    const rawContent = operation.content ?? operation.text ?? operation.file_content ?? operation.fileContent ?? '';
+    addEdit(file, { index, start: 0, end: 0, replacement: Buffer.from(String(rawContent), 'utf8'), description: 'create_file' });
     return;
   }
   throw new Error(`unsupported batch operation: ${operation.op}`);
@@ -353,7 +376,28 @@ function validateTarget(value) {
   return target;
 }
 function normalizeOperations(values) {
-  return (Array.isArray(values) ? values : []).map((value) => value && typeof value === 'object' && !Array.isArray(value) ? structuredClone(value) : { op: '' });
+  return (Array.isArray(values) ? values : []).map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { op: '' };
+    const clone = structuredClone(value);
+    const op = String(clone.op ?? '');
+    const p = clone.path ?? clone.file_path ?? clone.filePath ?? clone.file;
+    if (p !== undefined) clone.path = p;
+    if (op === 'replace_text') {
+      const oldVal = clone.old_text ?? clone.oldText ?? clone.oldtext ?? clone.search ?? clone.needle;
+      if (oldVal !== undefined) clone.old_text = oldVal;
+      const newVal = clone.new_text ?? clone.newText ?? clone.newtext ?? clone.replacement ?? clone.replace;
+      if (newVal !== undefined) clone.new_text = newVal;
+      const hashVal = clone.expected_hash ?? clone.expectedHash;
+      if (hashVal !== undefined) clone.expected_hash = hashVal;
+    } else if (op === 'create_file') {
+      const contentVal = clone.content ?? clone.text ?? clone.file_content ?? clone.fileContent;
+      if (contentVal !== undefined) clone.content = contentVal;
+    } else if (STRUCTURAL_OPS.has(op)) {
+      const contentVal = clone.content ?? clone.replacement ?? clone.text;
+      if (contentVal !== undefined) clone.content = contentVal;
+    }
+    return clone;
+  });
 }
 function allOccurrences(buffer, needle) { const output = []; let offset = 0; for (;;) { const index = buffer.indexOf(needle, offset); if (index < 0) break; output.push(index); offset = index + Math.max(1, needle.length); } return output; }
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }

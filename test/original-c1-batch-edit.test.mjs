@@ -194,3 +194,83 @@ test('ProjectWriter serializes mutating work for the same project', async () => 
   await Promise.all([first, second]);
   assert.deepEqual(order, ['first-start', 'first-end', 'second-start', 'second-end']);
 });
+
+test('batch prepare and apply accept lenient aliases for oldText, newText, content, and file', async () => {
+  const { root, manager } = await fixture();
+  await writeFile(join(root, 'foo.ts'), 'const x = "hello";\n');
+  const prepared = await manager.prepare({
+    sessionId: 's-alias',
+    projectRoot: root,
+    operations: [
+      { op: 'replace_text', file: 'foo.ts', oldText: '"hello"', newText: '"world"' },
+      { op: 'create_file', filePath: 'bar.ts', text: 'export const y = 42;\n' },
+    ],
+  });
+  assert.equal(prepared.state, 'prepared');
+  assert.match(prepared.diff, /"hello"/);
+  assert.match(prepared.diff, /"world"/);
+  assert.match(prepared.diff, /export const y = 42;/);
+
+  const applied = await manager.apply({
+    batchId: prepared.id,
+    sessionId: 's-alias',
+    projectRoot: root,
+    executionId: 'tool-alias',
+    authorize: async () => ({ allowed: true }),
+  });
+  assert.equal(applied.applied, true);
+  assert.equal(await readFile(join(root, 'foo.ts'), 'utf8'), 'const x = "world";\n');
+  assert.equal(await readFile(join(root, 'bar.ts'), 'utf8'), 'export const y = 42;\n');
+});
+
+test('batch prepare provides 1-based step and received keys on conflict', async () => {
+  const { root, manager } = await fixture();
+  await writeFile(join(root, 'test.ts'), 'console.log(1);\n');
+  try {
+    await manager.prepare({
+      sessionId: 's-conflict',
+      projectRoot: root,
+      operations: [
+        { op: 'create_file', path: 'new.ts', content: 'new\n' },
+        { op: 'replace_text', path: 'test.ts', wrong_key: 'foo' },
+      ],
+    });
+    assert.fail('Expected prepare to throw');
+  } catch (error) {
+    assert.equal(error.name, 'TstBatchConflictError');
+    assert.equal(error.conflicts.length, 1);
+    assert.equal(error.conflicts[0].index, 1);
+    assert.equal(error.conflicts[0].step, 2);
+    assert.match(error.conflicts[0].error, /replace_text old_text is required \(received keys: \[wrong_key\]\)/);
+  }
+});
+
+test('batch prepare gracefully succeeds when daemon does not support staged parsing', async () => {
+  const { root, manager, tst } = await fixture();
+  tst.parseStaged = async () => {
+    throw new Error('Connected TST daemon does not support staged parsing.');
+  };
+  await writeFile(join(root, 'query.sql'), 'SELECT 1;\n');
+  const prepared = await manager.prepare({
+    sessionId: 's-unsupported-parse',
+    projectRoot: root,
+    operations: [
+      { op: 'replace_text', path: 'query.sql', old_text: 'SELECT 1;', new_text: 'SELECT 2;' },
+    ],
+  });
+  assert.equal(prepared.state, 'prepared');
+  assert.equal(prepared.files[0].parse.supported, false);
+  assert.match(prepared.diff, /SELECT 2;/);
+
+  const applied = await manager.apply({
+    batchId: prepared.id,
+    sessionId: 's-unsupported-parse',
+    projectRoot: root,
+    executionId: 'tool-unsupported-parse',
+    authorize: async () => ({ allowed: true }),
+  });
+  assert.equal(applied.applied, true);
+  assert.equal(await readFile(join(root, 'query.sql'), 'utf8'), 'SELECT 2;\n');
+});
+
+

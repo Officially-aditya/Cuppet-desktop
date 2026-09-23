@@ -66,7 +66,7 @@ test('switching projects cannot retarget a run already bound to another project'
     assert.equal(restored.messages.at(-1).content, 'project A complete');
     assert.equal(restored.messages.at(-1).status, 'complete');
   } finally {
-    runtime.close();
-    await rm(dir, { recursive: true, force: true });
+    await runtime.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
   }
 });

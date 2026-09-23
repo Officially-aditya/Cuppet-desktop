@@ -61,7 +61,8 @@ export class SandboxManager {
    * @returns {Promise<{ command: string, args: string[], shell: boolean, env: Record<string, string>, driverName: string }>}
    */
   async getSpawnSpec(command, policy, { enabled = true } = {}) {
-    const env = sanitizeEnvironment(process.env, policy?.envOverrides);
+    const isFullAccess = Boolean(policy?.fullAccess || policy?.protectSensitiveCredentials === false);
+    const env = sanitizeEnvironment(process.env, policy?.envOverrides, { fullAccess: isFullAccess });
 
     if (!enabled) {
       return { command, args: [], shell: true, env, driverName: 'host-fallback' };

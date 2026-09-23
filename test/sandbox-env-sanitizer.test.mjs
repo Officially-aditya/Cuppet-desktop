@@ -83,3 +83,48 @@ test('sanitizeEnvironment applies explicit overrides', () => {
   assert.equal(result.PORT, '3000');
   assert.equal(result.CUSTOM_FLAG, 'true');
 });
+
+test('sanitizeEnvironment sets GIT_TERMINAL_PROMPT=0 to prevent dead-TTY hangs', () => {
+  const result = sanitizeEnvironment({ PATH: '/usr/bin' });
+  assert.equal(result.GIT_TERMINAL_PROMPT, '0');
+
+  // Can be explicitly overridden if requested
+  const overridden = sanitizeEnvironment({ PATH: '/usr/bin' }, { GIT_TERMINAL_PROMPT: '1' });
+  assert.equal(overridden.GIT_TERMINAL_PROMPT, '1');
+});
+
+test('sanitizeEnvironment with fullAccess: true preserves Git and SSH credentials while scrubbing provider keys', () => {
+  const source = {
+    PATH: '/usr/bin',
+    HOME: '/Users/testuser',
+    SSH_AUTH_SOCK: '/tmp/ssh-agent.sock',
+    GITHUB_TOKEN: 'ghp_secrettoken123',
+    GH_TOKEN: 'gho_secrettoken456',
+    GIT_AUTHOR_NAME: 'Alice Dev',
+    GIT_AUTHOR_EMAIL: 'alice@example.com',
+    GIT_COMMITTER_NAME: 'Alice Dev',
+    GIT_COMMITTER_EMAIL: 'alice@example.com',
+    OPENAI_API_KEY: 'sk-proj-1234567890',
+    ANTHROPIC_API_KEY: 'sk-ant-1234567890',
+    AWS_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    CUPPET_USER_DATA_DIR: '/Users/testuser/.cuppet',
+  };
+
+  const result = sanitizeEnvironment(source, {}, { fullAccess: true });
+
+  assert.equal(result.SSH_AUTH_SOCK, '/tmp/ssh-agent.sock');
+  assert.equal(result.GITHUB_TOKEN, 'ghp_secrettoken123');
+  assert.equal(result.GH_TOKEN, 'gho_secrettoken456');
+  assert.equal(result.GIT_AUTHOR_NAME, 'Alice Dev');
+  assert.equal(result.GIT_AUTHOR_EMAIL, 'alice@example.com');
+  assert.equal(result.GIT_COMMITTER_NAME, 'Alice Dev');
+  assert.equal(result.GIT_COMMITTER_EMAIL, 'alice@example.com');
+  assert.equal(result.GIT_TERMINAL_PROMPT, '0');
+
+  // Provider keys and Cuppet internal keys must still be scrubbed even in full access
+  assert.equal(result.OPENAI_API_KEY, undefined);
+  assert.equal(result.ANTHROPIC_API_KEY, undefined);
+  assert.equal(result.AWS_SECRET_ACCESS_KEY, undefined);
+  assert.equal(result.CUPPET_USER_DATA_DIR, undefined);
+});
+

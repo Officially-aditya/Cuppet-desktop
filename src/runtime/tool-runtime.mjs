@@ -173,11 +173,11 @@ export class ToolRuntime {
       case 'tst_read': return this.#read(projectRoot, args, authorize);
       case 'workspace_read': return this.#rawRead(projectRoot, args, authorize);
       case 'tst_edit_batch': return this.#batchEdit({ sessionId, projectRoot, executionId, args, authorize });
-      case 'tst_validate': return this.#validate(projectRoot, args, authorize, signal);
+      case 'tst_validate': return this.#validate(projectRoot, args, authorize, signal, sessionId);
       case 'workspace_edit': return this.#mutating(projectRoot, () => this.#edit(projectRoot, args, authorize));
       case 'workspace_write': return this.#mutating(projectRoot, () => this.#write(projectRoot, args, authorize));
-      case 'bash': return this.#bashWithWriter(projectRoot, args, authorize, signal, mode);
-      case 'background_process': return this.#backgroundProcess(projectRoot, args, authorize, signal);
+      case 'bash': return this.#bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId);
+      case 'background_process': return this.#backgroundProcess(projectRoot, args, authorize, signal, sessionId);
       default: throw new Error(`Unknown tool: ${name}`);
     }
   }
@@ -186,7 +186,7 @@ export class ToolRuntime {
     await this.#backgroundProcesses?.close?.();
   }
 
-  async #backgroundProcess(projectRoot, args, authorize, signal) {
+  async #backgroundProcess(projectRoot, args, authorize, signal, sessionId = null) {
     if (!projectRoot) throw new Error('background_process requires a project-bound session');
     const action = ['start', 'status', 'logs', 'list', 'stop'].includes(args.action) ? args.action : 'list';
     if (action === 'start') {
@@ -195,9 +195,11 @@ export class ToolRuntime {
       if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
       const permission = await authorize({ action: 'bash', resources: [command], description: `Start background process in project: ${command.slice(0, 300)}` });
       if (signal?.aborted) throw abortError();
+      const isFullAccess = Boolean(permission?.fullAccess || permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
       const spawnSpec = await this.#sandbox.getSpawnSpec(command, {
         projectRoot,
-        protectSensitiveCredentials: true,
+        fullAccess: isFullAccess,
+        protectSensitiveCredentials: !isFullAccess,
         offline: false,
       }, { enabled: true });
       const started = await this.#backgroundProcesses.start({
@@ -296,7 +298,11 @@ export class ToolRuntime {
     }
     const rendered = graphToolOutput(mode, result, cap);
     if (mode === 'search' && this.#batchEdits) {
-      const targetBlock = await this.#editTargetBlock(result).catch((error) => `EDIT TARGETS unavailable: ${cleanError(error)}`);
+      const targetBlock = await this.#editTargetBlock(result).catch((error) => {
+        const msg = cleanError(error);
+        if (/does not support revision-bound edit targets|not supported/i.test(msg)) return '';
+        return `EDIT TARGETS unavailable: ${msg}`;
+      });
       if (targetBlock) rendered.output = capText(`${rendered.output}\n\n${targetBlock}`, 6400);
     }
     this.#graphRemember(sessionId, key, rendered.paths);
@@ -373,7 +379,7 @@ export class ToolRuntime {
     };
   }
 
-  async #validate(projectRoot, args, authorize, signal) {
+  async #validate(projectRoot, args, authorize, signal, sessionId = null) {
     if (!projectRoot) throw new Error('tst_validate requires a project-bound session');
     const requestedPaths = [...new Set(array(args.paths).map(String).filter(Boolean))].slice(0, 64);
     const hashes = {};
@@ -389,7 +395,8 @@ export class ToolRuntime {
     const results = [];
     for (const command of commands) {
       const permission = await authorize({ action: 'bash', resources: [command], description: `Run validation check in project: ${command.slice(0, 300)}` });
-      const executed = await runShell(command, projectRoot, clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal, { fullAccess: permission.source === 'session-full-access' });
+      const isFullAccess = Boolean(permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
+      const executed = await runShell(command, projectRoot, clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal, { fullAccess: isFullAccess });
       results.push({ command, exitCode: executed.code, stdout: executed.stdout, stderr: executed.stderr });
     }
     const postHashes = {};
@@ -403,19 +410,27 @@ export class ToolRuntime {
   }
 
   async #edit(projectRoot, args, authorize) {
-    const resolved = await resolveWorkspacePath(projectRoot, args.path, { mustExist: true });
+    const filePath = args.path ?? args.file_path ?? args.filePath ?? args.file;
+    const resolved = await resolveWorkspacePath(projectRoot, filePath, { mustExist: true });
     await authorize({ action: 'edit', resources: [resolved.relative], description: `Edit ${resolved.relative}` });
-    const oldText = String(args.old_text ?? ''); const newText = String(args.new_text ?? '');
-    if (!oldText) throw new Error('old_text is required');
+    const rawOld = args.old_text ?? args.oldText ?? args.oldtext ?? args.search ?? args.needle;
+    const oldText = String(rawOld ?? '');
+    const rawNew = args.new_text ?? args.newText ?? args.newtext ?? args.replacement ?? args.replace;
+    const newText = String(rawNew ?? '');
+    if (!oldText) {
+      const keys = Object.keys(args).filter((k) => !['path', 'file_path', 'filePath', 'file'].includes(k));
+      throw new Error(`old_text is required${keys.length ? ` (received keys: [${keys.join(', ')}])` : ''}`);
+    }
     const source = await readFile(resolved.absolute, 'utf8');
     if (Buffer.byteLength(source) > MAX_FILE_BYTES) throw new Error(`File exceeds ${MAX_FILE_BYTES} byte edit limit`);
     const count = source.split(oldText).length - 1;
     if (!count) throw new Error('old_text was not found');
-    if (args.replace_all !== true && count !== 1) throw new Error(`old_text matched ${count} times; make the edit more specific or set replace_all=true`);
-    const next = args.replace_all === true ? source.split(oldText).join(newText) : source.replace(oldText, newText);
+    const replaceAll = args.replace_all ?? args.replaceAll;
+    if (replaceAll !== true && count !== 1) throw new Error(`old_text matched ${count} times; make the edit more specific or set replace_all=true`);
+    const next = replaceAll === true ? source.split(oldText).join(newText) : source.replace(oldText, newText);
     if (Buffer.byteLength(next) > MAX_FILE_BYTES) throw new Error(`Edited file exceeds ${MAX_FILE_BYTES} byte limit`);
     await writeFile(resolved.absolute, next, 'utf8');
-    return { output: `Edited ${resolved.relative}${args.replace_all === true ? ` (${count} replacements)` : ''}.`, paths: [resolved.relative], mutation: true };
+    return { output: `Edited ${resolved.relative}${replaceAll === true ? ` (${count} replacements)` : ''}.`, paths: [resolved.relative], mutation: true };
   }
 
   async #rawRead(projectRoot, args, authorize) {
@@ -431,32 +446,36 @@ export class ToolRuntime {
   }
 
   async #write(projectRoot, args, authorize) {
-    const resolved = await resolveWorkspacePath(projectRoot, args.path, { mustExist: false });
+    const filePath = args.path ?? args.file_path ?? args.filePath ?? args.file;
+    const resolved = await resolveWorkspacePath(projectRoot, filePath, { mustExist: false });
     await authorize({ action: 'write', resources: [resolved.relative], description: `Write ${resolved.relative}` });
-    const content = String(args.content ?? '');
+    const rawContent = args.content ?? args.text ?? args.file_content ?? args.fileContent;
+    const content = String(rawContent ?? '');
     if (Buffer.byteLength(content) > MAX_FILE_BYTES) throw new Error(`Content exceeds ${MAX_FILE_BYTES} byte write limit`);
     await mkdir(dirname(resolved.absolute), { recursive: true });
     await writeFile(resolved.absolute, content, 'utf8');
     return { output: `Wrote ${Buffer.byteLength(content)} bytes to ${resolved.relative}.`, paths: [resolved.relative], mutation: true };
   }
 
-  async #bashWithWriter(projectRoot, args, authorize, signal, mode) {
+  async #bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId = null) {
     const command = String(args.command ?? '').trim();
-    if (isSafeAutoBashCommand(command)) return this.#bash(projectRoot, args, authorize, signal, mode);
-    return this.#mutating(projectRoot, () => this.#bash(projectRoot, args, authorize, signal, mode));
+    if (isSafeAutoBashCommand(command)) return this.#bash(projectRoot, args, authorize, signal, mode, sessionId);
+    return this.#mutating(projectRoot, () => this.#bash(projectRoot, args, authorize, signal, mode, sessionId));
   }
 
-  async #bash(projectRoot, args, authorize, signal, mode = 'build') {
+  async #bash(projectRoot, args, authorize, signal, mode = 'build', sessionId = null) {
     if (!projectRoot) throw new Error('bash requires a project-bound session');
     const command = String(args.command ?? '').trim();
     if (!command) throw new Error('command is required');
     if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
     const permission = await authorize({ action: 'bash', resources: [command], description: `Run shell command in project: ${command.slice(0, 300)}` });
+    const isFullAccess = Boolean(permission?.fullAccess || permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
     const timeoutMs = clamp(Number(args.timeout_ms) || 30000, 1000, 120000);
     const executed = await this.#sandbox.execute(command, projectRoot, {
       projectRoot,
       offline: mode === 'plan',
-      protectSensitiveCredentials: true,
+      fullAccess: isFullAccess,
+      protectSensitiveCredentials: !isFullAccess,
     }, {
       timeoutMs,
       signal,
@@ -507,7 +526,7 @@ const READ_TOOL = tool('tst_read', 'Batch-read exact source ranges or revision-b
 });
 const BATCH_EDIT_TOOL = tool('tst_edit_batch', 'Prepare or apply a checked multi-file edit batch. Prepare is write-free and parses every staged final buffer. Apply revalidates hashes, permission, publishes one undo boundary, then waits for the TST graph refresh barrier.', {
   action: { type: 'string', enum: ['prepare', 'apply'] }, batch_id: { type: 'string' },
-  operations: { type: 'array', maxItems: 64, items: { type: 'object', additionalProperties: true, properties: { op: { type: 'string', enum: ['replace_node', 'insert_before_node', 'insert_after_node', 'delete_node', 'replace_text', 'create_file'] }, target: TARGET_SCHEMA, path: { type: 'string' }, content: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' }, expected_hash: { type: 'string' } }, required: ['op'] } },
+  operations: { type: 'array', maxItems: 64, items: { type: 'object', additionalProperties: true, properties: { op: { type: 'string', enum: ['replace_node', 'insert_before_node', 'insert_after_node', 'delete_node', 'replace_text', 'create_file'] }, target: TARGET_SCHEMA, path: { type: 'string' }, content: { type: 'string' }, old_text: { type: 'string' }, oldText: { type: 'string' }, new_text: { type: 'string' }, newText: { type: 'string' }, expected_hash: { type: 'string' } }, required: ['op'] } },
 }, ['action']);
 const VALIDATE_TOOL = tool('tst_validate', 'Associate explicit approved repository checks with the current post-edit file hashes. With no commands, suggest likely checks without executing anything.', {
   paths: { type: 'array', maxItems: 64, items: { type: 'string' } }, commands: { type: 'array', maxItems: MAX_VALIDATION_COMMANDS, items: { type: 'string' } }, timeout_ms: { type: 'integer', minimum: 1000, maximum: 120000 },
@@ -670,7 +689,7 @@ async function suggestValidationCommands(projectRoot) {
   return [...new Set(suggestions)].slice(0, MAX_VALIDATION_COMMANDS);
 }
 
-export async function runShell(command, cwd, timeoutMs, signal, { fullAccess = false, offline = false, protectSensitiveCredentials = true } = {}) {
+export async function runShell(command, cwd, timeoutMs, signal, { fullAccess = false, offline = false, protectSensitiveCredentials = !fullAccess } = {}) {
   const manager = new SandboxManager();
   return manager.execute(command, cwd, {
     projectRoot: cwd,
@@ -689,6 +708,7 @@ export async function fullAccessMacSandboxProfile(projectRoot) {
 }
 
 export function safeShellEnvironment(sourceEnv = process.env, overrides = {}) {
+  // safeShellEnvironment() child shell secret scrubbing: ^CUPPET_.*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)
   return sanitizeEnvironment(sourceEnv, overrides);
 }
 async function gitChangedPaths(cwd) {
