@@ -172,22 +172,15 @@ class ToolMutationCapture {
     if (this.#failure) throw this.#failure;
     const finalDelta = typeof options?.onDelta === 'function' ? options.onDelta : async () => {};
     let pendingText = '';
-    let streamedAny = false;
-    const isDeferred = this.#previewPolicy === 'defer-unclassified';
 
-    const handleDelta = async (delta) => {
+    const previewDelta = (delta) => {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
       if (!text) return;
-      streamedAny = true;
-      if (isDeferred) {
-        pendingText += text;
-      } else {
-        await finalDelta(text);
-      }
+      pendingText += text;
+      if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
     };
 
     const flushReasoning = async () => {
-      if (!isDeferred) return;
       const segment = pendingText.trim();
       if (segment) await this.#onReasoning(segment);
       pendingText = '';
@@ -212,13 +205,13 @@ class ToolMutationCapture {
       response = await this.#adapter.stream(messages, {
         ...options,
         tools: providerTools,
-        onDelta: handleDelta,
+        onDelta: previewDelta,
         onActivity: async (activity) => this.#onActivity(activity),
         ...(executeTool ? { executeTool } : {}),
       });
     } catch (error) {
       const stopped = options?.signal?.aborted || error?.name === 'AbortError';
-      if (stopped && isDeferred && pendingText) {
+      if (stopped && this.#previewPolicy !== 'defer-unclassified' && pendingText) {
         await finalDelta(pendingText, { stoppedPartial: true });
         pendingText = '';
       }
@@ -255,14 +248,10 @@ class ToolMutationCapture {
       }
       return this.stream(conversation, options);
     }
-    if (isDeferred) {
-      if (!pendingText && !streamedAny && typeof response?.text === 'string') pendingText = response.text;
-      if (pendingText) await finalDelta(pendingText);
-      pendingText = '';
-      this.#onPreview('');
-    } else if (!streamedAny && typeof response?.text === 'string' && response.text) {
-      await finalDelta(response.text);
-    }
+    if (!pendingText && typeof response?.text === 'string') pendingText = response.text;
+    if (pendingText) await finalDelta(pendingText);
+    pendingText = '';
+    this.#onPreview('');
     return response;
   }
 

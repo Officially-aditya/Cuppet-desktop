@@ -128,6 +128,8 @@ export class ManagedTstManager {
   async forgetMemory(sessionId, key) { return (await this.#forSession(sessionId)).forgetMemory(sessionId, key); }
   async clearMemory(sessionId, scope = 'session') { return (await this.#forSession(sessionId)).clearMemory(sessionId, scope); }
   async recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash) { return (await this.#forSession(sessionId)).recordEvidence(sessionId, memoryId, kind, reference, success, contentHash); }
+  async forSession(sessionId) { return this.#forSession(sessionId); }
+  sessionBinding(sessionId) { return this.#sessionBindings.get(sessionId) ?? null; }
 
   async #forSession(sessionId) {
     if (this.#external) return this.#external;

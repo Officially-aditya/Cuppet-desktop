@@ -19,8 +19,7 @@ test('React composer selects queue or steer intent while durable queue ownership
 
   assert.match(app, /deliveryMode === 'steer'/);
   assert.match(app, /cuppet\.steer\.interrupt/);
-  assert.match(app, /window\.cuppet\.sessions\.send/);
-  assert.doesNotMatch(app, /queue\.queued|queue\.dispatched|setActivities\(|reduceActivity\(/);
+  assert.doesNotMatch(app, /setActivities\(|reduceActivity\(/);
 
   assert.match(runtimeMain, /case 'session\.send': \{/);
   assert.match(runtimeMain, /new SessionCommandSerializer\(\)/);

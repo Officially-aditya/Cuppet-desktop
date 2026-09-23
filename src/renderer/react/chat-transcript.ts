@@ -103,7 +103,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
     });
   }
 
-  if ((event.source === 'execution' || event.source === 'provider') && activityType.startsWith('activity.tool.')) {
+  if ((event.source === 'execution' && activityType.startsWith('activity.tool.')) || (event.source === 'provider' && activityType.startsWith('activity.tool.'))) {
     return updateMessageState(state, messageId, (current) => ({
       ...current,
       items: updateTool(current.items, activity, sequence),

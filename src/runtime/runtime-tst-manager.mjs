@@ -3,9 +3,10 @@ import { ManagedTstManager } from './tst-supervisor.mjs';
 import { prepareManagedTstDataDir } from './tst-data-alias.mjs';
 
 export class RuntimeTstManager {
-  #manager; #context = new AsyncLocalStorage(); #closing;
+  #manager; #context = new AsyncLocalStorage(); #closing; #resolveProject;
 
   constructor(options = {}) {
+    this.#resolveProject = typeof options.resolveProjectForSession === 'function' ? options.resolveProjectForSession : null;
     if (options.manager) this.#manager = options.manager;
     else this.#manager = new ManagedTstManager({ ...options, dataDir: prepareManagedTstDataDir(options.dataDir) });
   }
@@ -61,11 +62,39 @@ export class RuntimeTstManager {
     const current = this.#context.getStore();
     if (current?.projectId && current?.projectRoot) {
       await this.#manager.bindSession(sessionId, current.projectId, current.projectRoot);
+      return;
+    }
+    if (this.#resolveProject) {
+      try {
+        const resolved = await this.#resolveProject(sessionId);
+        if (resolved?.projectId && resolved?.projectRoot) {
+          await this.#manager.bindSession(sessionId, resolved.projectId, resolved.projectRoot);
+        }
+      } catch {}
     }
   }
 
   async #projectHandle() {
     const current = this.#context.getStore();
+    if (current?.projectId && current?.projectRoot) {
+      return this.#manager.forProject(current.projectId, current.projectRoot);
+    }
+    if (current?.sessionId) {
+      if (this.#resolveProject) {
+        try {
+          const resolved = await this.#resolveProject(current.sessionId);
+          if (resolved?.projectId && resolved?.projectRoot) {
+            await this.#manager.bindSession(current.sessionId, resolved.projectId, resolved.projectRoot).catch(() => undefined);
+            return this.#manager.forProject(resolved.projectId, resolved.projectRoot);
+          }
+        } catch {}
+      }
+      if (typeof this.#manager.forSession === 'function') {
+        try {
+          return await this.#manager.forSession(current.sessionId);
+        } catch {}
+      }
+    }
     if (!current?.projectId || !current?.projectRoot) throw new Error('Project-scoped TST operation has no active project context');
     return this.#manager.forProject(current.projectId, current.projectRoot);
   }

@@ -78,7 +78,17 @@ const emit = (event) => {
   write({ kind: 'event', event });
   remote?.handleRuntimeEvent(event);
 };
-const tst = new RuntimeTstManager({ dataDir: join(dataDir, 'tst') });
+const tst = new RuntimeTstManager({
+  dataDir: join(dataDir, 'tst'),
+  resolveProjectForSession: (sessionId) => {
+    if (!sessionId) return null;
+    const session = localState.getSessionSummary(sessionId);
+    if (!session?.projectId) return null;
+    const project = localState.getProject(session.projectId);
+    if (!project?.canonicalPath) return null;
+    return { projectId: project.id, projectRoot: project.canonicalPath };
+  },
+});
 const browserControl = new BrowserControlManager({ emit });
 const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, runState });
 const service = {

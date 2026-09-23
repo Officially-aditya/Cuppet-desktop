@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
 import { PermissionBroker } from '../src/runtime/permissions.mjs';
 import { ToolRuntime, runShell } from '../src/runtime/tool-runtime.mjs';
+import { RuntimeTstManager } from '../src/runtime/runtime-tst-manager.mjs';
 
 async function fixture({ tst } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-c1-tools-'));
@@ -203,3 +204,107 @@ test('background_process starts, reads logs, and stops a long-lived project serv
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
+
+test('tool execution preserves project context in RuntimeTstManager across detached callbacks', async () => {
+  class FakeProjectManager {
+    configured = true;
+    status = { configured: true };
+    forProjectCalls = [];
+    async forProject(projectId, projectRoot) {
+      this.forProjectCalls.push({ projectId, projectRoot });
+      return {
+        graphWorkspace: async (limit) => ({ limit, projectRoot, files: [] }),
+        call: async () => ({}),
+        supports: async () => true,
+      };
+    }
+    async bindSession() {}
+    async close() {}
+  }
+  const fakeManager = new FakeProjectManager();
+  const tst = new RuntimeTstManager({ manager: fakeManager });
+  const { dir, root, db, broker, toolRuntime } = await fixture({ tst });
+  try {
+    const adapter = {
+      async stream(messages, { executeTool }) {
+        // Simulate an asynchronous event loop callback (like socket data / external process I/O)
+        // by executing in a separate setTimeout tick where AsyncLocalStorage is lost if not re-bound
+        return new Promise((resolve, reject) => {
+          setTimeout(async () => {
+            try {
+              const result = await executeTool({
+                id: 'call_explore',
+                name: 'tst_explore',
+                arguments: '{"mode":"workspace","limit":50}',
+              });
+              assert.equal(result.success, true);
+              assert.match(result.output, /UNTRUSTED CUPPET CODE GRAPH RESULTS/);
+              resolve({ text: 'exploration done', toolCalls: [], usage: null });
+            } catch (err) {
+              reject(err);
+            }
+          }, 10);
+        });
+      },
+    };
+    const result = await toolRuntime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'explore the workspace' }],
+      sessionId: 's1',
+      projectId: 'p1',
+      projectRoot: root,
+      mode: 'build',
+      signal: new AbortController().signal,
+      onDelta: async () => {},
+    });
+    assert.equal(result.toolSteps, 1);
+    assert.equal(fakeManager.forProjectCalls.length, 1);
+    assert.equal(fakeManager.forProjectCalls[0].projectId, 'p1');
+    assert.equal(fakeManager.forProjectCalls[0].projectRoot, root);
+  } finally {
+    await toolRuntime.close();
+    broker.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('tst_explore and cuppet_memory_search return clean messages when session has no project', async () => {
+  const { dir, db, broker, toolRuntime } = await fixture({ tst: { configured: true } });
+  try {
+    db.createSession({ id: 'general-session', projectId: null });
+    const adapter = scriptedAdapter([
+      {
+        toolCalls: [
+          { id: 'call_exp', name: 'tst_explore', arguments: '{"mode":"workspace"}' },
+          { id: 'call_mem', name: 'cuppet_memory_search', arguments: '{"query":"auth"}' },
+        ],
+      },
+      {
+        delta: 'done',
+        assertMessages(messages) {
+          const outputs = messages.filter((m) => m.role === 'tool').map((m) => m.content);
+          assert.match(outputs[0], /requires a project-bound chat/);
+          assert.match(outputs[1], /requires a project-bound chat/);
+        },
+      },
+    ]);
+    const result = await toolRuntime.run({
+      adapter,
+      messages: [{ role: 'user', content: 'check workspace' }],
+      sessionId: 'general-session',
+      projectId: null,
+      projectRoot: null,
+      mode: 'build',
+      signal: new AbortController().signal,
+      onDelta: async () => {},
+    });
+    assert.equal(result.toolSteps, 2);
+  } finally {
+    await toolRuntime.close();
+    broker.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+

@@ -76,3 +76,36 @@ test('managed shutdown is deduplicated so runtime close can await the same daemo
   await Promise.all([first, second]);
   assert.equal(manager.closes, 1);
 });
+
+test('project resolution fallback binds session and project handle when context has sessionId only', async () => {
+  const manager = new FakeManager();
+  const tst = new RuntimeTstManager({
+    manager,
+    resolveProjectForSession: (sessionId) => {
+      if (sessionId === 'session-lazy') return { projectId: 'project-lazy', projectRoot: '/workspace/lazy' };
+      return null;
+    },
+  });
+  const result = await tst.runWithProject({ sessionId: 'session-lazy' }, () => tst.graphLocate('searchTarget'));
+  assert.deepEqual(result, { projectId: 'project-lazy', projectRoot: '/workspace/lazy', pattern: 'searchTarget' });
+  assert.deepEqual(manager.binds, [
+    { sessionId: 'session-lazy', projectId: 'project-lazy', projectRoot: '/workspace/lazy' },
+  ]);
+});
+
+test('session-scoped TST calls resolve project from session when store has no project context', async () => {
+  const manager = new FakeManager();
+  const tst = new RuntimeTstManager({
+    manager,
+    resolveProjectForSession: (sessionId) => {
+      if (sessionId === 'session-detached') return { projectId: 'project-detached', projectRoot: '/workspace/detached' };
+      return null;
+    },
+  });
+  const result = await tst.queryMemory('session-detached', 'marker');
+  assert.deepEqual(result, { sessionId: 'session-detached', query: 'marker' });
+  assert.deepEqual(manager.binds, [
+    { sessionId: 'session-detached', projectId: 'project-detached', projectRoot: '/workspace/detached' },
+  ]);
+});
+

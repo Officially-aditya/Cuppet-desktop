@@ -44,58 +44,79 @@ export class ToolRuntime {
   }
 
   async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {} }) {
-    const definitions = this.definitions({ projectRoot, integrations });
-    const conversation = injectToolPolicy(messages, Boolean(projectRoot), mode);
+    let resolvedProjectId = projectId;
+    let resolvedProjectRoot = projectRoot;
+    if ((!resolvedProjectId || !resolvedProjectRoot) && sessionId && this.#db) {
+      try {
+        const session = this.#db.getSessionSummary?.(sessionId);
+        if (session?.projectId) {
+          resolvedProjectId = resolvedProjectId || session.projectId;
+          const project = this.#db.getProject?.(session.projectId);
+          if (project?.canonicalPath) resolvedProjectRoot = resolvedProjectRoot || project.canonicalPath;
+        }
+      } catch {}
+    }
+    const definitions = this.definitions({ projectRoot: resolvedProjectRoot, integrations });
+    const conversation = injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode);
     let toolSteps = 0;
     let usage = null;
 
     const executeTool = async (call) => {
       toolSteps += 1;
       if (toolSteps > MAX_TOOL_STEPS) throw new Error(`Tool step limit exceeded (${MAX_TOOL_STEPS}).`);
-      const result = await this.#executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal });
+      const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal });
+      const result = typeof this.#tst?.runWithProject === 'function'
+        ? await this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, operation)
+        : await operation();
       if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
       if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
       return result;
     };
 
-    for (;;) {
-      if (signal?.aborted) throw abortError();
-      const response = await adapter.stream(conversation, {
-        signal,
-        onDelta,
-        tools: definitions,
-        projectRoot,
-        executeTool,
-        requestAgentPermission: async (request) => {
-          const resources = agentPermissionResources(request);
-          const permission = await this.#permissions.authorize({
-            sessionId,
-            projectRoot,
-            planMode: mode === 'plan',
-            signal,
-            action: agentPermissionAction(request?.kind, request?.title),
-            resources,
-            description: String(request?.title || 'Allow local coding agent action').slice(0, 500),
-            fingerprintKey: stableJson(request?.rawInput ?? {}),
-          });
-          return permission.source === 'session-exact' ? 'always' : 'once';
-        },
-      });
-      usage = response?.usage ?? usage;
-      const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
-      if (!toolCalls.length) return { toolSteps, usage };
+    const runTurn = async () => {
+      for (;;) {
+        if (signal?.aborted) throw abortError();
+        const response = await adapter.stream(conversation, {
+          signal,
+          onDelta,
+          tools: definitions,
+          projectRoot: resolvedProjectRoot,
+          executeTool,
+          requestAgentPermission: async (request) => {
+            const resources = agentPermissionResources(request);
+            const permission = await this.#permissions.authorize({
+              sessionId,
+              projectRoot: resolvedProjectRoot,
+              planMode: mode === 'plan',
+              signal,
+              action: agentPermissionAction(request?.kind, request?.title),
+              resources,
+              description: String(request?.title || 'Allow local coding agent action').slice(0, 500),
+              fingerprintKey: stableJson(request?.rawInput ?? {}),
+            });
+            return permission.source === 'session-exact' ? 'always' : 'once';
+          },
+        });
+        usage = response?.usage ?? usage;
+        const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
+        if (!toolCalls.length) return { toolSteps, usage };
 
-      conversation.push({
-        role: 'assistant',
-        content: response.text || null,
-        tool_calls: toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments ?? '{}' } })),
-      });
+        conversation.push({
+          role: 'assistant',
+          content: response.text || null,
+          tool_calls: toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments ?? '{}' } })),
+        });
 
-      for (const call of toolCalls) {
-        const result = await executeTool(call);
-        conversation.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output });
+        for (const call of toolCalls) {
+          const result = await executeTool(call);
+          conversation.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output });
+        }
       }
-    }
+    };
+
+    return typeof this.#tst?.runWithProject === 'function'
+      ? this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, runTurn)
+      : runTurn();
   }
 
   async #executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal }) {
@@ -146,9 +167,9 @@ export class ToolRuntime {
     }
     switch (name) {
       case 'cuppet_plan': return this.#plan(sessionId, args);
-      case 'cuppet_memory_search': return this.#memory(sessionId, args);
+      case 'cuppet_memory_search': return this.#memory(sessionId, projectRoot, args);
       case 'question': return this.#question(sessionId, args, signal);
-      case 'tst_explore': return this.#explore(sessionId, args);
+      case 'tst_explore': return this.#explore(sessionId, projectRoot, args);
       case 'tst_read': return this.#read(projectRoot, args, authorize);
       case 'workspace_read': return this.#rawRead(projectRoot, args, authorize);
       case 'tst_edit_batch': return this.#batchEdit({ sessionId, projectRoot, executionId, args, authorize });
@@ -222,12 +243,21 @@ export class ToolRuntime {
     return { output: output ?? 'No lossless implementation plan has been captured for this session.', paths: [], mutation: false };
   }
 
-  async #memory(sessionId, args) {
-    if (!this.#tst.configured) return { output: 'Cuppet memory is unavailable because TST is not configured.', paths: [], mutation: false };
+  async #memory(sessionId, projectRoot, args) {
+    if (!projectRoot) return { output: 'Cuppet memory requires a project-bound chat.', paths: [], mutation: false };
+    if (!this.#tst?.configured) return { output: 'Cuppet memory is unavailable because TST is not configured.', paths: [], mutation: false };
     const query = String(args.query ?? '').trim();
     if (!query) throw new Error('query is required');
-    const records = await this.#tst.queryMemory(sessionId, query.slice(0, 512), clamp(Number(args.limit) || 20, 1, 40));
-    return { output: `UNTRUSTED CUPPET MEMORY RESULTS\n${JSON.stringify(records, null, 2)}`, paths: [], mutation: false };
+    try {
+      const records = await this.#tst.queryMemory(sessionId, query.slice(0, 512), clamp(Number(args.limit) || 20, 1, 40));
+      return { output: `UNTRUSTED CUPPET MEMORY RESULTS\n${JSON.stringify(records, null, 2)}`, paths: [], mutation: false };
+    } catch (error) {
+      const message = cleanError(error);
+      if (/not bound to a project|no active project context/i.test(message)) {
+        return { output: 'Cuppet memory is only available in project-bound chats.', paths: [], mutation: false };
+      }
+      throw error;
+    }
   }
 
   async #question(sessionId, args, signal) {
@@ -236,8 +266,9 @@ export class ToolRuntime {
     return { output: `USER QUESTION RESPONSE\n${JSON.stringify({ answers: result.answers })}`, paths: [], mutation: false };
   }
 
-  async #explore(sessionId, args) {
-    if (!this.#tst.configured) return { output: 'Cuppet workspace graph is unavailable because TST is not configured.', paths: [], mutation: false };
+  async #explore(sessionId, projectRoot, args) {
+    if (!projectRoot) return { output: 'Cuppet workspace graph requires a project-bound chat.', paths: [], mutation: false };
+    if (!this.#tst?.configured) return { output: 'Cuppet workspace graph is unavailable because TST is not configured.', paths: [], mutation: false };
     const mode = ['workspace', 'tree', 'search', 'trace'].includes(args.mode) ? args.mode : 'workspace';
     const key = stableJson({ mode, query: args.query ?? '', prefix: args.prefix ?? '', direction: args.direction ?? 'both', depth: args.depth ?? 2, limit: args.limit ?? null });
     const prior = this.#graphPrior(sessionId, key);
@@ -245,15 +276,23 @@ export class ToolRuntime {
 
     let result;
     let cap;
-    if (mode === 'workspace') { result = await this.#tst.graphWorkspace(clamp(Number(args.limit) || 100, 1, 512)); cap = 800; }
-    else if (mode === 'tree') { result = await this.#tst.graphList(cleanPrefix(args.prefix), clamp(Number(args.limit) || 100, 1, 512)); cap = 1200; }
-    else if (mode === 'search') {
-      const query = String(args.query ?? '').trim(); if (!query) throw new Error('query is required for mode=search');
-      result = await this.#tst.graphLocate(query.slice(0, 512), cleanPrefix(args.prefix), clamp(Number(args.limit) || 12, 1, 12)); cap = 1800;
-    } else {
-      const query = String(args.query ?? '').trim(); if (!query) throw new Error('query is required for mode=trace');
-      const direction = ['callers', 'callees', 'both'].includes(args.direction) ? args.direction : 'both';
-      result = await this.#tst.graphTraceSummary(query.slice(0, 512), direction, clamp(Number(args.depth) || 2, 1, 4), clamp(Number(args.limit) || 12, 1, 12)); cap = 2400;
+    try {
+      if (mode === 'workspace') { result = await this.#tst.graphWorkspace(clamp(Number(args.limit) || 100, 1, 512)); cap = 800; }
+      else if (mode === 'tree') { result = await this.#tst.graphList(cleanPrefix(args.prefix), clamp(Number(args.limit) || 100, 1, 512)); cap = 1200; }
+      else if (mode === 'search') {
+        const query = String(args.query ?? '').trim(); if (!query) throw new Error('query is required for mode=search');
+        result = await this.#tst.graphLocate(query.slice(0, 512), cleanPrefix(args.prefix), clamp(Number(args.limit) || 12, 1, 12)); cap = 1800;
+      } else {
+        const query = String(args.query ?? '').trim(); if (!query) throw new Error('query is required for mode=trace');
+        const direction = ['callers', 'callees', 'both'].includes(args.direction) ? args.direction : 'both';
+        result = await this.#tst.graphTraceSummary(query.slice(0, 512), direction, clamp(Number(args.depth) || 2, 1, 4), clamp(Number(args.limit) || 12, 1, 12)); cap = 2400;
+      }
+    } catch (error) {
+      const message = cleanError(error);
+      if (/no active project context|not bound to a project/i.test(message)) {
+        return { output: 'Cuppet workspace graph requires an active project context.', paths: [], mutation: false };
+      }
+      throw error;
     }
     const rendered = graphToolOutput(mode, result, cap);
     if (mode === 'search' && this.#batchEdits) {

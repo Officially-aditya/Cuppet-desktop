@@ -433,7 +433,12 @@ export class RuntimeService {
     const execution = { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route };
     this.#liveExecutions.set(targetSessionId, execution);
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
-    void this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
+    const runGeneration = () => this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
+    if (this.#tst && typeof this.#tst.runWithProject === 'function') {
+      void this.#tst.runWithProject({ sessionId: targetSessionId, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null }, runGeneration);
+    } else {
+      void runGeneration();
+    }
     return { accepted: true, sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route };
   }
 
