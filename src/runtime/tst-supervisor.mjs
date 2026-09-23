@@ -362,7 +362,16 @@ export function resolveManagedTstBinary({ resourcesPath = process.env.CUPPET_RES
   const candidates = [
     process.env.CUPPET_TST_BIN ? resolve(process.env.CUPPET_TST_BIN) : null,
     resourcesPath ? join(resolve(resourcesPath), 'tst', key, binaryName) : null,
+    resourcesPath ? join(resolve(resourcesPath), 'tst', binaryName) : null,
     resolve(here, '..', '..', 'vendor', 'tst', key, binaryName),
+    resolve(here, '..', '..', 'node_modules', `@cuppet-code/runtime-${key}`, 'bin', binaryName),
+    resolve(here, '..', '..', 'node_modules', `@cuppet/runtime-${key}`, 'bin', binaryName),
+    process.env.npm_config_prefix ? join(process.env.npm_config_prefix, 'lib', 'node_modules', `@cuppet-code/runtime-${key}`, 'bin', binaryName) : null,
+    process.env.NVM_BIN ? resolve(process.env.NVM_BIN, '..', 'lib', 'node_modules', `@cuppet-code/runtime-${key}`, 'bin', binaryName) : null,
+    process.env.HOME ? join(process.env.HOME, '.nvm', 'versions', 'node', process.version, 'lib', 'node_modules', `@cuppet-code/runtime-${key}`, 'bin', binaryName) : null,
+    process.env.HOME ? join(process.env.HOME, '.nvm', 'versions', 'node', process.version, 'lib', 'node_modules', `@cuppet/runtime-${key}`, 'bin', binaryName) : null,
+    `/usr/local/lib/node_modules/@cuppet-code/runtime-${key}/bin/${binaryName}`,
+    `/opt/homebrew/lib/node_modules/@cuppet-code/runtime-${key}/bin/${binaryName}`,
   ].filter(Boolean);
   return candidates.find((candidate) => existsImpl(candidate)) ?? candidates[0] ?? null;
 }

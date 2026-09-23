@@ -9,3 +9,5 @@ vendor/tst/*
 !vendor/tst/.gitkeep
 vendor/browsercontrol/*
 !vendor/browsercontrol/.gitkeep
+vendor/codex/*
+!vendor/codex/.gitkeep
