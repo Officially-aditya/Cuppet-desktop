@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Session } from '../types';
 import { CUPPET_LOGO_URL } from './brand';
-import { useClientRunState } from './client-run-state';
 
 const SIDEBAR_WIDTH_KEY = 'cuppet.desktop.sidebar-width';
 const SIDEBAR_COLLAPSED_KEY = 'cuppet.desktop.sidebar-collapsed';
@@ -37,7 +36,6 @@ type Props = {
 };
 
 export function Sidebar(props: Props) {
-  const running = useClientRunState();
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   const collapsed = props.collapsed ?? uncontrolledCollapsed;
@@ -314,7 +312,7 @@ export function Sidebar(props: Props) {
                     session={session}
                     title={titleOverrides[session.id]}
                     active={props.activeSessionId === session.id}
-                    isWorking={session.lastStatus === 'streaming' || running.has(session.id)}
+                    menuOpen={menu?.kind === 'session' && menu.id === session.id}
                     onOpen={props.onSession}
                     onMenu={openMenu}
                     onHoverStart={handleSessionHoverStart}
@@ -342,7 +340,7 @@ export function Sidebar(props: Props) {
                   session={session}
                   title={titleOverrides[session.id]}
                   active={props.activeSessionId === session.id}
-                  isWorking={session.lastStatus === 'streaming' || running.has(session.id)}
+                  menuOpen={menu?.kind === 'session' && menu.id === session.id}
                   onOpen={props.onSession}
                   onMenu={openMenu}
                   onHoverStart={handleSessionHoverStart}
@@ -432,30 +430,11 @@ export function Sidebar(props: Props) {
   );
 }
 
-const PULSE_FRAMES = ['.', '..', '...', '..', '.'];
-
-function PulsingDots() {
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((prev) => (prev + 1) % PULSE_FRAMES.length);
-    }, 80);
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <span className="session-pulsing-dots" aria-label="Working" title="Working">
-      {PULSE_FRAMES[frame]}
-    </span>
-  );
-}
-
 function SessionRow({
   session,
   title,
   active,
-  isWorking,
+  menuOpen,
   onOpen,
   onMenu,
   onHoverStart,
@@ -464,16 +443,15 @@ function SessionRow({
   session: Session;
   title?: string;
   active: boolean;
-  isWorking?: boolean;
+  menuOpen?: boolean;
   onOpen: (id: string) => void | Promise<void>;
   onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void;
   onHoverStart: (session: Session, displayTitle: string, event: React.MouseEvent) => void;
   onHoverEnd: () => void;
 }) {
   const displayTitle = title || session.title || 'New chat';
-  const showPulsing = Boolean(isWorking && !active);
   return (
-    <div className="session-row" onContextMenu={(event) => onMenu(event, 'session', session.id)}>
+    <div className={`session-row${menuOpen ? ' menu-open' : ''}`} onContextMenu={(event) => onMenu(event, 'session', session.id)}>
       <button
         type="button"
         className={`session-item${active ? ' active' : ''}`}
@@ -487,7 +465,7 @@ function SessionRow({
         onPointerDown={onHoverEnd}
       >
         <div className="session-title">{displayTitle}</div>
-        <div className="session-meta">{showPulsing ? <PulsingDots /> : relativeTime(session.updatedAt)}</div>
+        <div className="session-meta">{relativeTime(session.updatedAt)}</div>
       </button>
       <button
         type="button"

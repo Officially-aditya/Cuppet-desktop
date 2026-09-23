@@ -1,11 +1,18 @@
-/* Keep chat actions inside the highlighted sidebar row and swap them with metadata. */
+/* Keep chat actions inside the highlighted sidebar row and swap them with metadata at the exact same location. */
 .react-sidebar .session-row{
   position:relative;
   min-height:36px;
   margin:0 10px 4px 10px;
 }
 
+.react-sidebar .session-row:hover .session-item:not(.active){
+  background:#14181e;
+}
+
 .react-sidebar .session-item{
+  position:relative;
+  display:flex;
+  align-items:center;
   width:100%;
   min-height:36px;
   padding:8px 12px;
@@ -14,12 +21,37 @@
 }
 
 .react-sidebar .session-title{
+  min-width:0;
+  flex:1;
   line-height:20px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
 
 .react-sidebar .session-meta{
+  position:absolute;
+  z-index:1;
+  top:50%;
+  right:6px;
+  width:22px;
+  height:22px;
+  margin:0;
+  max-width:none;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transform:translateY(-50%);
+  pointer-events:none;
+  text-align:center;
+  font-size:10px;
+  line-height:1;
+  color:#626c79;
   transition:opacity .12s ease,visibility .12s ease;
-  line-height:20px;
+}
+
+.react-sidebar .session-item.active .session-meta{
+  color:#8893a2;
 }
 
 .react-sidebar .session-menu-button{
@@ -30,13 +62,33 @@
   width:22px;
   height:22px;
   margin:0;
+  display:grid;
+  place-items:center;
   transform:translateY(-50%);
+  opacity:0;
+  pointer-events:none;
+  visibility:hidden;
+  transition:opacity .12s ease,visibility .12s ease,background .12s ease,color .12s ease;
+}
+
+.react-sidebar .session-menu-button:hover{
+  background:#20262e;
+  color:#fff;
 }
 
 .react-sidebar .session-row:hover .session-meta,
-.react-sidebar .session-row:focus-within .session-meta{
+.react-sidebar .session-row:focus-within .session-meta,
+.react-sidebar .session-row.menu-open .session-meta{
   opacity:0;
   visibility:hidden;
+}
+
+.react-sidebar .session-row:hover .session-menu-button,
+.react-sidebar .session-row:focus-within .session-menu-button,
+.react-sidebar .session-row.menu-open .session-menu-button{
+  opacity:1;
+  pointer-events:auto;
+  visibility:visible;
 }
 
 .compact-sidebar .react-sidebar .session-row{
@@ -49,16 +101,3 @@
   padding-block:4px;
   border-radius:6px;
 }
-
-.session-pulsing-dots {
-  display: inline-block;
-  min-width: 14px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 14px;
-  letter-spacing: 0.5px;
-  color: #8c97a7;
-  text-align: right;
-}
-
