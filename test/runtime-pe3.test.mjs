@@ -11,6 +11,11 @@ function providerFactory() {
   return () => ({
     async stream(messages, { signal, onDelta }) {
       if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      const system = messages.find((message) => message.role === 'system')?.content ?? '';
+      if (system.includes('concise chat title')) {
+        await onDelta('Billing Integration');
+        return { text: 'Billing Integration' };
+      }
       const user = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
       await onDelta(`done:${user.includes('billing') ? 'billing' : 'auth'}`);
       return { text: 'done' };
@@ -50,6 +55,15 @@ async function waitFinished(events, sessionId) {
   throw new Error('run did not finish');
 }
 
+async function waitTitleUpdated(service, sessionId, provisional) {
+  for (let i = 0; i < 50; i++) {
+    const session = await service.handle('session.get', { sessionId });
+    if (session.title && session.title !== provisional) return session;
+    await sleep(10);
+  }
+  return service.handle('session.get', { sessionId });
+}
+
 test('runtime PE3 create handoff writes the new task only to its target SQLite session', async () => {
   const dir = await mkdtemp(join(tmpdir(),'cuppet-runtime-pe3-'));
   const projectRoot = join(dir,'project');
@@ -65,12 +79,12 @@ test('runtime PE3 create handoff writes the new task only to its target SQLite s
   try {
     const project = await service.handle('project.add-local',{path:projectRoot,name:'Project'});
     const source = await service.handle('session.create',{projectId:project.id});
-    const first = await service.handle('session.send',{sessionId:source.id,text:'Implement auth in src/auth.ts',provider:{model:'test'}});
+    const first = await service.handle('session.send',{sessionId:source.id,text:'Implement auth in src/auth.ts',provider:{provider:'test',model:'test'}});
     assert.equal(first.sessionId,source.id);
     await waitComplete(service,source.id);
     await waitFinished(events,source.id);
 
-    const second = await service.handle('session.send',{sessionId:source.id,text:'New task: implement billing in src/billing.ts',provider:{model:'test'}});
+    const second = await service.handle('session.send',{sessionId:source.id,text:'New task: implement billing in src/billing.ts',provider:{provider:'test',model:'test'}});
     assert.equal(second.pe3.action,'create',second.pe3.reason);
     assert.notEqual(second.sessionId,source.id);
     const target = await waitComplete(service,second.sessionId);
@@ -82,5 +96,9 @@ test('runtime PE3 create handoff writes the new task only to its target SQLite s
     assert.deepEqual(target.messages.filter((message)=>message.role==='user').map((message)=>message.content),['New task: implement billing in src/billing.ts']);
     assert.equal(target.messages.find((message)=>message.role==='assistant')?.content,'done:billing');
     assert.equal(events.some((event)=>event.type==='pe3.routed'&&event.targetSessionId===second.sessionId),true);
+
+    const targetWithTitle = await waitTitleUpdated(service, second.sessionId, 'New task: implement billing in src/billing.ts');
+    assert.equal(targetWithTitle.title, 'Billing Integration');
+    assert.equal(events.some((event) => event.type === 'session.updated' && event.session?.id === second.sessionId && event.session?.title === 'Billing Integration'), true);
   } finally { await service.close(); await rm(dir,{recursive:true,force:true}); }
 });

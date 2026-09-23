@@ -1,8 +1,8 @@
 import { isLocalCliProvider } from './local-cli-descriptors.mjs';
-import { providerRequest } from './provider-policy.mjs';
+import { DEFAULT_PROVIDER_ID, providerRequest } from './provider-policy.mjs';
 
 const TITLE_TIMEOUT_MS = 15_000;
-const ACCOUNT_PROVIDERS = new Set(['codex']);
+const ACCOUNT_PROVIDERS = new Set(['codex', 'chatgpt']);
 
 export async function generateChatTitle({ providerFactory, providerConfig, userText, timeoutMs = TITLE_TIMEOUT_MS }) {
   if (typeof providerFactory !== 'function') return null;
@@ -17,7 +17,7 @@ export async function generateChatTitle({ providerFactory, providerConfig, userT
   let output = '';
   try {
     const provider = providerFactory(configuration);
-    await provider.stream([
+    const response = await provider.stream([
       {
         role: 'system',
         content: 'Create a concise chat title from the user request. Return only the title: 2-6 words, plain text, no quotes, no markdown, no trailing punctuation. Do not use tools.',
@@ -29,7 +29,8 @@ export async function generateChatTitle({ providerFactory, providerConfig, userT
       onDelta: async (delta) => { output += String(delta ?? ''); },
     });
     if (controller.signal.aborted) return null;
-    return sanitizeChatTitle(output);
+    const raw = output || (typeof response?.text === 'string' ? response.text : '');
+    return sanitizeChatTitle(raw);
   } catch {
     return null;
   } finally {
@@ -40,7 +41,7 @@ export async function generateChatTitle({ providerFactory, providerConfig, userT
 export function secondaryProviderConfiguration(configuration = {}) {
   const source = record(configuration);
   const secondary = record(source.secondary);
-  const providerID = text(secondary.providerID) || text(source.providerID) || text(source.primary?.providerID);
+  const providerID = text(secondary.providerID) || text(source.providerID) || text(source.primary?.providerID) || text(source.provider);
   if (!providerID) return null;
 
   if (ACCOUNT_PROVIDERS.has(providerID.toLowerCase()) || isLocalCliProvider(providerID)) {
@@ -55,7 +56,15 @@ export function secondaryProviderConfiguration(configuration = {}) {
   }
 
   try { return providerRequest(source, 'secondary'); }
-  catch { return null; }
+  catch {
+    try { return providerRequest(source, 'primary'); }
+    catch {
+      if (source.model || source.primary?.modelID || source.backgroundModel) {
+        return { ...source, providerID };
+      }
+      return null;
+    }
+  }
 }
 
 export function sanitizeChatTitle(value) {

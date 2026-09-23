@@ -467,7 +467,7 @@ export class RuntimeService {
       const title = await generateChatTitle({ providerFactory: this.#providerFactory, providerConfig: provider, userText });
       if (!title || title === provisionalTitle || this.#closed) return;
       const current = this.#db.getSessionSummary(sessionId);
-      if (!current || current.title !== provisionalTitle) return;
+      if (!current || (current.title !== provisionalTitle && current.title !== 'New chat')) return;
       const session = this.#db.renameSession(sessionId, title);
       this.#emit({ type: 'session.updated', session });
     } catch {

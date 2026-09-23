@@ -150,9 +150,17 @@ function replaceSessions(values: Session[]) {
 
 function mergeSession(current: Session | undefined, incoming: Session) {
   const value = incoming as Session & Record<string, unknown>;
+  const incomingIsOlder = Boolean(
+    current &&
+    typeof current.updatedAt === 'number' &&
+    typeof incoming.updatedAt === 'number' &&
+    incoming.updatedAt < current.updatedAt
+  );
+  const base = incomingIsOlder
+    ? { ...incoming, ...current }
+    : { ...current, ...incoming };
   return normalizeSession({
-    ...current,
-    ...incoming,
+    ...base,
     messages: Object.prototype.hasOwnProperty.call(value, 'messages') ? incoming.messages : current?.messages ?? [],
     activities: Object.prototype.hasOwnProperty.call(value, 'activities') ? incoming.activities : current?.activities,
     toolExecutions: Object.prototype.hasOwnProperty.call(value, 'toolExecutions') ? incoming.toolExecutions : current?.toolExecutions,

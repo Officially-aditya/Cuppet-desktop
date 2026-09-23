@@ -46,3 +46,48 @@ test('title sanitizer removes model formatting and bounds noisy output', () => {
   assert.equal(sanitizeChatTitle('```text\nProvider Error Handling\n```'), 'Provider Error Handling');
   assert.equal(sanitizeChatTitle(''), null);
 });
+
+test('falls back to primary configuration if secondary configuration fails', async () => {
+  const providerConfig = {
+    providerID: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'test-key',
+    models: [
+      { providerID: 'openai', modelID: 'primary', capabilities: { tools: true, streaming: true, input: ['text'], output: ['text'] } },
+    ],
+    primary: { providerID: 'openai', modelID: 'primary' },
+    secondary: { providerID: 'openai', modelID: 'primary', variant: 'unavailable-variant' },
+  };
+  const title = await generateChatTitle({
+    providerConfig,
+    userText: 'Set up database schema',
+    providerFactory(config) {
+      assert.equal(config.model, 'primary');
+      assert.equal(config.variant, null);
+      return { async stream(_messages, options) { await options.onDelta('Database Setup'); return { text: 'Database Setup' }; } };
+    },
+  });
+  assert.equal(title, 'Database Setup');
+});
+
+test('falls back gracefully for mock or minimal provider configurations and captures response text', async () => {
+  const title = await generateChatTitle({
+    providerConfig: { provider: 'test', model: 'test' },
+    userText: 'Implement billing system',
+    providerFactory(config) {
+      assert.ok(config);
+      return { async stream() { return { text: 'Billing System' }; } };
+    },
+  });
+  assert.equal(title, 'Billing System');
+});
+
+test('chatgpt account provider is supported as an account provider', () => {
+  const result = secondaryProviderConfiguration({
+    providerID: 'chatgpt',
+    model: 'gpt-4o',
+  });
+  assert.equal(result.providerID, 'chatgpt');
+  assert.equal(result.model, 'gpt-4o');
+});
+
