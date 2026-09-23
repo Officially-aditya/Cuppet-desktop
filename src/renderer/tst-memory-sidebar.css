@@ -69,6 +69,54 @@
 .memory-dot.edited { background: #79d7ff; box-shadow: 0 0 7px rgba(121,215,255,.6); }
 .memory-dot.group { background: #808a99; width: 6px; height: 6px; }
 
+.memory-graph-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 9px;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 7px;
+  background: rgba(3, 5, 8, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.memory-graph-control-btn {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8c97a7;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.memory-graph-control-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #eef3fb;
+}
+
+.memory-graph-zoom-label {
+  font-size: 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 550;
+  color: #727e90;
+  padding: 0 3px;
+  min-width: 32px;
+  text-align: center;
+  user-select: none;
+}
+
+
 .memory-graph-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 32px; text-align: center; color: #66707d; z-index: 2; }
 .memory-graph-empty svg { width: 28px; height: 28px; color: #5b6676; margin-bottom: 2px; }
 .memory-graph-empty strong { color: #aeb7c4; font-size: 11px; font-weight: 600; }

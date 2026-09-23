@@ -49,10 +49,10 @@ type Props = {
 
 const MAX_GRAPH_FILES = 180;
 const ACTIVE_EDIT_MS = 12_000;
-const MIN_GRAPH_ZOOM = 0.65;
-const MAX_GRAPH_ZOOM = 2.5;
+const MIN_GRAPH_ZOOM = 0.2;
+const MAX_GRAPH_ZOOM = 8.0;
 const NODE_CLICK_RADIUS = 13;
-const DRAG_THRESHOLD = 6;
+const DRAG_THRESHOLD = 5;
 const ROOT_NODE_PATH = '__cuppet_root__';
 
 export function TstMemorySidebar({ sessionId, projectName, running = false, open: openProp, onOpenChange }: Props) {
@@ -220,10 +220,45 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   const selectedRef = useRef(selectedPath);
   const rotationRef = useRef({ x: -0.16, y: 0.1 });
   const zoomRef = useRef(1);
-  const pointerRef = useRef({ x: 0, y: 0, startX: 0, startY: 0, dragging: false, moved: false });
+  const [zoomDisplay, setZoomDisplay] = useState(100);
+  const panRef = useRef({ x: 0, y: 0 });
+  const customPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  const draggedNodeRef = useRef<GraphNode | null>(null);
+  const hoveredNodeIdRef = useRef<string | null>(null);
+  const hasInteractedRef = useRef(false);
+  const pointerRef = useRef<{
+    x: number;
+    y: number;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+    moved: boolean;
+    mode: 'node' | 'pan' | 'rotate';
+    node: GraphNode | null;
+  }>({
+    x: 0,
+    y: 0,
+    startX: 0,
+    startY: 0,
+    dragging: false,
+    moved: false,
+    mode: 'pan',
+    node: null,
+  });
   const projectedRef = useRef<Array<{ node: GraphNode; x: number; y: number; r: number }>>([]);
 
-  useEffect(() => { sceneRef.current = scene; }, [scene]);
+  useEffect(() => {
+    for (const node of scene.nodes) {
+      const custom = customPositionsRef.current.get(node.id);
+      if (custom) {
+        node.x = custom.x;
+        node.y = custom.y;
+        node.z = custom.z;
+      }
+    }
+    sceneRef.current = scene;
+  }, [scene]);
+
   useEffect(() => { selectedRef.current = selectedPath; }, [selectedPath]);
 
   useEffect(() => {
@@ -257,8 +292,23 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const render = (now: number) => {
       const elapsed = Math.min(48, now - last);
       last = now;
-      if (!pointerRef.current.dragging) rotationRef.current.y += elapsed * 0.000055;
-      drawScene(context, width, height, sceneRef.current, rotationRef.current, zoomRef.current, selectedRef.current, projectedRef, now);
+      if (!pointerRef.current.dragging && !hasInteractedRef.current) {
+        rotationRef.current.y += elapsed * 0.000055;
+      }
+      drawScene(
+        context,
+        width,
+        height,
+        sceneRef.current,
+        rotationRef.current,
+        zoomRef.current,
+        panRef.current,
+        selectedRef.current,
+        draggedNodeRef.current?.id ?? null,
+        hoveredNodeIdRef.current,
+        projectedRef,
+        now,
+      );
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -269,6 +319,25 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   }, []);
 
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+
+    let hit: { node: GraphNode; x: number; y: number; r: number } | null = null;
+    let bestDistance = Infinity;
+    for (const item of [...projectedRef.current].reverse()) {
+      const distance = Math.hypot(item.x - px, item.y - py);
+      const hitRadius = Math.max(NODE_CLICK_RADIUS, item.r + 8);
+      if (distance <= hitRadius && distance < bestDistance) {
+        hit = item;
+        bestDistance = distance;
+      }
+    }
+
+    const isRotate = event.button === 2 || event.shiftKey || event.altKey;
+
     pointerRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -276,26 +345,93 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       startY: event.clientY,
       dragging: true,
       moved: false,
+      mode: hit ? 'node' : isRotate ? 'rotate' : 'pan',
+      node: hit ? hit.node : null,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+
+    draggedNodeRef.current = hit ? hit.node : null;
+    canvas.style.cursor = 'grabbing';
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
   };
+
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!pointerRef.current.dragging) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    if (!pointerRef.current.dragging) {
+      const rect = canvas.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      let hovering = false;
+      let hoveredNode: GraphNode | null = null;
+      for (const item of [...projectedRef.current].reverse()) {
+        const distance = Math.hypot(item.x - px, item.y - py);
+        if (distance <= Math.max(NODE_CLICK_RADIUS, item.r + 7)) {
+          hovering = true;
+          hoveredNode = item.node;
+          break;
+        }
+      }
+      hoveredNodeIdRef.current = hoveredNode ? hoveredNode.id : null;
+      canvas.style.cursor = hovering ? 'grab' : 'default';
+      return;
+    }
+
+    canvas.style.cursor = 'grabbing';
     const dx = event.clientX - pointerRef.current.x;
     const dy = event.clientY - pointerRef.current.y;
     const totalDistance = Math.hypot(event.clientX - pointerRef.current.startX, event.clientY - pointerRef.current.startY);
+
     if (!pointerRef.current.moved && totalDistance <= DRAG_THRESHOLD) {
-      pointerRef.current.x = event.clientX;
-      pointerRef.current.y = event.clientY;
       return;
     }
     pointerRef.current.moved = true;
-    rotationRef.current.y += dx * 0.0065;
-    rotationRef.current.x = Math.max(-1.1, Math.min(1.1, rotationRef.current.x + dy * 0.005));
+    hasInteractedRef.current = true;
+
+    if (pointerRef.current.mode === 'node' && draggedNodeRef.current) {
+      const node = draggedNodeRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, rect.width);
+      const height = Math.max(1, rect.height);
+      const scale = Math.min(width, height) * 0.54 * zoomRef.current;
+
+      const cosy = Math.cos(rotationRef.current.y);
+      const siny = Math.sin(rotationRef.current.y);
+      const cosx = Math.cos(rotationRef.current.x);
+      const sinx = Math.sin(rotationRef.current.x);
+      const z1 = node.x * siny + node.z * cosy;
+      const z2 = node.y * sinx + z1 * cosx;
+      const perspective = 1 / Math.max(0.45, 1.7 + z2 * 0.38);
+      const currentScale = Math.max(1, scale * perspective);
+
+      const dScreenX = dx / currentScale;
+      const dScreenY = dy / currentScale;
+
+      const dwx = dScreenX * cosy - dScreenY * sinx * siny;
+      const dwy = dScreenY * cosx;
+      const dwz = -dScreenX * siny - dScreenY * sinx * cosy;
+
+      node.x += dwx;
+      node.y += dwy;
+      node.z += dwz;
+
+      customPositionsRef.current.set(node.id, { x: node.x, y: node.y, z: node.z });
+    } else if (pointerRef.current.mode === 'pan') {
+      panRef.current.x += dx;
+      panRef.current.y += dy;
+    } else if (pointerRef.current.mode === 'rotate') {
+      rotationRef.current.y += dx * 0.0065;
+      rotationRef.current.x = Math.max(-1.1, Math.min(1.1, rotationRef.current.x + dy * 0.005));
+    }
+
     pointerRef.current.x = event.clientX;
     pointerRef.current.y = event.clientY;
   };
+
   const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (canvas) canvas.style.cursor = 'default';
+
     if (!pointerRef.current.moved) {
       const rect = event.currentTarget.getBoundingClientRect();
       const x = event.clientX - rect.left;
@@ -311,19 +447,124 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
         }
       }
       onSelect(hit?.node.path ?? null);
+    } else if (pointerRef.current.mode === 'node' && draggedNodeRef.current) {
+      onSelect(draggedNodeRef.current.path);
     }
+
     pointerRef.current.dragging = false;
+    pointerRef.current.node = null;
+    draggedNodeRef.current = null;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
   };
+
   const wheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+
     const deltaUnit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 120 : 1;
     const delta = event.deltaY * deltaUnit;
-    const next = zoomRef.current * Math.exp(-delta * 0.0016);
-    zoomRef.current = Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, next));
+    const oldZoom = zoomRef.current;
+    const next = oldZoom * Math.exp(-delta * 0.0016);
+    const newZoom = Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, next));
+
+    if (Math.abs(newZoom - oldZoom) > 0.001) {
+      const currentCenterX = width / 2 + panRef.current.x;
+      const currentCenterY = height / 2 - 4 + panRef.current.y;
+      const zoomRatio = newZoom / oldZoom;
+      panRef.current.x = mouseX - width / 2 - (mouseX - currentCenterX) * zoomRatio;
+      panRef.current.y = mouseY - (height / 2 - 4) - (mouseY - currentCenterY) * zoomRatio;
+      zoomRef.current = newZoom;
+      hasInteractedRef.current = true;
+      setZoomDisplay(Math.round(newZoom * 100));
+    }
   };
 
-  return <canvas ref={canvasRef} className="memory-graph-canvas" onWheel={wheel} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { pointerRef.current.dragging = false; }} />;
+  const zoomIn = () => {
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.min(MAX_GRAPH_ZOOM, Number((oldZoom * 1.35).toFixed(2)));
+    zoomRef.current = newZoom;
+    hasInteractedRef.current = true;
+    setZoomDisplay(Math.round(newZoom * 100));
+  };
+
+  const zoomOut = () => {
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.max(MIN_GRAPH_ZOOM, Number((oldZoom / 1.35).toFixed(2)));
+    zoomRef.current = newZoom;
+    hasInteractedRef.current = true;
+    setZoomDisplay(Math.round(newZoom * 100));
+  };
+
+  const resetView = () => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    rotationRef.current = { x: -0.16, y: 0.1 };
+    hasInteractedRef.current = false;
+    setZoomDisplay(100);
+  };
+
+  const resetLayout = () => {
+    customPositionsRef.current.clear();
+    const freshScene = buildScene(files, edits);
+    sceneRef.current = freshScene;
+    resetView();
+  };
+
+  return (
+    <>
+      <canvas
+        ref={canvasRef}
+        className="memory-graph-canvas"
+        onContextMenu={(e) => e.preventDefault()}
+        onWheel={wheel}
+        onPointerDown={pointerDown}
+        onPointerMove={pointerMove}
+        onPointerUp={pointerUp}
+        onPointerCancel={() => {
+          pointerRef.current.dragging = false;
+          draggedNodeRef.current = null;
+          if (canvasRef.current) canvasRef.current.style.cursor = 'default';
+        }}
+      />
+      <div className="memory-graph-controls" aria-label="Graph navigation controls">
+        <button
+          type="button"
+          className="memory-graph-control-btn"
+          title="Zoom in (+)"
+          aria-label="Zoom in"
+          onClick={zoomIn}
+        >+</button>
+        <span className="memory-graph-zoom-label" title="Current zoom level">{zoomDisplay}%</span>
+        <button
+          type="button"
+          className="memory-graph-control-btn"
+          title="Zoom out (−)"
+          aria-label="Zoom out"
+          onClick={zoomOut}
+        >−</button>
+        <button
+          type="button"
+          className="memory-graph-control-btn"
+          title="Reset view (center & 100% zoom)"
+          aria-label="Reset view"
+          onClick={resetView}
+        >⊙</button>
+        <button
+          type="button"
+          className="memory-graph-control-btn"
+          title="Reset node positions"
+          aria-label="Reset node positions"
+          onClick={resetLayout}
+        >↺</button>
+      </div>
+    </>
+  );
 }
 
 function buildScene(filesInput: string[], edits: EditedFile[]) {
@@ -409,13 +650,16 @@ function drawScene(
   scene: { nodes: GraphNode[]; edges: GraphEdge[] },
   rotation: { x: number; y: number },
   zoom: number,
+  pan: { x: number; y: number },
   selectedPath: string | null,
+  draggedNodeId: string | null,
+  hoveredNodeId: string | null,
   projectedRef: React.MutableRefObject<Array<{ node: GraphNode; x: number; y: number; r: number }>>,
   now: number,
 ) {
   context.clearRect(0, 0, width, height);
-  const centerX = width / 2;
-  const centerY = height / 2 - 4;
+  const centerX = width / 2 + pan.x;
+  const centerY = height / 2 - 4 + pan.y;
   const scale = Math.min(width, height) * 0.54 * zoom;
   const projected = scene.nodes.map((node) => ({ node, ...project(node, rotation, centerX, centerY, scale) })).sort((a, b) => a.depth - b.depth);
   const byId = new Map(projected.map((item) => [item.node.id, item]));
@@ -426,11 +670,16 @@ function drawScene(
     const to = byId.get(edge.to);
     if (!from || !to) continue;
     const highlighted = Boolean(selectedTrace?.has(from.node.path) && selectedTrace?.has(to.node.path));
+    const isDraggedEdge = Boolean(draggedNodeId && (from.node.id === draggedNodeId || to.node.id === draggedNodeId));
     context.beginPath();
     context.moveTo(from.x, from.y);
     context.lineTo(to.x, to.y);
-    context.strokeStyle = highlighted ? 'rgba(153, 199, 255, .68)' : 'rgba(145, 161, 190, .24)';
-    context.lineWidth = highlighted ? 1.35 : 0.85;
+    context.strokeStyle = isDraggedEdge
+      ? 'rgba(121, 215, 255, .85)'
+      : highlighted
+        ? 'rgba(153, 199, 255, .68)'
+        : 'rgba(145, 161, 190, .24)';
+    context.lineWidth = isDraggedEdge ? 1.6 : highlighted ? 1.35 : 0.85;
     context.stroke();
   }
 
@@ -439,10 +688,13 @@ function drawScene(
     const { node, x, y, depth } = item;
     const depthScale = Math.max(0.55, Math.min(1.35, 1.03 - depth * 0.24));
     const selected = node.path === selectedPath;
+    const isDragged = draggedNodeId === node.id;
+    const isHovered = hoveredNodeId === node.id;
     const age = node.editedAt ? Math.max(0, Date.now() - node.editedAt) : Infinity;
     const active = age < ACTIVE_EDIT_MS;
     const baseRadius = node.path === ROOT_NODE_PATH ? 5.2 : node.kind === 'group' ? 4.2 : active ? 4.8 : 2.6;
-    const radius = baseRadius * depthScale;
+    const zoomScale = Math.min(2.2, Math.max(0.65, Math.sqrt(zoom)));
+    const radius = baseRadius * depthScale * zoomScale;
 
     if (active) {
       const wave = 0.5 + 0.5 * Math.sin(now * 0.006 + hashNumber(node.path));
@@ -454,40 +706,54 @@ function drawScene(
       context.arc(x, y, radius * (3.3 + wave), 0, Math.PI * 2);
       context.fill();
     }
-    if (selected) {
+    if (isDragged) {
+      context.strokeStyle = 'rgba(121, 215, 255, .95)';
+      context.lineWidth = 1.8;
+      context.setLineDash([3, 2]);
+      context.beginPath();
+      context.arc(x, y, radius + 6, 0, Math.PI * 2);
+      context.stroke();
+      context.setLineDash([]);
+    } else if (selected) {
       context.strokeStyle = 'rgba(226, 243, 255, .9)';
       context.lineWidth = 1.2;
       context.beginPath();
       context.arc(x, y, radius + 5, 0, Math.PI * 2);
+      context.stroke();
+    } else if (isHovered) {
+      context.strokeStyle = 'rgba(170, 205, 245, .7)';
+      context.lineWidth = 1.0;
+      context.beginPath();
+      context.arc(x, y, radius + 4, 0, Math.PI * 2);
       context.stroke();
     }
 
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fillStyle = node.kind === 'group'
-      ? selected
+      ? selected || isDragged
         ? 'rgba(218, 229, 246, .96)'
         : node.path === ROOT_NODE_PATH
           ? 'rgba(193, 205, 226, .9)'
           : 'rgba(168, 177, 198, .78)'
       : active
         ? 'rgba(128, 219, 255, .96)'
-        : selected
+        : selected || isDragged
           ? 'rgba(230, 245, 255, .96)'
           : `rgba(181, 198, 224, ${Math.max(.32, .7 - Math.abs(depth) * .2)})`;
     context.fill();
     clickTargets.push({ node, x, y, r: radius });
 
-    if (selected) {
+    if (selected || isDragged || isHovered) {
       context.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       const text = displayGraphPath(node.path);
       const metrics = context.measureText(text);
       const boxX = Math.min(width - metrics.width - 18, Math.max(8, x + 10));
       const boxY = Math.max(18, y - 17);
-      context.fillStyle = 'rgba(8, 10, 14, .88)';
+      context.fillStyle = isDragged ? 'rgba(12, 18, 26, .94)' : 'rgba(8, 10, 14, .88)';
       roundedRect(context, boxX - 5, boxY - 12, metrics.width + 10, 20, 5);
       context.fill();
-      context.fillStyle = 'rgba(235, 241, 249, .96)';
+      context.fillStyle = isDragged ? '#79d7ff' : 'rgba(235, 241, 249, .96)';
       context.fillText(text, boxX, boxY + 2);
     }
   }
