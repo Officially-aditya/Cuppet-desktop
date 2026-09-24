@@ -1,0 +1,577 @@
+/* ==========================================================================
+   macOS Liquid Glass (Safari Material) & Eye-Friendly Dark Thread Design
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Root Window Transparency & Native Vibrancy Passthrough
+   -------------------------------------------------------------------------- */
+:root {
+  --bg-deep-obsidian: #0e1116;
+  --bg-main-radial: radial-gradient(ellipse 90% 70% at 50% 0%, #151922 0%, #0e1116 55%, #0b0d11 100%);
+  --sidebar-glass-bg: rgba(16, 20, 26, 0.65);
+  --sidebar-glass-collapsed: rgba(14, 18, 24, 0.75);
+  --header-glass-bg: rgba(14, 18, 24, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.075);
+  --glass-border-subtle: rgba(255, 255, 255, 0.05);
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-pill-hover: rgba(255, 255, 255, 0.07);
+  --glass-pill-active: rgba(255, 255, 255, 0.12);
+  --text-main: #e2e6ed;
+  --text-dim: #9aa5b5;
+  --text-muted: #768292;
+}
+
+html, body {
+  background: transparent !important;
+  color: var(--text-main);
+}
+
+#root {
+  background: transparent;
+}
+
+.app-shell {
+  background: transparent;
+}
+
+/* --------------------------------------------------------------------------
+   2. macOS Safari Liquid Glass Sidebar
+   -------------------------------------------------------------------------- */
+.sidebar,
+.react-sidebar {
+  background: var(--sidebar-glass-bg) !important;
+  backdrop-filter: blur(32px) saturate(210%) contrast(106%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(210%) contrast(106%) !important;
+  border-right: 1px solid var(--glass-border) !important;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35), var(--glass-specular);
+  transition: width 0.18s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.react-sidebar.collapsed {
+  background: var(--sidebar-glass-collapsed) !important;
+  backdrop-filter: blur(32px) saturate(210%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(210%) !important;
+  border-right: 1px solid var(--glass-border) !important;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35), var(--glass-specular);
+}
+
+.react-sidebar .sidebar-top {
+  border-bottom: 1px solid var(--glass-border-subtle) !important;
+}
+
+.react-sidebar .sidebar-bottom {
+  border-top: 1px solid var(--glass-border-subtle) !important;
+  background: transparent !important;
+}
+
+/* Brand Row with Glass Rim */
+.react-sidebar .brand-mark {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), inset 0 0.5px 0.5px rgba(255, 255, 255, 0.22);
+}
+
+.react-sidebar .brand-title {
+  color: #f2f5f9;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+}
+
+/* Safari Glass Navigation Buttons */
+.react-sidebar .primary-nav .nav-button {
+  color: var(--text-dim);
+  border-radius: 8px;
+  transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.react-sidebar .primary-nav .nav-button:hover:not(:disabled) {
+  background: var(--glass-pill-hover) !important;
+  color: #f3f6fa !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.18), 0 2px 6px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.react-sidebar .primary-nav .nav-button:disabled {
+  color: rgba(255, 255, 255, 0.24);
+}
+
+/* Section Headers */
+.react-sidebar .projects-header,
+.react-sidebar .general-label {
+  color: rgba(255, 255, 255, 0.42) !important;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.react-sidebar .project-add-button {
+  color: var(--text-dim);
+  border-radius: 5px;
+  transition: all 0.12s ease;
+}
+
+.react-sidebar .project-add-button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.2);
+}
+
+/* Project Rows */
+.react-sidebar .project-button {
+  border-radius: 7px;
+  color: #cfd6e0;
+  transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.react-sidebar .project-row:hover .project-button {
+  background: rgba(255, 255, 255, 0.065);
+  color: #f1f5fa;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.14);
+}
+
+.react-sidebar .project-row.active {
+  background: transparent !important;
+}
+
+.react-sidebar .project-row.active .project-button {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.2), 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.react-sidebar .project-meta {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Action Icons inside Sidebar Rows */
+.react-sidebar .project-new-chat-button,
+.react-sidebar .project-menu-button,
+.react-sidebar .session-menu-button {
+  color: #8591a2;
+  border-radius: 6px;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.react-sidebar .project-new-chat-button:hover,
+.react-sidebar .project-menu-button:hover,
+.react-sidebar .session-menu-button:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.22);
+}
+
+/* Chat Session Rows - Liquid Glass Pills */
+.react-sidebar .session-item {
+  color: #afbac7;
+  border-radius: 8px;
+  transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.react-sidebar .session-row:hover .session-item:not(.active) {
+  background: var(--glass-pill-hover) !important;
+  color: #f1f5fa !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.16), 0 1px 4px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.react-sidebar .session-item.active {
+  background: var(--glass-pill-active) !important;
+  color: #ffffff !important;
+  font-weight: 550;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.24), 0 2px 8px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.react-sidebar .session-meta {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.react-sidebar .session-item.active .session-meta {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Sidebar Show More Button */
+.react-sidebar .session-show-more {
+  color: rgba(255, 255, 255, 0.48);
+  border-radius: 6px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.react-sidebar .session-show-more:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #e5ebf3 !important;
+}
+
+/* Sidebar Bottom Ghost Button */
+.react-sidebar .sidebar-bottom .ghost-button {
+  color: var(--text-dim);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  transition: all 0.14s ease;
+}
+
+.react-sidebar .sidebar-bottom .ghost-button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.18), 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* Sidebar Resizer */
+.sidebar-resizer {
+  transition: background 0.14s ease, box-shadow 0.14s ease;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizing .sidebar-resizer {
+  background: rgba(130, 180, 255, 0.3) !important;
+  box-shadow: 0 0 8px rgba(130, 180, 255, 0.35);
+}
+
+/* --------------------------------------------------------------------------
+   3. Eye-Friendly Variant of Black in Main Agent Thread
+   -------------------------------------------------------------------------- */
+.main-pane,
+.react-main-pane {
+  background: var(--bg-main-radial) !important;
+  color: var(--text-main);
+  min-height: 0;
+}
+
+.messages,
+.react-messages {
+  background: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.messages::-webkit-scrollbar,
+.project-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.messages::-webkit-scrollbar-thumb,
+.project-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.messages::-webkit-scrollbar-thumb:hover,
+.project-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Empty State */
+.empty-state {
+  color: #9aa5b5;
+}
+
+.empty-state h1 {
+  color: #f1f4f8;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.empty-state p {
+  color: #828d9c;
+}
+
+/* Messages & Roles */
+.message {
+  gap: 8px;
+}
+
+.message-role {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+/* Eye-Friendly User Message Pill */
+.message.user .message-content {
+  background: rgba(255, 255, 255, 0.045) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 14px;
+  padding: 13px 16px;
+  color: #eaedf3;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  line-height: 1.62;
+}
+
+/* Eye-Friendly Assistant Content */
+.message.assistant .message-content {
+  color: #dde3ec;
+  line-height: 1.68;
+  font-size: 14px;
+}
+
+.message.assistant .message-content.markdown-rendered h1,
+.message.assistant .message-content.markdown-rendered h2,
+.message.assistant .message-content.markdown-rendered h3,
+.message.assistant .message-content.markdown-rendered h4 {
+  color: #f3f6fa;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+/* Code Blocks in Thread */
+.message.assistant .message-content.markdown-rendered pre {
+  background: #11141a !important;
+  border: 1px solid rgba(255, 255, 255, 0.075) !important;
+  border-radius: 10px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  padding: 13px 15px;
+  color: #d6e0ec;
+}
+
+.message.assistant .message-content.markdown-rendered :not(pre)>code {
+  background: rgba(255, 255, 255, 0.065) !important;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  color: #ced8e5 !important;
+  border-radius: 5px;
+  padding: 2px 5.5px;
+}
+
+.message.assistant .message-content.markdown-rendered blockquote {
+  border-left: 2px solid rgba(135, 175, 235, 0.45) !important;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 7px 7px 0;
+  color: #9ba7b5 !important;
+  padding: 9px 13px;
+}
+
+.message.assistant .message-content.markdown-rendered a {
+  color: #82b4ff !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(130, 180, 255, 0.35);
+  text-underline-offset: 2.5px;
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+}
+
+.message.assistant .message-content.markdown-rendered a:hover {
+  color: #a6cbff !important;
+  text-decoration-color: #a6cbff;
+}
+
+.message.assistant .message-content.markdown-rendered table {
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message.assistant .message-content.markdown-rendered th,
+.message.assistant .message-content.markdown-rendered td {
+  border: 1px solid rgba(255, 255, 255, 0.065) !important;
+}
+
+.message.assistant .message-content.markdown-rendered th {
+  background: rgba(255, 255, 255, 0.035);
+  color: #dbe2ec;
+}
+
+/* Modified Files Turn Diff Card */
+.turn-diff-card {
+  background: rgba(255, 255, 255, 0.038) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22), var(--glass-specular);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.turn-diff-card:hover {
+  background: rgba(255, 255, 255, 0.075) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.turn-diff-label {
+  color: #e5ebf3;
+}
+
+.turn-diff-files-preview {
+  color: #8c97a6;
+}
+
+/* Cuppet Activity / Reasoning */
+.message-cuppet-toggle {
+  color: var(--text-muted);
+}
+
+.message-cuppet-toggle:hover {
+  color: #c9d2de !important;
+  background: rgba(255, 255, 255, 0.065) !important;
+}
+
+.message-trace-reasoning {
+  background: rgba(16, 20, 27, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 9px;
+  padding: 10px 13px;
+  color: #9aa5b5;
+}
+
+/* --------------------------------------------------------------------------
+   4. Floating Liquid Glass Composer Dock
+   -------------------------------------------------------------------------- */
+.react-composer-wrap {
+  background: transparent !important;
+  padding: 8px 22px 18px;
+}
+
+.composer,
+.react-composer {
+  background: rgba(18, 22, 29, 0.82) !important;
+  border: 1px solid rgba(255, 255, 255, 0.095) !important;
+  border-radius: 16px !important;
+  padding: 11px 13px !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.composer:focus-within,
+.react-composer:focus-within {
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+#prompt {
+  color: #f1f4f8 !important;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+#prompt::placeholder {
+  color: #637081 !important;
+}
+
+.send-button,
+.primary-button {
+  background: #edf1f6 !important;
+  color: #0d1014 !important;
+  border-radius: 9px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: all 0.12s ease;
+}
+
+.send-button:hover,
+.primary-button:hover {
+  background: #ffffff !important;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 #ffffff;
+}
+
+.composer-attach-button {
+  color: #828d9c !important;
+  border-radius: 8px;
+  transition: all 0.12s ease;
+}
+
+.composer-attach-button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #f0f4f8 !important;
+}
+
+.mode-inline-button {
+  color: #798595;
+  border-radius: 8px;
+  transition: all 0.12s ease;
+}
+
+.mode-inline-button:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: #e2e8f1 !important;
+}
+
+.mode-inline-button.active {
+  background: rgba(255, 255, 255, 0.11) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.2);
+}
+
+.composer-attachment {
+  background: rgba(255, 255, 255, 0.055) !important;
+  border: 1px solid rgba(255, 255, 255, 0.085) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 8px;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.08);
+}
+
+/* --------------------------------------------------------------------------
+   5. macOS Liquid Glass Window Header Bar
+   -------------------------------------------------------------------------- */
+.shell-panel-header {
+  background: var(--header-glass-bg) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  border-bottom: 1px solid var(--glass-border-subtle) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2), var(--glass-specular);
+}
+
+.project-header-button:hover,
+.project-header-button.active,
+.project-branch-badge:hover,
+.project-branch-badge.active {
+  background: rgba(255, 255, 255, 0.085) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.16);
+}
+
+.shell-panel-button {
+  color: #7d8999;
+  border-radius: 7px;
+  transition: all 0.12s ease;
+}
+
+.shell-panel-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.085) !important;
+  color: #f1f5fa !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.16);
+}
+
+.shell-panel-button.active {
+  color: #e2e8f1 !important;
+  background: rgba(255, 255, 255, 0.075) !important;
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.14);
+}
+
+/* --------------------------------------------------------------------------
+   6. Liquid Glass Dropdowns & Modals
+   -------------------------------------------------------------------------- */
+.project-header-dropdown,
+.project-branch-dropdown,
+.nav-context-menu {
+  background: rgba(18, 22, 29, 0.92) !important;
+  backdrop-filter: blur(24px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.react-search-dialog,
+.react-settings-hub,
+.sidebar-rename-dialog,
+.settings-dialog,
+.wide-dialog {
+  background: rgba(18, 22, 29, 0.94) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.095) !important;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}

@@ -331,7 +331,22 @@ async function openExternal(value) {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({ width: 1180, height: 800, minWidth: 860, minHeight: 620, show: false, backgroundColor: '#0d0f12', title: 'Cuppet', icon: process.platform === 'darwin' ? APP_ICON_MACOS : APP_ICON, ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' } : {}), webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  mainWindow = new BrowserWindow({
+    width: 1180,
+    height: 800,
+    minWidth: 860,
+    minHeight: 620,
+    show: false,
+    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#0d0f12',
+    title: 'Cuppet',
+    icon: process.platform === 'darwin' ? APP_ICON_MACOS : APP_ICON,
+    ...(process.platform === 'darwin' ? {
+      titleBarStyle: 'hiddenInset',
+      vibrancy: 'under-window',
+      visualEffectState: 'active',
+    } : {}),
+    webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(?:https?:|mailto:)/i.test(url)) void openExternal(url).catch(() => undefined);

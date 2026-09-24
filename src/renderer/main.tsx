@@ -21,6 +21,7 @@ import './tst-memory-sidebar.css';
 import './project-terminal.css';
 import './shell-panel-controls.css';
 import './diff-viewer.css';
+import './macos-liquid-glass.css';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { CommandResultEnhancement } from './react/CommandResultEnhancement';
