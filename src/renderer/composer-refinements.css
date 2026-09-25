@@ -72,6 +72,23 @@
 .sidebar-rename-actions button:disabled{opacity:.4;cursor:not-allowed}
 .sidebar-rename-error{color:#d99b9b;font-size:10px;line-height:1.4}
 
+/* Native-free inline chat delete confirmation surface. */
+.sidebar-delete-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px;background:rgba(4,6,9,.76);backdrop-filter:blur(14px) saturate(130%);-webkit-backdrop-filter:blur(14px) saturate(130%);animation:cuppet-backdrop-fade .18s ease-out}
+.sidebar-delete-dialog{width:min(380px,calc(100vw - 40px));display:grid;gap:12px;padding:18px 20px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(18,22,29,.98);backdrop-filter:blur(24px) saturate(190%);-webkit-backdrop-filter:blur(24px) saturate(190%);box-shadow:0 28px 70px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);animation:cuppet-modal-scale .2s cubic-bezier(.16,1,.3,1);color:var(--text,#f4f6f8)}
+.sidebar-delete-header{display:grid;gap:6px}
+.sidebar-delete-title{margin:0;font-size:15px;font-weight:650;color:#f2f5f9;letter-spacing:-.01em}
+.sidebar-delete-desc{margin:0;font-size:12.5px;line-height:1.5;color:#9da6b4}
+.sidebar-delete-name{color:#f0f4f9;font-weight:600;word-break:break-word}
+.sidebar-delete-subtext{display:block;margin-top:6px;font-size:11px;line-height:1.45;color:#798595}
+.sidebar-delete-error{color:#ff9b9b;font-size:11.5px;line-height:1.4;padding:6px 10px;background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.2);border-radius:7px}
+.sidebar-delete-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.sidebar-delete-actions button{min-height:30px;padding:5px 13px;border-radius:7px;font-size:11.5px;font-weight:550;cursor:pointer;transition:all .12s ease}
+.sidebar-delete-actions .sidebar-cancel-button{border:1px solid #303741;background:#171d24;color:#cbd2dc}
+.sidebar-delete-actions .sidebar-cancel-button:hover:not(:disabled){background:#202730;color:#fff}
+.sidebar-delete-actions .sidebar-danger-button{border:1px solid rgba(239,68,68,.4);background:#dc2626;color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.35)}
+.sidebar-delete-actions .sidebar-danger-button:hover:not(:disabled){background:#ef4444;box-shadow:0 3px 10px rgba(239,68,68,.45)}
+.sidebar-delete-actions button:disabled{opacity:.4;cursor:not-allowed}
+
 /* Streaming state belongs to the composer/pause affordance, not the transcript message body. */
 .message-status:not(.error){display:none}
 .message.assistant:has(.message-content:empty){display:none}

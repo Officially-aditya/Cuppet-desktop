@@ -348,7 +348,6 @@ export function App() {
   }, [activeSessionId, openSession, showToast, startDraft]);
 
   const deleteSession = useCallback(async (session: Session) => {
-    if (!window.confirm(`Delete “${session.title || 'New chat'}” permanently?`)) return;
     try {
       await window.cuppet.sessions.delete(session.id);
       const nextSessions = await refreshClientSessions();
@@ -356,8 +355,12 @@ export function App() {
         const next = nextSessions.find((item) => item.id !== session.id);
         if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
       }
-    } catch (error) { showToast(error); }
-  }, [activeSessionId, openSession, showToast, startDraft]);
+      showToast(`Deleted “${session.title || 'New chat'}”.`);
+    } catch (error) {
+      showToast(error);
+      throw error;
+    }
+  }, [activeSessionId, openSession, refreshClientSessions, showToast, startDraft]);
 
   const changeMode = useCallback(async (next: ComposerMode) => {
     const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';

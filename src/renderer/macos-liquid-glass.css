@@ -567,6 +567,7 @@ html, body {
 .react-search-dialog,
 .react-settings-hub,
 .sidebar-rename-dialog,
+.sidebar-delete-dialog,
 .settings-dialog,
 .wide-dialog {
   background: rgba(18, 22, 29, 0.94) !important;
@@ -574,4 +575,27 @@ html, body {
   -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
   border: 1px solid rgba(255, 255, 255, 0.095) !important;
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.sidebar-delete-actions .sidebar-cancel-button {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #c9d2de !important;
+}
+
+.sidebar-delete-actions .sidebar-cancel-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11) !important;
+  color: #ffffff !important;
+}
+
+.sidebar-delete-actions .sidebar-danger-button {
+  background: rgba(225, 45, 45, 0.88) !important;
+  border: 1px solid rgba(255, 95, 95, 0.4) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.sidebar-delete-actions .sidebar-danger-button:hover:not(:disabled) {
+  background: rgba(240, 55, 55, 0.96) !important;
+  box-shadow: 0 3px 12px rgba(239, 68, 68, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }

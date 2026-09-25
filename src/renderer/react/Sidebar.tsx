@@ -48,6 +48,9 @@ export function Sidebar(props: Props) {
   const [renameSession, setRenameSession] = useState<Session | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState('');
+  const [deleteSession, setDeleteSession] = useState<Session | null>(null);
+  const [deleteError, setDeleteError] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());
   const dragging = useRef(false);
@@ -217,6 +220,28 @@ export function Sidebar(props: Props) {
     }
   };
 
+  const beginDeleteSession = (session: Session) => {
+    handleSessionHoverEnd();
+    setMenu(null);
+    setDeleteSession(session);
+    setDeleteError('');
+    setDeleting(false);
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!deleteSession || deleting) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await props.onDeleteSession(deleteSession);
+      setDeleteSession(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error ?? 'Unable to delete chat.'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const toggleSidebar = () => {
     handleSessionHoverEnd();
     setCollapsed((current) => !current);
@@ -383,7 +408,15 @@ export function Sidebar(props: Props) {
           }}
         />
 
-        {menu && <ContextMenu {...props} menu={menu} onClose={() => setMenu(null)} onStartRenameSession={beginRenameSession} />}
+        {menu && (
+          <ContextMenu
+            {...props}
+            menu={menu}
+            onClose={() => setMenu(null)}
+            onStartRenameSession={beginRenameSession}
+            onStartDeleteSession={beginDeleteSession}
+          />
+        )}
       </>}
 
       {renameSession && (
@@ -409,6 +442,53 @@ export function Sidebar(props: Props) {
               <button type="submit" disabled={!renameValue.trim()}>Save</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {deleteSession && (
+        <div className="sidebar-delete-backdrop" onPointerDown={() => !deleting && setDeleteSession(null)}>
+          <div
+            className="sidebar-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="sidebar-chat-delete-title"
+            aria-describedby="sidebar-chat-delete-desc"
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !deleting) {
+                event.preventDefault();
+                setDeleteSession(null);
+              }
+            }}
+          >
+            <div className="sidebar-delete-header">
+              <h3 id="sidebar-chat-delete-title" className="sidebar-delete-title">Delete chat?</h3>
+              <p id="sidebar-chat-delete-desc" className="sidebar-delete-desc">
+                Are you sure you want to delete <span className="sidebar-delete-name">“{titleOverrides[deleteSession.id] || deleteSession.title || 'New chat'}”</span>?
+                <span className="sidebar-delete-subtext">Chats deleted from the sidebar remain recoverable for 7 days in Settings.</span>
+              </p>
+            </div>
+            {deleteError && <div className="sidebar-delete-error" role="alert">{deleteError}</div>}
+            <div className="sidebar-delete-actions">
+              <button
+                type="button"
+                className="sidebar-cancel-button"
+                onClick={() => setDeleteSession(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                autoFocus
+                className="sidebar-danger-button"
+                disabled={deleting}
+                onClick={() => void confirmDeleteSession()}
+              >
+                {deleting ? 'Deleting…' : 'Delete chat'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -480,8 +560,13 @@ function SessionRow({
   );
 }
 
-function ContextMenu(props: Props & { menu: { kind: 'project' | 'session'; id: string; x: number; y: number }; onClose: () => void; onStartRenameSession: (session: Session) => void }) {
-  const { menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onArchiveSession, onDeleteSession, onStartRenameSession, onOpenProjectGraph } = props;
+function ContextMenu(props: Props & {
+  menu: { kind: 'project' | 'session'; id: string; x: number; y: number };
+  onClose: () => void;
+  onStartRenameSession: (session: Session) => void;
+  onStartDeleteSession: (session: Session) => void;
+}) {
+  const { menu, onClose, projects, sessions, onRenameProject, onRemoveProject, onArchiveSession, onStartRenameSession, onStartDeleteSession, onOpenProjectGraph } = props;
   const project = menu.kind === 'project' ? projects.find((item) => item.id === menu.id) : null;
   const session = menu.kind === 'session' ? sessions.find((item) => item.id === menu.id) : null;
   const run = (action: () => void | Promise<void>) => {
@@ -505,7 +590,7 @@ function ContextMenu(props: Props & { menu: { kind: 'project' | 'session'; id: s
         <button type="button" onClick={() => onStartRenameSession(session)}>Rename chat</button>
         <button type="button" onClick={() => run(() => onArchiveSession(session))}>Archive chat</button>
         <hr />
-        <button type="button" className="danger" onClick={() => run(() => onDeleteSession(session))}>Delete chat…</button>
+        <button type="button" className="danger" onClick={() => onStartDeleteSession(session)}>Delete chat…</button>
       </>}
     </div>
   );
