@@ -273,4 +273,80 @@ test('batch prepare gracefully succeeds when daemon does not support staged pars
   assert.equal(await readFile(join(root, 'query.sql'), 'utf8'), 'SELECT 2;\n');
 });
 
+test('batch prepare and apply succeed when daemon does not support graph refresh barrier', async () => {
+  const { root, journal, manager, tst } = await fixture();
+  tst.refreshGraphPaths = async () => {
+    throw new Error('Connected TST daemon does not support the graph refresh barrier. Upgrade the bundled TST runtime.');
+  };
+  await writeFile(join(root, 'app.ts'), 'export const version = 1;\n');
+
+  // First batch prepare and apply
+  const prepared = await manager.prepare({
+    sessionId: 's-unsupported-graph',
+    projectRoot: root,
+    operations: [
+      { op: 'replace_text', path: 'app.ts', old_text: 'version = 1', new_text: 'version = 2' },
+    ],
+  });
+  assert.equal(prepared.state, 'prepared');
+  assert.match(prepared.diff, /version = 2/);
+
+  const applied = await manager.apply({
+    batchId: prepared.id,
+    sessionId: 's-unsupported-graph',
+    projectRoot: root,
+    executionId: 'tool-unsupported-graph-1',
+    authorize: async () => ({ allowed: true }),
+  });
+  assert.equal(applied.applied, true);
+  assert.equal(applied.graphReady, true);
+  assert.equal(applied.graphError, null);
+  assert.equal(applied.refresh?.supported, false);
+  assert.equal(await readFile(join(root, 'app.ts'), 'utf8'), 'export const version = 2;\n');
+  assert.deepEqual(await journal.graphInvalidations(root), []);
+
+  // Subsequent batch prepare and apply must succeed without permanent lock
+  const prepared2 = await manager.prepare({
+    sessionId: 's-unsupported-graph',
+    projectRoot: root,
+    operations: [
+      { op: 'replace_text', path: 'app.ts', old_text: 'version = 2', new_text: 'version = 3' },
+    ],
+  });
+  assert.equal(prepared2.state, 'prepared');
+
+  const applied2 = await manager.apply({
+    batchId: prepared2.id,
+    sessionId: 's-unsupported-graph',
+    projectRoot: root,
+    executionId: 'tool-unsupported-graph-2',
+    authorize: async () => ({ allowed: true }),
+  });
+  assert.equal(applied2.applied, true);
+  assert.equal(applied2.graphReady, true);
+  assert.equal(await readFile(join(root, 'app.ts'), 'utf8'), 'export const version = 3;\n');
+  assert.deepEqual(await journal.graphInvalidations(root), []);
+
+  // Pre-existing pending invalidations are also gracefully acknowledged on next prepare
+  await journal.recordBarrier({
+    sessionId: 's-unsupported-graph',
+    executionId: 'barrier-1',
+    projectRoot: root,
+    paths: ['app.ts'],
+    reason: 'external change',
+  });
+  assert.deepEqual(await journal.graphInvalidations(root), ['app.ts']);
+
+  const prepared3 = await manager.prepare({
+    sessionId: 's-unsupported-graph',
+    projectRoot: root,
+    operations: [
+      { op: 'replace_text', path: 'app.ts', old_text: 'version = 3', new_text: 'version = 4' },
+    ],
+  });
+  assert.equal(prepared3.state, 'prepared');
+  assert.deepEqual(await journal.graphInvalidations(root), []);
+});
+
+
 

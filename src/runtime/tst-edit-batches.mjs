@@ -10,6 +10,11 @@ const MAX_DIFF_BYTES = 96 * 1024;
 const BATCH_TTL_MS = 30 * 60 * 1000;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const STRUCTURAL_OPS = new Set(['replace_node', 'insert_before_node', 'insert_after_node', 'delete_node']);
+const UNSUPPORTED_GRAPH_REFRESH_PATTERN = /does not support (?:the )?(?:graph refresh barrier|graph\.refresh_paths)|graph\.refresh_paths.*(?:not supported|unsupported)|refresh barrier.*not supported/i;
+
+function isUnsupportedGraphRefresh(error) {
+  return UNSUPPORTED_GRAPH_REFRESH_PATTERN.test(cleanError(error));
+}
 
 export class TstBatchEditManager {
   #tst; #journal; #emit; #writer; #batches = new Map();
@@ -36,7 +41,16 @@ export class TstBatchEditManager {
         const current = await snapshotBytes(target.absolute);
         expected.set(path, current.exists ? current.hash : null);
       }
-      const refresh = await this.#tst.refreshGraphPaths(stale);
+      let refresh;
+      try {
+        refresh = await this.#tst.refreshGraphPaths(stale);
+      } catch (error) {
+        if (isUnsupportedGraphRefresh(error)) {
+          await this.#journal.acknowledgeGraphRefresh({ projectRoot: root, paths: stale }).catch(() => undefined);
+          return { ready: true, supported: false, acknowledged: stale, refresh: { supported: false, reason: 'unsupported_by_daemon' } };
+        }
+        throw error;
+      }
       const returned = new Map((refresh?.paths ?? []).map((item) => [String(item.path), item.content_hash ?? null]));
       const mismatches = stale.filter((path) => !returned.has(path) || returned.get(path) !== expected.get(path));
       if (mismatches.length) {
@@ -179,7 +193,12 @@ export class TstBatchEditManager {
           await this.#journal.acknowledgeGraphRefresh({ projectRoot: freshBatch.projectRoot, paths });
         }
       } catch (error) {
-        graphReady = false; graphError = cleanError(error);
+        if (isUnsupportedGraphRefresh(error)) {
+          await this.#journal.acknowledgeGraphRefresh({ projectRoot: freshBatch.projectRoot, paths }).catch(() => undefined);
+          graphReady = true; graphError = null; refresh = { supported: false, reason: 'unsupported_by_daemon' };
+        } else {
+          graphReady = false; graphError = cleanError(error);
+        }
       }
 
       this.#emit({ type: 'edit.batch.applied', sessionId, batchId, paths, diffDigest: freshBatch.diffDigest, graphReady, graphError });
