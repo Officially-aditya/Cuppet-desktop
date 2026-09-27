@@ -307,9 +307,10 @@ export function Sidebar(props: Props) {
             const projectSessions = sessionsByProject.get(project.id) ?? [];
             const chatsExpanded = expandedChatGroups.has(project.id);
             const visibleProjectSessions = chatsExpanded ? projectSessions : projectSessions.slice(0, MAX_VISIBLE_CHATS);
+            const projectMenuOpen = menu?.kind === 'project' && menu.id === project.id;
             return (
               <section className="project-group" key={project.id}>
-                <div className={`project-row${projectActive ? ' active' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
+                <div className={`project-row${projectActive ? ' active' : ''}${projectMenuOpen ? ' menu-open' : ''}`} onContextMenu={(event) => openMenu(event, 'project', project.id)}>
                   <button
                     type="button"
                     className="project-button"
