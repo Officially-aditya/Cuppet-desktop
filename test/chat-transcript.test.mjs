@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   reduceTranscriptEvent,
   orderedTranscriptItems,
+  formatWorkedDuration,
 } from '../src/renderer/react/chat-transcript.ts';
 
 test('chat-transcript accepts and merges provider tool activities', () => {
@@ -153,3 +154,26 @@ test('reasoning deltas preserve whitespace and concatenate naturally', () => {
   assert.equal(items[0].type, 'reasoning');
   assert.equal(items[0].text, "The user asks what's inside hello.txt. Let me check.");
 });
+
+test('formatWorkedDuration correctly formats seconds, minutes, and hours', () => {
+  // Seconds
+  assert.equal(formatWorkedDuration(400), '1s');
+  assert.equal(formatWorkedDuration(1000), '1s');
+  assert.equal(formatWorkedDuration(12000), '12s');
+  assert.equal(formatWorkedDuration(28785), '29s');
+  assert.equal(formatWorkedDuration(59000), '59s');
+
+  // Minutes
+  assert.equal(formatWorkedDuration(60000), '1m');
+  assert.equal(formatWorkedDuration(85000), '1m');
+  assert.equal(formatWorkedDuration(103591), '2m');
+  assert.equal(formatWorkedDuration(136555), '2m');
+  assert.equal(formatWorkedDuration(154409), '3m');
+  assert.equal(formatWorkedDuration(3540000), '59m');
+
+  // Hours
+  assert.equal(formatWorkedDuration(3600000), '1h');
+  assert.equal(formatWorkedDuration(7200000), '2h');
+  assert.equal(formatWorkedDuration(86400000), '24h');
+});
+

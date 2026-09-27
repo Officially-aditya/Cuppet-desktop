@@ -16,6 +16,8 @@ export type Message = {
   content: string;
   status?: string;
   sequence?: number;
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 export type MessageActivity = {

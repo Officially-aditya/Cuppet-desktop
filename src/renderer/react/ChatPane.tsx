@@ -12,7 +12,7 @@ import {
   readPermissionMode,
   readSendBehavior,
 } from './behavior-preferences';
-import { orderedTranscriptItems, type TranscriptState } from './chat-transcript';
+import { formatWorkedDuration, orderedTranscriptItems, type TranscriptState } from './chat-transcript';
 import { useClientTranscript } from './client-transcript';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -456,6 +456,9 @@ function MessageView({
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
 }) {
   const [traceOpen, setTraceOpen] = useState(live);
+  const [completedAt, setCompletedAt] = useState<number | null>(null);
+  const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
+  const prevLiveRef = useRef(live);
   const [copied, setCopied] = useState(false);
   const responseRef = useRef<HTMLDivElement | null>(null);
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
@@ -463,6 +466,26 @@ function MessageView({
   const content = String(message.content ?? '');
   const hasTrace = assistant && trace.length > 0;
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
+
+  useEffect(() => {
+    if (prevLiveRef.current && !live) {
+      setTraceOpen(false);
+      setCompletedAt(Date.now());
+    }
+    prevLiveRef.current = live;
+  }, [live]);
+
+  const workedDurationText = useMemo(() => {
+    if (live || message.status === 'streaming') return null;
+    const start = Number(message.createdAt) || startedAtRef.current;
+    const end = (Number(message.updatedAt) && Number(message.updatedAt) >= start)
+      ? Number(message.updatedAt)
+      : completedAt;
+    if (!start || !end || end < start) return null;
+    const durationMs = end - start;
+    if (durationMs <= 0) return null;
+    return `Worked for ${formatWorkedDuration(durationMs)}`;
+  }, [live, message.status, message.createdAt, message.updatedAt, completedAt]);
 
   const { editedFiles, rawDiff } = useMemo(() => {
     if (!assistant) return { editedFiles: [] as DiffFile[], rawDiff: '' };
@@ -570,10 +593,14 @@ function MessageView({
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
             aria-expanded={traceOpen}
-            aria-label={traceOpen ? 'Hide Cuppet activity' : 'Show Cuppet activity'}
+            aria-label={traceOpen
+              ? (workedDurationText ? `Hide Cuppet activity (${workedDurationText})` : 'Hide Cuppet activity')
+              : (workedDurationText ? `Show Cuppet activity (${workedDurationText})` : 'Show Cuppet activity')
+            }
             onClick={() => setTraceOpen((current) => !current)}
           >
             <span>Cuppet</span>
+            {workedDurationText && <span className="message-worked-time">({workedDurationText})</span>}
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
@@ -1245,3 +1272,5 @@ function QueuedTurnBar({
     </div>
   );
 }
+
+
