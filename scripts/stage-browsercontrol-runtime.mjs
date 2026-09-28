@@ -52,6 +52,13 @@ if (bundled.status !== 0) {
   throw new Error(`Unable to bundle browserControl runtime: ${(bundled.stderr || bundled.stdout || '').trim()}`);
 }
 
+const bundledRuntimeCode = await readFile(targetRuntime, 'utf8');
+const patchedRuntimeCode = bundledRuntimeCode.replace(
+  'if (import.meta.url === `file://${process.argv[1]}`)',
+  'if (Boolean(process.argv[1]))'
+);
+await writeFile(targetRuntime, patchedRuntimeCode, 'utf8');
+
 // Keep the remaining compiled output for diagnostics/source-map references and
 // future browserControl entrypoints, but ensure the bundled runtime above wins.
 await cp(join(source, 'dist'), join(target, 'dist'), { recursive: true, force: true, filter: (src) => resolve(src) !== resolve(sourceRuntime) });

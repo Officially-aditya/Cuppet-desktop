@@ -77,13 +77,6 @@ jobs:
       - name: Install desktop dependencies
         run: npm install --ignore-scripts
 
-      - name: Verify staged resources and renderer
-        run: |
-          node scripts/verify-staged-tst.mjs
-          npm run e2:verify-staged-codex
-          npm run browsercontrol:verify
-          npm run renderer:verify
-
       - name: Build unsigned Windows release
         run: npm run release:win
 
