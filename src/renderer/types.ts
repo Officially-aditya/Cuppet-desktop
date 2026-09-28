@@ -389,6 +389,11 @@ export type CuppetApi = {
     platform: string;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
     copyText: (text: string) => Promise<{ copied: boolean }>;
+    minimizeWindow?: () => Promise<void>;
+    toggleMaximizeWindow?: () => Promise<boolean>;
+    closeWindow?: () => Promise<void>;
+    isWindowMaximized?: () => Promise<boolean>;
+    onWindowMaximizeChange?: (callback: (isMaximized: boolean) => void) => () => void;
   };
   settings: {
     get: () => Promise<ProviderSettings>;

@@ -112,6 +112,16 @@ contextBridge.exposeInMainWorld('cuppet', {
     openProjectFile: (projectId, path) => ipcRenderer.invoke('cuppet:native:open-project-file', projectId, path),
     openExternal: (url) => ipcRenderer.invoke('cuppet:native:open-external', url),
     copyText: (text) => ipcRenderer.invoke('cuppet:native:copy-text', text),
+    minimizeWindow: () => ipcRenderer.invoke('cuppet:native:minimize'),
+    toggleMaximizeWindow: () => ipcRenderer.invoke('cuppet:native:toggle-maximize'),
+    closeWindow: () => ipcRenderer.invoke('cuppet:native:close'),
+    isWindowMaximized: () => ipcRenderer.invoke('cuppet:native:is-maximized'),
+    onWindowMaximizeChange: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const listener = (_event, isMaximized) => callback(isMaximized);
+      ipcRenderer.on('cuppet:window:maximize-change', listener);
+      return () => ipcRenderer.removeListener('cuppet:window:maximize-change', listener);
+    },
   },
   settings: {
     get: () => ipcRenderer.invoke('cuppet:settings:get'),

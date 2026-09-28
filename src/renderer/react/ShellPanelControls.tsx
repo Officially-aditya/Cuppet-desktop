@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
+import { DesktopWindowControls } from './DesktopWindowControls';
 
 type PanelState = {
   leftAvailable: boolean;
@@ -53,7 +54,15 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
   ]));
 
   return (
-    <header className={`shell-panel-header${isMac ? ' is-mac' : ' is-non-mac'}`} aria-label="Workspace panel controls">
+    <header
+      className={`shell-panel-header${isMac ? ' is-mac' : ' is-non-mac'}`}
+      aria-label="Workspace panel controls"
+      onDoubleClick={(e) => {
+        if (e.target === e.currentTarget && !isMac) {
+          void window.cuppet?.native?.toggleMaximizeWindow?.();
+        }
+      }}
+    >
       <div className="shell-panel-controls shell-panel-controls-left">
         <button
           type="button"
@@ -210,6 +219,7 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
         >
           <BottomPanelIcon />
         </button>
+        {!isMac && <DesktopWindowControls />}
       </div>
     </header>
   );

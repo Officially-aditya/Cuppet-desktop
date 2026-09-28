@@ -128,6 +128,28 @@ function registerIpc() {
     clipboard.writeText(text);
     return { copied: true };
   });
+  ipcMain.handle('cuppet:native:minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.minimize();
+  });
+  ipcMain.handle('cuppet:native:toggle-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return false;
+    if (win.isMaximized()) {
+      win.unmaximize();
+      return false;
+    }
+    win.maximize();
+    return true;
+  });
+  ipcMain.handle('cuppet:native:close', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.close();
+  });
+  ipcMain.handle('cuppet:native:is-maximized', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return win?.isMaximized() ?? false;
+  });
 
   ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
   ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
@@ -333,23 +355,33 @@ async function openExternal(value) {
 }
 
 function createWindow() {
+  const isMac = process.platform === 'darwin';
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 800,
     minWidth: 540,
     minHeight: 400,
     show: false,
-    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#0d0f12',
+    backgroundColor: isMac ? '#00000000' : '#0d0f12',
     title: 'Cuppet',
-    icon: process.platform === 'darwin' ? APP_ICON_MACOS : APP_ICON,
-    ...(process.platform === 'darwin' ? {
+    icon: isMac ? APP_ICON_MACOS : APP_ICON,
+    autoHideMenuBar: !isMac,
+    ...(isMac ? {
       titleBarStyle: 'hiddenInset',
       vibrancy: 'under-window',
       visualEffectState: 'active',
-    } : {}),
+    } : {
+      frame: false,
+    }),
     webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('cuppet:window:maximize-change', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('cuppet:window:maximize-change', false);
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(?:https?:|mailto:)/i.test(url)) void openExternal(url).catch(() => undefined);
     return { action: 'deny' };
