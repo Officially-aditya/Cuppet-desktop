@@ -75,7 +75,7 @@ jobs:
         run: npm run browsercontrol:stage -- --source=.release/browsercontrol
 
       - name: Install desktop dependencies
-        run: npm install
+        run: npm install --ignore-scripts
 
       - name: Verify staged resources and renderer
         run: |
@@ -99,7 +99,7 @@ jobs:
             echo "Expected Windows release artifacts were not produced." >&2
             exit 1
           fi
-          shasum -a 256 "$EXE_PATH" "$ZIP_PATH" > SHA256SUMS-windows.txt
+          (sha256sum "$EXE_PATH" "$ZIP_PATH" 2>/dev/null || shasum -a 256 "$EXE_PATH" "$ZIP_PATH") > SHA256SUMS-windows.txt
           cat SHA256SUMS-windows.txt
 
       - name: Upload Windows build artifacts to workflow run
