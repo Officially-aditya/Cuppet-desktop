@@ -1,10 +1,11 @@
 import { providerFailureMetadata } from './providers/provider-failure.mjs';
 
-const ACCOUNT_PROVIDERS = new Set(['codex','opencode','grok-build','github-copilot','mistral-vibe','kiro','antigravity']);
+const ACCOUNT_PROVIDERS = new Set(['codex', 'opencode', 'claude-code', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity']);
 
 const LABELS = Object.freeze({
   codex: 'ChatGPT / Codex',
   opencode: 'OpenCode',
+  'claude-code': 'Claude Code',
   'grok-build': 'Grok Build',
   'github-copilot': 'GitHub Copilot',
   'mistral-vibe': 'Mistral Vibe',

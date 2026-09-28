@@ -48,6 +48,10 @@ test('account provider auth errors tell user to reconnect',()=>{
   assert.equal(value.title,'Sign-in required');
   assert.match(value.message,/Reconnect GitHub Copilot in Settings → Platform/);
   assert.equal(value.action,'reauthenticate');
+  const claude=classify('login expired','claude-code');
+  assert.equal(claude.title,'Sign-in required');
+  assert.match(claude.message,/Reconnect Claude Code in Settings → Platform/);
+  assert.equal(claude.action,'reauthenticate');
 });
 
 test('API auth errors tell user to update credentials',()=>{

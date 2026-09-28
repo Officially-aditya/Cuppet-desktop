@@ -6,7 +6,7 @@ import test from 'node:test';
 import { installSpec, loginSpec } from '../src/main/cli-agent-status.mjs';
 import { localProviderOperations } from '../src/main/local-provider-operations.mjs';
 
-const providers = ['opencode', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'];
+const providers = ['opencode', 'claude-code', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'];
 
 test('all local providers have automatic macOS installers', () => {
   for (const providerID of providers) {
@@ -28,6 +28,7 @@ test('Antigravity uses the canonical installer without stale installer flags', (
 
 test('provider-owned login flows need no copied Terminal command', () => {
   assert.equal(loginSpec('opencode', 'opencode'), null);
+  assert.deepEqual(loginSpec('claude-code', 'claude-agent-acp').args, ['--cli', 'auth', 'login']);
   assert.deepEqual(loginSpec('grok-build', 'grok').args, ['login']);
   assert.deepEqual(loginSpec('github-copilot', 'copilot').args, ['login', '--web-flow']);
   assert.deepEqual(loginSpec('kiro', 'kiro-cli').args, ['login', '--license', 'free']);

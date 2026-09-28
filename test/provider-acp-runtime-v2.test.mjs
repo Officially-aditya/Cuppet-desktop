@@ -129,6 +129,7 @@ test('generic ACP adapter delegates ACP host operations through Cuppet', async (
 
 test('provider factory uses the shared ACP adapter for every ACP descriptor', () => {
   assert.ok(createUntrackedChatProvider({ providerID: 'opencode' }) instanceof AcpProviderAdapter);
+  assert.ok(createUntrackedChatProvider({ providerID: 'claude-code' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'grok-build' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'github-copilot' }) instanceof AcpProviderAdapter);
   assert.ok(createUntrackedChatProvider({ providerID: 'mistral-vibe' }) instanceof AcpProviderAdapter);

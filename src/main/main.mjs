@@ -7,6 +7,7 @@ import { ProviderSettingsStore } from './provider-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
 import { ProjectTerminalManager } from './project-terminal-manager.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
+import { isLocalCliProvider } from '../runtime/local-cli-descriptors.mjs';
 import { SandboxManager } from '../runtime/sandbox/sandbox-manager.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -241,7 +242,7 @@ function desktopProviderAuthority(request) {
 
 function validateCliProviderID(value) {
   const id = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (!['opencode', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'].includes(id)) throw new Error('Unsupported local CLI provider.');
+  if (!isLocalCliProvider(id)) throw new Error('Unsupported local CLI provider.');
   return id;
 }
 
