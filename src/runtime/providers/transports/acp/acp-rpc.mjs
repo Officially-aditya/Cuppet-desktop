@@ -22,14 +22,18 @@ export class AcpRpcChannel {
     processHandle.onLine((line) => this.#onLine(line));
     processHandle.onExit(({ code, signal, expected }) => {
       if (expected || this.#closed) return;
+      const stderr = this.#process.stderr();
+      const isMissing = code === 9009 || /not recognized as an internal or external command|is not recognized|command not found|cannot find the path specified/i.test(stderr);
       this.#failAll(providerFailureError(
-        `${this.#label} ACP exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.`,
+        isMissing
+          ? `${this.#label} CLI executable was not found.`
+          : `${this.#label} ACP exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.`,
         {
-          code: 'PROVIDER_PROCESS_EXITED',
-          category: 'process_exited',
-          retryable: true,
-          action: 'retry',
-          diagnostic: this.#process.stderr(),
+          code: isMissing ? 'PROVIDER_EXECUTABLE_MISSING' : 'PROVIDER_PROCESS_EXITED',
+          category: isMissing ? 'executable_missing' : 'process_exited',
+          retryable: !isMissing,
+          action: isMissing ? 'reconnect_provider' : 'retry',
+          diagnostic: stderr,
         },
       ));
     });

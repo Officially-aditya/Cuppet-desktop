@@ -231,13 +231,13 @@ export function installSpec(providerID, platform = process.platform) {
   }
   if (platform === 'win32') {
     const specs = {
-      'claude-code': { source: 'npm', script: "$ErrorActionPreference='Stop'; if (Get-Command claude-agent-acp -ErrorAction SilentlyContinue) { exit 0 }; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp; if ($LASTEXITCODE -ne 0) { npm install -g @agentclientprotocol/claude-agent-acp --force }" },
+      'claude-code': { source: 'npm', script: "$ErrorActionPreference='Stop'; $npmDir = if ($env:APPDATA) { Join-Path $env:APPDATA 'npm' } else { '' }; if ($npmDir -and (Test-Path (Join-Path $npmDir 'claude-agent-acp.cmd'))) { exit 0 }; if (Get-Command claude-agent-acp -ErrorAction SilentlyContinue) { exit 0 }; if ($npmDir -and (Test-Path $npmDir) -and -not ($env:PATH -split ';' -contains $npmDir)) { $env:PATH = \"$npmDir;$env:PATH\" }; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp; if ($LASTEXITCODE -ne 0) { if ($npmDir -and (Test-Path (Join-Path $npmDir 'claude-agent-acp.cmd'))) { exit 0 }; npm install -g @agentclientprotocol/claude-agent-acp --force }" },
       'grok-build': { source: 'managed', script: 'irm https://x.ai/cli/install.ps1 | iex' },
       'github-copilot': { source: 'managed', script: 'winget install --id GitHub.Copilot -e --silent --accept-package-agreements --accept-source-agreements' },
       'mistral-vibe': { source: 'managed', script: "$ErrorActionPreference='Stop'; if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { irm https://astral.sh/uv/install.ps1 | iex }; $uv=(Get-Command uv -ErrorAction SilentlyContinue).Source; if (-not $uv) { $uv=Join-Path $env:USERPROFILE '.local\\bin\\uv.exe' }; & $uv tool install mistral-vibe" },
       kiro: { source: 'managed', script: "irm 'https://cli.kiro.dev/install.ps1' | iex" },
       antigravity: { source: 'managed', script: 'irm https://antigravity.google/cli/install.ps1 | iex' },
-      opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; if (Get-Command opencode -ErrorAction SilentlyContinue) { exit 0 }; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai; if ($LASTEXITCODE -ne 0) { npm install -g opencode-ai --force } } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
+      opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; $npmDir = if ($env:APPDATA) { Join-Path $env:APPDATA 'npm' } else { '' }; if ($npmDir -and (Test-Path (Join-Path $npmDir 'opencode.cmd'))) { exit 0 }; if (Get-Command opencode -ErrorAction SilentlyContinue) { exit 0 }; if ($npmDir -and (Test-Path $npmDir) -and -not ($env:PATH -split ';' -contains $npmDir)) { $env:PATH = \"$npmDir;$env:PATH\" }; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai; if ($LASTEXITCODE -ne 0) { if ($npmDir -and (Test-Path (Join-Path $npmDir 'opencode.cmd'))) { exit 0 }; npm install -g opencode-ai --force } } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
     };
     const spec = specs[id];
     const powerShellCmd = resolveWindowsPowerShell(platform);
@@ -409,9 +409,9 @@ async function resolveExecutablePath(command) {
   if (value.includes('/') || value.includes('\\')) {
     return executableAt(value) ? value : null;
   }
-  const pathEntries = String(process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const pathEntries = String(process.env.PATH ?? process.env.Path ?? process.env.path ?? '').split(delimiter).filter(Boolean);
   const extensions = process.platform === 'win32'
-    ? String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    ? String(process.env.PATHEXT || process.env.Pathext || process.env.pathext || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
     : [''];
   for (const directory of pathEntries) {
     for (const extension of extensions) {

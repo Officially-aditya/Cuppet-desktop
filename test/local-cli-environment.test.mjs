@@ -161,3 +161,13 @@ test('local CLI resolver resolves Windows .cmd batch scripts from PATH', async (
   }
 });
 
+test('Windows local CLI environment handles camelCase AppData and Roaming npm fallback', () => {
+  const env = {
+    Path: 'C:\\custom\\bin',
+    AppData: 'C:\\Users\\test\\AppData\\Roaming',
+  };
+  const result = localCliEnvironment(env, { platform: 'win32', home: 'C:\\Users\\test' });
+  const entries = result.PATH.split(';');
+  assert.ok(entries.includes('C:\\Users\\test\\AppData\\Roaming\\npm'));
+});
+

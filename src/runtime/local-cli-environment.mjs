@@ -8,6 +8,20 @@ const DARWIN_PATH_MARKER = '__CUPPET_LOGIN_SHELL_PATH__=';
 let cachedDarwinLoginPath = null;
 let cachedDarwinLoginPathKey = '';
 
+export function getEnv(env, ...keys) {
+  if (!env || typeof env !== 'object') return '';
+  for (const key of keys) {
+    if (typeof env[key] === 'string' && env[key]) return env[key];
+    const lowerKey = key.toLowerCase();
+    for (const actualKey of Object.keys(env)) {
+      if (actualKey.toLowerCase() === lowerKey && typeof env[actualKey] === 'string' && env[actualKey]) {
+        return env[actualKey];
+      }
+    }
+  }
+  return '';
+}
+
 /**
  * Build the environment Cuppet should use when resolving user-installed CLIs.
  *
@@ -20,9 +34,9 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
   const platform = typeof options.platform === 'string' ? options.platform : process.platform;
   const home = typeof options.home === 'string' ? options.home : homedir();
   const pathDelimiter = platform === 'win32' ? ';' : ':';
-  const pathValue = environment.PATH ?? environment.Path ?? '';
+  const pathValue = getEnv(environment, 'PATH', 'Path');
   const existing = splitPath(pathValue, pathDelimiter);
-  const explicit = splitPath(environment.CUPPET_CLI_PATH, pathDelimiter);
+  const explicit = splitPath(getEnv(environment, 'CUPPET_CLI_PATH'), pathDelimiter);
   const recovered = platform === 'darwin'
     ? splitPath(recoverDarwinLoginPath(environment, options), pathDelimiter)
     : [];
@@ -58,17 +72,21 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
     ? options.environment
     : localCliEnvironment(inherited, options);
   const pathDelimiter = platform === 'win32' ? ';' : ':';
-  const pathEntries = splitPath(environment.PATH, pathDelimiter);
+  const pathValue = getEnv(environment, 'PATH', 'Path');
+  const pathEntries = splitPath(pathValue, pathDelimiter);
   const extensions = platform === 'win32'
-    ? executableExtensions(environment.PATHEXT)
+    ? executableExtensions(getEnv(environment, 'PATHEXT', 'Pathext'))
     : [''];
 
   for (const directory of pathEntries) {
+    const pathJoin = process.platform === 'win32'
+      ? win32Path.join
+      : (directory.startsWith('/') ? join : win32Path.join);
     for (const extension of extensions) {
       const fileName = platform === 'win32' && !value.toLowerCase().endsWith(extension.toLowerCase())
         ? `${value}${extension}`
         : (platform === 'win32' ? value : `${value}${extension}`);
-      const candidate = (process.platform === 'win32' ? win32Path.join : join)(directory, fileName);
+      const candidate = pathJoin(directory, fileName);
       try {
         accessSync(candidate, platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
         return candidate;
@@ -82,6 +100,7 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
 export function applyLocalCliEnvironment(options = {}) {
   const environment = localCliEnvironment(process.env, options);
   if (environment.PATH) process.env.PATH = environment.PATH;
+  if (process.platform === 'win32' && environment.Path) process.env.Path = environment.Path;
   return environment;
 }
 
@@ -139,39 +158,45 @@ function markerPath(stdout) {
 }
 
 function fallbackCliPaths(environment, home, platform) {
+  const isWin = platform === 'win32';
+  const pathJoin = isWin ? win32Path.join : join;
+  const pnpmHome = getEnv(environment, 'PNPM_HOME');
+  const bunInstall = getEnv(environment, 'BUN_INSTALL');
+  const appData = getEnv(environment, 'APPDATA', 'AppData') || (isWin && home ? pathJoin(home, 'AppData', 'Roaming') : '');
+  const localAppData = getEnv(environment, 'LOCALAPPDATA', 'LocalAppData') || (isWin && home ? pathJoin(home, 'AppData', 'Local') : '');
+
   const candidates = [
-    environment.PNPM_HOME,
-    environment.BUN_INSTALL ? join(environment.BUN_INSTALL, 'bin') : '',
-    environment.APPDATA ? join(environment.APPDATA, 'npm') : '',
-    environment.LOCALAPPDATA ? join(environment.LOCALAPPDATA, 'agy', 'bin') : '',
-    home ? join(home, '.local', 'bin') : '',
-    home ? join(home, '.opencode', 'bin') : '',
-    home ? join(home, '.grok', 'bin') : '',
-    home ? join(home, '.kiro', 'bin') : '',
-    home ? join(home, '.vibe', 'bin') : '',
-    home ? join(home, '.copilot', 'bin') : '',
-    home ? join(home, '.bun', 'bin') : '',
-    home ? join(home, '.npm-global', 'bin') : '',
+    pnpmHome,
+    bunInstall ? pathJoin(bunInstall, 'bin') : '',
+    appData ? pathJoin(appData, 'npm') : '',
+    localAppData ? pathJoin(localAppData, 'agy', 'bin') : '',
+    home ? pathJoin(home, '.local', 'bin') : '',
+    home ? pathJoin(home, '.opencode', 'bin') : '',
+    home ? pathJoin(home, '.grok', 'bin') : '',
+    home ? pathJoin(home, '.kiro', 'bin') : '',
+    home ? pathJoin(home, '.vibe', 'bin') : '',
+    home ? pathJoin(home, '.copilot', 'bin') : '',
+    home ? pathJoin(home, '.bun', 'bin') : '',
+    home ? pathJoin(home, '.npm-global', 'bin') : '',
   ];
   if (platform === 'darwin') {
     candidates.push('/opt/homebrew/bin', '/usr/local/bin');
-  } else if (platform === 'win32') {
-    const systemRoot = environment.SystemRoot || environment.windir || 'C:\\Windows';
-    const programFiles = environment.ProgramFiles || 'C:\\Program Files';
-    const programFilesX86 = environment['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-    const localAppData = environment.LOCALAPPDATA || (home ? win32Path.join(home, 'AppData', 'Local') : '');
+  } else if (isWin) {
+    const systemRoot = getEnv(environment, 'SystemRoot', 'windir') || 'C:\\Windows';
+    const programFiles = getEnv(environment, 'ProgramFiles') || 'C:\\Program Files';
+    const programFilesX86 = getEnv(environment, 'ProgramFiles(x86)') || 'C:\\Program Files (x86)';
     candidates.push(
-      win32Path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
-      win32Path.join(systemRoot, 'System32'),
+      pathJoin(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
+      pathJoin(systemRoot, 'System32'),
       systemRoot,
-      win32Path.join(systemRoot, 'System32', 'OpenSSH'),
-      win32Path.join(programFiles, 'PowerShell', '7'),
-      win32Path.join(programFiles, 'Git', 'cmd'),
-      win32Path.join(programFiles, 'Git', 'bin'),
-      localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'cmd') : '',
-      localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'bin') : '',
-      win32Path.join(programFiles, 'nodejs'),
-      win32Path.join(programFilesX86, 'nodejs'),
+      pathJoin(systemRoot, 'System32', 'OpenSSH'),
+      pathJoin(programFiles, 'PowerShell', '7'),
+      pathJoin(programFiles, 'Git', 'cmd'),
+      pathJoin(programFiles, 'Git', 'bin'),
+      localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'cmd') : '',
+      localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'bin') : '',
+      pathJoin(programFiles, 'nodejs'),
+      pathJoin(programFilesX86, 'nodejs'),
     );
   }
   return candidates.filter((value) => typeof value === 'string' && value.trim());
@@ -180,8 +205,8 @@ function fallbackCliPaths(environment, home, platform) {
 /** Resolve PowerShell executable on Windows, checking canonical system paths before bare fallback. */
 export function resolveWindowsPowerShell(platform = process.platform, env = process.env, accessSyncImpl = accessSync) {
   if (platform !== 'win32') return 'powershell.exe';
-  const systemRoot = env.SystemRoot || env.windir || 'C:\\Windows';
-  const programFiles = env.ProgramFiles || 'C:\\Program Files';
+  const systemRoot = getEnv(env, 'SystemRoot', 'windir') || 'C:\\Windows';
+  const programFiles = getEnv(env, 'ProgramFiles') || 'C:\\Program Files';
   const candidates = [
     win32Path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     win32Path.join(programFiles, 'PowerShell', '7', 'pwsh.exe'),

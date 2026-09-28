@@ -54,3 +54,18 @@ test('execution preflight uses explicit CLI command before descriptor defaults',
   });
   assert.deepEqual(observed, { command: '/opt/cuppet/opencode', args: ['--version'] });
 });
+
+test('execution preflight wraps ENOENT as PROVIDER_EXECUTABLE_MISSING failure', async () => {
+  const descriptor = localCliDescriptor('opencode');
+  await assert.rejects(() => verifyLocalProviderExecutableVersion(descriptor, { cliCommand: 'nonexistent-bin' }, {
+    runVersionImpl: async () => {
+      const err = new Error('spawn nonexistent-bin ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    },
+  }), (error) => {
+    assert.equal(error.code, 'PROVIDER_EXECUTABLE_MISSING');
+    assert.match(error.message, /CLI was not found/);
+    return true;
+  });
+});
