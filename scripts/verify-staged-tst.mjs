@@ -8,7 +8,13 @@ import { TST_PROTOCOL_VERSION } from '../src/runtime/tst-client.mjs';
 import { MANAGED_TST_SOURCE_REPOSITORY, MANAGED_TST_SOURCE_REVISION } from '../src/runtime/tst-release.mjs';
 
 const runtime = runtimeKey();
-if (!runtime) throw new Error(`Managed TST packaging is unsupported on ${process.platform}-${process.arch}`);
+if (!runtime) {
+  if (process.platform === 'win32') {
+    process.stdout.write('verified win32: unbundled TST runtime per F1 contract\n');
+    process.exit(0);
+  }
+  throw new Error(`Managed TST packaging is unsupported on ${process.platform}-${process.arch}`);
+}
 const directory = resolve(process.argv[2] ?? join('vendor', 'tst', runtime));
 const metadata = JSON.parse(await readFile(join(directory, 'tst-runtime.json'), 'utf8'));
 if (

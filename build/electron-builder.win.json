@@ -1,0 +1,61 @@
+{
+  "appId": "com.cuppet.desktop",
+  "productName": "Cuppet",
+  "executableName": "cuppet",
+  "artifactName": "${productName}-${version}-${arch}.${ext}",
+  "asar": true,
+  "asarUnpack": [
+    "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs"
+  ],
+  "files": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/runtime/**/*",
+    "src/cli/**/*",
+    "dist-renderer/**/*",
+    "src/remote-app/**/*",
+    "build/icon.png",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "vendor/tst",
+      "to": "tst",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "vendor/codex",
+      "to": "codex",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "vendor/browsercontrol",
+      "to": "browsercontrol",
+      "filter": ["**/*"]
+    }
+  ],
+  "directories": {
+    "output": "dist"
+  },
+  "win": {
+    "icon": "build/icon.png",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Cuppet"
+  }
+}
