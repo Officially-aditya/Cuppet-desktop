@@ -495,7 +495,12 @@ export class RuntimeService {
     for (let attempt = 0; attempt < 250; attempt++) {
       const live = this.#liveExecutions.get(sessionId);
       if (live && !live.controller.signal.aborted) live.controller.abort();
-      if (!this.#isSessionActive(sessionId)) return this.send({ sessionId, text, provider: params.provider ?? {} });
+      if (!this.#isSessionActive(sessionId)) return this.send({
+        sessionId,
+        text,
+        provider: params.provider ?? {},
+        attachments: Array.isArray(params.attachments) ? params.attachments : [],
+      });
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     throw new Error('session did not stop before steer');

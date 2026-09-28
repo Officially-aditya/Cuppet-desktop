@@ -251,6 +251,7 @@ function validateCommandInput(value) {
     ...(typeof record.key === 'string' ? { key: record.key.trim().slice(0, 240) } : {}),
     ...(typeof record.value === 'string' ? { value: record.value.trim().slice(0, 4000) } : {}),
     ...(typeof record.text === 'string' ? { text: record.text.trim().slice(0, 8192) } : {}),
+    ...(Array.isArray(record.attachments) ? { attachments: record.attachments.slice(0, 16) } : {}),
     ...(['session', 'project', 'global'].includes(record.scope) ? { scope: record.scope } : {}),
     ...(['plan', 'build'].includes(record.mode) ? { mode: record.mode } : {}),
     ...(record.pinned === true ? { pinned: true } : {}),

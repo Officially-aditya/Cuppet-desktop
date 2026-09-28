@@ -111,26 +111,9 @@ export function WorkspaceEnhancements() {
   return null;
 }
 
-function syncTurnFileSummaries(messages: RuntimeMessage[], events: EditedFileEvent[], projectId: string | null) {
-  const grouped = groupEditedFilesByTurn(messages, events);
-  const desired = new Set(grouped.keys());
-  for (const node of document.querySelectorAll<HTMLElement>('[data-cuppet-edited-files-summary]')) {
-    const messageId = node.getAttribute('data-message-id') || '';
-    if (!desired.has(messageId) || !projectId) node.remove();
-  }
-  if (!projectId) return;
-
-  for (const [messageId, files] of grouped) {
-    const article = document.querySelector<HTMLElement>(`.message.assistant[data-message-id="${cssEscape(messageId)}"]`);
-    if (!article || article.classList.contains('message-preview')) continue;
-    const signature = files.map((file) => file.path).join('\n');
-    const current = article.querySelector<HTMLElement>(':scope > [data-cuppet-edited-files-summary]');
-    if (current?.dataset.signature === signature) continue;
-    current?.remove();
-    const summary = buildTurnFileSummary(messageId, files);
-    const footer = article.querySelector(':scope > .message-footer-actions');
-    article.insertBefore(summary, footer ?? null);
-  }
+function syncTurnFileSummaries(_messages: RuntimeMessage[], _events: EditedFileEvent[], _projectId: string | null) {
+  // Replaced by the interactive modified button (.turn-diff-card) in ChatPane.
+  clearTurnFileSummaries();
 }
 
 function groupEditedFilesByTurn(messages: RuntimeMessage[], events: EditedFileEvent[]) {
@@ -156,48 +139,6 @@ function groupEditedFilesByTurn(messages: RuntimeMessage[], events: EditedFileEv
     messageId,
     [...files.values()].sort((a, b) => a.path.localeCompare(b.path)),
   ]));
-}
-
-function buildTurnFileSummary(messageId: string, files: EditedFileEvent[]) {
-  const summary = document.createElement('div');
-  summary.className = 'message-edited-files';
-  summary.setAttribute('data-cuppet-edited-files-summary', 'true');
-  summary.setAttribute('data-message-id', messageId);
-  summary.dataset.signature = files.map((file) => file.path).join('\n');
-
-  const trigger = document.createElement('button');
-  trigger.type = 'button';
-  trigger.className = 'message-edited-files-trigger';
-  trigger.setAttribute('data-cuppet-edited-files-toggle', 'true');
-  trigger.setAttribute('aria-expanded', 'false');
-  trigger.textContent = `${files.length} file${files.length === 1 ? '' : 's'} edited`;
-  const chevron = document.createElement('span');
-  chevron.className = 'message-edited-files-chevron';
-  chevron.textContent = '⌄';
-  chevron.setAttribute('aria-hidden', 'true');
-  trigger.append(chevron);
-
-  const list = document.createElement('div');
-  list.className = 'message-edited-files-list';
-  list.setAttribute('data-cuppet-edited-files-list', 'true');
-  list.setAttribute('aria-label', 'Edited files');
-  list.hidden = true;
-  for (const file of files) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'message-edited-file';
-    button.setAttribute('data-cuppet-project-file', file.path);
-    button.title = `Open ${file.path}`;
-    const path = document.createElement('span');
-    path.textContent = file.path;
-    const action = document.createElement('span');
-    action.className = 'message-edited-file-action';
-    action.textContent = 'Open';
-    button.append(path, action);
-    list.append(button);
-  }
-  summary.append(trigger, list);
-  return summary;
 }
 
 function clearTurnFileSummaries() {

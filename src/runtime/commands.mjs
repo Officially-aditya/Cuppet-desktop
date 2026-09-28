@@ -115,7 +115,13 @@ export async function executeCommand(parsedOrId, context = {}, input = {}) {
     case 'cuppet.steer.interrupt': {
       const text = String(input.text ?? '').trim();
       if (!text) throw new Error('interrupt-and-steer requires text');
-      result = await call('session.steer', { sessionId, text, provider: await resolveProviderRequest(context.providerRequest), interrupt: true });
+      result = await call('session.steer', {
+        sessionId,
+        text,
+        provider: await resolveProviderRequest(context.providerRequest),
+        interrupt: true,
+        attachments: Array.isArray(input.attachments) ? input.attachments : [],
+      });
       break;
     }
     case 'cuppet.plan.agent': result = await executePlan(call, sessionId, [String(input.mode ?? '')]); break;

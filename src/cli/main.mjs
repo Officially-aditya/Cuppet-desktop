@@ -17,8 +17,9 @@ import { executeCommand, listCommands, parseSlashCommand } from '../runtime/comm
 const here=dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_BASE='https://connect.cuppet.in';
 const rawArgs=process.argv.slice(2);
-const legacyPrompt=rawArgs[0]?.startsWith('-');
-const command=legacyPrompt?'prompt':rawArgs[0]??'help';
+const isHelp=rawArgs[0]==='--help'||rawArgs[0]==='-h'||rawArgs[0]==='help';
+const legacyPrompt=!isHelp&&rawArgs[0]?.startsWith('-');
+const command=isHelp?'help':(legacyPrompt?'prompt':rawArgs[0]??'help');
 const flags=parseFlags(legacyPrompt?rawArgs:rawArgs.slice(1));
 try{
   if(command==='remote-control')await remoteControl(flags);
@@ -209,4 +210,4 @@ function stringFlag(value){return typeof value==='string'&&value?value:null;}
 function listFlag(value){if(value===undefined)return[];return(Array.isArray(value)?value:[value]).map(String).slice(0,32);}
 function integer(value,fallback){const parsed=Number(value);return Number.isInteger(parsed)&&parsed>=0&&parsed<=65535?parsed:fallback;}
 function waitForSignal(){return new Promise((resolve)=>{const done=()=>{process.off('SIGINT',done);process.off('SIGTERM',done);resolve();};process.once('SIGINT',done);process.once('SIGTERM',done);});}
-function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet undo [--session id|-s id] [--json]\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}
+function usage(){console.log(`Cuppet independent CLI\n\n  cuppet prompt <text> [--session id|-s id] [--continue|-c] [--fork] [--json]\n  cuppet command "/status" [--session id|-s id] [--json]\n  cuppet commands\n  cuppet --prompt <text> [-s id|-c] [--fork]\n  cuppet sessions\n  cuppet undo [--session id|-s id] [--json]\n  cuppet status\n  cuppet doctor\n  cuppet models [--provider-id id] [--model id] [--effort variant]\n  cuppet remote-control [--relay-url wss://…] [--api-base ${DEFAULT_API_BASE}]\n  cuppet relay [--port 8787] [--bind 127.0.0.1] [--auth-file path]\n  cuppet remote-enroll --token <session-token> [--api-base ${DEFAULT_API_BASE}]\n\nHeadless provider env: CUPPET_PROVIDER_ID, CUPPET_API_KEY, CUPPET_MODEL, CUPPET_BACKGROUND_MODEL, CUPPET_EFFORT, CUPPET_BACKGROUND_EFFORT, CUPPET_BASE_URL.\nOptional non-secret metadata: CUPPET_MODEL_CATALOG_JSON, CUPPET_VARIANT_BRIDGE_JSON.`);}

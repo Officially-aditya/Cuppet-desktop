@@ -52,6 +52,7 @@ type Props = {
   terminalOpen?: boolean;
   queuedTurns?: QueuedTurn[];
   onCancelQueued?: (queueId: string) => void | Promise<void>;
+  onSteerQueued?: (turn: QueuedTurn) => void | Promise<void>;
   onTerminalOpenChange?: (open: boolean) => void;
   onSend: (text: string, deliveryMode: DeliveryMode, attachments: Attachment[]) => Promise<{ clear: boolean; commandResult?: CommandResult }>;
   onStop: () => void | Promise<void>;
@@ -72,6 +73,7 @@ export function ChatPane({
   terminalOpen,
   queuedTurns = [],
   onCancelQueued,
+  onSteerQueued,
   onTerminalOpenChange,
   onSend,
   onStop,
@@ -269,6 +271,25 @@ export function ChatPane({
     });
   };
 
+  const handleSteerQueued = (turn: QueuedTurn) => {
+    if (onSteerQueued) {
+      void onSteerQueued(turn);
+      return;
+    }
+    if (session?.id) {
+      const text = String(turn.params?.text ?? '').trim();
+      if (!text) return;
+      if (onCancelQueued) void onCancelQueued(turn.id);
+      void window.cuppet.commands.execute(session.id, {
+        id: 'cuppet.steer.interrupt',
+        input: {
+          text: text.slice(0, 8192),
+          ...(Array.isArray(turn.params?.attachments) && turn.params.attachments.length ? { attachments: turn.params.attachments } : {}),
+        },
+      });
+    }
+  };
+
   const chooseBrowserControl = () => {
     setValue((current) => insertBrowserControlMention(current));
     requestAnimationFrame(() => {
@@ -371,6 +392,7 @@ export function ChatPane({
                 total={queuedTurns.length}
                 onCancel={() => void onCancelQueued?.(turn.id)}
                 onEdit={() => handleEditQueued(turn)}
+                onSteer={() => handleSteerQueued(turn)}
               />
             ))}
           </div>
@@ -1218,12 +1240,14 @@ function QueuedTurnBar({
   total,
   onCancel,
   onEdit,
+  onSteer,
 }: {
   turn: QueuedTurn;
   index: number;
   total: number;
   onCancel: () => void;
   onEdit: () => void;
+  onSteer: () => void;
 }) {
   const text = String(turn.params?.text ?? '');
   const attachments = Array.isArray(turn.params?.attachments) ? turn.params.attachments : [];
@@ -1250,6 +1274,15 @@ function QueuedTurnBar({
         )}
       </div>
       <div className="queued-turn-actions">
+        <button
+          type="button"
+          className="queued-turn-button steer"
+          aria-label="Steer with queued message"
+          title="Interrupt Cuppet and steer with this message immediately"
+          onClick={onSteer}
+        >
+          Steer
+        </button>
         <button
           type="button"
           className="queued-turn-button"

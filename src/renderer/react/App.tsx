@@ -242,6 +242,28 @@ export function App() {
     }
   }, [activeSessionId, showToast]);
 
+  const steerQueued = useCallback(async (turn: QueuedTurn) => {
+    if (!activeSessionId) return;
+    const text = String(turn.params?.text ?? '').trim();
+    if (!text) {
+      showToast('Cannot steer with an empty message.');
+      return;
+    }
+    try {
+      await window.cuppet.sessions.queueCancel(turn.id, activeSessionId).catch(() => undefined);
+      setQueuedTurns((current) => current.filter((item) => item.id !== turn.id));
+      await window.cuppet.commands.execute(activeSessionId, {
+        id: 'cuppet.steer.interrupt',
+        input: {
+          text: text.slice(0, 8192),
+          ...(Array.isArray(turn.params?.attachments) && turn.params.attachments.length ? { attachments: turn.params.attachments } : {}),
+        },
+      });
+    } catch (error) {
+      showToast(error);
+    }
+  }, [activeSessionId, showToast]);
+
   const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue', attachments: Attachment[] = []) => {
     const trimmed = text.trim();
     const value = trimmed || (attachments.length ? `Attached: ${attachments.map((item) => item.name).join(', ')}` : '');
@@ -444,6 +466,7 @@ export function App() {
         terminalOpen={panels.terminal}
         queuedTurns={queuedTurns}
         onCancelQueued={cancelQueued}
+        onSteerQueued={steerQueued}
         onTerminalOpenChange={setTerminalOpen}
         onSend={send}
         onStop={stop}

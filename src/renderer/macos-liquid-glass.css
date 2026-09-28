@@ -655,3 +655,19 @@ html, body {
   background: rgba(240, 55, 55, 0.96) !important;
   box-shadow: 0 3px 12px rgba(239, 68, 68, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
+
+/* Queued Message Steer Button */
+.queued-turn-button.steer {
+  border-color: rgba(88, 166, 255, 0.4) !important;
+  color: #58a6ff !important;
+  background: rgba(88, 166, 255, 0.1) !important;
+  font-weight: 600;
+  transition: all 0.12s ease;
+}
+
+.queued-turn-button.steer:hover {
+  background: rgba(88, 166, 255, 0.22) !important;
+  border-color: rgba(88, 166, 255, 0.7) !important;
+  color: #79c0ff !important;
+  box-shadow: 0 1px 6px rgba(88, 166, 255, 0.25);
+}

@@ -10,6 +10,8 @@
 .queued-turn-actions{flex:0 0 auto;display:flex;align-items:center;gap:6px}
 .queued-turn-button{height:26px;padding:0 9px;border:1px solid #303844;border-radius:6px;background:transparent;color:#bdc5cf;font-size:11px;line-height:24px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
 .queued-turn-button:hover{background:#20262e;border-color:#484f58;color:#f1f4f7}
+.queued-turn-button.steer{border-color:rgba(88,166,255,.4);color:#58a6ff;background:rgba(88,166,255,.08);font-weight:600}
+.queued-turn-button.steer:hover{background:rgba(88,166,255,.2);border-color:rgba(88,166,255,.65);color:#79c0ff}
 .queued-turn-button.danger:hover{background:rgba(248,81,73,.15);border-color:rgba(248,81,73,.4);color:#f85149}
 
 .question-messages-container{width:100%;max-width:820px;margin:0 auto 8px;display:flex;flex-direction:column;gap:6px}
