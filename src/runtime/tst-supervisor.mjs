@@ -5,6 +5,7 @@ import { chmod, mkdir, realpath, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TstBridge, TST_PROTOCOL_VERSION } from './tst-client.mjs';
+import { WorkspaceTstHandle, WORKSPACE_TST_CAPABILITIES } from './workspace-tst-handle.mjs';
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const SHUTDOWN_TIMEOUT_MS = 1_500;
@@ -45,23 +46,28 @@ export class ManagedTstManager {
     if (this.#binaryPath && !this.#exists(this.#binaryPath)) this.#unavailableReason = `Managed TST runtime is missing for ${runtimeKey() ?? 'this platform'}.`;
   }
 
-  get configured() { return Boolean(this.#external?.configured || (this.#binaryPath && this.#exists(this.#binaryPath))); }
+  get #hasNative() { return Boolean(this.#binaryPath && this.#exists(this.#binaryPath)); }
+  get configured() { return true; }
   get status() {
     if (this.#external) return { ...this.#external.status, mode: 'external-developer-override', managed: false, projects: [] };
     const projects = [...this.#recordsByRoot.values()].map((record) => ({
       projectIds: [...record.projectIds].sort(), projectKey: record.projectKey, ...record.supervisor.status,
     }));
+    const hasNative = this.#hasNative;
+    const mode = hasNative ? 'managed-native' : 'workspace-fallback';
     return {
-      configured: this.configured,
-      connected: projects.some((project) => project.connected),
+      configured: true,
+      connected: hasNative ? projects.some((project) => project.connected) : true,
       protocol: TST_PROTOCOL_VERSION,
-      capabilities: [...new Set(projects.flatMap((project) => project.capabilities ?? []))].sort(),
-      mode: this.configured ? 'managed-native' : 'unavailable',
+      capabilities: hasNative
+        ? [...new Set(projects.flatMap((project) => project.capabilities ?? []))].sort()
+        : [...WORKSPACE_TST_CAPABILITIES],
+      mode,
       managed: true,
       runtime: runtimeKey(),
       runningProjects: projects.filter((project) => project.running).length,
       projects,
-      unavailableReason: this.configured ? null : this.#unavailableReason ?? 'Managed TST runtime is unavailable.',
+      unavailableReason: null,
     };
   }
 
@@ -110,7 +116,7 @@ export class ManagedTstManager {
     if (this.#external) { this.#external.close(); return; }
     const records = [...this.#recordsByRoot.values()];
     this.#recordsByRoot.clear();
-    await Promise.all(records.map((record) => record.supervisor.close().catch(() => undefined)));
+    await Promise.all(records.map((record) => Promise.resolve(record.supervisor.close()).catch(() => undefined)));
   }
 
   async call(method, params = {}) {
@@ -155,16 +161,32 @@ export class ManagedTstManager {
 
   async #createRecord(root) {
     const projectKey = createHash('sha256').update(root).digest('hex');
-    const supervisor = this.#supervisorFactory({
-      binaryPath: this.#binaryPath,
+    const projectStore = join(this.#dataDir, 'projects', projectKey);
+    const globalStore = join(this.#dataDir, 'global');
+    const runRoot = join(this.#dataDir, 'run');
+
+    if (this.#hasNative) {
+      const supervisor = this.#supervisorFactory({
+        binaryPath: this.#binaryPath,
+        projectRoot: root,
+        projectStore,
+        globalStore,
+        runRoot,
+        idleMs: this.#idleMs,
+        projectKey,
+      });
+      const record = { root, projectKey, projectIds: new Set(), supervisor, handle: new ProjectTstHandle(supervisor) };
+      this.#recordsByRoot.set(root, record);
+      return record;
+    }
+
+    const handle = new WorkspaceTstHandle({
       projectRoot: root,
-      projectStore: join(this.#dataDir, 'projects', projectKey),
-      globalStore: join(this.#dataDir, 'global'),
-      runRoot: join(this.#dataDir, 'run'),
-      idleMs: this.#idleMs,
       projectKey,
+      projectStore,
+      globalStore,
     });
-    const record = { root, projectKey, projectIds: new Set(), supervisor, handle: new ProjectTstHandle(supervisor) };
+    const record = { root, projectKey, projectIds: new Set(), supervisor: handle, handle };
     this.#recordsByRoot.set(root, record);
     return record;
   }
