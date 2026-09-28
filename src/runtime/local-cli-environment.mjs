@@ -65,9 +65,12 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
 
   for (const directory of pathEntries) {
     for (const extension of extensions) {
-      const candidate = join(directory, `${value}${extension}`);
+      const fileName = platform === 'win32' && !value.toLowerCase().endsWith(extension.toLowerCase())
+        ? `${value}${extension}`
+        : (platform === 'win32' ? value : `${value}${extension}`);
+      const candidate = (process.platform === 'win32' ? win32Path.join : join)(directory, fileName);
       try {
-        accessSync(candidate, fsConstants.X_OK);
+        accessSync(candidate, platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
         return candidate;
       } catch {}
     }

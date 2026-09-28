@@ -38,14 +38,17 @@ export function localProviderOperations(providerID, {
   };
 
   const detect = async () => {
-    const executable = command();
+    const rawCommand = command();
+    const resolved = await resolveExecutablePath(rawCommand);
+    const executable = resolved || rawCommand;
     const state = await providerState(userData, descriptor.id);
     let version = null;
     try {
       const result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
       version = firstLine(result.stdout || result.stderr) || null;
     } catch (error) {
-      const missing = error?.code === 'ENOENT' || /not found|ENOENT|command not found/i.test(String(error?.message ?? error));
+      const errorMsg = String(error?.message ?? error ?? '');
+      const missing = error?.code === 'ENOENT' || /not found|ENOENT|command not found|is not recognized as an internal or external command/i.test(errorMsg);
       return {
         providerID: descriptor.id,
         label: descriptor.label,
@@ -228,13 +231,13 @@ export function installSpec(providerID, platform = process.platform) {
   }
   if (platform === 'win32') {
     const specs = {
-      'claude-code': { source: 'npm', script: "$ErrorActionPreference='Stop'; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp" },
+      'claude-code': { source: 'npm', script: "$ErrorActionPreference='Stop'; if (Get-Command claude-agent-acp -ErrorAction SilentlyContinue) { exit 0 }; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp; if ($LASTEXITCODE -ne 0) { npm install -g @agentclientprotocol/claude-agent-acp --force }" },
       'grok-build': { source: 'managed', script: 'irm https://x.ai/cli/install.ps1 | iex' },
       'github-copilot': { source: 'managed', script: 'winget install --id GitHub.Copilot -e --silent --accept-package-agreements --accept-source-agreements' },
       'mistral-vibe': { source: 'managed', script: "$ErrorActionPreference='Stop'; if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { irm https://astral.sh/uv/install.ps1 | iex }; $uv=(Get-Command uv -ErrorAction SilentlyContinue).Source; if (-not $uv) { $uv=Join-Path $env:USERPROFILE '.local\\bin\\uv.exe' }; & $uv tool install mistral-vibe" },
       kiro: { source: 'managed', script: "irm 'https://cli.kiro.dev/install.ps1' | iex" },
       antigravity: { source: 'managed', script: 'irm https://antigravity.google/cli/install.ps1 | iex' },
-      opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
+      opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; if (Get-Command opencode -ErrorAction SilentlyContinue) { exit 0 }; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai; if ($LASTEXITCODE -ne 0) { npm install -g opencode-ai --force } } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
     };
     const spec = specs[id];
     const powerShellCmd = resolveWindowsPowerShell(platform);
@@ -342,7 +345,7 @@ function extendCliSearchPath() {
     process.env.CUPPET_CLI_PATH,
     process.env.PNPM_HOME,
     process.env.BUN_INSTALL ? join(process.env.BUN_INSTALL, 'bin') : '',
-    process.env.APPDATA ? join(process.env.APPDATA, 'npm') : '',
+    process.env.APPDATA ? (process.platform === 'win32' ? win32Path.join(process.env.APPDATA, 'npm') : join(process.env.APPDATA, 'npm')) : (process.platform === 'win32' && home ? win32Path.join(home, 'AppData', 'Roaming', 'npm') : ''),
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'agy', 'bin') : '',
     home ? join(home, '.local', 'bin') : '',
     home ? join(home, '.opencode', 'bin') : '',
@@ -412,7 +415,9 @@ async function resolveExecutablePath(command) {
     : [''];
   for (const directory of pathEntries) {
     for (const extension of extensions) {
-      const candidate = join(directory, process.platform === 'win32' && !value.toLowerCase().endsWith(extension.toLowerCase()) ? `${value}${extension}` : value);
+      const candidate = process.platform === 'win32'
+        ? win32Path.join(directory, !value.toLowerCase().endsWith(extension.toLowerCase()) ? `${value}${extension}` : value)
+        : join(directory, `${value}${extension}`);
       if (await executableAt(candidate)) return candidate;
     }
   }
@@ -466,10 +471,17 @@ function run(command, args, timeoutMs, options = {}) {
     let stderr = '';
     let child;
     try {
+      const isWindows = process.platform === 'win32';
+      const useShell = typeof options.shell === 'boolean'
+        ? options.shell
+        : (isWindows && (
+            /\.(cmd|bat)$/i.test(executable) ||
+            (!/\.exe$/i.test(executable) && !executable.toLowerCase().includes('powershell'))
+          ));
       child = spawn(executable, args, {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: false,
+        shell: useShell,
         env: { ...process.env, ...(options.env ?? {}) },
       });
     } catch (error) { rejectRun(error); return; }

@@ -165,3 +165,26 @@ test('discovered external installs never inherit update authority', async () => 
   await assert.rejects(() => operations.update(), /does not own this OpenCode installation/);
   assert.ok(!calls.some(([command]) => command === '/bin/bash'));
 });
+
+test('Windows provider detection handles "not recognized" cmd errors as uninstalled without error', async () => {
+  const runImpl = async () => {
+    throw new Error("'opencode' is not recognized as an internal or external command,\r\noperable program or batch file.");
+  };
+  const operations = localProviderOperations('opencode', { runImpl, platform: 'win32' });
+  const detected = await operations.detect();
+  assert.equal(detected.installed, false);
+  assert.equal(detected.error, null);
+  assert.equal(detected.installation.detected, false);
+});
+
+test('Windows installSpec for opencode and claude-code includes idempotency and force fallback', () => {
+  const opencodeSpec = installSpec('opencode', 'win32');
+  assert.ok(opencodeSpec);
+  assert.match(opencodeSpec.args.join(' '), /Get-Command opencode/);
+  assert.match(opencodeSpec.args.join(' '), /npm install -g opencode-ai --force/);
+
+  const claudeSpec = installSpec('claude-code', 'win32');
+  assert.ok(claudeSpec);
+  assert.match(claudeSpec.args.join(' '), /Get-Command claude-agent-acp/);
+  assert.match(claudeSpec.args.join(' '), /npm install -g @agentclientprotocol\/claude-agent-acp --force/);
+});

@@ -142,3 +142,22 @@ test('resolveWindowsPowerShell resolves absolute path when present or falls back
   assert.equal(fallback, 'powershell.exe');
 });
 
+test('local CLI resolver resolves Windows .cmd batch scripts from PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-win-bin-'));
+  const cmdFile = join(root, 'opencode.cmd');
+  try {
+    await writeFile(cmdFile, '@echo off\r\necho 1.0.0\r\n');
+    const environment = {
+      PATH: root,
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    };
+    const resolved = resolveLocalCliExecutable('opencode', environment, {
+      platform: 'win32',
+      environment,
+    });
+    assert.equal(resolved.toLowerCase(), cmdFile.toLowerCase());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

@@ -60,10 +60,17 @@ function runCommand(command, args, timeoutMs, options = {}) {
     let stderr = '';
     let child;
     try {
+      const isWindows = process.platform === 'win32';
+      const useShell = typeof options.shell === 'boolean'
+        ? options.shell
+        : (isWindows && (
+            /\.(cmd|bat)$/i.test(command) ||
+            (!/\.exe$/i.test(command) && !command.toLowerCase().includes('powershell'))
+          ));
       child = spawn(command, args, {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: false,
+        shell: useShell,
         env: process.env,
       });
     } catch (error) {

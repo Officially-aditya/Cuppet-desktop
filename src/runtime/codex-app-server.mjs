@@ -33,6 +33,7 @@ export class CodexAppServerClient extends EventEmitter {
       env: this.#env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      shell: process.platform === 'win32',
     });
     this.#child = child;
     this.#stderr = '';
@@ -171,14 +172,14 @@ export function codexRuntimeKey(platform = process.platform, arch = process.arch
 
 function executableName(platform) { return platform === 'win32' ? 'codex-app-server.exe' : 'codex-app-server'; }
 function codeModeHostName(platform) { return platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'; }
-async function executableFile(path) { try { await access(path, constants.X_OK); return true; } catch { return false; } }
+async function executableFile(path) { try { await access(path, process.platform === 'win32' ? constants.F_OK : constants.X_OK); return true; } catch { return false; } }
 async function executableCommand(command, args) {
   if ((command.includes('/') || command.includes('\\')) && !await executableFile(command)) throw new Error(`Codex app-server is not executable: ${command}`);
   return { command, args, source: 'override' };
 }
 function commandWorks(command, args, env) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { env, stdio: 'ignore', windowsHide: true });
+    const child = spawn(command, args, { env, stdio: 'ignore', windowsHide: true, shell: process.platform === 'win32' });
     const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(false); }, 3_000);
     child.once('error', () => { clearTimeout(timer); resolve(false); });
     child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
