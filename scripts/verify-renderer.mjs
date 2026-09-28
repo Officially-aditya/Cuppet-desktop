@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (path) => readFile(join(root, path), 'utf8');
 const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
   read('package.json'),
