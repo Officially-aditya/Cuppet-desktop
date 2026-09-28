@@ -55,7 +55,7 @@ export function Sidebar(props: Props) {
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());
   const dragging = useRef(false);
   const isMac = window.cuppet.native.platform === 'darwin';
-  const sidebarCollapsed = isMac && collapsed;
+  const sidebarCollapsed = collapsed;
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -77,15 +77,13 @@ export function Sidebar(props: Props) {
   }, [width]);
 
   useEffect(() => {
-    if (!isMac) return;
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
     if (props.onCollapsedChange) props.onCollapsedChange(collapsed);
-  }, [collapsed, isMac, props]);
+  }, [collapsed, props]);
 
   useEffect(() => {
-    if (!isMac) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.metaKey || !event.altKey || event.key.toLowerCase() !== 's') return;
+      if ((isMac ? !event.metaKey : !(event.ctrlKey || event.metaKey)) || !event.altKey || event.key.toLowerCase() !== 's') return;
       event.preventDefault();
       setCollapsed((current) => !current);
       setMenu(null);
@@ -252,20 +250,18 @@ export function Sidebar(props: Props) {
 
   return (
     <aside className={`sidebar react-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-      {isMac && (
-        <button
-          type="button"
-          className="sidebar-toggle-button"
-          aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-          title={`${sidebarCollapsed ? 'Show' : 'Hide'} sidebar (⌥⌘S)`}
-          onClick={toggleSidebar}
-        >
-          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
-            <rect x="2.5" y="3" width="13" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.25" />
-            <path d="M7 3v12" stroke="currentColor" strokeWidth="1.25" />
-          </svg>
-        </button>
-      )}
+      <button
+        type="button"
+        className="sidebar-toggle-button"
+        aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+        title={`${sidebarCollapsed ? 'Show' : 'Hide'} sidebar (${isMac ? '⌥⌘S' : 'Ctrl+Alt+S'})`}
+        onClick={toggleSidebar}
+      >
+        <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <rect x="2.5" y="3" width="13" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M7 3v12" stroke="currentColor" strokeWidth="1.25" />
+        </svg>
+      </button>
 
       {sidebarCollapsed && (
         <>

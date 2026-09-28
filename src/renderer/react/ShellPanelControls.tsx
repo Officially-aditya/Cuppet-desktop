@@ -28,10 +28,9 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
   const branchMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!isMac) return;
     document.documentElement.classList.add('cuppet-shell-header');
     return () => document.documentElement.classList.remove('cuppet-shell-header');
-  }, [isMac]);
+  }, []);
 
   useEffect(() => {
     if (!menuOpen && !branchMenuOpen) return;
@@ -48,15 +47,13 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
     return () => window.removeEventListener('mousedown', handleClickOutside);
   }, [menuOpen, branchMenuOpen]);
 
-  if (!isMac) return null;
-
   const availableBranches = Array.from(new Set([
     ...(project?.branches || []),
     ...(project?.branch ? [project.branch] : []),
   ]));
 
   return (
-    <header className="shell-panel-header" aria-label="Workspace panel controls">
+    <header className={`shell-panel-header${isMac ? ' is-mac' : ' is-non-mac'}`} aria-label="Workspace panel controls">
       <div className="shell-panel-controls shell-panel-controls-left">
         <button
           type="button"

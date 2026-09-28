@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { localCliEnvironment, resolveLocalCliExecutable } from '../src/runtime/local-cli-environment.mjs';
+import { localCliEnvironment, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../src/runtime/local-cli-environment.mjs';
 
 const bootstrapPath = fileURLToPath(new URL('../src/main/bootstrap.mjs', import.meta.url));
 
@@ -109,3 +109,36 @@ test('desktop bootstrap hydrates CLI PATH before importing the runtime', async (
   assert.ok(runtimeImportIndex >= 0, 'desktop bootstrap must import the runtime');
   assert.ok(hydrateIndex < runtimeImportIndex, 'CLI PATH recovery must happen before runtime startup');
 });
+
+test('Windows local CLI environment includes system directories and preserves Path alias', () => {
+  const env = {
+    Path: 'C:\\custom\\bin',
+    SystemRoot: 'C:\\Windows',
+    ProgramFiles: 'C:\\Program Files',
+  };
+  const result = localCliEnvironment(env, { platform: 'win32', home: 'C:\\Users\\test' });
+  const entries = result.PATH.split(';');
+  assert.ok(entries.includes('C:\\custom\\bin'));
+  assert.ok(entries.includes('C:\\Windows\\System32\\WindowsPowerShell\\v1.0'));
+  assert.ok(entries.includes('C:\\Windows\\System32'));
+  assert.ok(entries.includes('C:\\Program Files\\PowerShell\\7'));
+  assert.equal(result.Path, result.PATH);
+});
+
+test('resolveWindowsPowerShell resolves absolute path when present or falls back cleanly', () => {
+  assert.equal(resolveWindowsPowerShell('darwin'), 'powershell.exe');
+
+  // When candidates exist according to accessSyncImpl
+  const resolved = resolveWindowsPowerShell('win32', { SystemRoot: 'C:\\Windows' }, (path) => {
+    if (path.includes('WindowsPowerShell')) return;
+    throw new Error('not found');
+  });
+  assert.match(resolved, /WindowsPowerShell[/\\]v1\.0[/\\]powershell\.exe/);
+
+  // When no candidates exist, falls back to powershell.exe
+  const fallback = resolveWindowsPowerShell('win32', {}, () => {
+    throw new Error('not found');
+  });
+  assert.equal(fallback, 'powershell.exe');
+});
+

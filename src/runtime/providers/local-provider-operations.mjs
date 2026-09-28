@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
+import { resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
 import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 
@@ -236,7 +237,8 @@ export function installSpec(providerID, platform = process.platform) {
       opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
     };
     const spec = specs[id];
-    return spec ? { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', spec.script], source: spec.source } : null;
+    const powerShellCmd = resolveWindowsPowerShell(platform);
+    return spec ? { command: powerShellCmd, args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', spec.script], source: spec.source } : null;
   }
   return null;
 }
@@ -335,7 +337,7 @@ async function patchProviderState(userData, providerID, patch) {
 
 function extendCliSearchPath() {
   const home = homedir();
-  const existing = String(process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const existing = String(process.env.PATH ?? process.env.Path ?? '').split(delimiter).filter(Boolean);
   const candidates = [
     process.env.CUPPET_CLI_PATH,
     process.env.PNPM_HOME,
@@ -352,13 +354,34 @@ function extendCliSearchPath() {
     home ? join(home, '.npm-global', 'bin') : '',
     '/opt/homebrew/bin',
     '/usr/local/bin',
-  ].filter(Boolean);
+  ];
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env.LOCALAPPDATA || (home ? win32Path.join(home, 'AppData', 'Local') : '');
+    candidates.push(
+      win32Path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
+      win32Path.join(systemRoot, 'System32'),
+      systemRoot,
+      win32Path.join(systemRoot, 'System32', 'OpenSSH'),
+      win32Path.join(programFiles, 'PowerShell', '7'),
+      win32Path.join(programFiles, 'Git', 'cmd'),
+      win32Path.join(programFiles, 'Git', 'bin'),
+      localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'cmd') : '',
+      localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'bin') : '',
+      win32Path.join(programFiles, 'nodejs'),
+      win32Path.join(programFilesX86, 'nodejs'),
+    );
+  }
   const seen = new Set();
-  process.env.PATH = [...existing, ...candidates].filter((entry) => {
+  const nextPath = [...existing, ...candidates.filter(Boolean)].filter((entry) => {
     if (seen.has(entry)) return false;
     seen.add(entry);
     return true;
   }).join(delimiter);
+  process.env.PATH = nextPath;
+  if (process.platform === 'win32') process.env.Path = nextPath;
 }
 
 async function executableIdentity(command) {
@@ -431,12 +454,19 @@ function normalizeStoredIdentity(value) {
 }
 
 function run(command, args, timeoutMs, options = {}) {
+  let executable = command;
+  if (process.platform === 'win32') {
+    const lower = String(command || '').toLowerCase();
+    if (lower === 'powershell.exe' || lower === 'powershell') {
+      executable = resolveWindowsPowerShell();
+    }
+  }
   return new Promise((resolveRun, rejectRun) => {
     let stdout = '';
     let stderr = '';
     let child;
     try {
-      child = spawn(command, args, {
+      child = spawn(executable, args, {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,

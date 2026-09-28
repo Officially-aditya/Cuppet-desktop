@@ -336,8 +336,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 800,
-    minWidth: 860,
-    minHeight: 620,
+    minWidth: 540,
+    minHeight: 400,
     show: false,
     backgroundColor: process.platform === 'darwin' ? '#00000000' : '#0d0f12',
     title: 'Cuppet',

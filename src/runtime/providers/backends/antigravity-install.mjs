@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
+import { resolveWindowsPowerShell } from '../../local-cli-environment.mjs';
 
 const VERSION = 'agy_acp_server_1.1.1';
 const MAX_ARCHIVE_BYTES = 800 * 1024 * 1024;
@@ -167,7 +168,8 @@ async function extractArchive(archivePath, destination, platform) {
     return;
   }
   if (platform === 'win32') {
-    await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${psQuote(archivePath)}' -DestinationPath '${psQuote(destination)}' -Force`]);
+    const psCmd = resolveWindowsPowerShell(platform);
+    await runProcess(psCmd, ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${psQuote(archivePath)}' -DestinationPath '${psQuote(destination)}' -Force`]);
     return;
   }
   await runProcess('unzip', ['-q', archivePath, '-d', destination]);

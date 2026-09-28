@@ -4,6 +4,8 @@
 /* macOS-style sidebar disclosure control. It stays available in a compact rail when collapsed. */
 .sidebar-toggle-button{position:absolute;z-index:4;top:9px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:#7f8996}.sidebar-toggle-button:hover{background:#1d2229;color:#e6ebf0}.sidebar-toggle-button:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(130,145,165,.18)}.sidebar-toggle-button svg{width:16px;height:16px}.react-sidebar:not(.collapsed) .brand-row{padding-right:30px}.react-sidebar.collapsed{min-width:42px!important;max-width:42px!important;width:42px!important;border-right:1px solid var(--line);background:#0a0c0f}.react-sidebar.collapsed .sidebar-toggle-button{left:9px;right:auto}.sidebar-collapsed-brand{position:absolute;top:44px;left:9px;width:24px;height:24px;display:grid;place-items:center;pointer-events:none}.sidebar-collapsed-brand img{display:block;width:24px;height:24px;object-fit:contain;border-radius:6px}
 @media(max-width:900px){.react-command-palette{width:100%!important}.react-settings-hub{width:calc(100vw - 24px);height:calc(100vh - 24px)}.settings-hub-sidebar{width:190px}.react-delivery-controls::before{display:none}}
+@media(max-width:720px){.react-sidebar:not(.collapsed){min-width:180px!important;width:180px!important}}
+@media(max-width:600px){.react-sidebar:not(.collapsed){min-width:160px!important;width:160px!important}}
 @keyframes cuppet-backdrop-fade{from{opacity:0}to{opacity:1}}
 @keyframes cuppet-modal-scale{from{opacity:0;transform:scale(.96) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
 /* Full chat name suggestion on long hover */

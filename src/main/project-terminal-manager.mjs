@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, realpath, stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join, posix as posixPath, win32 as win32Path } from 'node:path';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 
@@ -257,8 +257,9 @@ export async function resolveProjectTerminalRoot(request, projectId) {
   if (!project || project.missing) {
     return resolveFallbackTerminalRoot();
   }
-  const configured = typeof project.canonicalPath === 'string' ? project.canonicalPath.trim() : '';
-  if (!configured || !isAbsolute(configured) || configured.includes('\0')) {
+  const configured = typeof project?.canonicalPath === 'string' ? project.canonicalPath.trim() : '';
+  const isAbs = process.platform === 'win32' ? win32Path.isAbsolute(configured) : posixPath.isAbsolute(configured);
+  if (!configured || !isAbs || configured.includes('\0')) {
     throw new Error('The canonical project root is invalid');
   }
   try {
@@ -274,29 +275,69 @@ export async function resolveProjectTerminalRoot(request, projectId) {
   }
 }
 
-export async function resolveFallbackTerminalRoot() {
+export async function resolveFallbackTerminalRoot(platform = process.platform, env = process.env, statImpl = stat) {
+  if (platform === 'win32') {
+    const candidates = [
+      homedir(),
+      env.USERPROFILE,
+      env.HOME,
+      env.SystemDrive ? `${env.SystemDrive}\\` : 'C:\\',
+    ].filter((value) => typeof value === 'string' && win32Path.isAbsolute(value));
+
+    for (const candidate of candidates) {
+      try {
+        const metadata = await statImpl(candidate);
+        if (metadata.isDirectory()) return candidate;
+      } catch {}
+    }
+    return env.SystemDrive ? `${env.SystemDrive}\\` : 'C:\\';
+  }
+
   const candidates = [
     homedir(),
-    process.env.HOME,
+    env.HOME,
     '/',
-  ].filter((value) => typeof value === 'string' && isAbsolute(value));
+  ].filter((value) => typeof value === 'string' && posixPath.isAbsolute(value));
 
   for (const candidate of candidates) {
     try {
       const resolved = await realpath(candidate);
-      const metadata = await stat(resolved);
+      const metadata = await statImpl(resolved);
       if (metadata.isDirectory()) return resolved;
     } catch {}
   }
   return '/';
 }
 
-export async function resolveTerminalShell() {
-  const candidates = [process.env.SHELL, process.platform === 'darwin' ? '/bin/zsh' : null, '/bin/bash', '/bin/sh']
-    .filter((value) => typeof value === 'string' && isAbsolute(value));
+export async function resolveTerminalShell(platform = process.platform, env = process.env, accessImpl = access) {
+  if (platform === 'win32') {
+    const systemRoot = env.SystemRoot || env.windir || 'C:\\Windows';
+    const programFiles = env.ProgramFiles || 'C:\\Program Files';
+    const localAppData = env.LOCALAPPDATA || '';
+    const candidates = [
+      env.ComSpec || env.COMSPEC,
+      win32Path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      win32Path.join(systemRoot, 'System32', 'cmd.exe'),
+      win32Path.join(programFiles, 'PowerShell', '7', 'pwsh.exe'),
+      win32Path.join(programFiles, 'Git', 'bin', 'bash.exe'),
+      localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'bin', 'bash.exe') : null,
+      env.SHELL,
+    ].filter((value) => typeof value === 'string' && win32Path.isAbsolute(value));
+
+    for (const candidate of candidates) {
+      try {
+        await accessImpl(candidate);
+        return candidate;
+      } catch {}
+    }
+    return env.ComSpec || env.COMSPEC || 'powershell.exe';
+  }
+
+  const candidates = [env.SHELL, platform === 'darwin' ? '/bin/zsh' : null, '/bin/bash', '/bin/sh']
+    .filter((value) => typeof value === 'string' && posixPath.isAbsolute(value));
   for (const candidate of candidates) {
     try {
-      await access(candidate);
+      await accessImpl(candidate);
       return candidate;
     } catch {}
   }

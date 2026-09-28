@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { ProjectTerminalManager, resolveProjectTerminalRoot } from '../src/main/project-terminal-manager.mjs';
+import { ProjectTerminalManager, resolveFallbackTerminalRoot, resolveProjectTerminalRoot, resolveTerminalShell } from '../src/main/project-terminal-manager.mjs';
 
 function fakeChild() {
   const child = new EventEmitter();
@@ -169,4 +169,37 @@ test('terminal resize delegates to active session and enforces renderer ownershi
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('resolveTerminalShell resolves Windows shells including ComSpec, PowerShell, and cmd.exe', async () => {
+  // Test ComSpec priority
+  const comspec = await resolveTerminalShell('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }, async () => {});
+  assert.equal(comspec, 'C:\\Windows\\System32\\cmd.exe');
+
+  // Test PowerShell candidate resolution
+  const psResolved = await resolveTerminalShell('win32', { SystemRoot: 'C:\\Windows' }, async (cand) => {
+    if (cand.includes('powershell.exe')) return;
+    throw new Error('missing');
+  });
+  assert.match(psResolved, /WindowsPowerShell[/\\]v1\.0[/\\]powershell\.exe/);
+
+  // Test fallback to powershell.exe when none pass accessImpl
+  const fallback = await resolveTerminalShell('win32', {}, async () => {
+    throw new Error('missing');
+  });
+  assert.equal(fallback, 'powershell.exe');
+
+  // POSIX throws when no supported shell found
+  await assert.rejects(
+    () => resolveTerminalShell('linux', {}, async () => { throw new Error('missing'); }),
+    /No supported shell was found/i,
+  );
+});
+
+test('resolveFallbackTerminalRoot returns drive root on Windows when needed', async () => {
+  const winRoot = await resolveFallbackTerminalRoot('win32', { SystemDrive: 'D:' }, async () => {
+    throw new Error('no dir');
+  });
+  assert.equal(winRoot, 'D:\\');
+});
+
 
