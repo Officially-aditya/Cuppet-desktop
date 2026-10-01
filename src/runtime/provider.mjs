@@ -42,10 +42,11 @@ export class OpenAICompatibleChatProvider {
   }
 
   async stream(messages, { signal, onDelta, tools = [] }) {
+    const formattedMessages = formatOpenAIChatMessages(messages);
     const request = {
       ...structuredClone(this.#requestBody),
       model: this.#model,
-      messages,
+      messages: formattedMessages,
       stream: true,
     };
     if (Array.isArray(tools) && tools.length) {
@@ -164,3 +165,22 @@ function sanitizeRequestBody(value) { return structuredClone(record(value)); }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function string(value) { return typeof value === 'string' ? value.trim() : ''; }
+
+export function formatOpenAIChatMessages(messages) {
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    if (message?.role === 'user' && Array.isArray(message.imageAttachments) && message.imageAttachments.length) {
+      const parts = [{ type: 'text', text: String(message.content ?? '') }];
+      for (const img of message.imageAttachments) {
+        if (typeof img?.dataUrl === 'string' && img.dataUrl) {
+          parts.push({
+            type: 'image_url',
+            image_url: { url: img.dataUrl },
+          });
+        }
+      }
+      return { role: 'user', content: parts };
+    }
+    return { role: message.role, content: message.content };
+  });
+}
+

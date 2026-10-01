@@ -72,6 +72,7 @@ export function catalogFromCodexModels(catalog = {}, configuredModel = '') {
     source: 'codex',
     modelDependentSettings: true,
     models,
+    attachments: { text: true, image: true },
     settings: reasoning ? [{ id: reasoning.configId, kind: 'select', category: 'thought_level', label: 'Reasoning effort', value: reasoning.currentValue ?? undefined, options: reasoning.options }] : [],
     defaultModel,
     currentModel: effectiveModel || null,

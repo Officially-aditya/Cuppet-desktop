@@ -74,6 +74,7 @@ export class ConversationDatabase {
     this.#ensureSessionProjectColumn();
     this.#ensureSessionArchiveColumn();
     this.#ensureSessionDeletedColumn();
+    this.#ensureMessageAttachmentsColumn();
     this.#ensureSearchIndex();
     const now = Date.now();
     this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming'").run(now);
@@ -98,6 +99,12 @@ export class ConversationDatabase {
     if (!columns.some((column) => column.name === 'deleted_at')) {
       this.#db.exec('ALTER TABLE sessions ADD COLUMN deleted_at INTEGER');
       this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)');
+    }
+  }
+  #ensureMessageAttachmentsColumn() {
+    const columns = this.#db.prepare('PRAGMA table_info(messages)').all();
+    if (!columns.some((column) => column.name === 'attachments_json')) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN attachments_json TEXT');
     }
   }
   #ensureSearchIndex() {
@@ -184,9 +191,9 @@ export class ConversationDatabase {
     return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
   }
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
-  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
-  appendMessage({id,sessionId,role,content='',status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
-  getMessage(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; }
+  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id).map(hydrateMessage); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
+  appendMessage({id,sessionId,role,content='',attachments=[],status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; const attachmentsJson = Array.isArray(attachments) && attachments.length ? JSON.stringify(attachments) : null; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,attachments_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,attachmentsJson,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
+  getMessage(id){ const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
   updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
   appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
   appendMessageActivity({sessionId,messageId,source='provider',activity,now=Date.now()}){
@@ -266,3 +273,16 @@ function ftsQuery(value){
   const terms=String(value??'').normalize('NFKC').match(/[\p{L}\p{N}_-]+/gu)?.slice(0,12)??[];
   return terms.map((term)=>`"${term.replace(/"/g,'""')}"*`).join(' AND ');
 }
+
+function hydrateMessage(row) {
+  if (!row) return null;
+  const { attachmentsJson, ...rest } = row;
+  if (!attachmentsJson) return rest;
+  try {
+    const parsed = JSON.parse(attachmentsJson);
+    return { ...rest, ...(Array.isArray(parsed) && parsed.length ? { attachments: parsed } : {}) };
+  } catch {
+    return rest;
+  }
+}
+

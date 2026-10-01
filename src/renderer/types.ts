@@ -14,6 +14,7 @@ export type Message = {
   sessionId: string;
   role: 'user' | 'assistant' | 'system' | string;
   content: string;
+  attachments?: Attachment[];
   status?: string;
   sequence?: number;
   createdAt?: number;
@@ -56,6 +57,7 @@ export type Attachment = {
   mime?: string;
   size?: number;
   path?: string;
+  dataUrl?: string;
 };
 
 export type QueuedTurn = {

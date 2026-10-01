@@ -18,6 +18,7 @@ export async function discoverApiCapabilities({ configuration = {}, options = {}
     available: parsed.models.length > 0,
     models: parsed.models,
     settings: [],
+    attachments: { text: true, image: true },
     defaultModel: parsed.defaultModel,
     currentModel: null,
     modelDependentSettings: false,

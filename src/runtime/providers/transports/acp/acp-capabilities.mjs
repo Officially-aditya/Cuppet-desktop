@@ -30,7 +30,7 @@ export function capabilitiesFromAcpSession(session = {}, initialized = {}) {
   return normalizeProviderCapabilities({
     models,
     settings,
-    attachments: { text: true },
+    attachments: { text: true, image: true },
     sessions: { cancel: true, resume: Boolean(agentCapabilities.loadSession || agentCapabilities.sessionLoad) },
     tools: { hostFilesystem: true, hostTerminal: true, permissions: true },
   });

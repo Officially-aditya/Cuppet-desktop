@@ -4,6 +4,7 @@ import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { ProjectTerminal } from './ProjectTerminal';
 import { DiffViewerModal, type DiffFile, CopyIcon, CheckIcon } from './DiffViewerModal';
+import { ImageLightboxModal } from './ImageLightboxModal';
 import { QuestionInline } from './QuestionModal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
@@ -87,6 +88,8 @@ export function ChatPane({
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const [diffModal, setDiffModal] = useState<{ files: DiffFile[]; rawDiff?: string } | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; name?: string } | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const transcript = useClientTranscript(session);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -213,19 +216,36 @@ export function ChatPane({
     if (result.clear) clearComposer();
   };
 
-  const addFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.currentTarget.files ?? []);
+  const ingestFiles = async (files: File[]) => {
     if (!files.length) return;
-    setAttachments((current) => {
-      const next = [...current];
-      const seen = new Set(next.map(attachmentKey));
-      for (const file of files) {
-        if (next.length >= 16) break;
+    const loaded = await Promise.all(
+      files.map(async (file) => {
         const attachment: Attachment = {
           name: file.name,
           ...(file.type ? { mime: file.type } : {}),
           size: file.size,
         };
+        if (file.type.startsWith('image/')) {
+          try {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result ?? ''));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(file);
+            });
+            if (dataUrl) attachment.dataUrl = dataUrl;
+          } catch {
+            // Keep metadata on read error
+          }
+        }
+        return attachment;
+      })
+    );
+    setAttachments((current) => {
+      const next = [...current];
+      const seen = new Set(next.map(attachmentKey));
+      for (const attachment of loaded) {
+        if (next.length >= 16) break;
         const key = attachmentKey(attachment);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -233,7 +253,52 @@ export function ChatPane({
       }
       return next;
     });
+  };
+
+  const addFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
+    void ingestFiles(files);
+  };
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageFiles: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          const extension = file.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+          const named = new File([file], `Pasted-Image-${Date.now()}.${extension}`, { type: file.type });
+          imageFiles.push(named);
+        }
+      }
+    }
+    if (imageFiles.length > 0) {
+      event.preventDefault();
+      void ingestFiles(imageFiles);
+    }
+  };
+
+  const handleDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isDraggingOver) setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingOver(false);
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length) void ingestFiles(files);
   };
 
   const choose = async (item: CommandDefinition) => {
@@ -353,7 +418,19 @@ export function ChatPane({
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
   return (
-    <main className="main-pane react-main-pane">
+    <main
+      className={`main-pane react-main-pane${isDraggingOver ? ' dropzone-active' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDraggingOver && (
+        <div className="chat-dropzone-overlay" aria-hidden="true">
+          <div className="chat-dropzone-indicator">
+            <span>📥 Drop images or files to attach</span>
+          </div>
+        </div>
+      )}
       <section ref={messagesRef} className="messages react-messages" aria-live="polite" tabIndex={0}>
         {!messages.length ? (
           <div className="empty-state"><img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><h1>{emptyTitle}</h1><p>{emptyDescription}</p></div>
@@ -363,6 +440,7 @@ export function ChatPane({
             message={message}
             trace={traceForMessage(transcript, message.id)}
             onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
+            onOpenLightbox={(img) => setLightboxImage(img)}
           />
         ))}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
@@ -372,6 +450,7 @@ export function ChatPane({
             trace={runningTrace}
             live
             onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
+            onOpenLightbox={(img) => setLightboxImage(img)}
           />
         )}
       </section>
@@ -393,6 +472,7 @@ export function ChatPane({
                 onCancel={() => void onCancelQueued?.(turn.id)}
                 onEdit={() => handleEditQueued(turn)}
                 onSteer={() => handleSteerQueued(turn)}
+                onOpenLightbox={(img) => setLightboxImage(img)}
               />
             ))}
           </div>
@@ -401,7 +481,7 @@ export function ChatPane({
         {integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery) && !hasBrowserControlMention(value) && <IntegrationMentionPalette onChoose={chooseBrowserControl} />}
         {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={addFiles} />
+          <input ref={fileInput} className="composer-file-input" type="file" multiple accept="image/*,.pdf,.txt,.md,.json,.js,.ts,.tsx,.jsx" tabIndex={-1} aria-hidden="true" onChange={addFiles} />
           <textarea
             ref={textarea}
             rows={1}
@@ -410,6 +490,7 @@ export function ChatPane({
             autoComplete="off"
             onChange={(event) => { setValue(event.target.value); resize(event.target); }}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
           />
           {browserControlMentioned && (
             <div className="composer-integration-chips" aria-label="Active integrations">
@@ -422,7 +503,18 @@ export function ChatPane({
             <div className="composer-attachments" aria-label="Attached files">
               {attachments.map((attachment, index) => (
                 <div className="composer-attachment" key={`${attachmentKey(attachment)}:${index}`}>
-                  <span title={attachment.name}>{attachment.name}</span>
+                  {attachment.dataUrl ? (
+                    <img
+                      src={attachment.dataUrl}
+                      alt=""
+                      className="composer-attachment-thumb"
+                      onClick={() => setLightboxImage({ src: attachment.dataUrl!, name: attachment.name })}
+                      title="Click to preview image"
+                    />
+                  ) : (
+                    <span className="composer-attachment-icon">📎</span>
+                  )}
+                  <span className="composer-attachment-name" title={attachment.name}>{attachment.name}</span>
                   <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
                 </div>
               ))}
@@ -462,6 +554,13 @@ export function ChatPane({
           onClose={() => setDiffModal(null)}
         />
       )}
+      {lightboxImage && (
+        <ImageLightboxModal
+          src={lightboxImage.src}
+          name={lightboxImage.name}
+          onClose={() => setLightboxImage(null)}
+        />
+      )}
     </main>
   );
 }
@@ -471,11 +570,13 @@ function MessageView({
   trace = [],
   live = false,
   onInspectDiff,
+  onOpenLightbox,
 }: {
   message: Session['messages'][number];
   trace?: TraceItem[];
   live?: boolean;
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
+  onOpenLightbox?: (image: { src: string; name?: string }) => void;
 }) {
   const [traceOpen, setTraceOpen] = useState(live);
   const [completedAt, setCompletedAt] = useState<number | null>(null);
@@ -629,9 +730,43 @@ function MessageView({
       </div>
       {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
       {assistant ? (
-        content ? <div ref={responseRef} className="message-content markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : null
+        content ? (
+          <div
+            ref={responseRef}
+            className="message-content markdown-rendered"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            onClick={(event) => {
+              const target = event.target as HTMLElement;
+              if (target.tagName === 'IMG') {
+                const img = target as HTMLImageElement;
+                if (img.src) {
+                  onOpenLightbox?.({ src: img.src, name: img.alt || 'Image' });
+                }
+              }
+            }}
+          />
+        ) : null
       ) : (
-        <div className="message-content">{content}</div>
+        <div className="message-content">
+          {content}
+          {Array.isArray(message.attachments) && message.attachments.some((a) => a.dataUrl) && (
+            <div className="message-image-gallery">
+              {message.attachments
+                .filter((a) => a.dataUrl)
+                .map((attachment, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="message-image-thumb-btn"
+                    title={`View ${attachment.name || 'image'}`}
+                    onClick={() => onOpenLightbox?.({ src: attachment.dataUrl!, name: attachment.name })}
+                  >
+                    <img src={attachment.dataUrl} alt={attachment.name || ''} loading="lazy" />
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
       )}
       {editedFiles.length > 0 && (
         <div
@@ -1005,7 +1140,7 @@ function exactSlash(value: string, item: CommandDefinition) {
 }
 
 function attachmentKey(value: Attachment) {
-  return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}`;
+  return `${value.name}:${value.size ?? ''}:${value.mime ?? ''}:${value.dataUrl ? value.dataUrl.slice(0, 48) : ''}`;
 }
 
 async function applyPermissionPreference(session: Session | null) {
@@ -1241,6 +1376,7 @@ function QueuedTurnBar({
   onCancel,
   onEdit,
   onSteer,
+  onOpenLightbox,
 }: {
   turn: QueuedTurn;
   index: number;
@@ -1248,6 +1384,7 @@ function QueuedTurnBar({
   onCancel: () => void;
   onEdit: () => void;
   onSteer: () => void;
+  onOpenLightbox?: (image: { src: string; name?: string }) => void;
 }) {
   const text = String(turn.params?.text ?? '');
   const attachments = Array.isArray(turn.params?.attachments) ? turn.params.attachments : [];
@@ -1269,7 +1406,28 @@ function QueuedTurnBar({
         </div>
         {attachments.length > 0 && (
           <div className="queued-turn-attachments">
-            📎 {attachments.length} {attachments.length === 1 ? 'file' : 'files'} attached
+            <span>📎 {attachments.length} {attachments.length === 1 ? 'file' : 'files'} attached</span>
+            {attachments.some((a) => a.dataUrl) && (
+              <div className="queued-turn-thumbs">
+                {attachments
+                  .filter((a) => a.dataUrl)
+                  .map((a, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="queued-turn-thumb-btn"
+                      onClick={() => onOpenLightbox?.({ src: a.dataUrl!, name: a.name })}
+                      title={a.name ? `Preview ${a.name}` : 'Preview image'}
+                    >
+                      <img
+                        src={a.dataUrl}
+                        alt={a.name || 'Queued attachment'}
+                        className="queued-turn-thumb"
+                      />
+                    </button>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </div>

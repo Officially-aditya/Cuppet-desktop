@@ -132,9 +132,19 @@ export class CodexSessionRuntime {
         status: 'running',
         transport: 'codex-app-server',
       }));
+      const turnInput = [{ type: 'text', text: serializeConversation(input.messages) }];
+      for (const msg of Array.isArray(input.messages) ? input.messages : []) {
+        if (msg?.role === 'user' && Array.isArray(msg.imageAttachments)) {
+          for (const img of msg.imageAttachments) {
+            if (typeof img?.dataUrl === 'string' && img.dataUrl && /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(img.dataUrl)) {
+              turnInput.push({ type: 'image', imageUrl: img.dataUrl });
+            }
+          }
+        }
+      }
       const startedTurn = await client.request('turn/start', {
         threadId: turn.threadId,
-        input: [{ type: 'text', text: serializeConversation(input.messages) }],
+        input: turnInput,
       });
       turn.turnId = String(record(startedTurn).turn?.id ?? '');
       if (!turn.turnId) throw new Error('Codex app-server did not return a turn ID.');

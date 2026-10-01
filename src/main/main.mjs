@@ -316,8 +316,10 @@ function validateAttachments(values) {
     const name = typeof value.name === 'string' ? value.name.trim().slice(0, 240) : '';
     const mime = typeof value.mime === 'string' ? value.mime.trim().slice(0, 128) : '';
     const path = typeof value.path === 'string' ? value.path.trim().slice(0, 512) : '';
-    if (!name && !path) return [];
-    return [{ ...(name ? { name } : {}), ...(mime ? { mime } : {}), ...(path ? { path } : {}), ...(Number.isFinite(value.size) ? { size: Math.max(0, Math.trunc(value.size)) } : {}) }];
+    const rawDataUrl = typeof value.dataUrl === 'string' ? value.dataUrl.trim() : '';
+    const validDataUrl = rawDataUrl.length > 0 && rawDataUrl.length <= 20 * 1024 * 1024 && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(rawDataUrl) ? rawDataUrl : '';
+    if (!name && !path && !validDataUrl) return [];
+    return [{ ...(name ? { name } : {}), ...(mime ? { mime } : {}), ...(path ? { path } : {}), ...(validDataUrl ? { dataUrl: validDataUrl } : {}), ...(Number.isFinite(value.size) ? { size: Math.max(0, Math.trunc(value.size)) } : {}) }];
   });
 }
 async function chooseFolder(options) {

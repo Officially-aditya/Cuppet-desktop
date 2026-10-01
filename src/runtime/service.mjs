@@ -403,18 +403,19 @@ export class RuntimeService {
     }
 
     let delivery;
+    const turnAttachments = Array.isArray(params.attachments) ? params.attachments : [];
     if (router && route.state === 'accepted') {
       try {
-        const committed = await router.commit(route.token, (tx) => this.#db.transaction(() => this.#writeRoutedTurn({ tx, ids, text, projectId: existing.projectId })));
+        const committed = await router.commit(route.token, (tx) => this.#db.transaction(() => this.#writeRoutedTurn({ tx, ids, text, projectId: existing.projectId, attachments: route.attachments?.length ? route.attachments : turnAttachments })));
         route = committed.route;
         delivery = committed.result;
       } catch (error) {
         router.abort(route.token, cleanError(error));
         route = fallbackRoute(sourceSessionId, existing.projectId, `PE3 handoff aborted; source preserved: ${cleanError(error)}`);
-        delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text }));
+        delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text, attachments: turnAttachments }));
       }
     } else {
-      delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text }));
+      delivery = this.#db.transaction(() => this.#writeDirectTurn({ sessionId: sourceSessionId, ids, text, attachments: turnAttachments }));
     }
 
     const targetSessionId = delivery.user.sessionId;
@@ -442,7 +443,7 @@ export class RuntimeService {
     return { accepted: true, sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route };
   }
 
-  #writeRoutedTurn({ tx, ids, text, projectId }) {
+  #writeRoutedTurn({ tx, ids, text, projectId, attachments = [] }) {
     let createdSession = null;
     const provisionalTitle = titleFromMessage(text);
     if (tx.action === 'create') createdSession = this.#db.createSession({ id: tx.targetSessionId, projectId, title: provisionalTitle });
@@ -452,15 +453,15 @@ export class RuntimeService {
       sourceSession = this.#db.getSessionSummary(tx.sourceSessionId);
     }
     const targetBefore = this.#db.getSessionSummary(tx.targetSessionId);
-    const user = this.#db.appendMessage({ id: ids.user, sessionId: tx.targetSessionId, role: 'user', content: text, status: 'complete' });
+    const user = this.#db.appendMessage({ id: ids.user, sessionId: tx.targetSessionId, role: 'user', content: text, attachments, status: 'complete' });
     const needsGeneratedTitle = Boolean(createdSession || targetBefore?.title === 'New chat');
     if (!createdSession && targetBefore?.title === 'New chat') this.#db.renameSession(tx.targetSessionId, provisionalTitle);
     const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId: tx.targetSessionId, role: 'assistant', content: '', status: 'streaming' });
     return { user, assistant, createdSession, sourceSession, targetSession: this.#db.getSessionSummary(tx.targetSessionId), provisionalTitle: needsGeneratedTitle ? provisionalTitle : null };
   }
-  #writeDirectTurn({ sessionId, ids, text }) {
+  #writeDirectTurn({ sessionId, ids, text, attachments = [] }) {
     const before = this.#db.getSessionSummary(sessionId);
-    const user = this.#db.appendMessage({ id: ids.user, sessionId, role: 'user', content: text, status: 'complete' });
+    const user = this.#db.appendMessage({ id: ids.user, sessionId, role: 'user', content: text, attachments, status: 'complete' });
     const provisionalTitle = before?.title === 'New chat' ? titleFromMessage(text) : null;
     if (provisionalTitle) this.#db.renameSession(sessionId, provisionalTitle);
     const assistant = this.#db.appendMessage({ id: ids.assistant, sessionId, role: 'assistant', content: '', status: 'streaming' });
@@ -509,14 +510,26 @@ export class RuntimeService {
   async #generate({ sessionId, assistantId, userId, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [], integrations = [] }) {
     let completedMessage;
     try {
-      const durable = this.#db.getSession(sessionId).messages.filter((message) => message.id !== assistantId && message.status !== 'streaming');
+      const durable = this.#db.getSession(sessionId).messages
+        .filter((message) => message.id !== assistantId && message.status !== 'streaming')
+        .map((message) => {
+          const imageAttachments = Array.isArray(message.attachments)
+            ? message.attachments.filter((a) => typeof a.dataUrl === 'string' && a.dataUrl && (!a.mime || a.mime.startsWith('image/')))
+            : [];
+          return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
+        });
       const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: userId });
       const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
       this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
       const adapter = this.#providerFactory(provider ?? {});
       await this.#tools.run({
         adapter,
-        messages: providerMessages.map(({ role, content }) => ({ role, content })),
+        messages: providerMessages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+          ...(Array.isArray(msg.imageAttachments) && msg.imageAttachments.length ? { imageAttachments: msg.imageAttachments } : {}),
+          ...(Array.isArray(msg.attachments) && msg.attachments.length ? { attachments: msg.attachments } : {}),
+        })),
         sessionId,
         projectId,
         projectRoot,

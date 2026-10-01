@@ -92,6 +92,11 @@ export function renderInline(value: unknown) {
   let source = String(value ?? '');
 
   source = source.replace(/`([^`\n]+)`/g, (_match, code) => reserve(`<code>${escapeHtml(code)}</code>`));
+  source = source.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (_match, alt, href) => {
+    const target = safeImageSrc(href);
+    if (!target) return escapeHtml(alt || '');
+    return reserve(`<span class="md-image-wrap"><img src="${escapeAttribute(target)}" alt="${escapeAttribute(alt || '')}" class="markdown-image" loading="lazy" /></span>`);
+  });
   source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_match, label, href) => {
     const target = safeLink(href);
     if (!target) return escapeHtml(label);
@@ -150,6 +155,14 @@ function safeLink(value: unknown): { kind: 'external' | 'anchor'; href: string }
   if (!path || path === '..' || path.startsWith('../') || path.includes('/../')) return null;
   if (!path.includes('/') && !/^[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+$/.test(path)) return null;
   return { kind: 'project', path: path.slice(0, 1024) };
+}
+
+function safeImageSrc(value: unknown): string | null {
+  const src = String(value ?? '').trim().slice(0, 20 * 1024 * 1024);
+  if (!src || src.includes('\0')) return null;
+  if (/^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(src)) return src;
+  if (EXTERNAL_LINK.test(src)) return src.slice(0, 2048);
+  return null;
 }
 
 export function escapeHtml(value: unknown) {

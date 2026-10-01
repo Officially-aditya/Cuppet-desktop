@@ -392,7 +392,7 @@ function fetcher(configuration) {
   return value;
 }
 
-function openAIInput(messages) {
+export function openAIInput(messages) {
   const output = [];
   for (const message of array(messages)) {
     if (message?.role === 'tool') {
@@ -412,7 +412,17 @@ function openAIInput(messages) {
       continue;
     }
     if (['system', 'developer', 'user', 'assistant'].includes(message?.role) && message.content != null) {
-      output.push({ role: message.role, content: String(message.content) });
+      if (message.role === 'user' && Array.isArray(message.imageAttachments) && message.imageAttachments.length) {
+        const parts = [{ type: 'input_text', text: String(message.content) }];
+        for (const img of message.imageAttachments) {
+          if (typeof img?.dataUrl === 'string' && img.dataUrl) {
+            parts.push({ type: 'input_image', image_url: img.dataUrl });
+          }
+        }
+        output.push({ role: 'user', content: parts });
+      } else {
+        output.push({ role: message.role, content: String(message.content) });
+      }
     }
   }
   return output;
@@ -452,7 +462,7 @@ function mergeOpenAIFinalCalls(calls, response) {
   }
 }
 
-function anthropicConversation(messages) {
+export function anthropicConversation(messages) {
   const system = [];
   const output = [];
   for (const message of array(messages)) {
@@ -482,7 +492,23 @@ function anthropicConversation(messages) {
       if (content.length) output.push({ role: 'assistant', content });
       continue;
     }
-    if (message?.role === 'user' && message.content != null) output.push({ role: 'user', content: String(message.content) });
+    if (message?.role === 'user' && message.content != null) {
+      if (Array.isArray(message.imageAttachments) && message.imageAttachments.length) {
+        const content = [{ type: 'text', text: String(message.content) }];
+        for (const img of message.imageAttachments) {
+          const match = String(img.dataUrl || '').match(/^data:(image\/[A-Za-z0-9+.-]+);base64,([A-Za-z0-9+/=]+)$/);
+          if (match) {
+            content.push({
+              type: 'image',
+              source: { type: 'base64', media_type: match[1], data: match[2] },
+            });
+          }
+        }
+        output.push({ role: 'user', content });
+      } else {
+        output.push({ role: 'user', content: String(message.content) });
+      }
+    }
   }
   return { system: system.join('\n\n'), messages: output };
 }
@@ -513,11 +539,22 @@ function systemText(messages) {
   return array(messages).flatMap((message) => ['system', 'developer'].includes(message?.role) && message.content ? [String(message.content)] : []).join('\n\n');
 }
 
-function geminiInitialInput(messages) {
+export function geminiInitialInput(messages) {
   const output = [];
   for (const message of array(messages)) {
     if (message?.role === 'system' || message?.role === 'developer' || message?.role === 'tool') continue;
-    if (message?.role === 'user' && message.content != null) output.push({ type: 'user_input', content: [{ type: 'text', text: String(message.content) }] });
+    if (message?.role === 'user' && message.content != null) {
+      const parts = [{ type: 'text', text: String(message.content) }];
+      if (Array.isArray(message.imageAttachments)) {
+        for (const img of message.imageAttachments) {
+          const match = String(img.dataUrl || '').match(/^data:(image\/[A-Za-z0-9+.-]+);base64,([A-Za-z0-9+/=]+)$/);
+          if (match) {
+            parts.push({ type: 'image', mime_type: match[1], data: match[2] });
+          }
+        }
+      }
+      output.push({ type: 'user_input', content: parts });
+    }
     else if (message?.role === 'assistant' && message.content) output.push({ type: 'model_output', content: [{ type: 'text', text: String(message.content) }] });
   }
   return output;
