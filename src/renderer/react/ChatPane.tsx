@@ -530,6 +530,7 @@ function imageMimeFromName(name: string): string | null {
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
+            <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
             {attachments.length > 0 && (
               <div className="composer-attachments" aria-label="Attached files">
                 {attachments.map((attachment, index) => (
@@ -551,7 +552,6 @@ function imageMimeFromName(name: string): string | null {
                 ))}
               </div>
             )}
-            <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
             {running ? (
