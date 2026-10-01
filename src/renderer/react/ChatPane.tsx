@@ -524,33 +524,33 @@ function imageMimeFromName(name: string): string | null {
               </button>
             </div>
           )}
-          {attachments.length > 0 && (
-            <div className="composer-attachments" aria-label="Attached files">
-              {attachments.map((attachment, index) => (
-                <div className="composer-attachment" key={`${attachmentKey(attachment)}:${index}`}>
-                  {attachment.dataUrl ? (
-                    <img
-                      src={attachment.dataUrl}
-                      alt=""
-                      className="composer-attachment-thumb"
-                      onClick={() => setLightboxImage({ src: attachment.dataUrl!, name: attachment.name })}
-                      title="Click to preview image"
-                    />
-                  ) : (
-                    <span className="composer-attachment-icon">📎</span>
-                  )}
-                  <span className="composer-attachment-name" title={attachment.name}>{attachment.name}</span>
-                  <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
           <div className="composer-actions react-composer-actions">
             <button type="button" className="composer-attach-button" aria-label="Attach files" title="Attach files" onClick={() => fileInput.current?.click()}>
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
+            {attachments.length > 0 && (
+              <div className="composer-attachments" aria-label="Attached files">
+                {attachments.map((attachment, index) => (
+                  <div className="composer-attachment" key={`${attachmentKey(attachment)}:${index}`}>
+                    {attachment.dataUrl ? (
+                      <img
+                        src={attachment.dataUrl}
+                        alt=""
+                        className="composer-attachment-thumb"
+                        onClick={() => setLightboxImage({ src: attachment.dataUrl!, name: attachment.name })}
+                        title="Click to preview image"
+                      />
+                    ) : (
+                      <span className="composer-attachment-icon">📎</span>
+                    )}
+                    <span className="composer-attachment-name" title={attachment.name}>{attachment.name}</span>
+                    <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
             <div className="composer-actions-spacer" aria-hidden="true" />
             <ModelPicker disabled={running} />
