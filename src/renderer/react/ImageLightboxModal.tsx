@@ -28,16 +28,38 @@ export function ImageLightboxModal({ src, name = 'Image Preview', onClose }: Ima
   const handleCopy = useCallback(async () => {
     try {
       if (src.startsWith('data:image/')) {
-        const res = await fetch(src);
-        const blob = await res.blob();
-        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } else {
-        await navigator.clipboard.writeText(src);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        let pngBlob: Blob | null = null;
+        if (src.startsWith('data:image/png;base64,')) {
+          const res = await fetch(src);
+          pngBlob = await res.blob();
+        } else {
+          // Chromium on Windows only accepts image/png on navigator.clipboard.write
+          pngBlob = await new Promise<Blob | null>((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return resolve(null);
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => resolve(blob), 'image/png');
+            };
+            img.onerror = () => resolve(null);
+            img.src = src;
+          });
+        }
+        if (pngBlob) {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+          return;
+        }
       }
+      await navigator.clipboard.writeText(src);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
       void navigator.clipboard.writeText(src);
       setCopied(true);

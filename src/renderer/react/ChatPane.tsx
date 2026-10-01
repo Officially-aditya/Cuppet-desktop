@@ -216,22 +216,39 @@ export function ChatPane({
     if (result.clear) clearComposer();
   };
 
+function imageMimeFromName(name: string): string | null {
+  const ext = name.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+    case 'jfif': return 'image/jpeg';
+    case 'webp': return 'image/webp';
+    case 'gif': return 'image/gif';
+    case 'svg': return 'image/svg+xml';
+    default: return null;
+  }
+}
+
   const ingestFiles = async (files: File[]) => {
     if (!files.length) return;
     const loaded = await Promise.all(
       files.map(async (file) => {
+        const inferredMime = file.type || imageMimeFromName(file.name) || undefined;
         const attachment: Attachment = {
           name: file.name,
-          ...(file.type ? { mime: file.type } : {}),
+          ...(inferredMime ? { mime: inferredMime } : {}),
           size: file.size,
         };
-        if (file.type.startsWith('image/')) {
+        const isImage = (inferredMime && inferredMime.startsWith('image/')) || file.type.startsWith('image/');
+        if (isImage) {
           try {
+            const blobToRead = inferredMime && inferredMime !== file.type ? new Blob([file], { type: inferredMime }) : file;
             const dataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = () => resolve(String(reader.result ?? ''));
               reader.onerror = () => reject(reader.error);
-              reader.readAsDataURL(file);
+              reader.readAsDataURL(blobToRead);
             });
             if (dataUrl) attachment.dataUrl = dataUrl;
           } catch {
@@ -271,6 +288,14 @@ export function ChatPane({
           const extension = file.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
           const named = new File([file], `Pasted-Image-${Date.now()}.${extension}`, { type: file.type });
           imageFiles.push(named);
+        }
+      }
+    }
+    if (imageFiles.length === 0 && event.clipboardData?.files?.length) {
+      for (const file of Array.from(event.clipboardData.files)) {
+        const mime = file.type || imageMimeFromName(file.name);
+        if (mime && mime.startsWith('image/')) {
+          imageFiles.push(file);
         }
       }
     }
