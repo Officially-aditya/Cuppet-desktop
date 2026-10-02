@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
+const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, modelCatalogCache, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
@@ -23,6 +23,7 @@ const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets,
   read('src/renderer/composer-refinements.css'),
   read('src/renderer/react/SelectControl.tsx'),
   read('src/renderer/react/ModelPicker.tsx'),
+  read('src/renderer/react/model-catalog-cache.ts'),
   read('src/renderer/react/App.tsx'),
   read('src/renderer/react/ChatPane.tsx'),
   read('src/renderer/react/Sidebar.tsx'),
@@ -101,7 +102,8 @@ assert.match(modelPicker, /useClientProviderSettings\(\)/, 'model picker does no
 assert.match(modelPicker, /refreshClientProviderSettings\(\)/, 'model picker cannot refresh the shared provider settings projection');
 assert.doesNotMatch(modelPicker, /window\.cuppet\.settings\.get\(\)/, 'model picker bypasses the shared provider settings projection');
 assert.match(modelPicker, /window\.cuppet\.settings\.save/, 'model picker does not persist model selection');
-assert.match(modelPicker, /window\.cuppet\.settings\.models\(\)/, 'model picker does not use the generic provider model catalog');
+assert.match(modelPicker, /loadModelCatalog\(/, 'model picker does not use the cached provider model catalog');
+assert.match(modelCatalogCache, /window\.cuppet\.settings\.models\(\)/, 'model catalog cache does not discover models through the generic provider API');
 assert.doesNotMatch(modelPicker, /window\.cuppet\.codexAuth\.models/, 'model picker still leaks the Codex-specific model catalog API');
 assert.match(modelPicker, /providerPreset\?\.models/, 'provider-family model choices are not merged into the picker');
 assert.match(modelPicker, /settings\?\.customModels/, 'validated provider custom models are not merged into the picker');

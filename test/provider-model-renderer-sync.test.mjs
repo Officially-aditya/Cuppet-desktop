@@ -6,26 +6,28 @@ test('composer model picker consumes shared provider settings and requests gener
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
   const providerState = await readFile(new URL('../src/renderer/react/client-provider-state.ts', import.meta.url), 'utf8');
   const modal = await readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8');
+  const catalogCache = await readFile(new URL('../src/renderer/react/model-catalog-cache.ts', import.meta.url), 'utf8');
   assert.match(picker, /useClientProviderSettings\(\)/);
   assert.match(picker, /refreshClientProviderSettings\(\)/);
   assert.doesNotMatch(picker, /window\.cuppet\.settings\.get\(\)/);
   assert.match(providerState, /PROVIDER_SETTINGS_EVENT/);
   assert.match(providerState, /window\.cuppet\.settings\.get\(\)/);
-  assert.match(picker, /window\.cuppet\.settings\.models\(\)/);
+  assert.match(picker, /loadModelCatalog\(/);
+  assert.match(catalogCache, /window\.cuppet\.settings\.models\(\)/);
   assert.doesNotMatch(picker, /codexAuth\.models/);
   assert.match(modal, /notifyProviderSettingsChanged\(\)/);
 });
 
-test('ModelPicker refreshes model-dependent capabilities before deciding effort and persisting', async () => {
+test('ModelPicker resolves cached or live model-dependent capabilities before deciding effort and persisting', async () => {
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');
   const start = picker.indexOf('const chooseModel = async');
   const end = picker.indexOf('const chooseEffort = async');
   assert.ok(start >= 0 && end > start);
   const chooseModel = picker.slice(start, end);
-  const refresh = chooseModel.indexOf('window.cuppet.settings.models({ model: id })');
+  const refresh = chooseModel.indexOf('loadModelCatalog(current, { model: id })');
   const effort = chooseModel.indexOf('const nextEffortState = modelEffortState');
   const save = chooseModel.indexOf('window.cuppet.settings.save');
-  assert.ok(refresh >= 0, 'candidate model capabilities must be refreshed');
+  assert.ok(refresh >= 0, 'candidate model capabilities must be loaded from cache or the provider');
   assert.ok(refresh < effort, 'candidate capabilities must be known before effort is resolved');
   assert.ok(effort < save, 'effort validity must be resolved before settings are persisted');
   assert.match(picker, /if \(exactLiveSnapshot\)/);

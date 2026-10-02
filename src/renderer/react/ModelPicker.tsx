@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderModelCatalog, ProviderSettings } from '../types';
 import { notifyProviderSettingsChanged } from './provider-settings-events';
+import { cachedModelCatalog, cachedProviderCatalog, loadModelCatalog } from './model-catalog-cache';
 import {
   hydrateClientProviderSettings,
   refreshClientProviderSettings,
@@ -32,14 +33,17 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const [stage, setStage] = useState<PickerStage>('models');
   const [busy, setBusy] = useState(false);
   const settings = useClientProviderSettings();
-  const [advertised, setAdvertised] = useState<ProviderModelCatalog>(EMPTY_ADVERTISED);
+  const [advertised, setAdvertised] = useState<ProviderModelCatalog>(() => settings ? cachedModelCatalog(settings) ?? cachedProviderCatalog(settings) ?? EMPTY_ADVERTISED : EMPTY_ADVERTISED);
   const [error, setError] = useState('');
+  const catalogRequest = useRef(0);
 
-  const refreshCatalog = async (next: ProviderSettings) => {
+  const refreshCatalog = async (next: ProviderSettings, refresh = false) => {
     const providerID = next.primary?.providerID || next.providerID || '';
+    const request = ++catalogRequest.current;
     setError('');
-    const catalog = await window.cuppet.settings.models();
-    setAdvertised(catalog.providerID === providerID ? catalog : EMPTY_ADVERTISED);
+    const catalog = await loadModelCatalog(next, { refresh });
+    if (request !== catalogRequest.current) return catalog;
+    setAdvertised(catalog.providerID === providerID ? (catalog.error && !catalog.models.length ? cachedModelCatalog(next) ?? catalog : catalog) : EMPTY_ADVERTISED);
     if (catalog.error && !catalog.models.length) setError(catalog.error);
     return catalog;
   };
@@ -59,8 +63,9 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
 
   useEffect(() => {
     if (!settings) return;
-    void refreshCatalog(settings).catch((value) => setError(message(value)));
-  }, [settings]);
+    setAdvertised(cachedModelCatalog(settings) ?? cachedProviderCatalog(settings) ?? EMPTY_ADVERTISED);
+    void refreshCatalog(settings, true).catch((value) => setError(message(value)));
+  }, [settings?.primary?.providerID, settings?.providerID, settings?.baseUrl]);
 
   useEffect(() => {
     if (!open) return;
@@ -172,12 +177,11 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       const currentProvider = providerID || current.providerID;
       if (!currentProvider) throw new Error('Configure a provider before selecting a model.');
 
-      let candidateAdvertised = advertised;
-      const refreshCandidate = currentProvider === advertised.providerID
-        && advertised.modelDependentSettings === true
-        && advertised.configuredModel !== id;
+      let candidateAdvertised = cachedModelCatalog(current, id) ?? advertised;
+      const refreshCandidate = candidateAdvertised.providerID !== currentProvider
+        || (candidateAdvertised.modelDependentSettings === true && candidateAdvertised.configuredModel !== id);
       if (refreshCandidate) {
-        const refreshed = await window.cuppet.settings.models({ model: id });
+        const refreshed = await loadModelCatalog(current, { model: id });
         if (refreshed.providerID !== currentProvider) throw new Error('Provider changed while refreshing model capabilities.');
         if (refreshed.error && !refreshed.models.length) throw new Error(refreshed.error);
         candidateAdvertised = refreshed;
@@ -366,6 +370,9 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
 }
 
 function modelEffortState(providerID: string, modelID: string, settings: ProviderSettings | null, advertised: ProviderModelCatalog) {
+  if (settings && (advertised.providerID !== providerID || advertised.configuredModel !== modelID)) {
+    advertised = cachedModelCatalog(settings, modelID) ?? advertised;
+  }
   const exactLiveSnapshot = advertised.providerID === providerID
     && advertised.modelDependentSettings === true
     && advertised.configuredModel === modelID;
