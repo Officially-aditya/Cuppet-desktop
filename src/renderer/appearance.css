@@ -107,7 +107,7 @@
   .project-header-button,.project-branch-badge,.composer-attach-button,.mode-inline-button,.message-copy-button,
   .message-cuppet-toggle,.cuppet-select-option,.model-picker-option,.model-picker-effort-option,.model-picker-back,
   .diff-action-button,.diff-toggle-btn,.diff-file-item,.nav-context-menu button,.command-option,.composer-mode-option,
-  .project-new-chat-button,.project-menu-button,.session-menu-button,.repo-result,.question-choice
+  .project-new-chat-button,.project-menu-button,.session-menu-button,.repo-result,.question-choice,.permission-inline-button
 ):hover:not(:disabled){background:#e4ebf5!important;color:var(--text-main)!important;box-shadow:none}
 
 :root[data-theme="light"] :is(.primary-button,.send-button){background:#253b58!important;color:#ffffff!important;box-shadow:0 2px 5px rgba(37,59,88,.15)}
