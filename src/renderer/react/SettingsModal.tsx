@@ -6,6 +6,7 @@ import { GeneralPanel } from './GeneralPanel';
 import { CUPPET_LOGO_URL } from './brand';
 import { notifyProviderSettingsChanged } from './provider-settings-events';
 import { providerStatusPresentation } from './provider-status-presentation';
+import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -430,10 +431,55 @@ function CustomModelField({ current, providerID, providerLabel, apiKey, isCodex,
 }
 
 function PersonalisationPanel({ compact, reduceMotion, onCompact, onReduceMotion }: { compact: boolean; reduceMotion: boolean; onCompact: (value: boolean) => void; onReduceMotion: (value: boolean) => void }) {
-  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Interface</h3><p>These preferences are stored only on this computer.</p></div></div>
+  const [appearance, setAppearance] = useState(readAppearancePreference);
+  const choices: { value: AppearancePreference; label: string }[] = [
+    { value: 'system', label: 'System default' },
+    { value: 'dark', label: 'Dark' },
+    { value: 'light', label: 'Light' },
+  ];
+  return <>
+    <div className="settings-card appearance-card">
+      <div className="settings-card-heading"><div><h3>Appearance</h3><p>Choose a theme, or follow your system’s appearance.</p></div></div>
+      <div className="appearance-options" role="radiogroup" aria-label="Appearance">
+        {choices.map(({ value, label }) => <label key={value} className={`appearance-option${appearance === value ? ' selected' : ''}`}>
+          <input type="radio" name="appearance" value={value} checked={appearance === value} onChange={() => { writeAppearancePreference(value); setAppearance(value); }} />
+          <AppearancePreview mode={value} />
+          <span className="appearance-option-label">{label}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+        </label>)}
+      </div>
+    </div>
+    <div className="settings-card"><div className="settings-card-heading"><div><h3>Interface</h3><p>These preferences are stored only on this computer.</p></div></div>
     <label className="settings-toggle-row"><div><strong>Compact sidebar</strong><span>Reduce vertical spacing for projects and conversations.</span></div><input type="checkbox" checked={compact} onChange={(event) => onCompact(event.target.checked)} /></label>
     <label className="settings-toggle-row"><div><strong>Reduce motion</strong><span>Minimise interface animations and smooth scrolling.</span></div><input type="checkbox" checked={reduceMotion} onChange={(event) => onReduceMotion(event.target.checked)} /></label>
-  </div>;
+    </div>
+  </>;
+}
+
+function AppearancePreview({ mode }: { mode: AppearancePreference }) {
+  const frame = (dark: boolean) => <>
+    <rect width="160" height="98" fill={dark ? '#11161e' : '#f6f8fc'} />
+    <rect width="160" height="13" fill={dark ? '#1e2632' : '#e4eaf3'} />
+    <circle cx="9" cy="6.5" r="1.6" fill={dark ? '#657187' : '#9ba8ba'} />
+    <circle cx="15" cy="6.5" r="1.6" fill={dark ? '#657187' : '#9ba8ba'} />
+    <circle cx="21" cy="6.5" r="1.6" fill={dark ? '#657187' : '#9ba8ba'} />
+    <rect y="13" width="39" height="85" fill={dark ? '#19212d' : '#edf1f7'} />
+    <rect x="8" y="24" width="23" height="4" rx="2" fill={dark ? '#c1cbdc' : '#8794aa'} />
+    <rect x="8" y="36" width="19" height="3" rx="1.5" fill={dark ? '#52617a' : '#c0cad9'} />
+    <rect x="8" y="46" width="22" height="3" rx="1.5" fill={dark ? '#52617a' : '#c0cad9'} />
+    <rect x="8" y="56" width="16" height="3" rx="1.5" fill={dark ? '#52617a' : '#c0cad9'} />
+    <rect x="54" y="27" width="70" height="5" rx="2.5" fill={dark ? '#d0d9e8' : '#697b94'} />
+    <rect x="54" y="40" width="87" height="3" rx="1.5" fill={dark ? '#53637d' : '#c0cad9'} />
+    <rect x="54" y="48" width="69" height="3" rx="1.5" fill={dark ? '#53637d' : '#c0cad9'} />
+    <rect x="51" y="69" width="95" height="19" rx="5" fill={dark ? '#253246' : '#e0e7f1'} />
+    <circle cx="136" cy="78.5" r="4.5" fill={dark ? '#86b7ff' : '#5683d6'} />
+  </>;
+  return <svg className="appearance-preview" viewBox="0 0 160 98" aria-hidden="true">
+    {frame(mode === 'dark')}
+    {mode === 'system' && <>
+      <defs><clipPath id="appearance-system-split"><rect x="80" width="80" height="98" /></clipPath></defs>
+      <g clipPath="url(#appearance-system-split)">{frame(true)}</g>
+    </>}
+  </svg>;
 }
 
 function UsagePanel({ current, usage, loading, onRefresh }: { current: ProviderSettings | null; usage: TokenUsageSummary | null; loading: boolean; onRefresh: () => void | Promise<void> }) {

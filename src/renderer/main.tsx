@@ -22,12 +22,15 @@ import './project-terminal.css';
 import './shell-panel-controls.css';
 import './diff-viewer.css';
 import './macos-liquid-glass.css';
+import './appearance.css';
+import { installAppearance } from './react/appearance';
 import { App } from './react/App';
 import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
 import { CommandResultEnhancement } from './react/CommandResultEnhancement';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
+installAppearance();
 installSessionRetentionCleanup();
 
 const root = document.getElementById('root');

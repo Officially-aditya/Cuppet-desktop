@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { Project } from '../types';
+import { APPEARANCE_CHANGED_EVENT, terminalAppearance } from './appearance';
 
 type TerminalSession = {
   sessionId: string;
@@ -63,6 +64,12 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   const projectIdRef = useRef<string | null>(project?.id ?? null);
   const prevProjectIdRef = useRef<string | null>(project?.id ?? null);
   const startGeneration = useRef(0);
+
+  useEffect(() => {
+    const updateTheme = () => { if (xtermRef.current) xtermRef.current.options.theme = terminalAppearance(); };
+    window.addEventListener(APPEARANCE_CHANGED_EVENT, updateTheme);
+    return () => window.removeEventListener(APPEARANCE_CHANGED_EVENT, updateTheme);
+  }, []);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
 
@@ -131,30 +138,7 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 11,
       lineHeight: 1.2,
-      theme: {
-        background: '#050608',
-        foreground: '#c9d1d9',
-        cursor: '#58a6ff',
-        cursorAccent: '#050608',
-        selectionBackground: 'rgba(56, 139, 253, 0.35)',
-        selectionForeground: '#ffffff',
-        black: '#0d1117',
-        red: '#ff7b72',
-        green: '#3fb950',
-        yellow: '#d29922',
-        blue: '#58a6ff',
-        magenta: '#bc8cff',
-        cyan: '#39c5cf',
-        white: '#b1bac4',
-        brightBlack: '#6e7681',
-        brightRed: '#ffa198',
-        brightGreen: '#56d364',
-        brightYellow: '#e3b341',
-        brightBlue: '#79c0ff',
-        brightMagenta: '#d2a8ff',
-        brightCyan: '#56d4dd',
-        brightWhite: '#f0f6fc',
-      },
+      theme: terminalAppearance(),
       allowTransparency: true,
       convertEol: true,
       scrollback: 5000,
