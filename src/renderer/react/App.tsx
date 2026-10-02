@@ -37,8 +37,10 @@ import {
 import {
   refreshClientSession,
   refreshClientSessions,
+  setViewedClientSession,
   upsertClientSession,
   useClientSessions,
+  useClientUnreadSessions,
 } from './client-session-state';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
@@ -64,6 +66,7 @@ export function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const sessions = useClientSessions();
+  const unreadSessionIds = useClientUnreadSessions();
   const running = useClientRunState();
   const provider = useClientProviderSettings();
   const active = useMemo(() => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null, [activeSessionId, sessions]);
@@ -72,6 +75,22 @@ export function App() {
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
   const activeRunning = Boolean(activeSessionId && running.has(activeSessionId));
   const activeComposerMode: ComposerMode = cognitive.orchestratorEnabled ? 'orchestrate' : mode;
+
+  useEffect(() => {
+    const updateViewedSession = () => {
+      setViewedClientSession(!loading && !modal && !document.hidden && document.hasFocus() ? activeSessionId : null);
+    };
+    updateViewedSession();
+    window.addEventListener('focus', updateViewedSession);
+    window.addEventListener('blur', updateViewedSession);
+    document.addEventListener('visibilitychange', updateViewedSession);
+    return () => {
+      window.removeEventListener('focus', updateViewedSession);
+      window.removeEventListener('blur', updateViewedSession);
+      document.removeEventListener('visibilitychange', updateViewedSession);
+      setViewedClientSession(null);
+    };
+  }, [activeSessionId, loading, modal]);
 
   const showToast = useCallback((message: unknown) => {
     setToast(message instanceof Error ? message.message : String(message ?? ''));
@@ -428,6 +447,7 @@ export function App() {
         sessions={sessions.filter((session) => !session.archivedAt)}
         generalSessions={generalSessions}
         activeSessionId={activeSessionId}
+        unreadSessionIds={unreadSessionIds}
         selectedProjectId={activeProjectId}
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}

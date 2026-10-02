@@ -2,6 +2,9 @@ import { useSyncExternalStore } from 'react';
 import type { Message, RuntimeEvent, Session } from '../types';
 
 let sessions: Session[] = frozenSessions([]);
+const UNREAD_SESSIONS_KEY = 'cuppet.desktop.unread-sessions';
+let unreadSessions: ReadonlySet<string> = loadUnreadSessions();
+let viewedSessionId: string | null = null;
 let refreshPromise: Promise<Session[]> | null = null;
 const detailRefreshes = new Map<string, Promise<Session>>();
 const listeners = new Set<() => void>();
@@ -13,6 +16,19 @@ export function useClientSessions(): Session[] {
 
 export function clientSessionsSnapshot(): Session[] {
   return sessions;
+}
+
+export function useClientUnreadSessions(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeClientSessions, clientUnreadSessionsSnapshot, clientUnreadSessionsSnapshot);
+}
+
+export function clientUnreadSessionsSnapshot(): ReadonlySet<string> {
+  return unreadSessions;
+}
+
+export function setViewedClientSession(sessionId: string | null) {
+  viewedSessionId = text(sessionId) || null;
+  if (viewedSessionId) setSessionUnread(viewedSessionId, false);
 }
 
 export function clientSessionSnapshot(sessionId: string | null | undefined) {
@@ -83,6 +99,11 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
   const type = String(event?.type ?? '');
   const sessionId = text(event?.sessionId ?? event?.message?.sessionId);
 
+  if (type === 'message.completed' && event?.message?.role === 'assistant' && sessionId && sessionId !== viewedSessionId) {
+    setSessionUnread(sessionId, true);
+  }
+  if (type === 'session.purged' && sessionId) setSessionUnread(sessionId, false);
+
   if (event?.session?.id) {
     upsertClientSession(event.session);
     handled = true;
@@ -112,6 +133,8 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
 export function resetClientSessionStateStore() {
   releaseRuntimeSubscription();
   sessions = frozenSessions([]);
+  unreadSessions = loadUnreadSessions();
+  viewedSessionId = null;
   refreshPromise = null;
   detailRefreshes.clear();
   listeners.clear();
@@ -189,6 +212,25 @@ function sameSessions(current: readonly Session[], next: readonly Session[]) {
 
 function notify() {
   for (const listener of listeners) listener();
+}
+
+function loadUnreadSessions(): ReadonlySet<string> {
+  try {
+    const values = JSON.parse(localStorage.getItem(UNREAD_SESSIONS_KEY) ?? '[]');
+    return new Set(Array.isArray(values) ? values.filter((id) => typeof id === 'string' && id) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function setSessionUnread(sessionId: string, unread: boolean) {
+  if (unreadSessions.has(sessionId) === unread) return;
+  const next = new Set(unreadSessions);
+  if (unread) next.add(sessionId);
+  else next.delete(sessionId);
+  unreadSessions = next;
+  try { localStorage.setItem(UNREAD_SESSIONS_KEY, JSON.stringify([...next])); } catch {}
+  notify();
 }
 
 function text(value: unknown) {

@@ -16,6 +16,7 @@ type Props = {
   sessions: Session[];
   generalSessions: Session[];
   activeSessionId: string | null;
+  unreadSessionIds?: ReadonlySet<string>;
   selectedProjectId: string | null;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -354,6 +355,7 @@ export function Sidebar(props: Props) {
                     session={session}
                     title={titleOverrides[session.id]}
                     active={props.activeSessionId === session.id}
+                    unread={props.unreadSessionIds?.has(session.id)}
                     menuOpen={menu?.kind === 'session' && menu.id === session.id}
                     onOpen={props.onSession}
                     onMenu={openMenu}
@@ -382,6 +384,7 @@ export function Sidebar(props: Props) {
                   session={session}
                   title={titleOverrides[session.id]}
                   active={props.activeSessionId === session.id}
+                  unread={props.unreadSessionIds?.has(session.id)}
                   menuOpen={menu?.kind === 'session' && menu.id === session.id}
                   onOpen={props.onSession}
                   onMenu={openMenu}
@@ -532,6 +535,7 @@ function SessionRow({
   session,
   title,
   active,
+  unread = false,
   menuOpen,
   onOpen,
   onMenu,
@@ -541,6 +545,7 @@ function SessionRow({
   session: Session;
   title?: string;
   active: boolean;
+  unread?: boolean;
   menuOpen?: boolean;
   onOpen: (id: string) => void | Promise<void>;
   onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void;
@@ -562,6 +567,7 @@ function SessionRow({
         onMouseLeave={onHoverEnd}
         onPointerDown={onHoverEnd}
       >
+        {unread && <span className="session-unread-marker" role="img" aria-label="Unread agent work" title="Unread agent work" />}
         <div className="session-title">{displayTitle}</div>
         <div className="session-meta">{relativeTime(session.updatedAt)}</div>
       </button>

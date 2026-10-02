@@ -29,6 +29,14 @@
   white-space:nowrap;
 }
 
+.react-sidebar .session-unread-marker{
+  flex:0 0 6px;
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:#7ab7ff;
+}
+
 .react-sidebar .session-meta{
   position:absolute;
   z-index:1;
