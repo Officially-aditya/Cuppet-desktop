@@ -194,6 +194,7 @@
 .cuppet-shell-header .sidebar-toggle-button{display:none!important}
 .cuppet-shell-header .react-sidebar:not(.collapsed) .brand-row{padding-right:5px}
 .cuppet-shell-header .react-sidebar.collapsed .sidebar-collapsed-brand{top:9px}
+.cuppet-shell-header .react-sidebar.collapsed .sidebar-compact-nav{top:43px}
 
 /* TST: graph only, floating as a square workspace panel. */
 .cuppet-shell-header .memory-sidebar{position:fixed;z-index:14;top:50px;right:12px;width:clamp(286px,30vw,380px);min-width:0;max-width:calc(100vw - 36px);height:auto;aspect-ratio:1/1;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#030405;box-shadow:0 18px 46px rgba(0,0,0,.34);overflow:hidden}
