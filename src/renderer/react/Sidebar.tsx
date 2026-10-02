@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Project, Session } from '../types';
 import { CUPPET_LOGO_URL } from './brand';
 
@@ -442,7 +443,7 @@ export function Sidebar(props: Props) {
         </div>
       )}
 
-      {deleteSession && (
+      {deleteSession && createPortal(
         <div className="sidebar-delete-backdrop" onPointerDown={() => !deleting && setDeleteSession(null)}>
           <div
             className="sidebar-delete-dialog"
@@ -486,7 +487,8 @@ export function Sidebar(props: Props) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {hoveredSession && (
