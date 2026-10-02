@@ -70,11 +70,12 @@ export function Sidebar(props: Props) {
       if (!dragging.current) return;
       setWidth(clamp(event.clientX));
     };
-    const onUp = () => {
+    const onUp = (event: PointerEvent) => {
       if (!dragging.current) return;
       dragging.current = false;
       document.body.classList.remove('sidebar-resizing');
       localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+      if (event.clientX < MIN_WIDTH / 2) setCollapsed(true);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -82,7 +83,7 @@ export function Sidebar(props: Props) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [width]);
+  }, [width, setCollapsed]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');

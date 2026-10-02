@@ -36,6 +36,7 @@
 :root[data-theme="light"] body,
 :root[data-theme="light"] #root{background:#f6f8fb!important;color:var(--text-main)}
 :root[data-theme="light"] .react-boot{background:#f6f8fb;color:var(--text-main)}
+:root[data-theme="light"] .react-sidebar{border-right-color:var(--glass-border-subtle)!important;box-shadow:none}
 :root[data-theme="light"] .appearance-option.selected{border-color:#407cca;background:#edf4ff}
 :root[data-theme="light"] .appearance-option:focus-within{outline-color:#2563eb}
 :root[data-theme="light"] .appearance-option-label svg{color:#2563eb}
