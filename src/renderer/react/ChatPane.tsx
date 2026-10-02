@@ -1060,7 +1060,7 @@ function IntegrationMentionPalette({ onChoose }: { onChoose: () => void }) {
       <button type="button" className="command-option selected" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={onChoose}>
         <div className="command-name">{BROWSERCONTROL_MENTION}</div>
         <div className="command-description">Use your connected Chrome through browserControl for this turn.</div>
-        <div className="command-meta">integration · explicit per-turn access</div>
+        <div className="command-meta">integration · optional mention</div>
       </button>
     </div>
   );

@@ -95,7 +95,7 @@ export function GeneralPanel() {
 
     <div className="settings-card general-settings-card integrations-card">
       <div className="settings-card-heading">
-        <div><h3>Integrations</h3><p>Connect local tools that Cuppet can use while it works. Mention @browserControl in a message to expose Chrome to that turn.</p></div>
+        <div><h3>Integrations</h3><p>Connect local tools that Cuppet can use while it works. Once Chrome is connected, ask Cuppet to use the browser in plain language. Mentioning @browserControl is optional.</p></div>
       </div>
       <div className="settings-row general-settings-row integration-row">
         <div>
