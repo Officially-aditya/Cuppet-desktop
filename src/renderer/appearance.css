@@ -52,7 +52,7 @@
 ){background:#ffffff!important;border-color:var(--line)!important;color:var(--text-main)!important;box-shadow:0 10px 32px rgba(37,53,78,.1)!important}
 
 :root[data-theme="light"] :is(
-  .settings-hub-sidebar,.usage-stat,.settings-status-pill,.settings-value,.control-pill,.provider-pill,
+  .settings-hub-sidebar,.usage-stat,.settings-status-pill,.settings-value,.control-pill,.provider-pill,.platform-model-section,
   .composer,.react-composer,.composer-attachment,.message-trace-reasoning,.message-reasoning-content,
   .diff-modal-header,.diff-files-sidebar,.diff-file-header,.diff-view-mode-toggle,.diff-stats-badge,
   .diff-line-gutter,.diff-split-num,.diff-split-header-row,.diff-split-hunk-row,.diff-line.hunk,.diff-split-cell.empty,
@@ -90,13 +90,13 @@
 ){color:var(--text-muted)!important}
 
 :root[data-theme="light"] :is(input,textarea,select){color-scheme:light}
-:root[data-theme="light"] :is(input:not([type="checkbox"]):not([type="radio"]),textarea,select,.cuppet-select-trigger,.search-input-wrap){background:#ffffff!important;border-color:var(--line)!important;color:var(--text-main)!important}
+:root[data-theme="light"] :is(input:not([type="checkbox"]):not([type="radio"]),textarea,select,.cuppet-select-trigger,.search-input-wrap,.settings-model-picker .model-picker-trigger){background:#ffffff!important;border-color:var(--line)!important;color:var(--text-main)!important}
 :root[data-theme="light"] :is(input,textarea)::placeholder{color:#7b879a!important}
 :root[data-theme="light"] #prompt{background:transparent!important;color:var(--text-main)!important}
 :root[data-theme="light"] select option{background:#ffffff;color:var(--text-main)}
 
 :root[data-theme="light"] :is(
-  .settings-hub-nav button.active,.session-item.active,.project-row.active,.mode-inline-button.active,
+  .settings-hub-nav button.active,.session-item.active,.project-row.active,.mode-inline-button.active,.model-picker.open .model-picker-trigger,
   .shell-panel-button.active,.project-header-button.active,.project-branch-badge.active,.diff-toggle-btn.active,
   .diff-file-item.active,.cuppet-select-option.selected,.model-picker-option.selected,.command-option.selected,.composer-mode-option.selected,
   .question-choice.selected,.search-result.selected
@@ -104,7 +104,7 @@
 
 :root[data-theme="light"] :is(
   .nav-button,.project-button,.session-item,.ghost-button,.settings-hub-nav button,.shell-panel-button,
-  .project-header-button,.project-branch-badge,.composer-attach-button,.mode-inline-button,.message-copy-button,
+  .project-header-button,.project-branch-badge,.composer-attach-button,.mode-inline-button,.message-copy-button,.model-picker-trigger,
   .message-cuppet-toggle,.cuppet-select-option,.model-picker-option,.model-picker-effort-option,.model-picker-back,
   .diff-action-button,.diff-toggle-btn,.diff-file-item,.nav-context-menu button,.command-option,.composer-mode-option,
   .project-new-chat-button,.project-menu-button,.session-menu-button,.repo-result,.question-choice,.permission-inline-button,.settings-close-button

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderModelCatalog, ProviderSettings } from '../types';
 import { notifyProviderSettingsChanged } from './provider-settings-events';
 import { cachedModelCatalog, cachedProviderCatalog, loadModelCatalog } from './model-catalog-cache';
+import { orderPinnedModels, togglePinnedModel, usePinnedModels } from './model-pins';
 import {
   hydrateClientProviderSettings,
   refreshClientProviderSettings,
@@ -80,6 +81,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   }, [open]);
 
   const providerID = settings?.primary?.providerID || settings?.providerID || '';
+  const pinnedModels = usePinnedModels(providerID);
   const providerPreset = settings?.presets?.find((item) => item.id === providerID);
   const providerLabel = providerPreset?.label || providerID || 'Provider';
   const configuredModel = slot === 'secondary'
@@ -118,8 +120,8 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       add(model.modelID, model.name);
     }
     add(configuredModel, configuredModel);
-    return output;
-  }, [advertised, configuredModel, providerID, providerLabel, providerPreset?.model, providerPreset?.models, settings?.customModels, settings?.models]);
+    return orderPinnedModels(output, pinnedModels);
+  }, [advertised, configuredModel, providerID, providerLabel, providerPreset?.model, providerPreset?.models, settings?.customModels, settings?.models, pinnedModels]);
 
   const effortState = modelEffortState(providerID, configuredModel, settings, advertised);
   const effortOptions = effortState.options;
@@ -308,20 +310,31 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
               )}
               {options.length > 0 ? options.map((option) => {
                 const selected = !secondaryAuto && option.id === configuredModel;
+                const pinned = pinnedModels.includes(option.id);
                 return (
+                  <div className="model-picker-row" key={option.id}>
                   <button
                     type="button"
                     role="option"
                     aria-selected={selected}
                     className={`model-picker-option${selected ? ' selected' : ''}`}
-                    key={option.id}
                     disabled={busy}
                     onClick={() => void chooseModel(option.id)}
                   >
-                    <strong>{option.label}</strong>
+                    <strong>{pinned && <ModelPinIcon pinned className="model-picker-pinned-mark" />}{option.label}</strong>
                     {option.description && <small>{option.description}</small>}
                     {selected && <span className="model-picker-check" aria-hidden="true">✓</span>}
                   </button>
+                  {surface === 'settings' && <button
+                    type="button"
+                    className="model-picker-pin-button"
+                    aria-label={`${pinned ? 'Unpin' : 'Pin'} ${option.label}`}
+                    title={`${pinned ? 'Unpin' : 'Pin'} model`}
+                    aria-pressed={pinned}
+                    disabled={busy}
+                    onClick={() => togglePinnedModel(providerID, option.id)}
+                  ><ModelPinIcon pinned={pinned} /></button>}
+                  </div>
                 );
               }) : <div className="model-picker-empty">No models advertised by this provider.</div>}
             </>
@@ -367,6 +380,13 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       )}
     </div>
   );
+}
+
+function ModelPinIcon({ pinned, className }: { pinned: boolean; className?: string }) {
+  return <svg className={className} viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m9 2 5 5-3 1v3l-1 1-6-6 1-1h3l1-3Z" fill={pinned ? 'currentColor' : 'none'} />
+    <path d="m6 10-4 4" />
+  </svg>;
 }
 
 function modelEffortState(providerID: string, modelID: string, settings: ProviderSettings | null, advertised: ProviderModelCatalog) {

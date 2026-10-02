@@ -1,4 +1,12 @@
 /* Provider model selection reuses the chat model picker with a settings-sized surface. */
+.model-picker-row{display:flex;align-items:center;gap:4px}
+.model-picker-row .model-picker-option{flex:1;min-width:0}
+.model-picker-pin-button{flex:0 0 28px;width:28px;height:28px;display:grid;place-items:center;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
+.model-picker-pin-button svg{width:14px;height:14px}
+.model-picker-pin-button:hover{background:var(--panel-2);color:var(--text)}
+.model-picker-pin-button[aria-pressed="true"]{background:var(--glass-pill-active);color:#78aaf1}
+.model-picker-pin-button:focus-visible{outline:2px solid #78aaf1;outline-offset:1px}
+.model-picker-pinned-mark{display:inline-block;width:12px;height:12px;margin-right:5px;vertical-align:-1px;color:var(--text-muted)}
 .platform-model-section{
   display:grid;
   gap:8px;

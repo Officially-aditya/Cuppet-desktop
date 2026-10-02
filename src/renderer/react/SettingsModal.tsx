@@ -354,6 +354,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             </div>
           </div>
           {modelHint && <div className="platform-model-hint">{modelHint}</div>}
+          {modelsReady && <div className="platform-model-hint">Use the pin buttons in the model lists to keep favourites at the top of the picker.</div>}
         </div>}
         {selected && !isLocalCli && <CustomModelField current={current} providerID={providerID} providerLabel={selected.label || selected.id} apiKey={apiKey} isCodex={isCodex} codex={codex} />}
       </div>
