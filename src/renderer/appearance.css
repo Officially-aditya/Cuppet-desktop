@@ -92,7 +92,7 @@
 :root[data-theme="light"] :is(input,textarea,select){color-scheme:light}
 :root[data-theme="light"] :is(input:not([type="checkbox"]):not([type="radio"]),textarea,select,.cuppet-select-trigger,.search-input-wrap,.settings-model-picker .model-picker-trigger){background:#ffffff!important;border-color:var(--line)!important;color:var(--text-main)!important}
 :root[data-theme="light"] :is(input,textarea)::placeholder{color:#7b879a!important}
-:root[data-theme="light"] #prompt{background:transparent!important;color:var(--text-main)!important}
+:root[data-theme="light"] :is(#prompt,.react-composer textarea){background:transparent!important;color:var(--text-main)!important}
 :root[data-theme="light"] select option{background:#ffffff;color:var(--text-main)}
 
 :root[data-theme="light"] :is(
