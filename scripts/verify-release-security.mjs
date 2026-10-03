@@ -20,10 +20,11 @@ assert.deepEqual(pkg.dependencies, {}, 'release hardening must not add productio
 for (const key of ['appId', 'productName', 'executableName', 'asar', 'asarUnpack', 'files', 'extraResources', 'directories']) {
   assert.deepEqual(releaseConfig[key], pkg.build[key], `release config drifted from base packaging: ${key}`);
 }
-assert.equal(releaseConfig.forceCodeSigning, true, 'production release must fail if signing is unavailable');
+assert.equal(releaseConfig.forceCodeSigning, false, 'unsigned releases must not require signing credentials');
+assert.equal(releaseConfig.mac.identity, null, 'unsigned releases must disable signing identity discovery');
 assert.equal(releaseConfig.artifactName, '${productName}-${version}-${arch}.${ext}');
-assert.equal(releaseConfig.mac.hardenedRuntime, true);
-assert.equal(releaseConfig.mac.notarize, true);
+assert.equal(releaseConfig.mac.hardenedRuntime, false);
+assert.equal(releaseConfig.mac.notarize, false);
 assert.equal(releaseConfig.mac.entitlements, 'build/entitlements.mac.plist');
 assert.equal(releaseConfig.mac.entitlementsInherit, 'build/entitlements.mac.inherit.plist');
 assert.deepEqual(releaseConfig.mac.target, ['dmg', 'zip']);
@@ -43,6 +44,7 @@ assert.match(updater, /checkForUpdates\(\)/);
 assert.doesNotMatch(updater, /quitAndInstall\(/, 'updates must never force an unexpected restart');
 assert.match(policy, /update-feed\/macos\/arm64\/releases\.json/);
 assert.match(policy, /prerelease-or-invalid-version/);
+assert.match(policy, /enabled: false, reason: 'unsigned-release'/);
 assert.match(feedBuilder, /sha256/);
 assert.match(feedBuilder, /metadata\.size/);
 assert.match(feedBuilder, /Release tag must exactly match/);
@@ -51,12 +53,13 @@ assert.match(workflow, /name:\s*Production Release/);
 assert.match(workflow, /workflow_dispatch:/);
 assert.match(workflow, /tags:\s*\n\s*- ['"]v\*['"]/);
 assert.match(workflow, /permissions:\s*\n\s*actions:\s*read\s*\n\s*contents:\s*write/);
-for (const secret of ['MAC_CSC_LINK', 'MAC_CSC_KEY_PASSWORD', 'APPLE_API_KEY_P8_BASE64', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']) assert.match(workflow, new RegExp(`secrets\\.${secret}`));
-for (const command of ['npm run release:verify', 'npm run release:mac', 'codesign --verify', 'spctl --assess', 'xcrun stapler validate', 'npm run release:feed', 'gh release', 'update-feed']) assert.match(workflow, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+assert.doesNotMatch(workflow, /MAC_CSC_LINK|MAC_CSC_KEY_PASSWORD|APPLE_API_KEY|APPLE_API_ISSUER/);
+assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s*'false'/);
+for (const command of ['npm run release:verify', 'npm run release:mac', 'shasum -a 256', 'gh release']) assert.match(workflow, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 assert.match(workflow, /Provider V2 Selected/);
 assert.match(workflow, /packaged-runtime-smoke|CI/);
 assert.match(workflow, /PRERELEASE.*true|PRERELEASE.*false/s);
-assert.match(workflow, /if \[\[ "\$PRERELEASE" == "false" \]\]/, 'only stable releases may advance the production update feed');
+assert.doesNotMatch(workflow, /codesign --verify|spctl --assess|xcrun stapler|npm run release:feed|update-feed|dist\/releases\.json|latest-mac\.yml/, 'unsigned releases must not require Apple trust checks or publish automatic update metadata');
 
 for (const path of ['src/main/auto-update-policy.mjs', 'src/main/auto-update.mjs', 'scripts/build-macos-update-feed.mjs', 'scripts/verify-release-security.mjs']) {
   const result = spawnSync(process.execPath, ['--check', join(root, path)], { cwd: root, stdio: 'inherit' });
@@ -64,4 +67,4 @@ for (const path of ['src/main/auto-update-policy.mjs', 'src/main/auto-update.mjs
 }
 const tests = spawnSync(process.execPath, ['--test', join(root, 'test/release-security.test.mjs')], { cwd: root, stdio: 'inherit' });
 if (tests.status !== 0) process.exit(tests.status ?? 1);
-console.log('Production release security verification passed: signing/notarization fail closed and stable macOS updates are hash-bound to signed release ZIPs.');
+console.log('Unsigned release verification passed: Apple credentials are not required, DMG/ZIP artifacts are checksummed, and automatic macOS updates are disabled.');

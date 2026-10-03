@@ -45,3 +45,12 @@
 .queued-turn-thumb-btn:focus-visible{box-shadow:0 0 0 2px #4f8bf9}
 .queued-turn-thumb{width:18px;height:18px;object-fit:cover;border-radius:4px;border:1px solid rgba(255,255,255,.2);transition:transform .12s ease,border-color .12s ease}
 .queued-turn-thumb:hover{transform:scale(1.1);border-color:rgba(255,255,255,.5)}
+/* Project creation form: name and source in two list rows. */
+.add-project-list{list-style:none;margin:0;padding:0}
+.add-project-row{display:grid;grid-template-columns:64px minmax(0,1fr);gap:16px;padding:14px 0}
+.add-project-row+.add-project-row{border-top:1px solid var(--line)}
+.add-project-row>label,.add-project-row>span{display:block;margin:0;padding-top:10px;color:#bfc5cf;font-size:12px}
+.add-project-row input{min-width:0;width:100%}
+.project-source-fields{display:grid;gap:10px;min-width:0}
+.project-source-fields .ghost-button{flex:0 0 auto}
+@media(max-width:480px){.add-project-row{grid-template-columns:1fr;gap:8px}.add-project-row>label,.add-project-row>span{padding-top:0}}

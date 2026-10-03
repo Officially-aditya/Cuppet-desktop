@@ -25,11 +25,7 @@ jobs:
     timeout-minutes: 75
     env:
       BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
-      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
@@ -68,31 +64,6 @@ jobs:
               exit 1
             fi
           done
-
-      - name: Require signing and notarization credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing required production release credential: $name" >&2
-              exit 1
-            fi
-          done
-
-      - name: Materialize App Store Connect API key
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import base64, os
-          from pathlib import Path
-          target = Path(os.environ['RUNNER_TEMP']) / f"AuthKey_{os.environ['APPLE_API_KEY_ID']}.p8"
-          target.write_bytes(base64.b64decode(os.environ['APPLE_API_KEY_P8_BASE64'], validate=True))
-          target.chmod(0o600)
-          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
-              env.write(f"APPLE_API_KEY={target}\n")
-          PY
 
       - uses: actions/checkout@v6
         with:
@@ -150,25 +121,20 @@ jobs:
           npm run e1:audit-runtime
           npm run release:verify
 
-      - name: Build, sign, and notarize macOS arm64 release
+      - name: Build unsigned macOS arm64 release
         run: npm run release:mac
 
-      - name: Verify Developer ID signature, Gatekeeper, and notarization staple
+      - name: Verify packaged macOS app
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH="$(find dist -maxdepth 3 -type d -name 'Cuppet.app' -print -quit)"
+          APP_PATH="$(find dist -maxdepth 3 -type d -iname 'Cuppet.app' -print -quit)"
           if [[ -z "$APP_PATH" ]]; then
             echo "Packaged Cuppet.app not found" >&2
             exit 1
           fi
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
-          grep -q '^Authority=Developer ID Application:' "$RUNNER_TEMP/codesign.txt"
-          spctl --assess --type execute --verbose=4 "$APP_PATH"
-          xcrun stapler validate "$APP_PATH"
 
-      - name: Build hash-bound Squirrel update metadata
+      - name: Generate SHA-256 checksums
         shell: bash
         run: |
           set -euo pipefail
@@ -178,8 +144,7 @@ jobs:
             echo "Expected arm64 DMG/ZIP release artifacts were not produced." >&2
             exit 1
           fi
-          npm run release:feed -- --tag "$RELEASE_TAG" --zip "$ZIP_PATH" --output dist/releases.json
-          shasum -a 256 "$DMG_PATH" "$ZIP_PATH" dist/releases.json > dist/SHA256SUMS.txt
+          shasum -a 256 "$DMG_PATH" "$ZIP_PATH" > dist/SHA256SUMS.txt
           echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
           echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
 
@@ -187,8 +152,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          assets=("$DMG_PATH" "$ZIP_PATH" dist/releases.json dist/SHA256SUMS.txt)
-          if [[ -f dist/latest-mac.yml ]]; then assets+=(dist/latest-mac.yml); fi
+          assets=("$DMG_PATH" "$ZIP_PATH" dist/SHA256SUMS.txt)
           while IFS= read -r blockmap; do assets+=("$blockmap"); done < <(find dist -maxdepth 1 -type f -name '*.blockmap' -print)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
@@ -196,22 +160,4 @@ jobs:
             flags=()
             if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
             gh release create "$RELEASE_TAG" "${assets[@]}" --target "$GITHUB_SHA" --title "Cuppet $VERSION" --generate-notes "${flags[@]}"
-          fi
-
-      - name: Advance stable production update feed
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$PRERELEASE" == "false" ]]; then
-            FEED_PATH='macos/arm64/releases.json'
-            if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/update-feed" >/dev/null 2>&1; then
-              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref='refs/heads/update-feed' -f sha="$GITHUB_SHA" >/dev/null
-            fi
-            existing_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/$FEED_PATH?ref=update-feed" --jq '.sha' 2>/dev/null || true)"
-            content="$(base64 < dist/releases.json | tr -d '\n')"
-            if [[ -n "$existing_sha" ]]; then
-              gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$FEED_PATH" -f message="release: advance macOS arm64 feed to $VERSION" -f content="$content" -f branch='update-feed' -f sha="$existing_sha" >/dev/null
-            else
-              gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$FEED_PATH" -f message="release: initialize macOS arm64 feed at $VERSION" -f content="$content" -f branch='update-feed' >/dev/null
-            fi
           fi

@@ -7,14 +7,14 @@ import { tmpdir } from 'node:os';
 import { MAC_UPDATE_FEED_URL, isStableVersion, macUpdateEligibility } from '../src/main/auto-update-policy.mjs';
 import { buildMacUpdateFeed } from '../scripts/build-macos-update-feed.mjs';
 
-test('production updater is restricted to packaged stable arm64 macOS builds', () => {
+test('production updater stays disabled for unsigned macOS releases', () => {
   assert.equal(isStableVersion('1.2.3'), true);
   assert.equal(isStableVersion('1.2.3-alpha.1'), false);
   assert.deepEqual(macUpdateEligibility({ isPackaged: false, platform: 'darwin', arch: 'arm64', version: '1.2.3' }), { enabled: false, reason: 'development-build' });
   assert.deepEqual(macUpdateEligibility({ isPackaged: true, platform: 'linux', arch: 'arm64', version: '1.2.3' }), { enabled: false, reason: 'unsupported-platform' });
   assert.deepEqual(macUpdateEligibility({ isPackaged: true, platform: 'darwin', arch: 'x64', version: '1.2.3' }), { enabled: false, reason: 'unsupported-architecture' });
   assert.deepEqual(macUpdateEligibility({ isPackaged: true, platform: 'darwin', arch: 'arm64', version: '1.2.3-alpha.1' }), { enabled: false, reason: 'prerelease-or-invalid-version' });
-  assert.deepEqual(macUpdateEligibility({ isPackaged: true, platform: 'darwin', arch: 'arm64', version: '1.2.3' }), { enabled: true, reason: null, feedURL: MAC_UPDATE_FEED_URL });
+  assert.deepEqual(macUpdateEligibility({ isPackaged: true, platform: 'darwin', arch: 'arm64', version: '1.2.3' }), { enabled: false, reason: 'unsigned-release' });
   assert.equal(MAC_UPDATE_FEED_URL, 'https://raw.githubusercontent.com/Officially-aditya/Cuppet-desktop/update-feed/macos/arm64/releases.json');
 });
 

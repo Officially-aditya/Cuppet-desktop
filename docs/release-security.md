@@ -1,48 +1,23 @@
 # Production Release Security
 
-Cuppet's normal CI/package smoke remains unsigned. Only `.github/workflows/release.yml` is allowed to produce a distributable macOS release.
+Cuppet currently distributes unsigned releases because Developer ID signing and Apple notarization credentials are not available. The macOS release workflow produces arm64 DMG and ZIP artifacts; the Windows release workflow produces unsigned x64 NSIS and ZIP artifacts.
 
 ## Release prerequisites
 
-The exact release commit must already have successful completed runs for both `CI` and `Provider V2 Selected`. The release tag must exactly equal `v` + `package.json` version.
+The exact macOS release commit must already have successful completed runs for both `CI` and `Provider V2 Selected`. The release tag must exactly equal `v` + `package.json` version.
 
-Configure these repository secrets before running the production release workflow:
+No Apple signing or notarization secrets are required. GitHub Actions supplies `GITHUB_TOKEN`; the macOS workflow requests `actions: read` to check prior validation and `contents: write` to publish release assets.
 
-- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
-- `MAC_CSC_KEY_PASSWORD`: password used when exporting the `.p12`.
-- `APPLE_API_KEY_P8_BASE64`: base64-encoded App Store Connect API key (`.p8`).
-- `APPLE_API_KEY_ID`: App Store Connect API key ID.
-- `APPLE_API_ISSUER`: App Store Connect API issuer ID.
+## Unsigned macOS packaging
 
-`GITHUB_TOKEN` is supplied by GitHub Actions and the workflow requests only `contents: write` so it can create/upload the release and update the dedicated `update-feed` branch.
+Production packaging uses `build/electron-builder.release.json` with `forceCodeSigning: false`, `mac.identity: null`, `hardenedRuntime: false`, and `notarize: false`. The workflow also disables signing identity discovery with `CSC_IDENTITY_AUTO_DISCOVERY: false`.
 
-## macOS trust chain
+The workflow checks that the packaged app, DMG, and ZIP exist, generates SHA-256 checksums, and publishes the artifacts and checksums to GitHub Releases. It does not require a Developer ID signature, Gatekeeper assessment, or a notarization staple. Downloaded apps do not carry Apple trust verification.
 
-Production packaging uses `build/electron-builder.release.json`, not the unsigned smoke config. It requires:
+## Updates
 
-- `forceCodeSigning: true`;
-- Developer ID Application signing from `CSC_LINK`;
-- Hardened Runtime;
-- the checked-in production entitlements and inherited entitlements;
-- Apple notarization through the App Store Connect API key;
-- DMG and ZIP arm64 artifacts.
-
-After packaging, CI independently runs `codesign --verify`, requires a `Developer ID Application` authority, runs Gatekeeper assessment with `spctl`, and validates the notarization staple with `xcrun stapler`.
-
-## Updater trust chain
-
-Stable packaged arm64 macOS builds use Electron's built-in Squirrel.Mac updater. No additional production npm dependency is introduced.
-
-The feed is hosted at:
-
-`https://raw.githubusercontent.com/Officially-aditya/Cuppet-desktop/update-feed/macos/arm64/releases.json`
-
-The release workflow computes the ZIP's SHA-256 digest and exact byte size and writes both into the Squirrel `updateTo` record. Electron 44 verifies those values before unpacking, and Squirrel.Mac also requires the downloaded app to pass macOS code-signing verification.
-
-Prerelease builds (`-alpha`, `-beta`, `-rc`, etc.) do not consume or advance the production feed. They may still be signed, notarized, and published as GitHub prereleases. This avoids relying on Squirrel.Mac's numeric version comparison for prerelease identifiers.
-
-Downloaded stable updates are not allowed to force an unexpected restart. They install on the next normal app launch.
+Automatic macOS updates are disabled for unsigned releases, including stable versions. The release workflow does not generate or publish Squirrel update metadata or advance the production update feed. Download and install new versions manually from GitHub Releases.
 
 ## Cutting a release
 
-Either push a `v<package-version>` tag or use **Production Release → Run workflow** and provide the exact tag. The workflow fails closed if the tag/version, prior validation, Apple credentials, signing identity, notarization, packaged artifacts, or update metadata checks are invalid.
+Either push a `v<package-version>` tag or use **Production Release → Run workflow** and provide the exact tag. The workflow still rejects mismatched tags, missing successful validation runs, invalid staged runtime resources, and missing packaged artifacts. Versions containing a prerelease suffix are published as GitHub prereleases.
