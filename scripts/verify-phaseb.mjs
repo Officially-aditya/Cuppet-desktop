@@ -13,7 +13,7 @@ expect(text['src/runtime/service.mjs'].includes("case 'project.github-clone'") &
 expect(text['src/main/main.mjs'].includes('dialog.showOpenDialog'),'native folder picker missing');
 expect(text['src/preload/preload.cjs'].includes('githubClone') && text['src/preload/preload.cjs'].includes('chooseFolder'),'project preload surface missing');
 const add=text['src/renderer/react/AddProjectModal.tsx'];
-for(const token of ['Local folder','GitHub URL','GitHub repositories','chooseFolder','cloneUrl','githubList','githubClone']) expect(add.includes(token),`React Add project path missing: ${token}`);
+for(const token of ['Local','GitHub','GitHub repository URL','chooseFolder','cloneUrl','projects.addLocal','projects.cloneUrl']) expect(add.includes(token),`React Add project path missing: ${token}`);
 const app=text['src/renderer/react/App.tsx'];
 expect(app.includes('const [draft') && app.includes('ensureActiveSession') && app.includes('window.cuppet.sessions.create(projectId)'),'first-message draft persistence missing in React');
 const run=spawnSync(process.execPath,['--test','test/database-migration.test.mjs','test/database-projects.test.mjs','test/projects.test.mjs','test/runtime-project-binding.test.mjs'],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
