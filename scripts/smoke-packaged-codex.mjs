@@ -20,11 +20,11 @@ await access(executable);
 await access(binary);
 await access(codeModeHost);
 const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
-assert.equal(packageManifest.version, '0.153.4');
+assert.equal(packageManifest.version, '0.160.0');
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.equal(manifest.vendor, 'OpenAI');
 assert.equal(manifest.product, 'codex-app-server-package');
-assert.equal(manifest.version, '0.153.4');
+assert.equal(manifest.version, '0.160.0');
 assert.equal(manifest.runtime, runtime);
 assert.deepEqual(manifest.requiredHelpers, ['codex-code-mode-host']);
 

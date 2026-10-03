@@ -25,18 +25,18 @@ for (const [path, label] of [[binary, 'Codex app-server'], [codeModeHost, 'Codex
   assert.ok(itemStat.size > 1_000_000, `staged ${label} is unexpectedly small`);
 }
 const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
-assert.equal(packageManifest.version, '0.153.4');
+assert.equal(packageManifest.version, '0.160.0');
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.equal(manifest.schemaVersion, 2);
 assert.equal(manifest.vendor, 'OpenAI');
 assert.equal(manifest.product, 'codex-app-server-package');
-assert.equal(manifest.version, '0.153.4');
-assert.equal(manifest.release, 'rust-v0.153.4');
+assert.equal(manifest.version, '0.160.0');
+assert.equal(manifest.release, 'rust-v0.160.0');
 assert.equal(manifest.runtime, runtime);
 assert.match(manifest.asset, /^codex-app-server-package-/);
 assert.deepEqual(manifest.requiredHelpers, ['codex-code-mode-host']);
 assert.match(manifest.archiveSha256, /^[a-f0-9]{64}$/);
-assert.equal(manifest.source, 'https://github.com/openai/codex/releases/tag/rust-v0.153.4');
+assert.equal(manifest.source, 'https://github.com/openai/codex/releases/tag/rust-v0.160.0');
 await run(binary, ['--help'], 8_000);
 console.log(`Verified staged official Codex app-server package for ${runtime}: ${binary} + ${codeModeHost}`);
 

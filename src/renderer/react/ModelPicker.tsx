@@ -45,11 +45,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     const catalog = await loadModelCatalog(next, { refresh });
     if (request !== catalogRequest.current) return catalog;
     setAdvertised(catalog.providerID === providerID ? (catalog.error && !catalog.models.length ? cachedModelCatalog(next) ?? catalog : catalog) : EMPTY_ADVERTISED);
-    const refreshError = String(catalog.discoveryError || catalog.error || '').trim();
-    if (refreshError) {
-      const staleNotice = catalog.stale && catalog.models.length ? 'Showing last known models. ' : '';
-      setError(`${staleNotice}${refreshError}`.slice(0, 400));
-    }
+    if (catalog.error && !catalog.models.length) setError(catalog.error);
     return catalog;
   };
 
