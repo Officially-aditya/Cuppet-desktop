@@ -62,7 +62,13 @@ export class OperationBroker {
         'push', '--porcelain', '--no-verify',
         '--no-follow-tags', '--recurse-submodules=no', url, `${commit}:refs/heads/${branch}`];
       const result = await this.#host(GIT, args, job, auth, signal);
-      return { output: `Pushed ${commit} to ${remote}/${branch}.\n${result.stdout.trim()}`, paths: [], mutation: false };
+      let trackingWarning = '';
+      try {
+        await this.#git(root, ['update-ref', `refs/remotes/${remote}/${branch}`, commit], signal);
+      } catch {
+        trackingWarning = '\nPush succeeded, but the local tracking ref could not be updated; refresh the repository from its remote.';
+      }
+      return { output: `Pushed ${commit} to ${remote}/${branch}.\n${result.stdout.trim()}${trackingWarning}`, paths: [], mutation: false };
     });
   }
 

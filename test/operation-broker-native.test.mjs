@@ -56,6 +56,7 @@ test('native sandbox stages and commits with hooks confined; broker exports/impo
   await broker.gitPush({ projectRoot: root, remote: 'origin', branch: 'main', commit, authorize: async () => {} });
   const pushed = await exec('/usr/bin/git', ['--git-dir', target, 'rev-parse', 'refs/heads/main']);
   assert.equal(pushed.stdout.trim(), commit);
+  assert.equal((await exec('/usr/bin/git', ['-C', root, 'rev-parse', 'refs/remotes/origin/main'])).stdout.trim(), commit);
   await assert.rejects(readFile(outside));
 });
 

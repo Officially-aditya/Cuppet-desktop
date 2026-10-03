@@ -30,6 +30,7 @@ test('push binds approval to exact repo/URL/branch/commit and isolates authentic
     if (command.includes("'rev-parse'")) return { code: 0, stdout: SHA, stderr: '' };
     if (command.includes("'get-url'")) return { code: 0, stdout: URL, stderr: '' };
     assert.equal(approved, true);
+    if (command.includes("'update-ref'")) return { code: 0, stdout: '', stderr: '' };
     assert.match(command, /'bundle' 'create'/);
     assert.equal(policy.scratchDirs.length, 1);
     assert.ok(policy.scratchDirs[0].endsWith('/export'));
@@ -58,6 +59,7 @@ test('push binds approval to exact repo/URL/branch/commit and isolates authentic
   assert.ok(push.args.includes('http.followRedirects=false'));
   assert.ok(push.args.includes(`credential.helper=${trusted}/git-credential-osxkeychain`));
   assert.deepEqual(push.args.slice(-2), [URL, `${SHA}:refs/heads/main`]);
+  assert.ok(calls.some((call) => call.command.includes(`'update-ref' 'refs/remotes/origin/main' '${SHA}'`)));
   assert.deepEqual(await readdir(join(dir, 'operation-broker')), []);
 });
 
@@ -72,6 +74,23 @@ test('push stops before authentication if HEAD changed after approval', async (t
   });
   await assert.rejects(broker.gitPush({ projectRoot: root, remote: 'origin', branch: 'main', commit: SHA, authorize: async () => {} }), /HEAD changed/);
   assert.deepEqual(await readdir(join(dir, 'operation-broker')), []);
+});
+
+test('tracking-ref failure preserves the successful remote push result', async (t) => {
+  const { dir, root } = await fixture(t);
+  const sandbox = exportSandbox();
+  const execute = sandbox.execute;
+  sandbox.execute = async (command, ...args) => command.includes("'update-ref'")
+    ? { code: 1, stdout: '', stderr: 'locked ref' } : execute(command, ...args);
+  const broker = new OperationBroker({ dataDir: dir, platform: 'darwin', sandbox,
+    hostRunner: async (_command, args) => {
+      if (args.includes('list-heads')) return { stdout: `${SHA} HEAD\n` };
+      if (args.includes('config')) { const error = new Error('No helper'); error.code = 1; throw error; }
+      return { stdout: 'ok' };
+    },
+  });
+  const result = await broker.gitPush({ projectRoot: root, branch: 'main', commit: SHA, authorize: async () => {} });
+  assert.match(result.output, /Push succeeded, but the local tracking ref could not be updated/);
 });
 
 test('push rejection never exports a bundle or invokes host Git', async (t) => {
