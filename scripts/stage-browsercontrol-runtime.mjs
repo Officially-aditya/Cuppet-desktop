@@ -36,8 +36,7 @@ await mkdir(join(target, 'dist', 'local'), { recursive: true });
 const esbuild = join(source, 'node_modules', 'esbuild', 'bin', 'esbuild');
 const sourceRuntime = join(source, 'dist', 'local', 'runtime.js');
 const targetRuntime = join(target, 'dist', 'local', 'runtime.js');
-const bundled = spawnSync(process.execPath, [
-  esbuild,
+const bundleArgs = [
   sourceRuntime,
   '--bundle',
   '--platform=node',
@@ -46,7 +45,12 @@ const bundled = spawnSync(process.execPath, [
   '--banner:js=import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
   '--log-level=warning',
   `--outfile=${targetRuntime}`,
-], { cwd: source, encoding: 'utf8' });
+];
+const bundled = spawnSync(
+  process.platform === 'win32' ? process.execPath : esbuild,
+  process.platform === 'win32' ? [esbuild, ...bundleArgs] : bundleArgs,
+  { cwd: source, encoding: 'utf8' },
+);
 if (bundled.error) throw bundled.error;
 if (bundled.status !== 0) {
   throw new Error(`Unable to bundle browserControl runtime: ${(bundled.stderr || bundled.stdout || '').trim()}`);
