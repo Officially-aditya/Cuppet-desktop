@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const root=new URL('..',import.meta.url).pathname;
-const paths=['src/runtime/context-compiler.mjs','src/runtime/lossless-plan.mjs','src/runtime/tst-client.mjs','src/runtime/candidate-ledger.mjs','src/runtime/background-enricher.mjs','src/runtime/cognitive-state.mjs','src/runtime/service.mjs','src/runtime/commands.mjs','src/preload/preload.cjs','src/renderer/react/App.tsx','src/renderer/react/ChatPane.tsx','src/main/provider-settings.mjs'];
+const paths=['src/runtime/context-compiler.mjs','src/runtime/lossless-plan.mjs','src/runtime/tst-client.mjs','src/runtime/candidate-ledger.mjs','src/runtime/background-enricher.mjs','src/runtime/cognitive-state.mjs','src/runtime/service.mjs','src/runtime/commands.mjs','src/preload/preload.cjs','src/renderer/react/App.tsx','src/renderer/react/ChatPane.tsx','src/renderer/react/ModePicker.tsx','src/main/provider-settings.mjs'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 expect(text['src/runtime/context-compiler.mjs'].includes('Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)))'),'foreground context budget changed');
 expect(text['src/runtime/context-compiler.mjs'].includes('Math.min(16_384, Math.max(0, Math.floor(usableTokens * 0.12)))'),'plan context budget changed');
@@ -13,7 +13,8 @@ expect(text['src/runtime/background-enricher.mjs'].includes("provenance: 'model_
 expect(text['src/runtime/candidate-ledger.mjs'].includes('if (observation.trustedSupport)'),'candidate evidence gate missing');
 expect(text['src/preload/preload.cjs'].includes('modeSet') && text['src/preload/preload.cjs'].includes('orchestratorSet') && text['src/preload/preload.cjs'].includes('backgroundPause'),'cognitive preload surface missing');
 const chatPane=text['src/renderer/react/ChatPane.tsx'];
-expect(chatPane.includes('onModeChange') && chatPane.includes('<option value="build">Build</option>') && chatPane.includes('<option value="plan">Plan</option>') && chatPane.includes('<option value="orchestrate">Orchestrate</option>') && text['src/renderer/react/App.tsx'].includes('window.cuppet.commands.list'),'React cognitive/command surface missing');
+const modePicker=text['src/renderer/react/ModePicker.tsx'];
+expect(chatPane.includes('onModeChange') && chatPane.includes('<ModePicker value={activeMode}') && ['Build','Plan','Orchestrate'].every((label)=>modePicker.includes(`label: '${label}'`)) && text['src/renderer/react/App.tsx'].includes('window.cuppet.commands.list'),'React cognitive/command surface missing');
 expect(text['src/runtime/commands.mjs'].includes("command('background'") && text['src/runtime/commands.mjs'].includes("command('orchestrator'") && text['src/runtime/commands.mjs'].includes("command('plan'"),'visible slash cognitive controls missing');
 expect(text['src/main/provider-settings.mjs'].includes('backgroundModel'),'secondary model setting missing');
 const tests=['test/context-compiler.test.mjs','test/lossless-plan.test.mjs','test/candidate-ledger.test.mjs','test/background-enricher.test.mjs','test/cognitive-state.test.mjs','test/runtime-cognitive.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
