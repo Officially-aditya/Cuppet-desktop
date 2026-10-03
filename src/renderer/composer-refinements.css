@@ -75,8 +75,8 @@
 .sidebar-rename-error{color:#d99b9b;font-size:10px;line-height:1.4}
 
 /* Native-free inline chat delete confirmation surface. */
-.sidebar-delete-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px;background:rgba(4,6,9,.76);backdrop-filter:blur(14px) saturate(130%);-webkit-backdrop-filter:blur(14px) saturate(130%);animation:cuppet-backdrop-fade .18s ease-out}
-.sidebar-delete-dialog{width:min(380px,calc(100vw - 40px));display:grid;gap:12px;padding:18px 20px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(18,22,29,.98);backdrop-filter:blur(24px) saturate(190%);-webkit-backdrop-filter:blur(24px) saturate(190%);box-shadow:0 28px 70px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);animation:cuppet-modal-scale .2s cubic-bezier(.16,1,.3,1);color:var(--text,#f4f6f8)}
+.sidebar-delete-backdrop{position:fixed;inset:0;z-index:1100;display:grid;place-items:center;padding:20px;background:rgba(4,6,9,.76);backdrop-filter:blur(14px) saturate(130%);-webkit-backdrop-filter:blur(14px) saturate(130%);animation:cuppet-backdrop-fade .18s ease-out}
+.sidebar-delete-dialog{width:min(380px,calc(100vw - 40px));display:grid;gap:12px;padding:18px 20px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:#12161d;box-shadow:0 28px 70px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);animation:cuppet-modal-scale .2s cubic-bezier(.16,1,.3,1);color:var(--text,#f4f6f8)}
 .sidebar-delete-header{display:grid;gap:6px}
 .sidebar-delete-title{margin:0;font-size:15px;font-weight:650;color:#f2f5f9;letter-spacing:-.01em}
 .sidebar-delete-desc{margin:0;font-size:12.5px;line-height:1.5;color:#9da6b4}
