@@ -107,7 +107,7 @@ test('plan mode remains read-only even when full access is selected', async () =
 
 
 
-test('macOS Full access shell blocks indirect deletion outside the project at the syscall boundary', { skip: process.platform !== 'darwin' }, async () => {
+test('macOS Full access shell blocks indirect writes and deletion outside the project at the syscall boundary', { skip: process.platform !== 'darwin' }, async () => {
   const { dir, root, outside } = await fixture();
   const outsideFile = join(outside, 'secret.txt');
   const insideFile = join(root, 'src', 'tmp', 'inside.txt');
@@ -122,7 +122,7 @@ test('macOS Full access shell blocks indirect deletion outside the project at th
       undefined,
       { fullAccess: true },
     );
-    assert.equal(outsideWrite.code, 0, outsideWrite.stderr);
+    assert.notEqual(outsideWrite.code, 0, 'outside-project write unexpectedly succeeded');
 
     const outsideDelete = await runShell(
       commandFor(`require('node:fs').rmSync(${JSON.stringify(outsideFile)})`),
@@ -132,7 +132,7 @@ test('macOS Full access shell blocks indirect deletion outside the project at th
       { fullAccess: true },
     );
     assert.notEqual(outsideDelete.code, 0, 'outside-project unlink unexpectedly succeeded');
-    assert.equal(await readFile(outsideFile, 'utf8'), 'changed\n');
+    assert.equal(await readFile(outsideFile, 'utf8'), 'outside\n');
 
     const symlinkDelete = await runShell(
       commandFor(`require('node:fs').rmSync(${JSON.stringify(join(root, 'escape', 'secret.txt'))})`),
@@ -142,7 +142,7 @@ test('macOS Full access shell blocks indirect deletion outside the project at th
       { fullAccess: true },
     );
     assert.notEqual(symlinkDelete.code, 0, 'symlink escape unlink unexpectedly succeeded');
-    assert.equal(await readFile(outsideFile, 'utf8'), 'changed\n');
+    assert.equal(await readFile(outsideFile, 'utf8'), 'outside\n');
 
     const insideDelete = await runShell(
       commandFor(`require('node:fs').rmSync(${JSON.stringify(insideFile)})`),

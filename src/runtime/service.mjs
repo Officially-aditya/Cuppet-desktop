@@ -76,7 +76,7 @@ export class RuntimeService {
     this.#writer = projectWriter ?? new ProjectWriter();
     this.#batchEdits = batchEdits ?? new TstBatchEditManager({ tst: this.#tst, journal: this.#journal, writer: this.#writer, emit: this.#emit });
     this.#browserControl = browserControl;
-    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, externalTools: browserControl, emit: this.#emit });
+    this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, externalTools: browserControl, dataDir, emit: this.#emit });
     this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();

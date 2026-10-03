@@ -1,5 +1,5 @@
 const OPTIMIZED_TOOLS = new Set(['tst_explore', 'tst_read', 'tst_edit_batch', 'tst_validate']);
-const SEMANTIC_TOOLS = new Set(['cuppet_plan', 'cuppet_memory_search', 'question', 'cuppet_execute']);
+const SEMANTIC_TOOLS = new Set(['cuppet_plan', 'cuppet_memory_search', 'question', 'cuppet_execute', 'git_push', 'package_dmg']);
 const RAW_TOOLS = new Set(['workspace_read', 'workspace_edit', 'workspace_write', 'bash']);
 const RAW_MUTATION_TOOLS = new Set(['workspace_edit', 'workspace_write']);
 const RAW_READ_TOOLS = new Set(['workspace_read']);
@@ -297,7 +297,7 @@ function looksLikeShellMutation(source) {
   if (/(^|[^<])>{1,2}(?!>)/.test(source)) return true;
   if (/\b(?:rm|rmdir|unlink|mv|cp|touch|truncate|tee|patch)\b/i.test(source)) return true;
   if (/\bsed\b[^\n;&|]*\s-i(?:\s|$)/i.test(source) || /\bperl\b[^\n;&|]*\s-(?:p?i|i?p)\b/i.test(source)) return true;
-  if (/\bgit\s+(?:add|checkout|switch|restore|reset|clean|apply|am|commit|merge|rebase|cherry-pick|rm|mv)\b/i.test(source)) return true;
+  if (/\bgit\s+(?:checkout|switch|restore|reset|clean|apply|am|merge|rebase|cherry-pick|rm|mv)\b/i.test(source)) return true;
   if (/\b(?:python\d*|node|ruby|perl)\b[^\n;&|]*(?:-c|-e)\b[^\n;&|]*(?:write|append|unlink|rename|mkdir|rmdir|remove|open\s*\()/i.test(source)) return true;
   return false;
 }

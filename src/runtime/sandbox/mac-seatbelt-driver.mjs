@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { SENSITIVE_HOST_PATHS } from './types.mjs';
 
 /**
@@ -15,27 +15,9 @@ export async function buildMacSeatbeltProfile(policy) {
   const rawRoot = resolve(policy.projectRoot);
   const rawLiteral = JSON.stringify(rawRoot);
 
-  if (policy.fullAccess) {
-    return [
-      '(version 1)',
-      '(allow default)',
-      '(deny file-write-unlink)',
-      `(allow file-write-unlink (literal ${rootLiteral}))`,
-      `(allow file-write-unlink (subpath ${rootLiteral}))`,
-      ...(rawLiteral !== rootLiteral ? [
-        `(allow file-write-unlink (literal ${rawLiteral}))`,
-        `(allow file-write-unlink (subpath ${rawLiteral}))`,
-      ] : []),
-    ].join('\n');
-  }
-
   const writeAllowClauses = [
     `(allow file-write* (literal ${rootLiteral}))`,
     `(allow file-write* (subpath ${rootLiteral}))`,
-    '(allow file-write* (subpath "/tmp"))',
-    '(allow file-write* (subpath "/private/tmp"))',
-    '(allow file-write* (subpath "/var/folders"))',
-    '(allow file-write* (subpath "/private/var/folders"))',
     '(allow file-write* (literal "/dev/null"))',
     '(allow file-write* (literal "/dev/zero"))',
     '(allow file-write* (literal "/dev/dtracehelper"))',
@@ -63,18 +45,24 @@ export async function buildMacSeatbeltProfile(policy) {
   }
 
   const sensitiveDenyClauses = [];
-  if (policy.protectSensitiveCredentials !== false) {
+  {
     const userHome = homedir();
     for (const relPath of SENSITIVE_HOST_PATHS) {
       const fullPath = join(userHome, relPath);
-      // Skip if the project root is somehow inside or equal to this path
-      if (root.startsWith(fullPath)) continue;
       const literal = JSON.stringify(fullPath);
       sensitiveDenyClauses.push(
         `(deny file-read* (literal ${literal}))`,
         `(deny file-read* (subpath ${literal}))`
       );
     }
+    for (const path of policy.protectedPaths ?? []) {
+      const literal = JSON.stringify(await realpath(path).catch(() => resolve(path)));
+      const exceptions = (policy.brokerJobDirs ?? []).map((dir) => `(require-not (subpath ${JSON.stringify(resolve(dir))}))`);
+      const filter = exceptions.length ? `(require-all (subpath ${literal}) ${exceptions.join(' ')})` : `(subpath ${literal})`;
+      sensitiveDenyClauses.push(`(deny file-read* ${filter})`, `(deny file-write* ${filter})`);
+    }
+    // These services can retrieve credentials without reading their files directly.
+    sensitiveDenyClauses.push('(deny mach-lookup (global-name "com.apple.securityd"))', '(deny mach-lookup (global-name "com.apple.security.agent"))');
   }
 
   const networkClauses = [];

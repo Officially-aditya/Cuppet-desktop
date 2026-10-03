@@ -1,6 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { SENSITIVE_HOST_PATHS } from './types.mjs';
 
 /**
@@ -16,9 +16,13 @@ export async function getLinuxBwrapSpawnSpec(command, policy) {
 
   const args = [
     // Unshare namespaces for isolation
+    '--unshare-user',
     '--unshare-pid',
     '--unshare-ipc',
     '--unshare-uts',
+    '--die-with-parent',
+    '--new-session',
+    '--cap-drop', 'ALL',
     '--proc', '/proc',
     '--dev', '/dev',
     // Mount core system paths read-only
@@ -33,11 +37,20 @@ export async function getLinuxBwrapSpawnSpec(command, policy) {
   args.push('--ro-bind-try', '/sbin', '/sbin');
   args.push('--ro-bind-try', '/opt', '/opt');
 
-  // Writable workspace
-  args.push('--bind', root, root);
+  // Expose installed toolchains, not the entire home directory and its credentials.
+  args.push('--dir', userHome);
+  const toolchainDirs = [
+    join(userHome, '.cargo', 'bin'), join(userHome, '.rustup'),
+    ...['NVM_DIR', 'PYENV_ROOT', 'RUSTUP_HOME', 'GOROOT', 'JAVA_HOME', 'CONDA_PREFIX', 'VIRTUAL_ENV'].map((key) => process.env[key]),
+    ...(process.env.PATH ?? '').split(':').filter((dir) => dir.startsWith(`${userHome}/`)),
+  ];
+  for (const dir of [...new Set(toolchainDirs.filter((value) => value && isAbsolute(value) && resolve(value) !== userHome))]) {
+    if ((await stat(dir).catch(() => null))?.isDirectory()) args.push('--ro-bind', dir, dir);
+  }
+  args.push('--tmpfs', '/tmp');
 
-  // Writable /tmp
-  args.push('--bind', '/tmp', '/tmp');
+  // Writable workspace (after the read-only home mount).
+  args.push('--bind', root, root);
 
   if (Array.isArray(policy.scratchDirs)) {
     for (const dir of policy.scratchDirs) {
@@ -49,12 +62,15 @@ export async function getLinuxBwrapSpawnSpec(command, policy) {
   }
 
   // Hide sensitive credentials by masking them with empty tmpfs
-  if (policy.protectSensitiveCredentials !== false) {
+  {
     for (const relPath of SENSITIVE_HOST_PATHS) {
       const fullPath = join(userHome, relPath);
-      if (root.startsWith(fullPath)) continue;
-      args.push('--tmpfs', fullPath);
+      const metadata = await stat(fullPath).catch(() => null);
+      if (metadata?.isDirectory()) args.push('--tmpfs', fullPath);
+      else if (metadata) args.push('--ro-bind', '/dev/null', fullPath);
     }
+    for (const path of policy.protectedPaths ?? []) args.push('--tmpfs', path);
+    for (const dir of policy.brokerJobDirs ?? []) args.push('--bind', dir, dir);
   }
 
   // Network unsharing
@@ -65,7 +81,7 @@ export async function getLinuxBwrapSpawnSpec(command, policy) {
   args.push('--', '/bin/sh', '-c', command);
 
   return {
-    command: 'bwrap',
+    command: '/usr/bin/bwrap',
     args,
     shell: false,
   };

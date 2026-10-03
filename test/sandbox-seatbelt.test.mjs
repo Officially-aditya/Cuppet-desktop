@@ -134,7 +134,7 @@ test('SandboxManager blocks network connections when offline is true', async (t)
   await rm(dir, { recursive: true, force: true });
 });
 
-test('buildMacSeatbeltProfile with fullAccess: true does not deny credential paths', async () => {
+test('Full Access retains workspace write limits and credential protection on macOS', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-sandbox-full-'));
   const profile = await buildMacSeatbeltProfile({
     projectRoot: dir,
@@ -142,14 +142,15 @@ test('buildMacSeatbeltProfile with fullAccess: true does not deny credential pat
   });
 
   assert.match(profile, /\(allow default\)/);
-  assert.match(profile, /\(deny file-write-unlink\)/);
-  assert.doesNotMatch(profile, /\(deny file-read\* \(subpath ".*\.ssh"\)\)/);
-  assert.doesNotMatch(profile, /\(deny file-read\* \(subpath ".*Keychains"\)\)/);
+  assert.match(profile, /\(deny file-write\*\)/);
+  assert.match(profile, /\(deny file-read\* \(subpath ".*\.ssh"\)\)/);
+  assert.match(profile, /\(deny file-read\* \(subpath ".*Keychains"\)\)/);
+  assert.doesNotMatch(profile, /\(allow file-write\* \(subpath "\/private\/tmp"\)\)/);
 
   await rm(dir, { recursive: true, force: true });
 });
 
-test('SandboxManager in full access mode allows credential environment and git tools', async (t) => {
+test('SandboxManager in full access mode keeps Git noninteractive', async (t) => {
   if (process.platform !== 'darwin') {
     t.skip('macOS Seatbelt only runs on darwin');
     return;
@@ -175,4 +176,3 @@ test('SandboxManager in full access mode allows credential environment and git t
 
   await rm(dir, { recursive: true, force: true });
 });
-

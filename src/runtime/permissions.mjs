@@ -15,7 +15,7 @@ const VERSION_COMMANDS = new Set([
 ]);
 const WORKSPACE_ACTIONS = new Set(['read', 'edit', 'write']);
 const AUTO_PROJECT_ACTIONS = new Set(['delete', 'agent-tool']);
-const PLAN_MUTATING_ACTIONS = new Set(['edit', 'write', 'delete', 'bash', 'browser-control', 'agent-tool']);
+const PLAN_MUTATING_ACTIONS = new Set(['edit', 'write', 'delete', 'bash', 'browser-control', 'agent-tool', 'git-push', 'package-dmg']);
 const UNSAFE_RESOURCE_CHARACTERS = /[\\*?\[\]{}]/;
 
 export class PermissionDeniedError extends Error {
@@ -141,6 +141,7 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
   if (action === 'browser-read') return { effect: 'allow', source: 'explicit-browser-read' };
   if (action === 'bash' && resources.length === 1 && isSafeAutoBashCommand(resources[0] ?? '')) return { effect: 'allow', source: 'safe-bash' };
   if (planMode && PLAN_MUTATING_ACTIONS.has(action)) return { effect: 'deny', code: 'plan_mode_read_only', reason: 'Plan mode is read-only; mutating tools, browser control, agent side effects, and arbitrary shell commands are blocked.' };
+  if (action === 'git-push' || action === 'package-dmg') return { effect: 'ask', autoEligible: false };
   if (auto && action === 'web-fetch') return { effect: 'allow', source: 'session-auto-web' };
 
   if (fullAccess) {

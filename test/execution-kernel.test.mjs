@@ -137,6 +137,21 @@ test('cuppet_execute allows project commands but blocks shell read/write bypasse
   assert.equal(metrics.blockedShellMutations, 1);
 });
 
+test('optimized command mediation allows sandboxed Git staging and commits without raw source mutation fallback', async () => {
+  const kernel = new ExecutionKernel();
+  for (const command of ['git add src/app.ts', 'git commit -m update']) {
+    const result = await kernel.execute({ id: command, name: 'cuppet_execute', arguments: JSON.stringify({ command }) }, {
+      sessionId: 'git-project', projectRoot: '/project', execute: async (call) => {
+        assert.equal(call.name, 'bash');
+        return { success: true, paths: [] };
+      },
+    });
+    assert.equal(result.success, true);
+  }
+  assert.equal(executionPathForTool('git_push'), 'semantic');
+  assert.equal(executionPathForTool('package_dmg'), 'semantic');
+});
+
 test('JournaledToolRuntime routes provider tool calls through the shared ExecutionKernel', async () => {
   const calls = [];
   const executionKernel = {

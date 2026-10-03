@@ -284,8 +284,8 @@ class ToolMutationCapture {
       if (!path) return;
       const token = await this.#journal.beginFile({ sessionId: this.#sessionId, executionId: callId, tool: call.name, projectRoot: this.#projectRoot, path });
       this.#pending.set(callId, { kind: 'file', token });
-    } else if (call?.name === 'bash') {
-      this.#pending.set(callId, { kind: 'barrier', tool: 'bash' });
+    } else if (call?.name === 'bash' || call?.name === 'package_dmg') {
+      this.#pending.set(callId, { kind: 'barrier', tool: call.name });
     }
   }
 
@@ -308,7 +308,7 @@ class ToolMutationCapture {
         finished.pending.token.executionId = String(finished.event.executionId || finished.pending.token.executionId || finished.callId);
         await this.#journal.commitFile(finished.pending.token);
       } else if (finished.pending.kind === 'barrier' && mutation) {
-        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: 'bash', projectRoot: this.#projectRoot, paths, reason: 'Shell mutation has no byte-exact preimage; undo will not cross this boundary.' });
+        await this.#journal.recordBarrier({ sessionId: this.#sessionId, executionId: String(finished.event.executionId || finished.callId), tool: finished.pending.tool, projectRoot: this.#projectRoot, paths, reason: 'Command output has no byte-exact preimage; undo will not cross this boundary.' });
       }
     } catch (error) { this.#failure = error instanceof Error ? error : new Error(String(error)); throw this.#failure; }
   }

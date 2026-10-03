@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
-import { realpath, stat } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { sanitizeEnvironment } from './env-sanitizer.mjs';
 import { getMacSeatbeltSpawnSpec } from './mac-seatbelt-driver.mjs';
 import { getLinuxBwrapSpawnSpec } from './linux-bwrap-driver.mjs';
@@ -10,9 +13,13 @@ export class SandboxManager {
   #platform;
   #seatbeltAvailable = null;
   #bwrapAvailable = null;
+  #cacheRoot;
+  #protectedPaths;
 
-  constructor({ platform = process.platform } = {}) {
+  constructor({ platform = process.platform, cacheRoot = join(homedir(), '.cache', 'cuppet-execution'), protectedPaths = [] } = {}) {
     this.#platform = platform;
+    this.#cacheRoot = cacheRoot;
+    this.#protectedPaths = protectedPaths;
   }
 
   async isAvailable() {
@@ -27,7 +34,7 @@ export class SandboxManager {
 
     if (this.#platform === 'linux') {
       if (this.#bwrapAvailable === null) {
-        this.#bwrapAvailable = await checkCommandAvailable('bwrap');
+        this.#bwrapAvailable = await stat('/usr/bin/bwrap').then((s) => s.isFile()).catch(() => false);
       }
       return this.#bwrapAvailable;
     }
@@ -61,6 +68,12 @@ export class SandboxManager {
    * @returns {Promise<{ command: string, args: string[], shell: boolean, env: Record<string, string>, driverName: string }>}
    */
   async getSpawnSpec(command, policy, { enabled = true } = {}) {
+    if (this.#platform === 'darwin' || this.#platform === 'linux') {
+      if (!enabled || !(await this.isAvailable())) {
+        throw new Error(`Protected command execution requires ${this.#platform === 'darwin' ? 'macOS sandbox-exec' : 'bubblewrap (bwrap) on Linux'}. No command was run.`);
+      }
+      policy = await this.#projectPolicy(policy);
+    }
     const isFullAccess = Boolean(policy?.fullAccess || policy?.protectSensitiveCredentials === false);
     const env = sanitizeEnvironment(process.env, policy?.envOverrides, { fullAccess: isFullAccess });
 
@@ -81,6 +94,40 @@ export class SandboxManager {
     return { command, args: [], shell: true, env, driverName: 'host-fallback' };
   }
 
+  async #projectPolicy(policy) {
+    const root = await realpath(policy.projectRoot);
+    const id = createHash('sha256').update(root).digest('hex');
+    await mkdir(this.#cacheRoot, { recursive: true, mode: 0o700 });
+    const cacheRoot = await realpath(this.#cacheRoot);
+    const storage = join(cacheRoot, id);
+    const names = ['tmp', 'npm', 'pnpm', 'yarn', 'electron', 'electron-builder', 'pip', 'uv', 'cargo', 'go-build', 'go-mod', 'gradle', 'xdg'];
+    await Promise.all(names.map((name) => mkdir(join(storage, name), { recursive: true, mode: 0o700 })));
+    for (const path of [storage, ...names.map((name) => join(storage, name))]) {
+      if (await realpath(path) !== resolve(path)) throw new Error('Execution cache directories must not be symlinks.');
+    }
+    const identity = await gitIdentity(root);
+    // Full Access controls approvals, never host credentials or OS isolation on Unix.
+    return {
+      ...policy, projectRoot: root, fullAccess: false, protectSensitiveCredentials: true,
+      protectedPaths: [...this.#protectedPaths, ...(policy.protectedPaths ?? [])],
+      scratchDirs: [...names.map((name) => join(storage, name)), ...(policy.scratchDirs ?? [])],
+      envOverrides: {
+        ...policy.envOverrides,
+        ...identity,
+        TMPDIR: join(storage, 'tmp'), TMP: join(storage, 'tmp'), TEMP: join(storage, 'tmp'),
+        npm_config_cache: join(storage, 'npm'), npm_config_userconfig: '/dev/null',
+        PNPM_HOME: join(storage, 'pnpm'), YARN_CACHE_FOLDER: join(storage, 'yarn'),
+        ELECTRON_CACHE: join(storage, 'electron'), ELECTRON_BUILDER_CACHE: join(storage, 'electron-builder'),
+        PIP_CACHE_DIR: join(storage, 'pip'), UV_CACHE_DIR: join(storage, 'uv'),
+        CARGO_HOME: join(storage, 'cargo'), GOCACHE: join(storage, 'go-build'), GOMODCACHE: join(storage, 'go-mod'),
+        GRADLE_USER_HOME: join(storage, 'gradle'), XDG_CACHE_HOME: join(storage, 'xdg'),
+        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '',
+        GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+        GIT_ASKPASS: '/usr/bin/false', SSH_ASKPASS: '/usr/bin/false',
+      },
+    };
+  }
+
   /**
    * Executes a command within the native sandbox.
    *
@@ -91,8 +138,10 @@ export class SandboxManager {
    * @returns {Promise<import('./types.mjs').SandboxExecutionResult>}
    */
   async execute(command, cwd, policy, { timeoutMs = 30000, signal, enabled = true } = {}) {
+    if (signal?.aborted) { const error = new Error('Generation stopped'); error.name = 'AbortError'; throw error; }
     const realCwd = await realpath(cwd).catch(() => cwd);
     const spawnSpec = await this.getSpawnSpec(command, policy, { enabled });
+    if (signal?.aborted) { const error = new Error('Generation stopped'); error.name = 'AbortError'; throw error; }
 
     return new Promise((resolvePromise, reject) => {
       const child = spawn(spawnSpec.command, spawnSpec.args, {
@@ -191,10 +240,21 @@ export class SandboxManager {
   }
 }
 
-async function checkCommandAvailable(bin) {
-  return new Promise((resolvePromise) => {
-    const child = spawn('which', [bin], { stdio: 'ignore' });
-    child.once('exit', (code) => resolvePromise(code === 0));
-    child.once('error', () => resolvePromise(false));
-  });
+// Preserve ordinary commit identity without giving the shell the user's Git config.
+async function gitIdentity(root) {
+  const env = {};
+  for (const path of [join(homedir(), '.gitconfig'), join(root, '.git', 'config')]) {
+    const config = await readFile(path, 'utf8').catch(() => '');
+    let user = false;
+    for (const line of config.split(/\r?\n/)) {
+      if (/^\s*\[/.test(line)) user = /^\s*\[user\]\s*$/i.test(line);
+      const match = user && line.match(/^\s*(name|email)\s*=\s*(.*?)\s*$/i);
+      if (!match) continue;
+      const value = match[2].replace(/^"(.*)"$/, '$1');
+      const key = match[1].toLowerCase() === 'name' ? 'NAME' : 'EMAIL';
+      env[`GIT_AUTHOR_${key}`] = value;
+      env[`GIT_COMMITTER_${key}`] = value;
+    }
+  }
+  return env;
 }

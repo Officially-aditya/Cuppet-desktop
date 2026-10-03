@@ -44,4 +44,11 @@ export const SENSITIVE_HOST_PATHS = [
   '.bash_history',
   '.zsh_history',
   '.history',
+  '.git-credentials',
+  '.gitconfig',
+  '.config/git',
+  '.config/gh',
+  '.config/hub',
+  '.cargo/credentials',
+  '.cargo/credentials.toml',
 ];

@@ -1,0 +1,51 @@
+name: Command sandbox
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - src/runtime/sandbox/**
+      - src/runtime/tool-runtime.mjs
+      - src/runtime/permissions.mjs
+      - test/operation-broker*.test.mjs
+      - test/sandbox*.test.mjs
+      - .github/workflows/command-sandbox.yml
+  pull_request:
+    paths:
+      - src/runtime/sandbox/**
+      - src/runtime/tool-runtime.mjs
+      - src/runtime/permissions.mjs
+      - test/operation-broker*.test.mjs
+      - test/sandbox*.test.mjs
+      - .github/workflows/command-sandbox.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-boundaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Prepare Linux isolation in the disposable test VM
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Check command and broker boundaries
+        run: node --test test/operation-broker.test.mjs test/operation-broker-native.test.mjs test/sandbox-resources.test.mjs test/sandbox-seatbelt.test.mjs test/sandbox-env-sanitizer.test.mjs test/full-access-permissions.test.mjs test/execution-kernel.test.mjs

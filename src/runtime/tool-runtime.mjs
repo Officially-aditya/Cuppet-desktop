@@ -2,11 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { isSafeAutoBashCommand } from './permissions.mjs';
 import { BackgroundProcessManager } from './background-process-manager.mjs';
 import { SandboxManager } from './sandbox/sandbox-manager.mjs';
 import { sanitizeEnvironment } from './sandbox/env-sanitizer.mjs';
 import { buildMacSeatbeltProfile } from './sandbox/mac-seatbelt-driver.mjs';
+import { OperationBroker } from './sandbox/operation-broker.mjs';
 
 const MAX_TOOL_STEPS = 64;
 const MAX_TOOL_OUTPUT = 128 * 1024;
@@ -17,9 +19,9 @@ const MAX_BATCH_READS = 12;
 const MAX_VALIDATION_COMMANDS = 8;
 
 export class ToolRuntime {
-  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #graphCache = new Map();
+  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #operations; #graphCache = new Map();
 
-  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, sandboxManager = null, emit = () => {} }) {
+  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, sandboxManager = null, dataDir = join(homedir(), '.cuppet-desktop'), emit = () => {} }) {
     this.#tst = tst;
     this.#plans = planStore;
     this.#permissions = permissions;
@@ -29,13 +31,16 @@ export class ToolRuntime {
     this.#writer = writer;
     this.#externalTools = externalTools;
     this.#backgroundProcesses = backgroundProcesses ?? new BackgroundProcessManager();
-    this.#sandbox = sandboxManager ?? new SandboxManager();
+    this.#sandbox = sandboxManager ?? new SandboxManager({ protectedPaths: [dataDir] });
+    this.#operations = new OperationBroker({ sandbox: this.#sandbox, dataDir });
     this.#emit = emit;
   }
 
   definitions({ projectRoot = null, integrations = [] } = {}) {
     const tools = [PLAN_TOOL, MEMORY_TOOL, QUESTION_TOOL];
     if (projectRoot) tools.push(EXPLORE_TOOL, READ_TOOL, BATCH_EDIT_TOOL, VALIDATE_TOOL, EDIT_TOOL, WRITE_TOOL, BASH_TOOL, BACKGROUND_PROCESS_TOOL);
+    if (projectRoot && ['darwin', 'linux'].includes(process.platform)) tools.push(GIT_PUSH_TOOL);
+    if (projectRoot && process.platform === 'darwin') tools.push(PACKAGE_DMG_TOOL);
     if (Array.isArray(integrations) && integrations.includes('browserControl')) {
       const external = this.#externalTools?.definitions?.() ?? [];
       if (Array.isArray(external)) tools.push(...external.slice(0, 128));
@@ -178,6 +183,8 @@ export class ToolRuntime {
       case 'workspace_write': return this.#mutating(projectRoot, () => this.#write(projectRoot, args, authorize));
       case 'bash': return this.#bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId);
       case 'background_process': return this.#backgroundProcess(projectRoot, args, authorize, signal, sessionId);
+      case 'git_push': return this.#operations.gitPush({ projectRoot, remote: args.remote, branch: args.branch, commit: args.commit, authorize, signal });
+      case 'package_dmg': return this.#mutating(projectRoot, () => this.#operations.packageDmg({ projectRoot, source: args.source, output: args.output, authorize, signal }));
       default: throw new Error(`Unknown tool: ${name}`);
     }
   }
@@ -396,7 +403,7 @@ export class ToolRuntime {
     for (const command of commands) {
       const permission = await authorize({ action: 'bash', resources: [command], description: `Run validation check in project: ${command.slice(0, 300)}` });
       const isFullAccess = Boolean(permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
-      const executed = await runShell(command, projectRoot, clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal, { fullAccess: isFullAccess });
+      const executed = await this.#sandbox.execute(command, projectRoot, { projectRoot, fullAccess: isFullAccess, protectSensitiveCredentials: !isFullAccess }, { timeoutMs: clamp(Number(args.timeout_ms) || 60000, 1000, 120000), signal });
       results.push({ command, exitCode: executed.code, stdout: executed.stdout, stderr: executed.stderr });
     }
     const postHashes = {};
@@ -543,6 +550,12 @@ const BASH_TOOL = tool('bash', 'Run a finite shell command with cwd fixed to the
 const BACKGROUND_PROCESS_TOOL = tool('background_process', 'Start and manage long-lived project processes such as dev servers and watchers without blocking the tool runtime. Use this instead of shell &, nohup, or spawning a detached child from bash.', {
   action: { type: 'string', enum: ['start', 'status', 'logs', 'list', 'stop'] }, command: { type: 'string' }, process_id: { type: 'string' }, label: { type: 'string', maxLength: 120 }, max_bytes: { type: 'integer', minimum: 1024, maximum: MAX_TOOL_OUTPUT },
 }, ['action']);
+const GIT_PUSH_TOOL = tool('git_push', 'Push the exact current HEAD to a configured remote and destination branch through Cuppet’s credential broker. Requires operation-specific approval; force pushes, hooks and repository credential helpers are disabled.', {
+  remote: { type: 'string' }, branch: { type: 'string' }, commit: { type: 'string' },
+}, ['remote', 'branch', 'commit']);
+const PACKAGE_DMG_TOOL = tool('package_dmg', 'Create a verified DMG from a project .app using Cuppet’s constrained macOS packaging helper. Source and output must be inside the project; the helper handles only its own image.', {
+  source: { type: 'string' }, output: { type: 'string' },
+}, ['source', 'output']);
 
 function tool(name, description, properties, required = []) { return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } }; }
 function injectToolPolicy(messages, projectBound, mode) {
@@ -556,6 +569,7 @@ function injectToolPolicy(messages, projectBound, mode) {
     'Use the question tool only when a user decision or missing requirement genuinely blocks safe progress; do not ask for facts available from tools or project context.',
     'Do not repeat an identical tst_explore query; narrow or change it when more detail is needed.',
     'For long-lived dev servers, watchers, or other commands intended to keep running, use background_process action=start. Do not emulate backgrounding with shell &, nohup, disown, or a child process that inherits bash stdio.',
+    ['darwin', 'linux'].includes(process.platform) ? 'Builds, tests, package scripts, git staging and commits run inside the project sandbox with dedicated caches/temp storage, including Full Access mode. Use git_push for authenticated pushes; never request credentials in shell. On macOS use package_dmg for disk images instead of host hdiutil commands.' : '',
     projectBound ? 'This session is project-bound; workspace tools are available through the runtime permission boundary. Never delete paths outside the active project root.' : 'This is a general chat; filesystem and shell tools are unavailable.',
     mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, and agent side effects are blocked.' : '',
     '</CUPPET_TOOL_POLICY>',
