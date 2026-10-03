@@ -117,7 +117,7 @@ function structuredProviderFailure(metadata, raw, providerID, provider) {
     case 'transport_closed':
     case 'transport_write':
     case 'protocol_transport':
-      return failure('streaming', 'Provider process stopped', `${provider}'s local process stopped unexpectedly. Retry the request; Cuppet will start a fresh provider process automatically.`, 'retry', diagnostic, providerID, provider);
+      return failure('streaming', 'Provider process stopped', providerProcessMessage(provider, diagnostic), 'retry', diagnostic, providerID, provider);
     case 'timeout':
       return failure('timeout', 'Provider timed out', `${provider} took too long to respond. Retry the request; if it keeps happening, switch providers or try again later.`, 'retry', diagnostic, providerID, provider);
     case 'authentication':
@@ -141,6 +141,22 @@ function failure(category, title, message, action, diagnostic, providerID, provi
     chatMessage: `**${title}**\n\n${message}`,
     toastMessage: `${title} — ${message}`,
   };
+}
+
+function providerProcessMessage(provider, diagnostic) {
+  const detail = displayDiagnostic(diagnostic);
+  const guidance = `${provider}'s local process stopped unexpectedly. Retry the request; Cuppet will start a fresh provider process automatically.`;
+  return detail ? `${guidance} Provider detail: ${detail}` : guidance;
+}
+
+function displayDiagnostic(value) {
+  return String(value ?? '')
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
+    .replace(/("(?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|secret)"\s*:\s*")[^"]+("\s*)/gi, '$1[redacted]$2')
+    .replace(/((?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(-320);
 }
 
 function providerId(context) {
