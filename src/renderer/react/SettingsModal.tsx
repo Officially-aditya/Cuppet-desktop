@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, SandboxStatus, Session, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
 import { CUPPET_LOGO_URL } from './brand';
-import { notifyProviderSettingsChanged } from './provider-settings-events';
+import { invalidateModelCatalogCache } from './model-catalog-cache';
+import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './provider-settings-events';
 import { providerStatusPresentation } from './provider-status-presentation';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
 
@@ -61,10 +62,53 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     } catch (error) { onError(error); }
   }, [onError, providerID]);
 
-  const refreshCodex = useCallback(async () => {
-    try { setCodex(await window.cuppet.codexAuth.status()); }
-    catch (error) { setCodex({ available: false, loggedIn: false, loginRunning: false, message: error instanceof Error ? error.message : String(error) }); }
+  const invalidateModelCatalogs = useCallback(() => {
+    invalidateModelCatalogCache();
+    notifyProviderCatalogInvalid();
   }, []);
+
+  const providerSettingsCommitted = useCallback(() => {
+    notifyProviderSettingsChanged();
+    invalidateModelCatalogs();
+  }, [invalidateModelCatalogs]);
+
+  const codexWatch = useRef<number | null>(null);
+  const codexWatchDeadline = useRef(0);
+
+  const stopCodexWatch = useCallback(() => {
+    if (codexWatch.current === null) return;
+    window.clearInterval(codexWatch.current);
+    codexWatch.current = null;
+  }, []);
+
+  const pollCodexLogin = useCallback(async () => {
+    const watch = codexWatch.current;
+    if (watch === null || Date.now() > codexWatchDeadline.current) { stopCodexWatch(); return; }
+    let next: any = null;
+    try { next = await window.cuppet.codexAuth.status(); } catch { return; }
+    if (codexWatch.current !== watch) return;
+    setCodex(next);
+    if (next?.loggedIn) { stopCodexWatch(); invalidateModelCatalogs(); return; }
+    if (!next?.loginRunning || Date.now() > codexWatchDeadline.current) stopCodexWatch();
+  }, [invalidateModelCatalogs, stopCodexWatch]);
+
+  const watchCodexLogin = useCallback(() => {
+    if (codexWatch.current !== null) return;
+    codexWatchDeadline.current = Date.now() + 5 * 60 * 1000;
+    codexWatch.current = window.setInterval(() => { void pollCodexLogin(); }, 2500);
+  }, [pollCodexLogin]);
+
+  const refreshCodex = useCallback(async () => {
+    try {
+      const next = await window.cuppet.codexAuth.status();
+      setCodex(next);
+      if (!next?.loggedIn && next?.loginRunning) watchCodexLogin();
+      else stopCodexWatch();
+    }
+    catch (error) { setCodex({ available: false, loggedIn: false, loginRunning: false, message: error instanceof Error ? error.message : String(error) }); }
+  }, [stopCodexWatch, watchCodexLogin]);
+
+  useEffect(() => stopCodexWatch, [stopCodexWatch]);
 
   const refreshCliStatus = useCallback(async () => {
     if (!isLocalCli || !providerID) { setCliStatus(null); return; }
@@ -114,6 +158,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     try {
       await window.cuppet.codexAuth.login();
       await refreshCodex();
+      watchCodexLogin();
       setNote('Complete ChatGPT sign-in in the browser. Cuppet never receives the OAuth credentials.');
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }
@@ -121,7 +166,11 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
 
   const disconnectCodex = async () => {
     setBusy(true);
-    try { setCodex(await window.cuppet.codexAuth.logout()); }
+    try {
+      stopCodexWatch();
+      setCodex(await window.cuppet.codexAuth.logout());
+      invalidateModelCatalogs();
+    }
     catch (error) { onError(error); }
     finally { setBusy(false); }
   };
@@ -140,7 +189,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setApiKey('');
       const projected = { ...saved, credentialConfigured: true, configured: Boolean(saved.primary?.modelID) };
       onSaved(projected);
-      notifyProviderSettingsChanged();
+      providerSettingsCommitted();
       setNote(`${selected.label || selected.id} connected and selected.`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : String(error));
@@ -161,7 +210,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       const saved = await window.cuppet.settings.save({ providerID: nextProviderID, apiKey: '', resolveDefault: true });
       setCurrent(saved);
       onSaved(saved);
-      notifyProviderSettingsChanged();
+      providerSettingsCommitted();
       setNote(`${saved.presets?.find((item) => item.id === nextProviderID)?.label || nextProviderID} selected.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }
@@ -183,7 +232,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setCurrent(saved);
       setApiKey('');
       onSaved(saved);
-      notifyProviderSettingsChanged();
+      providerSettingsCommitted();
       setNote(`${selected.label || selected.id} credential updated.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }
@@ -206,7 +255,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       });
       setCurrent(saved);
       onSaved(saved);
-      notifyProviderSettingsChanged();
+      providerSettingsCommitted();
       setNote(`${selected.label || selected.id} model settings reset.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }

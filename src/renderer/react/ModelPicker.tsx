@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderModelCatalog, ProviderSettings } from '../types';
-import { notifyProviderSettingsChanged } from './provider-settings-events';
-import { cachedModelCatalog, cachedProviderCatalog, loadModelCatalog } from './model-catalog-cache';
+import { notifyProviderSettingsChanged, PROVIDER_CATALOG_INVALID_EVENT } from './provider-settings-events';
+import { cachedModelCatalog, cachedProviderCatalog, isProviderCatalogStale, loadModelCatalog, CATALOG_FRESH_MS } from './model-catalog-cache';
 import { orderPinnedModels, togglePinnedModel, usePinnedModels } from './model-pins';
 import {
   hydrateClientProviderSettings,
@@ -67,6 +67,27 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setAdvertised(cachedModelCatalog(settings) ?? cachedProviderCatalog(settings) ?? EMPTY_ADVERTISED);
     void refreshCatalog(settings, true).catch((value) => setError(message(value)));
   }, [settings?.primary?.providerID, settings?.providerID, settings?.baseUrl]);
+
+  useEffect(() => {
+    if (!settings) return;
+    const revalidate = (force: boolean) => {
+      if (!force && !isProviderCatalogStale(settings)) return;
+      void refreshCatalog(settings, force).catch((value) => setError(message(value)));
+    };
+    const onFocus = () => revalidate(false);
+    const onInvalidated = () => revalidate(true);
+    const onVisible = () => { if (document.visibilityState === 'visible') revalidate(false); };
+    const timer = window.setInterval(() => revalidate(false), CATALOG_FRESH_MS);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener(PROVIDER_CATALOG_INVALID_EVENT, onInvalidated);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(PROVIDER_CATALOG_INVALID_EVENT, onInvalidated);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [settings]);
 
   useEffect(() => {
     if (!open) return;
