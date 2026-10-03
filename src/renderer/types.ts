@@ -199,6 +199,8 @@ export type ProviderModelCatalog = {
   modelDependentSettings?: boolean;
   fetchedAt?: number;
   error?: string;
+  stale?: boolean;
+  discoveryError?: string;
   reasoning?: {
     configId: string;
     currentValue?: string | null;
