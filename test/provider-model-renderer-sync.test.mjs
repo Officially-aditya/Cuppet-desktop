@@ -66,3 +66,23 @@ test('ModelPicker does not branch on provider transport or Codex identity', asyn
   assert.match(source, /providerPreset\?\.model/);
   assert.match(source, /advertised\.modelDependentSettings === true/);
 });
+
+test('credential and account changes invalidate the persisted catalog instead of waiting for its freshness window', async () => {
+  const [picker, modal, events, cache] = await Promise.all([
+    readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/SettingsModal.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/provider-settings-events.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/model-catalog-cache.ts', import.meta.url), 'utf8'),
+  ]);
+  assert.match(events, /PROVIDER_CATALOG_INVALID_EVENT/);
+  assert.match(cache, /export function invalidateModelCatalogCache/);
+  assert.match(cache, /export function isProviderCatalogStale/);
+  assert.match(picker, /isProviderCatalogStale\(settings\)/);
+  assert.match(picker, /window\.addEventListener\(PROVIDER_CATALOG_INVALID_EVENT/);
+  assert.match(picker, /window\.setInterval\(\(\) => revalidate\(false\), CATALOG_FRESH_MS\)/);
+  assert.match(modal, /invalidateModelCatalogCache\(\)/);
+  assert.match(modal, /notifyProviderCatalogInvalid\(\)/);
+  const accountFlow = modal.slice(modal.indexOf('const connectCodex'), modal.indexOf('const connectLocalCli'));
+  assert.match(accountFlow, /watchCodexLogin\(\)/, 'ChatGPT sign-in completion does not revalidate the catalog');
+  assert.match(accountFlow, /invalidateModelCatalogs\(\)/, 'signing out of the account does not revalidate the catalog');
+});

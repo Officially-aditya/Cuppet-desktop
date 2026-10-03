@@ -100,3 +100,51 @@ test('models with no reasoning options are cached without inventing efforts', as
   assert.equal((await cache.loadModelCatalog(settings())).reasoning, undefined);
   assert.equal(calls, 1);
 });
+
+test('a lapsed freshness window revalidates the catalog instead of replaying it forever', async (t) => {
+  let calls = 0;
+  const { cache } = await fixture(t, async () => { calls++; return catalog(); });
+  await cache.loadModelCatalog(settings());
+  await cache.loadModelCatalog(settings());
+  assert.equal(calls, 1);
+  assert.equal(cache.isProviderCatalogStale(settings()), false);
+  assert.ok(cache.CATALOG_FRESH_MS > 0);
+  await cache.loadModelCatalog(settings(), { maxAgeMs: 0 });
+  assert.equal(calls, 2);
+  assert.equal(cache.isProviderCatalogStale(settings()), false);
+});
+
+test('invalidating one provider catalog keeps other endpoints and forces rediscovery', async (t) => {
+  let calls = 0;
+  const { cache, saved } = await fixture(t, async () => { calls++; return catalog(); });
+  const endpoint = settings('a', 'demo', 'https://b.example');
+  await cache.loadModelCatalog(settings());
+  await cache.loadModelCatalog(endpoint);
+  assert.equal(calls, 2);
+  cache.invalidateModelCatalogCache(endpoint);
+  assert.ok(cache.cachedModelCatalog(settings()));
+  assert.equal(cache.cachedModelCatalog(endpoint), null);
+  assert.equal(Object.keys(JSON.parse(saved())).length, 1);
+  cache.invalidateModelCatalogCache();
+  assert.equal(cache.cachedModelCatalog(settings()), null);
+  assert.deepEqual(JSON.parse(saved()), {});
+  await cache.loadModelCatalog(settings());
+  assert.equal(calls, 3);
+});
+
+test('account invalidation prevents an earlier discovery from restoring the old catalog', async (t) => {
+  const completions = [];
+  const { cache } = await fixture(t, () => new Promise(resolve => completions.push(resolve)));
+  const beforeLogout = cache.loadModelCatalog(settings());
+  cache.invalidateModelCatalogCache();
+  const afterLogin = cache.loadModelCatalog(settings());
+  assert.equal(completions.length, 2);
+  completions[0](catalog('a', ['old']));
+  await beforeLogout;
+  assert.equal(cache.cachedModelCatalog(settings()), null);
+  const sharedRefresh = cache.loadModelCatalog(settings());
+  assert.equal(completions.length, 2);
+  completions[1](catalog('a', ['new']));
+  await Promise.all([afterLogin, sharedRefresh]);
+  assert.deepEqual(cache.cachedModelCatalog(settings()).reasoning.options.map(option => option.id), ['new']);
+});
