@@ -8,6 +8,8 @@ on:
         required: false
         type: string
   push:
+    branches:
+      - 'codex/release-alpha11'
     tags:
       - 'v*'
 

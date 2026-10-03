@@ -1,0 +1,90 @@
+name: Unsigned Mac Alpha Release
+
+on:
+  push:
+    branches: ['codex/release-alpha11']
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Verify alpha version and native arm64 runner
+        run: |
+          test "$(uname -m)" = arm64
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in *-*) ;; *) echo 'This workflow publishes prereleases only.' >&2; exit 1;; esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/Cuppet-code
+          ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+          path: .release/cuppet-code
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88'
+      - name: Build pinned native TST daemon
+        run: cargo build --locked -p tst-daemon --release --manifest-path .release/cuppet-code/Cargo.toml
+      - name: Package pinned TST runtime
+        working-directory: .release/cuppet-code
+        run: GITHUB_SHA=9f2a8ae63555b7534ee1ccfe211efce1ad46f630 node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output=${{ github.workspace }}/.release/tst-runtime
+      - name: Stage native TST and updated Codex package
+        run: |
+          npm run f1:stage-tst -- --source=.release/tst-runtime
+          npm run e2:stage-codex
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/browserControl
+          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          path: .release/browsercontrol
+          persist-credentials: false
+      - name: Build pinned browserControl runtime
+        working-directory: .release/browsercontrol
+        run: npm ci && npm run build
+      - name: Stage browserControl and install build dependencies
+        run: npm run browsercontrol:stage -- --source=.release/browsercontrol && npm install --ignore-scripts
+      - name: Verify renderer and staged runtimes
+        run: |
+          npm run renderer:verify
+          npm run f1:verify-staged-tst
+          npm run e2:verify-staged-codex
+          npm run browsercontrol:verify
+      - name: Build unsigned Mac alpha
+        run: npm run mac:prepare-icon && npx electron-builder --mac dmg zip --arm64 --config.mac.identity=null --publish never
+      - name: Verify packaged runtime and archives
+        run: |
+          APP_EXEC=dist/mac-arm64/Cuppet.app/Contents/MacOS/cuppet
+          node scripts/smoke-packaged-runtime.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-codex.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-browsercontrol.mjs "$APP_EXEC"
+          hdiutil verify "dist/Cuppet-${VERSION}-arm64.dmg"
+          unzip -tq "dist/Cuppet-${VERSION}-arm64-mac.zip"
+          shasum -a 256 "dist/Cuppet-${VERSION}-arm64.dmg" "dist/Cuppet-${VERSION}-arm64-mac.zip" > dist/SHA256SUMS-macos.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cuppet-macos-${{ env.VERSION }}
+          path: |
+            dist/Cuppet-*-arm64.dmg
+            dist/Cuppet-*-arm64-mac.zip
+            dist/SHA256SUMS-macos.txt
+          if-no-files-found: error
+      - name: Publish unsigned Mac alpha assets
+        run: |
+          assets=("dist/Cuppet-${VERSION}-arm64.dmg" "dist/Cuppet-${VERSION}-arm64-mac.zip" dist/SHA256SUMS-macos.txt)
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Cuppet $VERSION" --notes 'Unsigned alpha for Windows x64 and Mac arm64. The Mac build is not Developer ID signed or notarized.' --prerelease || gh release view "$RELEASE_TAG" >/dev/null
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
