@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { localCliLaunch } from '../local-cli-launch.mjs';
 
 const STATUS_TIMEOUT_MS = 8_000;
 
@@ -67,10 +68,11 @@ function runCommand(command, args, timeoutMs, options = {}) {
             /\.(cmd|bat)$/i.test(command) ||
             (!/\.exe$/i.test(command) && !command.toLowerCase().includes('powershell'))
           ));
-      child = spawn(command, args, {
+      const launch = localCliLaunch(command, args, { shell: useShell });
+      child = spawn(launch.command, launch.args, {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: useShell,
+        shell: launch.shell,
         env: process.env,
       });
     } catch (error) {

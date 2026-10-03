@@ -226,7 +226,7 @@ function executableExtensions(value) {
     .split(';')
     .map((item) => item.trim())
     .filter(Boolean);
-  return ['', ...extensions.filter((item) => item.startsWith('.'))];
+  return [...extensions.filter((item) => item.startsWith('.')), ''];
 }
 
 function splitPath(value, delimiter) {

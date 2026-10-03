@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import { localCliDescriptor } from '../../../local-cli-descriptors.mjs';
 import { modelRuntimeSetting, reasoningRuntimeSetting } from '../../capabilities.mjs';
 import { AcpSessionRuntime } from './acp-session.mjs';
+import { verifyLocalProviderExecutableVersion } from '../../local-provider-version-check.mjs';
 
 /**
  * Discover provider-authoritative ACP model/config metadata through the same
@@ -24,6 +25,7 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
   const descriptor = options.descriptor ?? localCliDescriptor(id);
   if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Unsupported ACP provider: ${providerID ?? 'unknown'}`);
   const configuration = record(options.configuration);
+  await verifyLocalProviderExecutableVersion(descriptor, configuration);
   const cwd = text(options.cwd) || tmpdir();
   const baselineConfiguration = withoutRuntimeSelections(configuration);
   const baselineCapabilities = await discoverCapabilities(descriptor, baselineConfiguration, cwd);

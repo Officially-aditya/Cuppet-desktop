@@ -4,7 +4,15 @@ import { ProviderControlPlane } from '../src/runtime/providers/control-plane.mjs
 import {
   localProviderVersionCompatibility,
   localProviderVersionPolicy,
+  localProviderVersionLabel,
 } from '../src/runtime/providers/version-policy.mjs';
+
+test('OpenCode version detection ignores launcher banners and ANSI formatting', () => {
+  assert.equal(localProviderVersionLabel('opencode', { stdout: 'Node.js 22.18.0\n\u001b[32mOpenCode 1.18.30\u001b[0m\n' }), 'OpenCode 1.18.30');
+  assert.equal(localProviderVersionLabel('opencode', { stdout: '1.19.0\n', stderr: 'Node.js 22.18.0 warning\n' }), '1.19.0');
+  assert.equal(localProviderVersionLabel('opencode', { stdout: 'development build', stderr: 'Node.js 22.18.0' }), null);
+  assert.equal(localProviderVersionLabel('opencode', { stdout: '1.18.29\n1.18.30\n' }), null);
+});
 
 test('OpenCode production policy matches the authenticated ACP acceptance floor', () => {
   assert.deepEqual(localProviderVersionPolicy('opencode'), { minimumVersion: '1.18.30' });

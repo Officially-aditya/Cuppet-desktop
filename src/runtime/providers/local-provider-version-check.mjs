@@ -3,8 +3,10 @@ import { promisify } from 'node:util';
 import {
   assertLocalProviderVersionSupported,
   localProviderVersionPolicy,
+  localProviderVersionLabel,
 } from './version-policy.mjs';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../local-cli-environment.mjs';
+import { localCliLaunch } from '../local-cli-launch.mjs';
 import { providerFailureError } from './provider-failure.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -16,12 +18,12 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
   const policy = localProviderVersionPolicy(providerID);
   if (!policy) return null;
 
+  const environment = localCliEnvironment({ ...process.env, ...(configuration?.cliEnv ?? {}) });
   const rawCommand = text(configuration?.cliCommand)
-    || text(process.env[descriptor?.envOverride])
+    || text(environment[descriptor?.envOverride])
     || text(descriptor?.command);
   if (!rawCommand) throw new Error(`${text(descriptor?.label) || providerID || 'Provider'} executable is not configured.`);
 
-  const environment = localCliEnvironment(process.env);
   const command = resolveLocalCliExecutable(rawCommand, environment, { environment }) || rawCommand;
 
   const args = Array.isArray(descriptor?.versionArgs) && descriptor.versionArgs.length
@@ -54,7 +56,7 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
     throw error;
   }
 
-  const label = firstLine(result?.stdout || result?.stderr);
+  const label = localProviderVersionLabel(providerID, result);
   return assertLocalProviderVersionSupported(providerID, label, text(descriptor?.label) || providerID);
 }
 
@@ -64,17 +66,14 @@ export async function readExecutableVersion(command, args = ['--version'], { tim
     /\.(cmd|bat)$/i.test(command) ||
     !/\.exe$/i.test(command)
   );
-  return execFileAsync(command, args, {
+  const launch = localCliLaunch(command, args, { shell: useShell });
+  return execFileAsync(launch.command, launch.args, {
     timeout: timeoutMs,
     maxBuffer: MAX_VERSION_OUTPUT_BYTES,
     env,
     windowsHide: true,
-    shell: useShell,
+    shell: launch.shell,
   });
-}
-
-function firstLine(value) {
-  return String(value ?? '').trim().split(/\r?\n/, 1)[0]?.trim() || '';
 }
 
 function text(value) {

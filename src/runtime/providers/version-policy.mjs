@@ -8,6 +8,18 @@ export function localProviderVersionPolicy(providerID) {
   return policy ? { ...policy } : null;
 }
 
+export function localProviderVersionLabel(providerID, result = {}) {
+  const outputs = [result.stdout, result.stderr].map((value) => String(value ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, ''));
+  const lines = outputs.flatMap((value) => value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  if (text(providerID).toLowerCase() !== 'opencode') return lines[0] || null;
+  for (const line of lines) {
+    const named = line.match(/\bopencode\s+(?:version\s*[:=]?\s*)?v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?/i);
+    if (named) return named[0];
+  }
+  const bare = [...new Set(lines.filter((line) => /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(line)))];
+  return bare.length === 1 ? bare[0] : null;
+}
+
 export function localProviderVersionCompatibility(providerID, versionLabel) {
   const policy = localProviderVersionPolicy(providerID);
   if (!policy) {

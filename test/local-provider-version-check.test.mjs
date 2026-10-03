@@ -69,3 +69,11 @@ test('execution preflight wraps ENOENT as PROVIDER_EXECUTABLE_MISSING failure', 
     return true;
   });
 });
+
+test('preflight checks the same CLI environment override that ACP will launch', async () => {
+  let observed;
+  await verifyLocalProviderExecutableVersion(localCliDescriptor('opencode'), { cliEnv: { CUPPET_OPENCODE_BIN: '/custom/opencode' } }, {
+    runVersionImpl: async (command) => { observed = command; return { stdout: 'OpenCode 1.18.30' }; },
+  });
+  assert.equal(observed, '/custom/opencode');
+});

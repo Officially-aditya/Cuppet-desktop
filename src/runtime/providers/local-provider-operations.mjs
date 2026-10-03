@@ -4,13 +4,41 @@ import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
-import { resolveWindowsPowerShell } from '../local-cli-environment.mjs';
+import { resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
+import { localCliLaunch } from '../local-cli-launch.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
 import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
+import { localProviderVersionLabel } from './version-policy.mjs';
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const STATUS_TIMEOUT_MS = 8_000;
 const LINK_STATE_FILE = 'cli-agent-links.json';
+const INSTALLED_CLI_MARKER = '__CUPPET_INSTALLED_CLI__=';
+
+const WINDOWS_OPENCODE_INSTALL = String.raw`
+$ErrorActionPreference='Stop'
+$cli = $null
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+  npm install -g opencode-ai
+  if ($LASTEXITCODE -ne 0) { npm install -g opencode-ai --force }
+  if ($LASTEXITCODE -ne 0) { throw 'OpenCode npm installation failed.' }
+  $prefix = (npm prefix -g | Select-Object -Last 1).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the OpenCode npm installation directory.' }
+  $cli = Join-Path $prefix 'opencode.cmd'
+} elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+  choco upgrade opencode -y
+  if ($LASTEXITCODE -ne 0) { throw 'OpenCode Chocolatey installation failed.' }
+} elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
+  $existing = Get-Command opencode -ErrorAction SilentlyContinue
+  if ($existing) { scoop update opencode } else { scoop install opencode }
+  if ($LASTEXITCODE -ne 0) { throw 'OpenCode Scoop installation failed.' }
+} else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }
+if (-not $cli) { $cli = (Get-Command opencode -CommandType Application -ErrorAction Stop).Source }
+if (-not (Test-Path -LiteralPath $cli)) { throw 'OpenCode installer did not produce a CLI launcher.' }
+& $cli --version
+if ($LASTEXITCODE -ne 0) { throw 'OpenCode was installed but its CLI could not start.' }
+Write-Output "__CUPPET_INSTALLED_CLI__=$cli"
+`;
 
 // Finder-launched macOS apps do not inherit the user's interactive shell PATH.
 extendCliSearchPath();
@@ -39,27 +67,45 @@ export function localProviderOperations(providerID, {
 
   const detect = async () => {
     const rawCommand = command();
-    const resolved = await resolveExecutablePath(rawCommand);
-    const executable = resolved || rawCommand;
     const state = await providerState(userData, descriptor.id);
-    let version = null;
+    let resolved = await resolveExecutablePath(rawCommand);
+    const recordedIdentity = normalizeStoredIdentity(state.executableIdentity);
+    if (!resolved && !process.env[descriptor.envOverride] && state.installedByCuppet && recordedIdentity?.resolvedPath && await executableAt(recordedIdentity.resolvedPath)) {
+      resolved = recordedIdentity.resolvedPath;
+      extendCliSearchPath([dirname(resolved)]);
+    }
+    let executable = resolved || rawCommand;
+    let result;
+    let probeError;
     try {
-      const result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
-      version = firstLine(result.stdout || result.stderr) || null;
-    } catch (error) {
-      const errorMsg = String(error?.message ?? error ?? '');
-      const missing = error?.code === 'ENOENT' || /not found|ENOENT|command not found|is not recognized as an internal or external command/i.test(errorMsg);
+      result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+    } catch (error) { probeError = error; }
+    if (probeError && !resolved && descriptor.id === 'opencode' && platform === 'win32' && !process.env[descriptor.envOverride]) {
+      const npmExecutable = await findOpenCodeNpmExecutable(runImpl);
+      if (npmExecutable) {
+        resolved = executable = npmExecutable;
+        extendCliSearchPath([dirname(executable)]);
+        try {
+          result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+          probeError = null;
+        } catch (error) { probeError = error; }
+      }
+    }
+    const installed = Boolean(result || (resolved && probeError?.code !== 'ENOENT'));
+    const version = result ? localProviderVersionLabel(descriptor.id, result) : null;
+    if (!installed) {
+      const errorMsg = String(probeError?.message ?? probeError ?? '');
+      const missing = probeError?.code === 'ENOENT' || /not found|ENOENT|command not found|is not recognized as an internal or external command/i.test(errorMsg);
       return {
         providerID: descriptor.id,
         label: descriptor.label,
         installed: false,
         installation: normalizeProviderInstallation({ detected: false, executable, source: state.installSource }),
-        error: missing ? null : cleanError(error),
+        error: missing ? null : cleanError(probeError),
       };
     }
 
     const identity = await executableIdentityImpl(executable).catch(() => null);
-    const recordedIdentity = normalizeStoredIdentity(state.executableIdentity);
     const ownershipMatches = state.installedByCuppet === true && executableIdentityMatches(recordedIdentity, identity);
     const spec = installSpec(descriptor.id, platform);
     const resolvedExecutable = identity?.realPath || identity?.resolvedPath || executable;
@@ -68,6 +114,7 @@ export function localProviderOperations(providerID, {
       label: descriptor.label,
       installed: true,
       version,
+      ...(probeError ? { error: cleanError(probeError) } : {}),
       installation: normalizeProviderInstallation({
         detected: true,
         executable: resolvedExecutable,
@@ -115,10 +162,11 @@ export function localProviderOperations(providerID, {
     if (before.installed) return before;
     const spec = installSpec(descriptor.id, platform);
     if (!spec) throw new Error(`Automatic ${descriptor.label} installation is not available on this platform yet.`);
-    await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
+    const installed = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
+    await applyInstallerExecutable(installed);
     extendCliSearchPath();
     const detected = await detect();
-    if (!detected.installed) throw new Error(`${descriptor.label} installation completed but Cuppet still could not find the CLI.`);
+    if (!detected.installed || detected.error) throw new Error(`${descriptor.label} installation could not be verified.${detected.error ? ` ${detected.error}` : ' The installer did not produce a usable CLI.'}`);
     await markInstalled(userData, descriptor.id, {
       source: spec.source,
       installedAt: now(),
@@ -135,10 +183,11 @@ export function localProviderOperations(providerID, {
     }
     const spec = updateSpec(descriptor.id, platform, detected.installation.source);
     if (!spec) throw new Error(`Automatic ${descriptor.label} updates are not available for this installation source.`);
-    await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
+    const updated = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
+    await applyInstallerExecutable(updated);
     extendCliSearchPath();
     const after = await detect();
-    if (!after.installed) throw new Error(`${descriptor.label} update completed but the CLI could no longer be found.`);
+    if (!after.installed || after.error) throw new Error(`${descriptor.label} update could not be verified.${after.error ? ` ${after.error}` : ' The CLI could not be found.'}`);
     await markInstalled(userData, descriptor.id, {
       source: detected.installation.source,
       installedAt: now(),
@@ -237,7 +286,7 @@ export function installSpec(providerID, platform = process.platform) {
       'mistral-vibe': { source: 'managed', script: "$ErrorActionPreference='Stop'; if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { irm https://astral.sh/uv/install.ps1 | iex }; $uv=(Get-Command uv -ErrorAction SilentlyContinue).Source; if (-not $uv) { $uv=Join-Path $env:USERPROFILE '.local\\bin\\uv.exe' }; & $uv tool install mistral-vibe" },
       kiro: { source: 'managed', script: "irm 'https://cli.kiro.dev/install.ps1' | iex" },
       antigravity: { source: 'managed', script: 'irm https://antigravity.google/cli/install.ps1 | iex' },
-      opencode: { source: 'managed', script: "$ErrorActionPreference='Stop'; $npmDir = if ($env:APPDATA) { Join-Path $env:APPDATA 'npm' } else { '' }; if ($npmDir -and (Test-Path (Join-Path $npmDir 'opencode.cmd'))) { exit 0 }; if (Get-Command opencode -ErrorAction SilentlyContinue) { exit 0 }; if ($npmDir -and (Test-Path $npmDir) -and -not ($env:PATH -split ';' -contains $npmDir)) { $env:PATH = \"$npmDir;$env:PATH\" }; if (Get-Command npm -ErrorAction SilentlyContinue) { npm install -g opencode-ai; if ($LASTEXITCODE -ne 0) { if ($npmDir -and (Test-Path (Join-Path $npmDir 'opencode.cmd'))) { exit 0 }; npm install -g opencode-ai --force } } elseif (Get-Command choco -ErrorAction SilentlyContinue) { choco install opencode -y } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { scoop install opencode } else { throw 'OpenCode automatic install needs npm, Chocolatey, or Scoop on Windows.' }" },
+      opencode: { source: 'managed', script: WINDOWS_OPENCODE_INSTALL },
     };
     const spec = specs[id];
     const powerShellCmd = resolveWindowsPowerShell(platform);
@@ -338,7 +387,7 @@ async function patchProviderState(userData, providerID, patch) {
   await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
 }
 
-function extendCliSearchPath() {
+function extendCliSearchPath(additional = []) {
   const home = homedir();
   const existing = String(process.env.PATH ?? process.env.Path ?? '').split(delimiter).filter(Boolean);
   const candidates = [
@@ -378,7 +427,7 @@ function extendCliSearchPath() {
     );
   }
   const seen = new Set();
-  const nextPath = [...existing, ...candidates.filter(Boolean)].filter((entry) => {
+  const nextPath = [...additional, ...existing, ...candidates.filter(Boolean)].filter((entry) => {
     if (seen.has(entry)) return false;
     seen.add(entry);
     return true;
@@ -404,24 +453,27 @@ async function executableIdentity(command) {
 }
 
 async function resolveExecutablePath(command) {
-  const value = String(command ?? '').trim();
-  if (!value) return null;
-  if (value.includes('/') || value.includes('\\')) {
-    return executableAt(value) ? value : null;
-  }
-  const pathEntries = String(process.env.PATH ?? process.env.Path ?? process.env.path ?? '').split(delimiter).filter(Boolean);
-  const extensions = process.platform === 'win32'
-    ? String(process.env.PATHEXT || process.env.Pathext || process.env.pathext || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
-    : [''];
-  for (const directory of pathEntries) {
-    for (const extension of extensions) {
-      const candidate = process.platform === 'win32'
-        ? win32Path.join(directory, !value.toLowerCase().endsWith(extension.toLowerCase()) ? `${value}${extension}` : value)
-        : join(directory, `${value}${extension}`);
-      if (await executableAt(candidate)) return candidate;
+  const resolved = resolveLocalCliExecutable(command);
+  return resolved && await executableAt(resolved) ? resolved : null;
+}
+
+async function findOpenCodeNpmExecutable(runImpl) {
+  try {
+    const result = await runImpl('npm', ['prefix', '-g'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+    const prefix = String(result.stdout ?? '').trim().split(/\r?\n/).at(-1)?.trim();
+    if (!prefix || !win32Path.isAbsolute(prefix)) return null;
+    for (const name of ['opencode.cmd', 'opencode.exe']) {
+      const path = win32Path.join(prefix, name);
+      if (await executableAt(path)) return path;
     }
-  }
+  } catch {}
   return null;
+}
+
+async function applyInstallerExecutable(result) {
+  const line = String(result?.stdout ?? '').split(/\r?\n/).map((value) => value.trim()).find((value) => value.startsWith(INSTALLED_CLI_MARKER));
+  const path = line?.slice(INSTALLED_CLI_MARKER.length);
+  if (path && await executableAt(path)) extendCliSearchPath([dirname(path)]);
 }
 
 async function executableAt(path) {
@@ -478,10 +530,11 @@ function run(command, args, timeoutMs, options = {}) {
             /\.(cmd|bat)$/i.test(executable) ||
             (!/\.exe$/i.test(executable) && !executable.toLowerCase().includes('powershell'))
           ));
-      child = spawn(executable, args, {
+      const launch = localCliLaunch(executable, args, { shell: useShell });
+      child = spawn(launch.command, launch.args, {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: useShell,
+        shell: launch.shell,
         env: { ...process.env, ...(options.env ?? {}) },
       });
     } catch (error) { rejectRun(error); return; }
@@ -512,5 +565,4 @@ function siblingCommand(command, sibling) {
 }
 async function exists(path) { try { await access(path, fsConstants.F_OK); return true; } catch { return false; } }
 async function nonEmpty(path) { try { return (await readFile(path, 'utf8')).trim().length > 0; } catch { return false; } }
-function firstLine(value) { return String(value ?? '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? ''; }
 function cleanError(error) { return String(error instanceof Error ? error.message : error ?? '').replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }

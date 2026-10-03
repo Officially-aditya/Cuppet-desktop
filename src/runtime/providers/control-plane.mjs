@@ -100,6 +100,10 @@ export class ProviderControlPlane {
 
     if (localProviderVersionPolicy(providerID)) {
       const detected = withVersionCompatibility(providerID, await this.#operations(providerID).detect());
+      if (detected.installed !== true) {
+        this.#capabilityState.delete(providerID);
+        return unavailable(providerID, 'acp', detected.error || 'Connect OpenCode to install and verify its CLI before selecting a model.');
+      }
       if (detected.installed === true && versionBlocked(detected)) {
         assertLocalProviderVersionSupported(
           providerID,
@@ -215,7 +219,7 @@ function incompatibleLocalState(state = {}) {
       state.version || state.installation?.version,
       state.label || state.providerID,
       { managed },
-    ),
+    ) + (state.error ? ` ${cleanError(state.error)}` : ''),
   };
 }
 

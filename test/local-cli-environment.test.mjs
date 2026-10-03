@@ -147,6 +147,7 @@ test('local CLI resolver resolves Windows .cmd batch scripts from PATH', async (
   const cmdFile = join(root, 'opencode.cmd');
   try {
     await writeFile(cmdFile, '@echo off\r\necho 1.0.0\r\n');
+    await writeFile(join(root, 'opencode'), '#!/bin/sh\necho 1.0.0\n');
     const environment = {
       PATH: root,
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
@@ -170,4 +171,3 @@ test('Windows local CLI environment handles camelCase AppData and Roaming npm fa
   const entries = result.PATH.split(';');
   assert.ok(entries.includes('C:\\Users\\test\\AppData\\Roaming\\npm'));
 });
-

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { providerFailureError } from '../../provider-failure.mjs';
+import { localCliLaunch } from '../../../local-cli-launch.mjs';
 
 export class AcpProcess {
   #child;
@@ -18,12 +19,13 @@ export class AcpProcess {
     this.label = label;
     this.command = command;
     try {
-      this.#child = spawn(command, args, {
+      const launch = localCliLaunch(command, args);
+      this.#child = spawn(launch.command, launch.args, {
         cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: process.platform === 'win32',
+        shell: launch.shell,
       });
     } catch (error) {
       this.#state = 'crashed';

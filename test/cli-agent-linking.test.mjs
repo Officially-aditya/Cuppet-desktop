@@ -166,7 +166,10 @@ test('discovered external installs never inherit update authority', async () => 
   assert.ok(!calls.some(([command]) => command === '/bin/bash'));
 });
 
-test('Windows provider detection handles "not recognized" cmd errors as uninstalled without error', async () => {
+test('Windows provider detection handles "not recognized" cmd errors as uninstalled without error', async (t) => {
+  const previous = process.env.CUPPET_OPENCODE_BIN;
+  process.env.CUPPET_OPENCODE_BIN = join(tmpdir(), `missing-opencode-${process.pid}.cmd`);
+  t.after(() => { if (previous === undefined) delete process.env.CUPPET_OPENCODE_BIN; else process.env.CUPPET_OPENCODE_BIN = previous; });
   const runImpl = async () => {
     throw new Error("'opencode' is not recognized as an internal or external command,\r\noperable program or batch file.");
   };
