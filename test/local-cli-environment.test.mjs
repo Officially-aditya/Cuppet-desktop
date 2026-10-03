@@ -144,7 +144,7 @@ test('resolveWindowsPowerShell resolves absolute path when present or falls back
 
 test('local CLI resolver resolves Windows .cmd batch scripts from PATH', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-win-bin-'));
-  const cmdFile = join(root, 'opencode.cmd');
+  const cmdFile = join(root, 'opencode.CMD');
   try {
     await writeFile(cmdFile, '@echo off\r\necho 1.0.0\r\n');
     await writeFile(join(root, 'opencode'), '#!/bin/sh\necho 1.0.0\n');
