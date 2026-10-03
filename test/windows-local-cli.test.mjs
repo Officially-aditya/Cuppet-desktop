@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,7 @@ test('Windows OpenCode setup and ACP support npm shims and native paths with spa
     const operations = localProviderOperations('opencode', { userData: join(root, 'state') });
     const detected = await operations.detect();
     assert.equal(detected.installed, true);
-    assert.equal(detected.installation.executable.toLowerCase(), command.toLowerCase());
+    assert.equal(detected.installation.executable.toLowerCase(), (await realpath(command)).toLowerCase());
     assert.equal(detected.installation.ownedByCuppet, false);
     const connected = await operations.connect();
     assert.equal(connected.available, true);
@@ -95,7 +95,7 @@ test('Windows installer verifies a new CLI and repairs managed versions without 
     const status = await plane.localConnect('opencode');
     assert.equal(status.control.overall, 'ready');
     assert.equal(status.installation.ownedByCuppet, true);
-    assert.equal(status.installation.executable.toLowerCase(), command.toLowerCase());
+    assert.equal(status.installation.executable.toLowerCase(), (await realpath(command)).toLowerCase());
   });
   await t.test('an old managed OpenCode installation is actually upgraded', async () => {
     await writeFile(command, launcher('1.18.29'));
