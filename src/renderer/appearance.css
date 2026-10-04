@@ -55,8 +55,7 @@
 :root[data-theme="light"] :is(
   .settings-hub-sidebar,.usage-stat,.settings-status-pill,.settings-value,.control-pill,.provider-pill,.platform-model-section,
   .composer,.react-composer,.composer-attachment,.message-trace-reasoning,.message-reasoning-content,
-  .diff-modal-header,.diff-files-sidebar,.diff-file-header,.diff-view-mode-toggle,.diff-stats-badge,
-  .diff-line-gutter,.diff-split-num,.diff-split-header-row,.diff-split-hunk-row,.diff-line.hunk,.diff-split-cell.empty,
+  .diff-modal-header,.diff-files-sidebar,.diff-file-header,
   .project-terminal,.project-terminal-body,.project-terminal-bar,.project-terminal-xterm-container,
   .memory-sidebar-header,.memory-node-inspector,.search-input-wrap,.question-inline-input,
   .question-step-dot,.question-inline-badge,.question-inline-step-pill,.thread-tool-detail,
@@ -72,7 +71,7 @@
   h1,h2,h3,h4,h5,h6,strong,label,button,input,textarea,select,
   .brand-title,.brand-subtitle,.project-button,.session-item,.nav-button,.sidebar-delete-title,.sidebar-delete-name,
   .message-content,.message-role,.message-cuppet-toggle,.message-worked-time,.thread-tool-detail-value,
-  .project-header-name,.project-branch-name,.diff-modal-title,.diff-file-name,.diff-line-text,.diff-split-code,.diff-empty-state,.turn-diff-label,
+  .project-header-name,.project-branch-name,.diff-modal-title,.diff-file-name,.diff-line-text,.diff-empty-state,.turn-diff-label,
   .composer-attachment,.settings-value,.cuppet-select,.cuppet-select-option,.model-picker-effort-option,
   .command-name,.command-description,.search-result-title,.search-result-snippet,.repo-result,
   .permission-inline-copy,.question-inline-title,.question-choice,.question-inline-input,
@@ -99,7 +98,7 @@
 
 :root[data-theme="light"] :is(
   .settings-hub-nav button.active,.session-item.active,.project-row.active,.mode-inline-button.active,.model-picker.open .model-picker-trigger,
-  .shell-panel-button.active,.project-header-button.active,.project-branch-badge.active,.diff-toggle-btn.active,
+  .shell-panel-button.active,.project-header-button.active,.project-branch-badge.active,
   .diff-file-item.active,.cuppet-select-option.selected,.model-picker-option.selected,.command-option.selected,.composer-mode-option.selected,
   .question-choice.selected,.search-result.selected
 ){background:#dde7f5!important;color:var(--text-main)!important;border-color:#b8cbe8!important;box-shadow:none}
@@ -108,14 +107,14 @@
   .nav-button,.project-button,.session-item,.ghost-button,.settings-hub-nav button,.shell-panel-button,
   .project-header-button,.project-branch-badge,.composer-attach-button,.mode-inline-button,.message-copy-button,.model-picker-trigger,
   .message-cuppet-toggle,.cuppet-select-option,.model-picker-option,.model-picker-effort-option,.model-picker-back,
-  .diff-action-button,.diff-toggle-btn,.diff-file-item,.nav-context-menu button,.command-option,.composer-mode-option,
+  .diff-action-button,.diff-file-item,.nav-context-menu button,.command-option,.composer-mode-option,
   .project-new-chat-button,.project-menu-button,.session-menu-button,.repo-result,.question-choice,.permission-inline-button,.settings-close-button
 ):hover:not(:disabled){background:#e4ebf5!important;color:var(--text-main)!important;box-shadow:none}
 
 :root[data-theme="light"] :is(.primary-button,.send-button){background:#253b58!important;color:#ffffff!important;box-shadow:0 2px 5px rgba(37,59,88,.15)}
 :root[data-theme="light"] :is(.primary-button,.send-button):hover{background:#324e73!important}
 :root[data-theme="light"] :is(.sidebar-danger-button,.stop-button){background:#b42318!important;color:#ffffff!important;border-color:#b42318!important}
-:root[data-theme="light"] :is(.sidebar-cancel-button,.diff-action-button,.diff-toggle-btn){background:#e9eef5!important;color:var(--text-main)!important;border-color:var(--line)!important}
+:root[data-theme="light"] :is(.sidebar-cancel-button,.diff-action-button){background:#e9eef5!important;color:var(--text-main)!important;border-color:var(--line)!important}
 
 /* Code, diffs, and semantic status colors. */
 :root[data-theme="light"] .message.assistant .message-content.markdown-rendered pre,
@@ -123,11 +122,9 @@
 :root[data-theme="light"] .message.assistant .message-content.markdown-rendered blockquote{background:#edf3fb;color:var(--text-dim)!important;border-left-color:#80a5db!important}
 :root[data-theme="light"] .message.assistant .message-content.markdown-rendered a{color:#225bb5!important;text-decoration-color:#80a5db}
 :root[data-theme="light"] :is(.message.assistant .message-content.markdown-rendered table,.message.assistant .message-content.markdown-rendered th,.message.assistant .message-content.markdown-rendered td){border-color:var(--line)!important;background:transparent;color:var(--text-main)}
-:root[data-theme="light"] :is(.diff-content-pane,.diff-lines-container,.diff-split-lines,.diff-line,.diff-empty-state){background:#ffffff;color:var(--text-main)}
-:root[data-theme="light"] :is(.diff-line.add,.diff-line.addition,.diff-line.added){background:#e9f7ee}
-:root[data-theme="light"] :is(.diff-line.del,.diff-line.deletion,.diff-line.removed){background:#fceceb}
-:root[data-theme="light"] :is(.diff-stat-add,.diff-line.add .diff-line-sign,.diff-split-cell.add .diff-split-sign,.thread-tool-row.complete,.thread-tool-row.complete .thread-tool-summary){color:#18723b!important}
-:root[data-theme="light"] :is(.diff-stat-del,.diff-line.del .diff-line-sign,.diff-split-cell.del .diff-split-sign,.message-status.error,.thread-tool-row.error,.thread-tool-row.error .thread-tool-summary,.sidebar-delete-error,.nav-context-menu button.danger){color:#b42318!important}
+:root[data-theme="light"] :is(.diff-content-pane,.diff-lines-container,.diff-empty-state){background:#ffffff;color:var(--text-main)}
+:root[data-theme="light"] :is(.diff-stat-add,.diff-line.add .diff-line-sign,.thread-tool-row.complete,.thread-tool-row.complete .thread-tool-summary){color:#18723b!important}
+:root[data-theme="light"] :is(.diff-stat-del,.diff-line.del .diff-line-sign,.message-status.error,.thread-tool-row.error,.thread-tool-row.error .thread-tool-summary,.sidebar-delete-error,.nav-context-menu button.danger){color:#b42318!important}
 :root[data-theme="light"] :is(.thread-tool-row.running,.thread-tool-row.running .thread-tool-summary){color:#225bb5!important}
 :root[data-theme="light"] .session-unread-marker{background:#2563eb}
 :root[data-theme="light"] :is(.settings-row,.settings-toggle-row,.settings-hub-header,.usage-model-row,.usage-model-list,.diff-modal-header,.diff-file-header,.permission-inline-footer,.question-inline-footer){border-color:var(--line)!important}
