@@ -1064,20 +1064,9 @@ function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?
           {showCodeBlock && (
             <div className="thread-tool-code-block">
               {rawDiff ? (
-                item.details?.split('\n').map((line, i) => {
-                  const color = line.startsWith('+') && !line.startsWith('+++')
-                    ? '#3fb950'
-                    : line.startsWith('-') && !line.startsWith('---')
-                      ? '#f85149'
-                      : line.startsWith('@@')
-                        ? '#8b949e'
-                        : undefined;
-                  return (
-                    <div key={i} style={color ? { color } : undefined}>
-                      {line}
-                    </div>
-                  );
-                })
+                item.details?.split('\n').map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))
               ) : (
                 item.details
               )}

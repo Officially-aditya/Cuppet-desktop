@@ -123,9 +123,12 @@
 :root[data-theme="light"] .message.assistant .message-content.markdown-rendered a{color:#225bb5!important;text-decoration-color:#80a5db}
 :root[data-theme="light"] :is(.message.assistant .message-content.markdown-rendered table,.message.assistant .message-content.markdown-rendered th,.message.assistant .message-content.markdown-rendered td){border-color:var(--line)!important;background:transparent;color:var(--text-main)}
 :root[data-theme="light"] :is(.diff-content-pane,.diff-lines-container,.diff-empty-state){background:#ffffff;color:var(--text-main)}
-:root[data-theme="light"] :is(.diff-stat-add,.diff-line.add .diff-line-sign,.thread-tool-row.complete,.thread-tool-row.complete .thread-tool-summary){color:#18723b!important}
-:root[data-theme="light"] :is(.diff-stat-del,.diff-line.del .diff-line-sign,.message-status.error,.thread-tool-row.error,.thread-tool-row.error .thread-tool-summary,.sidebar-delete-error,.nav-context-menu button.danger){color:#b42318!important}
-:root[data-theme="light"] :is(.thread-tool-row.running,.thread-tool-row.running .thread-tool-summary){color:#225bb5!important}
+:root[data-theme="light"] :is(.diff-stat-add,.diff-line.add .diff-line-sign){color:#18723b!important}
+:root[data-theme="light"] :is(.diff-stat-del,.diff-line.del .diff-line-sign,.message-status.error,.sidebar-delete-error,.nav-context-menu button.danger){color:#b42318!important}
+:root[data-theme="light"] :is(.thread-tool-row,.thread-tool-summary,.thread-tool-detail-value){color:#404040!important}
+:root[data-theme="light"] :is(.thread-tool-detail,.thread-tool-detail-key,.thread-tool-code-block){color:#737373!important}
+:root[data-theme="light"] .thread-tool-detail{border-left-color:#d4d4d4!important}
+:root[data-theme="light"] .thread-tool-result-line.error :is(.thread-tool-detail-key,.thread-tool-detail-value){color:#262626!important}
 :root[data-theme="light"] .session-unread-marker{background:#2563eb}
 :root[data-theme="light"] :is(.settings-row,.settings-toggle-row,.settings-hub-header,.usage-model-row,.usage-model-list,.diff-modal-header,.diff-file-header,.permission-inline-footer,.question-inline-footer){border-color:var(--line)!important}
 :root[data-theme="light"] :is(.messages,.project-list,.cuppet-select-menu){scrollbar-color:#b8c6d7 transparent}
