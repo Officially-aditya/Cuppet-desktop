@@ -158,13 +158,17 @@ export function ChatPane({
       node.scrollTop = node.scrollHeight;
       shouldAutoScrollRef.current = true;
     }
+    let lastScrollTop = node.scrollTop;
     const onScroll = () => {
       const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
-      if (distance < 60) {
+      if (node.scrollTop < lastScrollTop) {
+        shouldAutoScrollRef.current = false;
+      } else if (distance < 60) {
         shouldAutoScrollRef.current = true;
       } else if (distance > 120) {
         shouldAutoScrollRef.current = false;
       }
+      lastScrollTop = node.scrollTop;
       localStorage.setItem(key, String(Math.max(0, Math.round(node.scrollTop))));
     };
     node.addEventListener('scroll', onScroll, { passive: true });
@@ -175,7 +179,10 @@ export function ChatPane({
     const node = messagesRef.current;
     if (!node) return;
     if (shouldAutoScrollRef.current) {
-      requestAnimationFrame(() => { node.scrollTop = node.scrollHeight; });
+      const frame = requestAnimationFrame(() => {
+        if (shouldAutoScrollRef.current) node.scrollTop = node.scrollHeight;
+      });
+      return () => cancelAnimationFrame(frame);
     }
   }, [session?.messages, transcript, running]);
 
