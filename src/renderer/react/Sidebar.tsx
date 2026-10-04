@@ -41,10 +41,8 @@ export function Sidebar(props: Props) {
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   const collapsed = props.collapsed ?? uncontrolledCollapsed;
-  const [hoverExpanded, setHoverExpanded] = useState(false);
   const setCollapsed = (value: boolean | ((current: boolean) => boolean)) => {
     const next = typeof value === 'function' ? value(props.collapsed ?? uncontrolledCollapsed) : value;
-    setHoverExpanded(false);
     if (props.onCollapsedChange) props.onCollapsedChange(next);
     else setUncontrolledCollapsed(next);
   };
@@ -59,11 +57,7 @@ export function Sidebar(props: Props) {
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());
   const dragging = useRef(false);
   const isMac = window.cuppet.native.platform === 'darwin';
-  const sidebarCollapsed = collapsed && !hoverExpanded && !menu && !renameSession;
-
-  useEffect(() => {
-    setHoverExpanded(false);
-  }, [collapsed]);
+  const sidebarCollapsed = collapsed;
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -229,7 +223,6 @@ export function Sidebar(props: Props) {
 
   const beginDeleteSession = (session: Session) => {
     handleSessionHoverEnd();
-    setHoverExpanded(false);
     setMenu(null);
     setDeleteSession(session);
     setDeleteError('');
@@ -262,15 +255,7 @@ export function Sidebar(props: Props) {
     <aside
       className={`sidebar react-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}
       style={{ width: sidebarWidth, minWidth: sidebarWidth }}
-      onPointerEnter={(event) => {
-        if (collapsed && !deleteSession && event.pointerType !== 'touch' && event.currentTarget.contains(event.target as Node)) {
-          setHoverExpanded(true);
-        }
-      }}
-      onPointerLeave={() => {
-        setHoverExpanded(false);
-        handleSessionHoverEnd();
-      }}
+      onPointerLeave={handleSessionHoverEnd}
     >
       <button
         type="button"
