@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Attachment, CommandDefinition, CommandResult, Project, QueuedTurn, QuestionRequest, Session } from '../types';
+import type { Attachment, CommandDefinition, CommandResult, PermissionRequest, Project, QueuedTurn, QuestionRequest, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { ProjectTerminal } from './ProjectTerminal';
 import { DiffViewerModal, type DiffFile, CopyIcon, CheckIcon } from './DiffViewerModal';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { QuestionInline } from './QuestionModal';
+import { PermissionModal } from './PermissionModal';
 import { renderMarkdown } from './markdown';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -60,6 +61,8 @@ type Props = {
   onModeChange: (mode: ComposerMode) => void | Promise<void>;
   question?: QuestionRequest | null;
   onAnswerQuestion?: (answers: string[][] | null) => void | Promise<void>;
+  permission?: PermissionRequest | null;
+  onResolvePermission?: (reply: 'once' | 'always' | 'reject', enableAuto?: boolean) => void | Promise<void>;
 };
 
 export function ChatPane({
@@ -81,6 +84,8 @@ export function ChatPane({
   onModeChange,
   question,
   onAnswerQuestion,
+  permission,
+  onResolvePermission,
 }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -594,6 +599,7 @@ function imageMimeFromName(name: string): string | null {
       </section>
 
       <footer className="composer-wrap react-composer-wrap">
+        {permission && onResolvePermission && <PermissionModal key={permission.id} request={permission} onResolve={onResolvePermission} />}
         {question && (
           <div className="question-messages-container" aria-label="Questions from Cuppet">
             <QuestionInline request={question} onAnswer={onAnswerQuestion || (() => {})} />

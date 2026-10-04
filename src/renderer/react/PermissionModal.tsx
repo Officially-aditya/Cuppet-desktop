@@ -1,45 +1,10 @@
-import { useLayoutEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import type { PermissionRequest } from '../types';
-
-type Anchor = { left: number; width: number; bottom: number };
 
 export function PermissionModal({ request, onResolve }: { request: PermissionRequest; onResolve: (reply: 'once' | 'always' | 'reject', enableAuto?: boolean) => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
   const resources = request.resources ?? [];
   const resourceSummary = useMemo(() => summarizeResources(resources), [resources]);
-
-  useLayoutEffect(() => {
-    const composer = document.querySelector<HTMLElement>('.react-composer');
-    const mainPane = document.querySelector<HTMLElement>('.react-main-pane');
-    if (!composer) return;
-
-    let frame = 0;
-    const measure = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const rect = composer.getBoundingClientRect();
-        setAnchor({
-          left: Math.round(rect.left),
-          width: Math.round(rect.width),
-          bottom: Math.max(8, Math.round(window.innerHeight - rect.top + 8)),
-        });
-      });
-    };
-
-    const resize = new ResizeObserver(measure);
-    resize.observe(composer);
-    if (mainPane) resize.observe(mainPane);
-    window.addEventListener('resize', measure);
-    measure();
-
-    return () => {
-      cancelAnimationFrame(frame);
-      resize.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, []);
 
   const run = async (reply: 'once' | 'always' | 'reject', enableAuto = false) => {
     setBusy(true);
@@ -47,14 +12,9 @@ export function PermissionModal({ request, onResolve }: { request: PermissionReq
     finally { setBusy(false); }
   };
 
-  const style: CSSProperties | undefined = anchor
-    ? { left: anchor.left, width: anchor.width, bottom: anchor.bottom }
-    : undefined;
-
   return (
     <section
-      className={`permission-inline${anchor ? ' anchored' : ''}`}
-      style={style}
+      className="permission-inline"
       role="alert"
       aria-labelledby="permission-title"
     >
