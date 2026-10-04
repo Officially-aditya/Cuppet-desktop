@@ -7,10 +7,10 @@
    -------------------------------------------------------------------------- */
 :root {
   --bg-deep-obsidian: #0e1116;
-  --bg-main-radial: radial-gradient(ellipse 90% 70% at 50% 0%, #151922 0%, #0e1116 55%, #0b0d11 100%);
+  --bg-main-surface: #1e1e1e;
   --sidebar-glass-bg: rgba(16, 20, 26, 0.65);
   --sidebar-glass-collapsed: rgba(14, 18, 24, 0.75);
-  --header-glass-bg: rgba(14, 18, 24, 0.72);
+  --header-glass-bg: rgba(30, 30, 30, 0.78);
   --glass-border: rgba(255, 255, 255, 0.075);
   --glass-border-subtle: rgba(255, 255, 255, 0.05);
   --glass-pill-hover: rgba(255, 255, 255, 0.07);
@@ -279,11 +279,11 @@ html, body {
 }
 
 /* --------------------------------------------------------------------------
-   3. Eye-Friendly Variant of Black in Main Agent Thread
+   3. Neutral macOS Content Surface in Main Agent Thread
    -------------------------------------------------------------------------- */
 .main-pane,
 .react-main-pane {
-  background: var(--bg-main-radial) !important;
+  background: var(--bg-main-surface) !important;
   color: var(--text-main);
   min-height: 0;
 }
@@ -369,7 +369,7 @@ html, body {
 
 /* Code Blocks in Thread */
 .message.assistant .message-content.markdown-rendered pre {
-  background: #11141a !important;
+  background: #181818 !important;
   border: 1px solid rgba(255, 255, 255, 0.075) !important;
   border-radius: 10px;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -474,7 +474,7 @@ html, body {
 }
 
 .message-trace-reasoning {
-  background: rgba(16, 20, 27, 0.7);
+  background: rgba(38, 38, 38, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.065);
   border-radius: 9px;
   padding: 10px 13px;
@@ -491,7 +491,7 @@ html, body {
 
 .composer,
 .react-composer {
-  background: rgba(18, 22, 29, 0.82) !important;
+  background: rgba(44, 44, 44, 0.88) !important;
   border: 1px solid rgba(255, 255, 255, 0.095) !important;
   border-radius: 16px !important;
   padding: 11px 13px !important;
