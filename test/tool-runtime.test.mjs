@@ -138,6 +138,65 @@ test('identical TST exploration calls are cached per session and do not repeat d
   } finally { broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('long turns keep executing tools beyond 64 calls through dynamic and returned tool bridges', async (t) => {
+  for (const dynamic of [true, false]) {
+    await t.test(dynamic ? 'dynamic tools' : 'returned tool calls', async () => {
+      const { dir, root, db, broker, toolRuntime } = await fixture();
+      try {
+        const call = (index) => ({ id: `long_${index}`, name: 'cuppet_plan', arguments: '{}' });
+        let index = 0;
+        const adapter = {
+          async stream(messages, { executeTool }) {
+            if (dynamic) {
+              for (; index < 80; index++) {
+                const result = await executeTool(call(index));
+                assert.equal(result.success, true);
+              }
+            } else if (index < 80) {
+              if (index > 0) assert.equal(messages.at(-1).role, 'tool');
+              return { text: '', toolCalls: [call(index++)] };
+            }
+            return { text: 'done', toolCalls: [] };
+          },
+        };
+        const result = await toolRuntime.run({
+          adapter, messages: [], sessionId: 's1', projectId: 'p1', projectRoot: root,
+          signal: new AbortController().signal, onDelta: async () => {},
+        });
+        assert.equal(result.toolSteps, 80);
+        assert.equal(db.listToolExecutions('s1').length, 80);
+        assert.ok(db.listToolExecutions('s1').every((execution) => execution.status === 'complete'));
+      } finally {
+        await toolRuntime.close();
+        broker.close(); db.close(); await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('long returned-tool turns still stop when the user aborts', async () => {
+  const { dir, root, db, broker, toolRuntime } = await fixture();
+  const controller = new AbortController();
+  let calls = 0;
+  try {
+    const adapter = {
+      async stream() {
+        calls += 1;
+        if (calls === 80) controller.abort();
+        return { text: '', toolCalls: [{ id: `abort_${calls}`, name: 'cuppet_plan', arguments: '{}' }] };
+      },
+    };
+    await assert.rejects(toolRuntime.run({
+      adapter, messages: [], sessionId: 's1', projectId: 'p1', projectRoot: root,
+      signal: controller.signal, onDelta: async () => {},
+    }), (error) => error?.name === 'AbortError');
+    assert.equal(calls, 80);
+  } finally {
+    await toolRuntime.close();
+    broker.close(); db.close(); await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('runShell returns after the parent exits even when a background descendant keeps stdio open', { skip: process.platform === 'win32' }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-shell-inherited-stdio-'));
   let orphanPid = null;

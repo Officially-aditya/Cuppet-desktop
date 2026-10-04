@@ -10,7 +10,6 @@ import { sanitizeEnvironment } from './sandbox/env-sanitizer.mjs';
 import { buildMacSeatbeltProfile } from './sandbox/mac-seatbelt-driver.mjs';
 import { OperationBroker } from './sandbox/operation-broker.mjs';
 
-const MAX_TOOL_STEPS = 64;
 const MAX_TOOL_OUTPUT = 128 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_GRAPH_CACHE_SESSIONS = 128;
@@ -67,8 +66,8 @@ export class ToolRuntime {
     let usage = null;
 
     const executeTool = async (call) => {
+      if (signal?.aborted) throw abortError();
       toolSteps += 1;
-      if (toolSteps > MAX_TOOL_STEPS) throw new Error(`Tool step limit exceeded (${MAX_TOOL_STEPS}).`);
       const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal });
       const result = typeof this.#tst?.runWithProject === 'function'
         ? await this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, operation)
