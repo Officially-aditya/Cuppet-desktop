@@ -1,9 +1,13 @@
+import { normalizeAttachments } from './pe3/router.mjs';
+
 const SECRET_KEY = /(?:api.?key|secret|token|password|authorization|cookie|credential)/i;
 
 export function queueSafeSendParams(params = {}) {
   const source = record(params);
   return {
     ...sanitizeValue(source),
+    // Image payloads have their own validation and must not use the generic text limit.
+    ...(Array.isArray(source.attachments) ? { attachments: normalizeAttachments(source.attachments) } : {}),
     provider: sanitizeProvider(source.provider),
   };
 }

@@ -55,6 +55,30 @@ test('queued send fails closed when provider execution identity changed while wa
   );
 });
 
+test('queued images survive serialization and dispatch without truncation', () => {
+  const dataUrl = 'data:image/png;base64,' + 'AQID'.repeat(75_000);
+  const safe = queueSafeSendParams({
+    sessionId: 's1', text: 'inspect this screenshot', provider: provider('old-secret'),
+    attachments: [{ name: 'screenshot.png', mime: 'image/png', dataUrl, apiKey: 'attachment-secret' }],
+  });
+  const hydrated = rehydrateQueuedSendParams(JSON.parse(JSON.stringify(safe)), provider('new-secret'));
+  assert.equal(hydrated.attachments[0].dataUrl, dataUrl);
+  assert.equal(containsPersistedCredential(safe), false);
+  assert.equal(safe.attachments[0].apiKey, undefined);
+});
+
+test('queued images still reject invalid and oversized image data', () => {
+  const safe = queueSafeSendParams({
+    attachments: [
+      { name: 'invalid.png', dataUrl: 'javascript:alert(1)' },
+      { name: 'huge.png', dataUrl: 'data:image/png;base64,' + 'A'.repeat(20 * 1024 * 1024) },
+    ],
+  });
+  assert.equal(safe.attachments.length, 2);
+  assert.equal(safe.attachments[0].dataUrl, undefined);
+  assert.equal(safe.attachments[1].dataUrl, undefined);
+});
+
 function provider(apiKey) {
   return {
     providerID: 'openai',

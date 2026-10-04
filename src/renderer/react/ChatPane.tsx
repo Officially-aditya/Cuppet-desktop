@@ -94,6 +94,65 @@ export function ChatPane({
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const historyRef = useRef<{ messageId: string; draft: { text: string; attachments: Attachment[] } } | null>(null);
+  const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const updateSelection = () => {
+      const selection = window.getSelection();
+      const pane = paneRef.current;
+      if (!selection || selection.isCollapsed || !selection.rangeCount || !pane ||
+          !selection.anchorNode || !selection.focusNode ||
+          !pane.contains(selection.anchorNode) || !pane.contains(selection.focusNode)) {
+        setSelectionMenu(null);
+        return;
+      }
+      const text = selection.toString().trim();
+      if (!text) {
+        setSelectionMenu(null);
+        return;
+      }
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      setSelectionMenu({
+        text,
+        x: Math.max(8, Math.min(rect.left, window.innerWidth - 196)),
+        y: rect.bottom + 48 > window.innerHeight ? Math.max(8, rect.top - 44) : rect.bottom + 8,
+      });
+    };
+    const dismiss = () => setSelectionMenu(null);
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('.chat-selection-menu')) dismiss();
+    };
+    const onEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(); };
+    document.addEventListener('selectionchange', updateSelection);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onEscape);
+    document.addEventListener('scroll', dismiss, true);
+    window.addEventListener('resize', dismiss);
+    return () => {
+      document.removeEventListener('selectionchange', updateSelection);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onEscape);
+      document.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('resize', dismiss);
+    };
+  }, []);
+
+  const addSelectionToChat = () => {
+    if (!selectionMenu) return;
+    setValue((current) => current + (current ? '\n\n' : '') + selectionMenu.text);
+    historyRef.current = null;
+    setSelectionMenu(null);
+    window.getSelection()?.removeAllRanges();
+    requestAnimationFrame(() => {
+      const node = textarea.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(node.value.length, node.value.length);
+      resize(node);
+    });
+  };
 
   const palette = useMemo(() => {
     const query = currentSlashQuery(value);
@@ -114,6 +173,8 @@ export function ChatPane({
 
   useEffect(() => {
     setAttachments([]);
+    historyRef.current = null;
+    setSelectionMenu(null);
     if (fileInput.current) fileInput.current.value = '';
   }, [session?.id, draft?.projectId]);
 
@@ -202,6 +263,7 @@ export function ChatPane({
   }, [session?.id, session?.messages?.length]);
 
   const clearComposer = () => {
+    historyRef.current = null;
     setValue('');
     setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
@@ -434,6 +496,39 @@ function imageMimeFromName(name: string): string | null {
         return;
       }
     }
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+        !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
+      const node = event.currentTarget;
+      const up = event.key === 'ArrowUp';
+      const atBoundary = node.selectionStart === node.selectionEnd && (up
+        ? !value.slice(0, node.selectionStart).includes('\n')
+        : !value.slice(node.selectionEnd).includes('\n'));
+      const sent = session?.messages?.filter((message) => message.role === 'user') ?? [];
+      const cursor = historyRef.current;
+      if (atBoundary && sent.length && (up || cursor)) {
+        const currentIndex = cursor ? sent.findIndex((message) => message.id === cursor.messageId) : sent.length;
+        const nextIndex = up ? Math.max(0, currentIndex - 1) : currentIndex + 1;
+        event.preventDefault();
+        if (nextIndex >= sent.length) {
+          setValue(cursor!.draft.text);
+          setAttachments(cursor!.draft.attachments);
+          historyRef.current = null;
+        } else {
+          const message = sent[nextIndex];
+          historyRef.current = {
+            messageId: message.id,
+            draft: cursor?.draft ?? { text: value, attachments },
+          };
+          setValue(message.content ?? '');
+          setAttachments(message.attachments ?? []);
+        }
+        requestAnimationFrame(() => {
+          node.setSelectionRange(node.value.length, node.value.length);
+          resize(node);
+        });
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void submit();
@@ -451,11 +546,22 @@ function imageMimeFromName(name: string): string | null {
 
   return (
     <main
+      ref={paneRef}
       className={`main-pane react-main-pane${isDraggingOver ? ' dropzone-active' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {selectionMenu && (
+        <div className="chat-selection-menu" role="group" aria-label="Selected text actions"
+          style={{ left: selectionMenu.x, top: selectionMenu.y }}
+          onMouseDown={(event) => event.preventDefault()}>
+          <button type="button" onClick={() => {
+            void window.cuppet.native.copyText(selectionMenu.text).then(() => setSelectionMenu(null)).catch(() => undefined);
+          }}>Copy</button>
+          <button type="button" onClick={addSelectionToChat}>Add to chat</button>
+        </div>
+      )}
       {isDraggingOver && (
         <div className="chat-dropzone-overlay" aria-hidden="true">
           <div className="chat-dropzone-indicator">
