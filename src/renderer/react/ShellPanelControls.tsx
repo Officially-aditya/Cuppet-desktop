@@ -208,6 +208,7 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
           </div>
         )}
 
+        <div className="shell-panel-drag-region" aria-hidden="true" />
         <div className="shell-panel-controls shell-panel-controls-right">
           <button
             type="button"
