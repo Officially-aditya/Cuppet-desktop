@@ -33,11 +33,24 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
   const parsedFiles = useMemo(() => parseDiff(rawDiff, files), [rawDiff, files]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [editor, setEditor] = useState<{ name: string; icon: string | null } | null>(null);
 
   const activeFile: ParsedFileDiff | null = parsedFiles[selectedIndex] ?? parsedFiles[0] ?? null;
 
   const totalAdditions = useMemo(() => parsedFiles.reduce((sum, file) => sum + file.additions, 0), [parsedFiles]);
   const totalDeletions = useMemo(() => parsedFiles.reduce((sum, file) => sum + file.deletions, 0), [parsedFiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEditor(null);
+    const lookup = window.cuppet.native.projectFileEditor;
+    if (projectId && activeFile?.path && lookup) {
+      void lookup(projectId, activeFile.path).then((info) => {
+        if (!cancelled) setEditor(info);
+      }).catch(() => undefined);
+    }
+    return () => { cancelled = true; };
+  }, [projectId, activeFile?.path]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -106,31 +119,23 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
               <button
                 type="button"
                 className="diff-action-button"
-                title="Open in external editor"
+                title={`Open in ${editor?.name || 'default editor'}`}
+                aria-label="Open in editor"
                 onClick={openInEditor}
               >
-                <CodeIcon />
-                <span>Open in editor</span>
+                {editor?.icon ? <img src={editor.icon} alt="" aria-hidden="true" /> : <CodeIcon />}
               </button>
             )}
             <button
               type="button"
               className={`diff-action-button${copied ? ' copied' : ''}`}
-              title="Copy diff to clipboard"
+              title={copied ? 'Copied!' : 'Copy diff to clipboard'}
+              aria-label={copied ? 'Copied!' : 'Copy diff'}
               onClick={() => void copyDiff()}
             >
               <span className="copy-icon-wrapper" aria-hidden="true">
                 {copied ? <CheckIcon /> : <CopyIcon />}
               </span>
-              <span>{copied ? 'Copied!' : 'Copy diff'}</span>
-            </button>
-            <button
-              type="button"
-              className="diff-close-button"
-              aria-label="Close diff viewer"
-              onClick={onClose}
-            >
-              ×
             </button>
           </div>
         </header>
@@ -173,7 +178,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                 </div>
 
                 {activeFile.lines.length === 0 ? (
-                  <EmptyFileDiffState file={activeFile} onOpenInEditor={projectId ? openInEditor : undefined} />
+                  <EmptyFileDiffState file={activeFile} />
                 ) : (
                   <div className="diff-lines-container">
                     {activeFile.lines.map((line, lineIndex) => {
@@ -216,7 +221,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
   );
 }
 
-function EmptyFileDiffState({ file, onOpenInEditor }: { file: ParsedFileDiff; onOpenInEditor?: () => void }) {
+function EmptyFileDiffState({ file }: { file: ParsedFileDiff }) {
   return (
     <div className="diff-empty-state">
       <div className="diff-empty-copy">
@@ -232,12 +237,6 @@ function EmptyFileDiffState({ file, onOpenInEditor }: { file: ParsedFileDiff; on
           <div className="diff-raw-content">
             <pre>{file.raw}</pre>
           </div>
-        )}
-        {onOpenInEditor && (
-          <button type="button" className="diff-action-button" onClick={onOpenInEditor}>
-            <CodeIcon />
-            <span>Open {file.path.split('/').pop()} in editor</span>
-          </button>
         )}
       </div>
     </div>

@@ -87,11 +87,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 500;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0;
   color: var(--text-main);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -108,29 +107,14 @@
   color: var(--diff-add);
 }
 
-.diff-action-button svg {
-  width: 14px;
-  height: 14px;
+.diff-action-button svg,
+.diff-action-button img {
+  width: 16px;
+  height: 16px;
 }
 
-.diff-close-button {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 20px;
-  line-height: 1;
-}
-
-.diff-close-button:hover {
-  background: var(--glass-pill-hover);
-  color: var(--text-main);
+.diff-action-button img {
+  object-fit: contain;
 }
 
 .diff-modal-dialog button:focus-visible {

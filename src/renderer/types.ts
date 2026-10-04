@@ -391,6 +391,7 @@ export type CuppetApi = {
     platform: string;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
     copyText: (text: string) => Promise<{ copied: boolean }>;
+    projectFileEditor?: (projectId: string, path: string) => Promise<{ name: string; icon: string | null }>;
     minimizeWindow?: () => Promise<void>;
     toggleMaximizeWindow?: () => Promise<boolean>;
     closeWindow?: () => Promise<void>;

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { realpath, stat } from 'node:fs/promises';
 import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
@@ -122,6 +122,7 @@ function registerIpc() {
 
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
+  ipcMain.handle('cuppet:native:project-file-editor', (_event, projectId, path) => projectFileEditor(request, projectId, path));
   ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
   ipcMain.handle('cuppet:native:copy-text', (_event, value) => {
     const text = typeof value === 'string' ? value.slice(0, 2_000_000) : '';
@@ -329,7 +330,7 @@ async function chooseFolder(options) {
   return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
-async function openProjectFile(request, projectId, value) {
+async function resolveProjectFile(request, projectId, value) {
   const id = boundedId(projectId);
   const path = typeof value === 'string' ? value.trim().slice(0, 1024) : '';
   if (!id || !path || path.includes('\0')) throw new Error('A project and file path are required.');
@@ -342,6 +343,17 @@ async function openProjectFile(request, projectId, value) {
   if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('File path escapes the project workspace.');
   const metadata = await stat(actual);
   if (!metadata.isFile()) throw new Error('Only project files can be opened from chat.');
+  return { actual, child };
+}
+
+async function projectFileEditor(request, projectId, value) {
+  const { actual } = await resolveProjectFile(request, projectId, value);
+  const info = await app.getApplicationInfoForProtocol(pathToFileURL(actual).href);
+  return { name: info.name, icon: info.icon.isEmpty() ? null : info.icon.toDataURL() };
+}
+
+async function openProjectFile(request, projectId, value) {
+  const { actual, child } = await resolveProjectFile(request, projectId, value);
   const message = await shell.openPath(actual);
   if (message) throw new Error(`Could not open ${child}: ${message}`);
   return { opened: true, path: child.replaceAll('\\', '/') };
