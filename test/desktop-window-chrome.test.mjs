@@ -52,7 +52,7 @@ test('DesktopWindowControls implements minimize, maximize/restore toggle, and cl
 });
 
 test('shell header CSS has non-mac layout rules and window control styling', () => {
-  assert.match(cssSource, /\.shell-panel-header\.is-non-mac\s*\{\s*padding-right:\s*0\s*\}/);
+  assert.match(cssSource, /\.shell-panel-header\.is-non-mac\s+\.shell-panel-header-workspace\s*\{\s*padding-right:\s*0\s*\}/);
   assert.match(cssSource, /\.desktop-window-controls\s*\{[^}]*-webkit-app-region:\s*no-drag/);
   assert.match(cssSource, /\.window-control-btn\s*\{[^}]*-webkit-app-region:\s*no-drag/);
   assert.match(cssSource, /\.window-control-btn\.window-control-close:hover\s*\{[^}]*background:\s*#e81123/);

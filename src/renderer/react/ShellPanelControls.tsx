@@ -63,18 +63,17 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
         }
       }}
     >
-      <div className="shell-panel-controls shell-panel-controls-left">
-        <button
-          type="button"
-          className={`shell-panel-button${state.leftOpen ? ' active' : ''}`}
-          aria-label={state.leftOpen ? 'Hide left sidebar' : 'Show left sidebar'}
-          title={state.leftOpen ? 'Hide left sidebar' : 'Show left sidebar'}
-          disabled={!state.leftAvailable}
-          onClick={onToggleLeft}
-        >
-          <LeftPanelIcon />
-        </button>
-      </div>
+      <div className="shell-panel-controls shell-panel-controls-left" />
+      <button
+        type="button"
+        className={`shell-panel-button shell-sidebar-toggle${state.leftOpen ? ' active' : ''}`}
+        aria-label={state.leftOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+        title={state.leftOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+        disabled={!state.leftAvailable}
+        onClick={onToggleLeft}
+      >
+        <LeftPanelIcon />
+      </button>
 
       <div className="shell-panel-header-workspace">
         {project && (
