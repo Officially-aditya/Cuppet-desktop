@@ -58,10 +58,11 @@ export class ContextCompiler {
     const budgetTokens = planMode ? Math.min(16_384, Math.max(0, Math.floor(usableTokens * 0.12))) : mode === 'stm_events' ? Math.min(STM_EVENT_CONTEXT_MAX_TOKENS, Math.max(0, usableTokens)) : Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)));
     if (!this.#tst?.configured || budgetTokens <= 0) return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false };
     const projectionBudget = planMode ? Math.floor(budgetTokens * 0.70) : 0;
+    const hints = retrievalHints(prompt);
     let prepared;
-    try { prepared = await this.#tst.prepareContext(sessionId, prompt, retrievalHints(prompt), [], mode, projectionBudget); }
+    try { prepared = await this.#tst.prepareContext(sessionId, prompt, hints, [], mode, projectionBudget); }
     catch { return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false }; }
-    const block = renderPrepared(prepared ?? {}, budgetTokens, planMode, mode);
+    const block = renderPrepared(prepared ?? {}, budgetTokens, planMode, mode, hints);
     return { block, budgetTokens, observationComplete: prepared?.observation_complete === true, hasStm: Array.isArray(prepared?.stm) && prepared.stm.length > 0, projectionComplete: planMode && projectionComplete(prepared?.plan_projection) };
   }
   #rememberEpoch(key, value) {
@@ -70,7 +71,7 @@ export class ContextCompiler {
   }
 }
 
-function renderPrepared(result, budget, planMode, mode) {
+function renderPrepared(result, budget, planMode, mode, hints) {
   if (mode === 'stm_only') {
     const stm = renderMemories('SESSION CONTINUITY (STM ONLY)', result.stm ?? result.retained ?? [], 24);
     return stm ? wrap('CUPPET_STM_ONLY_CONTEXT', clipTokens(stm, budget), budget) : '';
@@ -80,7 +81,7 @@ function renderPrepared(result, budget, planMode, mode) {
     return stm ? wrap('CUPPET_STM_EVENT_CONTEXT', clipTokens(stm, budget), budget) : '';
   }
   const stm = renderMemories('SESSION CONTINUITY (STM)', result.stm ?? [], planMode ? 12 : 8);
-  const graph = renderGraph(result.graph ?? [], result.edges ?? [], planMode ? 12 : 8);
+  const graph = renderGraph(result.graph ?? [], result.edges ?? [], planMode ? 12 : 8, hints);
   const ltm = renderMemories('VERIFIED PROJECT MEMORY', result.ltm ?? [], planMode ? 8 : 5);
   const projection = planMode ? renderProjection(result.plan_projection) : '';
   const sections = planMode ? [{ text: projection, share: .70 }, { text: graph, share: .15 }, { text: stm, share: .10 }, { text: ltm, share: .05 }] : [{ text: stm, share: .45 }, { text: graph, share: .35 }, { text: ltm, share: .20 }];
@@ -97,14 +98,30 @@ function renderMemories(title, records, limit) {
   });
   return rows.length ? `${title}\n${rows.join('\n')}` : '';
 }
-function renderGraph(nodes, edges, limit) {
-  const lines = [];
-  for (const record of (Array.isArray(nodes) ? nodes : []).slice(0, limit)) {
-    const node = record?.node ?? record; const path = node?.path; if (!path) continue;
-    const symbol = node?.name ? ` :: ${node.name}` : ''; const signature = node?.signature ? ` — ${node.signature}` : ''; lines.push(`- ${path}${symbol}${signature}`);
+function renderGraph(nodes, edges, limit, hints) {
+  if (!hints.length) return '';
+  const lines = []; const seen = new Set();
+  const matchesPath = (path) => typeof path === 'string' && !path.includes('::') && hints.some((hint) => path === hint || path.startsWith(`${hint}/`));
+  const candidates = (Array.isArray(nodes) ? nodes : []).map((record) => record?.node ?? record).filter((node) => {
+    if (typeof node?.path !== 'string' || !node.path || node.path.includes('::')) return false;
+    const named = node.name && hints.includes(node.name);
+    if (!named && !matchesPath(node.path)) return false;
+    return named || !['variable_declarator', 'lexical_declaration', 'variable_declaration'].includes(node.kind);
+  }).sort((a, b) => Number(hints.includes(b.name)) - Number(hints.includes(a.name)));
+  for (const node of candidates) {
+    if (lines.length >= limit) break;
+    const file = ['file', 'module'].includes(node.kind);
+    const name = file ? '' : node.name ?? '';
+    const key = `${node.path}\0${name}`; if (seen.has(key)) continue; seen.add(key);
+    const symbol = name ? ` :: ${name}` : ''; const signature = !file && node.signature ? ` — ${node.signature}` : '';
+    lines.push(`- ${node.path}${symbol}${signature}`);
   }
-  for (const edge of (Array.isArray(edges) ? edges : []).slice(0, Math.max(0, limit - lines.length))) {
-    const from = edge?.from?.path; const to = edge?.to?.path; if (from && to) lines.push(`- ${from} -[${edge.kind ?? 'rel'}]-> ${to}`);
+  for (const edge of (Array.isArray(edges) ? edges : [])) {
+    if (lines.length >= limit) break;
+    const from = edge?.from?.path; const to = edge?.to?.path;
+    if (typeof from !== 'string' || typeof to !== 'string' || !from || !to || from.includes('::') || to.includes('::') || from === to) continue;
+    if (!matchesPath(from) && !matchesPath(to) && !hints.includes(edge.from.name) && !hints.includes(edge.to.name)) continue;
+    const line = `- ${from} -[${edge.kind ?? 'rel'}]-> ${to}`; if (seen.has(line)) continue; seen.add(line); lines.push(line);
   }
   return lines.length ? `WORKSPACE GRAPH\n${lines.join('\n')}` : '';
 }
@@ -134,7 +151,13 @@ function selectRecentTurns(messages, count) {
   const userIndexes = messages.flatMap((message, i) => message.role === 'user' ? [i] : []); if (userIndexes.length <= count) return messages.map((message) => ({ ...message }));
   return messages.slice(userIndexes[userIndexes.length - count]).map((message) => ({ ...message }));
 }
-function retrievalHints(prompt) { return [...new Set([...extractPaths(prompt), ...(String(prompt).match(/[A-Za-z_$][\w$]{2,}/g) ?? []).slice(0, 16)])].slice(0, 32); }
+function retrievalHints(prompt) {
+  const value = String(prompt);
+  const references = [...value.matchAll(/`([A-Za-z_$][\w$]*)`|\b([A-Za-z_$][\w$]*)\s*\(/g)].map((match) => match[1] ?? match[2]);
+  const symbols = (value.match(/[A-Za-z_$][\w$]*/g) ?? []).filter((word) => /[a-z0-9][A-Z]|[_$]|^[A-Z][A-Z0-9]+$/.test(word));
+  const filenames = value.match(/\b[A-Za-z_][\w@+-]*(?:\.[\w@+-]+)+\b/g) ?? [];
+  return [...new Set([...extractPaths(value), ...filenames, ...references, ...symbols])].slice(0, 32);
+}
 function extractPaths(value) { return [...new Set((String(value).match(/(?:^|[\s`'"(])([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.@+-]+)+)/g) ?? []).map((item) => item.trim().replace(/^[`'"(]+|[`'"),.;:]+$/g, ''))) ].slice(0, 32); }
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }
 function clipTokens(value, tokens) { const chars = Math.max(0, Math.floor(tokens * 4)); return value.length <= chars ? value : `${value.slice(0, Math.max(0, chars - 1))}…`; }
