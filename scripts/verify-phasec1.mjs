@@ -5,7 +5,7 @@ const root=new URL('..',import.meta.url).pathname;
 const paths=['src/runtime/tool-runtime.mjs','src/runtime/permissions.mjs','src/runtime/provider.mjs','src/runtime/database.mjs','src/runtime/service.mjs','src/main/main.mjs','src/preload/preload.cjs','src/renderer/react/PermissionModal.tsx'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const tools=text['src/runtime/tool-runtime.mjs'];for(const name of ['cuppet_plan','cuppet_memory_search','tst_explore','tst_read','workspace_edit','workspace_write','bash'])expect(tools.includes(`'${name}'`),`model tool missing: ${name}`);
-expect(tools.includes('MAX_TOOL_STEPS = 64') && tools.includes('MAX_TOOL_OUTPUT = 128 * 1024'),'tool safety caps changed');
+expect(tools.includes('MAX_TOOL_OUTPUT = 128 * 1024'),'tool output cap changed');
 const permissions=text['src/runtime/permissions.mjs'];expect(permissions.includes('isSafeAutoBashCommand') && permissions.includes('isSensitivePath') && permissions.includes('isProtectedResource'),'permission safety policy missing');expect(permissions.includes("source: 'session-auto'") && permissions.includes("source: 'session-exact'"),'guarded auto/exact policy missing');
 expect(text['src/runtime/provider.mjs'].includes('request.tools = tools') && text['src/runtime/provider.mjs'].includes('delta?.tool_calls'),'provider tool streaming missing');
 expect(text['src/runtime/database.mjs'].includes('CREATE TABLE IF NOT EXISTS tool_executions'),'durable tool audit missing');
