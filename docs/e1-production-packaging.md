@@ -11,7 +11,7 @@ E1 turns the source-only Electron application into a reproducible packaged-app c
 - Executable: `cuppet`
 - ASAR: enabled
 - Production application files: `src/**` and `package.json`
-- Runtime production dependencies: none; Electron and electron-builder remain development/build dependencies.
+- Runtime production dependencies: `node-pty` for the interactive project terminal; Electron and electron-builder remain development/build dependencies. Native terminal binaries and helpers are unpacked from ASAR.
 - `npm run pack:dir` creates an unpacked platform application for acceptance testing. Signing, notarization, installers, and release publication remain E2.
 
 The packaged Electron executable is also the runtime host. `RuntimeClient` starts the same executable with `ELECTRON_RUN_AS_NODE=1` and points it at `src/runtime/main.mjs` inside the application bundle. That preserves the independent runtime and avoids adding a second Node distribution.
@@ -24,7 +24,7 @@ During E1 this gate exposed high-severity transitive advisories under the former
 
 That provider performs bounded deterministic word/subword hashing in JavaScript and requires no model download, native runtime, archive extraction, image codec, network access, or model cache. Deterministic task affinity and TST remain higher-authority routing signals, and PE3 still preserves the active task on low-confidence/failure paths.
 
-As a result, Cuppet's packaged runtime currently has zero npm production dependencies. Dev/build dependencies are deliberately excluded from the production audit because they are not shipped as runtime application dependencies.
+PE3 has no npm production dependencies. The desktop ships `node-pty` for its interactive terminal, including Windows ConPTY support. Dev/build dependencies are deliberately excluded from the production audit because they are not shipped as runtime application dependencies.
 
 ## Durable state and restart behavior
 

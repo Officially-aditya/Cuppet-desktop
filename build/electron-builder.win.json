@@ -5,7 +5,8 @@
   "artifactName": "${productName}-${version}-${arch}.${ext}",
   "asar": true,
   "asarUnpack": [
-    "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs"
+    "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs",
+    "node_modules/node-pty/**/*"
   ],
   "files": [
     "src/main/**/*",

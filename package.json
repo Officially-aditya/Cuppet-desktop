@@ -54,7 +54,9 @@
     "browsercontrol:verify": "node scripts/verify-staged-browsercontrol.mjs",
     "browsercontrol:package-smoke": "node scripts/smoke-packaged-browsercontrol.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
   "devDependencies": {
     "@types/qrcode": "1.5.6",
     "@types/react": "19.1.12",
@@ -64,7 +66,6 @@
     "@xterm/xterm": "^6.0.0",
     "electron": "44.3.0",
     "electron-builder": "26.15.3",
-    "node-pty": "^1.1.0",
     "qrcode": "1.5.4",
     "react": "19.1.1",
     "react-dom": "19.1.1",
@@ -80,7 +81,8 @@
     "executableName": "cuppet",
     "asar": true,
     "asarUnpack": [
-      "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs"
+      "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs",
+      "node_modules/node-pty/**/*"
     ],
     "files": [
       "src/main/**/*",

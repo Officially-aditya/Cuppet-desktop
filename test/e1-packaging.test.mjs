@@ -58,11 +58,12 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
     'package.json',
   ]) assert.ok(packagedFiles.has(required), `missing packaged surface: ${required}`);
   assert.equal(packagedFiles.has('src/**/*'), false, 'packaging should stay explicit instead of bundling every source file');
-  assert.deepEqual(pkg.dependencies, {});
+  assert.deepEqual(pkg.dependencies, { 'node-pty': '^1.1.0' });
+  assert.equal(pkg.devDependencies['node-pty'], undefined, 'the interactive terminal must ship in production builds');
   assert.deepEqual(
     pkg.build.asarUnpack,
-    ['src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs'],
-    'ASAR unpacking must stay restricted to the external ACP MCP stdio entrypoint that provider CLIs execute directly',
+    ['src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs', 'node_modules/node-pty/**/*'],
+    'the external ACP entrypoint and native terminal helpers must be available outside ASAR',
   );
   assert.equal(pkg.devDependencies.electron, '44.3.0');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
@@ -76,4 +77,20 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
   assert.match(bootstrap, /setPermissionRequestHandler/);
   assert.match(bootstrap, /setPermissionCheckHandler/);
   assert.match(bootstrap, /will-navigate/);
+});
+
+test('Windows release packages native terminal helpers and smoke tests the installed terminal', async () => {
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
+  const config = JSON.parse(await readFile(join(root, 'build/electron-builder.win.json'), 'utf8'));
+  assert.deepEqual(config.asarUnpack, pkg.build.asarUnpack);
+  assert.equal(lock.packages[''].dependencies['node-pty'], pkg.dependencies['node-pty']);
+  assert.equal(lock.packages['node_modules/node-pty'].dev, undefined);
+  assert.equal(lock.packages['node_modules/node-addon-api'].dev, undefined);
+
+  const workflow = await readFile(join(root, '.github/workflows/release-windows.yml'), 'utf8');
+  const build = workflow.indexOf('run: npm run release:win');
+  const smoke = workflow.indexOf('run: node scripts/smoke-packaged-terminal.mjs');
+  const publish = workflow.indexOf('- name: Publish or update GitHub release assets');
+  assert.ok(build >= 0 && smoke > build && publish > smoke, 'packaged terminal verification must pass before publishing Windows assets');
 });

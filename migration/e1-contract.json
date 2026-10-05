@@ -29,7 +29,7 @@
     "e1HasPermanentVerificationGate": true
   },
   "runtimeDependencies": {
-    "npmProductionDependencies": 0,
+    "npmProductionDependencies": 1,
     "auditCommand": "npm audit --omit=dev --audit-level=high",
     "pe3Embedding": "cuppet/subword-hash-v1",
     "pe3ExternalModelDownload": false,

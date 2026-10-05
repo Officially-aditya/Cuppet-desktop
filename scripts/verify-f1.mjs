@@ -37,7 +37,7 @@ assert.equal(pkg.scripts['f1:package-smoke'], 'node scripts/smoke-packaged-tst.m
 assert.equal(pkg.scripts['f1:verify'], 'node scripts/verify-f1.mjs');
 assert.match(pkg.scripts['pack:dir'], /verify-staged-tst\.mjs/);
 assert.ok(pkg.build.extraResources?.some((item) => item.from === 'vendor/tst' && item.to === 'tst'));
-assert.deepEqual(pkg.dependencies, {});
+assert.deepEqual(pkg.dependencies, { 'node-pty': '^1.1.0' });
 
 for (const token of [
   "randomBytes(32).toString('hex')", "mode: 0o700", "bridge.call('shutdown')", "child.kill('SIGTERM')", "child.kill('SIGKILL')",

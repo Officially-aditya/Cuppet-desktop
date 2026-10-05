@@ -16,7 +16,7 @@ const updater = await read('src/main/auto-update.mjs');
 const policy = await read('src/main/auto-update-policy.mjs');
 const feedBuilder = await read('scripts/build-macos-update-feed.mjs');
 
-assert.deepEqual(pkg.dependencies, {}, 'release hardening must not add production npm dependencies');
+assert.deepEqual(pkg.dependencies, { 'node-pty': '^1.1.0' }, 'only the native interactive terminal dependency is shipped');
 for (const key of ['appId', 'productName', 'executableName', 'asar', 'asarUnpack', 'files', 'extraResources', 'directories']) {
   assert.deepEqual(releaseConfig[key], pkg.build[key], `release config drifted from base packaging: ${key}`);
 }
