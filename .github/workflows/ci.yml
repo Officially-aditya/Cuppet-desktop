@@ -28,6 +28,13 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+      - name: Prepare Linux isolation in the disposable test VM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - run: npm install --ignore-scripts
       - run: npm run renderer:verify
       - run: npm run phase0:verify
