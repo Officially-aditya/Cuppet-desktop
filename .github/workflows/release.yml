@@ -151,6 +151,7 @@ jobs:
             echo "Packaged Cuppet.app not found" >&2
             exit 1
           fi
+          node scripts/smoke-packaged-terminal.mjs "$APP_PATH/Contents/MacOS/cuppet"
 
       - name: Generate SHA-256 checksums
         shell: bash
