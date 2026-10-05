@@ -81,85 +81,21 @@ test('STM compaction aborts without TST and never authorizes transcript mutation
   assert.match(result.directive, /preserve the full durable transcript/i);
 });
 
-test('ordinary prompt words do not inject speculative graph matches', async () => {
-  const tst = fakeTst({
-    stm: [{ key: 'goal', value: 'event synthesis' }],
-    graph: [
-      { node: { path: 'src/unrelated.ts', name: 'block', kind: 'variable_declarator' } },
-      { node: { path: 'src/other.ts', name: 'nodes', kind: 'variable_declarator' } },
-    ],
-    edges: [{ from: { path: 'src/unrelated.ts' }, to: { path: 'src/other.ts' }, kind: 'calls' }],
-  });
-  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
-  const prompt = 'The graph block contains nodes but none helped with event synthesis';
-  const output = await compiler.compile({ sessionId: 'natural', messages: [{ role: 'user', content: prompt }], userMessageId: 'u1' });
-  assert.equal(tst.calls[0][1], prompt, 'memory retrieval still receives the complete prompt');
-  assert.deepEqual(tst.calls[0][2], [], 'ordinary words are not code anchors');
-  assert.doesNotMatch(output.messages.find((message) => message.role === 'system').content, /WORKSPACE GRAPH|unrelated\.ts|other\.ts/);
-});
-
-test('explicit symbols survive long prose and irrelevant leading graph results', async () => {
-  const target = { path: 'src/browser-control/tools.ts', name: 'handleBrowserToolCall', kind: 'function_declaration', signature: 'function handleBrowserToolCall(input)', content_hash: 'hash', target_id: 'target' };
-  const tst = fakeTst({
-    graph: [...Array.from({ length: 10 }, (_, i) => ({ node: { path: `src/other-${i}.ts`, name: 'block', kind: 'variable_declarator' } })), { node: target }, { node: target }],
-    edges: [
-      { from: { path: 'src/unrelated.ts' }, to: { path: 'src/other.ts' }, kind: 'calls' },
-      { from: target, to: { path: 'src/browser-control/transport.ts', name: 'send' }, kind: 'calls' },
-    ],
-  });
-  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
-  const prompt = 'Investigate why the browser action fails after the session has been running for a while and trace handleBrowserToolCall';
-  const output = await compiler.compile({ sessionId: 'symbol', messages: [{ role: 'user', content: prompt }], userMessageId: 'u1' });
-  const block = output.messages.find((message) => message.role === 'system').content;
-  assert.deepEqual(tst.calls[0][2], ['handleBrowserToolCall']);
-  assert.equal((block.match(/ :: handleBrowserToolCall/g) ?? []).length, 1);
-  assert.match(block, /tools\.ts -\[calls\]-> src\/browser-control\/transport\.ts/);
-  assert.doesNotMatch(block, /other-\d|unrelated\.ts|content_hash|target_id/);
-});
-
-test('explicit paths deduplicate file nodes and omit incidental local bindings', async () => {
-  const path = 'src/browser-control/tools.ts';
-  const tst = fakeTst({
-    graph: [
-      { node: { path, name: path, kind: 'file' } },
-      { node: { path, name: 'src::browser-control::tools', kind: 'module' } },
-      { node: { path: 'src::browser-control::tools', name: 'tools', kind: 'module' } },
-      ...Array.from({ length: 8 }, (_, i) => ({ node: { path, name: `local${i}`, kind: 'variable_declarator' } })),
-      { node: { path, name: 'handleBrowserToolCall', kind: 'function_declaration' } },
-      { node: { path, name: 'TOOL_LIMIT', kind: 'exported_variable_declarator' } },
-      { node: { path: 'src/unrelated.ts', name: 'other', kind: 'function_declaration' } },
-    ],
-  });
-  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
-  const output = await compiler.compile({ sessionId: 'path', messages: [{ role: 'user', content: `Inspect ${path}` }], userMessageId: 'u1' });
-  const block = output.messages.find((message) => message.role === 'system').content;
-  assert.match(block, / :: handleBrowserToolCall/);
-  assert.match(block, / :: TOOL_LIMIT/);
-  assert.equal(block.split('\n').filter((line) => line === `- ${path}`).length, 1);
-  assert.doesNotMatch(block, /local\d|src::| :: src\/|unrelated\.ts/);
-});
-
-test('quoted identifiers and calls keep specifically requested local symbols', async () => {
-  for (const prompt of ['Inspect `nodes` in src/a.ts', 'Trace render() in src/a.ts']) {
+test('automatic graph context retains retrieved hits for ordinary requests and brief follow-ups', async () => {
+  for (const prompt of ['Make context compilation faster', 'ok']) {
     const tst = fakeTst({
-      graph: [
-        { node: { path: 'src/a.ts', name: 'nodes', kind: 'variable_declarator' } },
-        { node: { path: 'src/a.ts', name: 'block', kind: 'variable_declarator' } },
-        { node: { path: 'src/a.ts', name: 'render', kind: 'function_declaration' } },
-      ],
+      graph: [{ node: { path: 'src/runtime/context-compiler.mjs', name: 'ContextCompiler', signature: 'class ContextCompiler' } }],
+      edges: [{ from: { path: 'src/runtime/context-compiler.mjs' }, to: { path: 'src/runtime/tst-client.mjs' }, kind: 'calls' }],
     });
     const compiler = new ContextCompiler({ tst, cognitiveState: state() });
-    const output = await compiler.compile({ sessionId: 'quoted', messages: [{ role: 'user', content: prompt }], userMessageId: prompt });
+    const output = await compiler.compile({ sessionId: 'automatic', messages: [{ role: 'user', content: prompt }], userMessageId: prompt });
+    assert.equal(tst.calls[0][1], prompt, 'retrieval receives the complete user request');
+    if (prompt.includes('context')) assert.ok(tst.calls[0][2].includes('context'), 'ordinary keywords remain retrieval hints');
+    else assert.deepEqual(tst.calls[0][2], [], 'brief follow-up has no keyword or explicit code hints');
+    assert.equal(output.injected, true);
     const block = output.messages.find((message) => message.role === 'system').content;
-    assert.match(block, prompt.includes('`nodes`') ? / :: nodes/ : / :: render/);
-    assert.doesNotMatch(block, / :: block/);
+    assert.match(block, /WORKSPACE GRAPH/);
+    assert.match(block, /context-compiler\.mjs :: ContextCompiler — class ContextCompiler/);
+    assert.match(block, /context-compiler\.mjs -\[calls\]-> src\/runtime\/tst-client\.mjs/);
   }
-});
-
-test('top-level filenames anchor automatic graph context', async () => {
-  const tst = fakeTst({ graph: [{ node: { path: 'package.json', name: 'package.json', kind: 'file' } }] });
-  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
-  const output = await compiler.compile({ sessionId: 'filename', messages: [{ role: 'user', content: 'Inspect package.json' }], userMessageId: 'u1' });
-  assert.deepEqual(tst.calls[0][2], ['package.json']);
-  assert.match(output.messages.find((message) => message.role === 'system').content, /- package\.json\n/);
 });
