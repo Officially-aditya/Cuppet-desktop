@@ -6,8 +6,11 @@
    1. Root Window Transparency & Native Vibrancy Passthrough
    -------------------------------------------------------------------------- */
 :root {
-  --bg-deep-obsidian: #0e1116;
+  --bg-deep-obsidian: #181818;
   --bg-main-surface: #1e1e1e;
+  --panel: var(--bg-main-surface);
+  --panel-2: #2c2c2c;
+  --line: rgba(255, 255, 255, 0.1);
   --sidebar-glass-bg: rgba(16, 20, 26, 0.65);
   --sidebar-glass-collapsed: rgba(14, 18, 24, 0.75);
   --header-glass-bg: rgba(30, 30, 30, 0.78);
@@ -612,8 +615,11 @@ html, body {
    -------------------------------------------------------------------------- */
 .project-header-dropdown,
 .project-branch-dropdown,
-.nav-context-menu {
-  background: rgba(18, 22, 29, 0.92) !important;
+.nav-context-menu,
+.model-picker-menu,
+.composer-mode-menu,
+.cuppet-select-menu {
+  background: var(--panel-2) !important;
   backdrop-filter: blur(24px) saturate(190%) !important;
   -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
   border: 1px solid rgba(255, 255, 255, 0.09) !important;
@@ -625,11 +631,65 @@ html, body {
 .sidebar-rename-dialog,
 .settings-dialog,
 .wide-dialog {
-  background: rgba(18, 22, 29, 0.94) !important;
+  background: var(--bg-main-surface) !important;
   backdrop-filter: blur(28px) saturate(190%) !important;
   -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
   border: 1px solid rgba(255, 255, 255, 0.095) !important;
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Settings uses the same neutral content, raised, and inset surfaces as chat. */
+.settings-hub-main {
+  background: var(--bg-main-surface);
+}
+
+.settings-hub-sidebar {
+  background: var(--bg-deep-obsidian);
+  border-color: var(--line);
+}
+
+:is(.settings-card, .settings-status-pill, .settings-device, .usage-stat, .usage-stat.primary, .usage-placeholder) {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+:is(.provider-auth-card, .provider-preset-note, .platform-model-section) {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+:is(.settings-hub-header, .settings-row, .settings-toggle-row, .settings-form-footer, .usage-model-list, .usage-model-row, .model-picker-custom) {
+  border-color: var(--line);
+}
+
+.settings-hub-dialog :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select, .cuppet-select-trigger, .model-picker-trigger),
+.model-picker-custom input {
+  background: var(--bg-deep-obsidian);
+  border-color: var(--line);
+}
+
+.settings-hub-dialog :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select, .cuppet-select-trigger, .model-picker-trigger):is(:hover, :focus, :focus-visible),
+.model-picker-custom input:is(:hover, :focus) {
+  background: var(--panel);
+}
+
+.model-picker-custom button {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+:is(.settings-hub-nav button, .settings-close-button, .model-picker-trigger, .composer-mode-trigger, .model-picker-option, .model-picker-back, .model-picker-effort-option, .model-picker-custom button):hover:not(:disabled),
+.composer-mode-option.active,
+.cuppet-select-option.active {
+  background: var(--glass-pill-hover);
+}
+
+:is(.settings-hub-nav button.active, .model-picker-option.selected, .model-picker-effort-option.selected, .composer-mode-picker.open .composer-mode-trigger, .model-picker.open .model-picker-trigger) {
+  background: var(--glass-pill-active);
+}
+
+:is(.model-picker-provider, .model-picker-empty, .model-picker-option small, .composer-mode-menu-header, .composer-mode-option-text small) {
+  color: var(--text-muted);
 }
 
 .sidebar-delete-actions .sidebar-cancel-button {

@@ -13,21 +13,21 @@
 :root[data-theme="light"]{
   color-scheme:light;
   --panel:#ffffff;
-  --panel-2:#e9eef5;
-  --line:#d8e0ea;
+  --panel-2:#f5f5f5;
+  --line:#dedede;
   --muted:#627086;
   --text:#202c3d;
   --accent:#253b58;
   --accent-text:#ffffff;
-  --bg-deep-obsidian:#f6f8fb;
+  --bg-deep-obsidian:#f2f2f2;
   --bg-main-surface:#ffffff;
   --sidebar-glass-bg:rgba(241,245,250,.92);
   --sidebar-glass-collapsed:rgba(241,245,250,.95);
   --header-glass-bg:rgba(246,246,246,.94);
   --glass-border:rgba(45,65,95,.14);
   --glass-border-subtle:rgba(45,65,95,.09);
-  --glass-pill-hover:rgba(45,65,95,.07);
-  --glass-pill-active:rgba(45,65,95,.11);
+  --glass-pill-hover:rgba(0,0,0,.05);
+  --glass-pill-active:rgba(0,0,0,.08);
   --text-main:#202c3d;
   --text-dim:#526179;
   --text-muted:#65748b;
@@ -53,14 +53,14 @@
 ){background:#ffffff!important;border-color:var(--line)!important;color:var(--text-main)!important;box-shadow:0 10px 32px rgba(37,53,78,.1)!important}
 
 :root[data-theme="light"] :is(
-  .settings-hub-sidebar,.usage-stat,.settings-status-pill,.settings-value,.control-pill,.provider-pill,.platform-model-section,
+  .settings-hub-sidebar,.usage-stat,.usage-placeholder,.settings-device,.settings-status-pill,.settings-value,.control-pill,.provider-pill,.platform-model-section,
   .composer,.react-composer,.composer-attachment,.message-trace-reasoning,.message-reasoning-content,
   .diff-modal-header,.diff-files-sidebar,.diff-file-header,
   .project-terminal,.project-terminal-body,.project-terminal-bar,.project-terminal-xterm-container,
   .memory-sidebar-header,.memory-node-inspector,.search-input-wrap,.question-inline-input,
   .question-step-dot,.question-inline-badge,.question-inline-step-pill,.thread-tool-detail,
   .chat-dropzone-indicator
-){background:#f0f4f9!important;border-color:var(--line)!important;color:var(--text-main)!important;box-shadow:none!important}
+){background:var(--panel-2)!important;border-color:var(--line)!important;color:var(--text-main)!important;box-shadow:none!important}
 :root[data-theme="light"] :is(.composer,.react-composer){background:#f5f5f5!important;box-shadow:0 8px 24px rgba(37,53,78,.12)!important}
 :root[data-theme="light"] :is(.message-trace-reasoning,.message-reasoning-content){background:#f5f5f5!important}
 :root[data-theme="light"] .message.user .message-content{background:#f0f0f0!important;border-color:var(--line)!important;box-shadow:none}
@@ -99,22 +99,22 @@
 :root[data-theme="light"] :is(
   .settings-hub-nav button.active,.session-item.active,.project-row.active,.mode-inline-button.active,.model-picker.open .model-picker-trigger,
   .shell-panel-button.active,.project-header-button.active,.project-branch-badge.active,
-  .diff-file-item.active,.cuppet-select-option.selected,.model-picker-option.selected,.command-option.selected,.composer-mode-option.selected,
+  .diff-file-item.active,.cuppet-select-option.selected,.model-picker-option.selected,.model-picker-effort-option.selected,.command-option.selected,.composer-mode-option.selected,
   .question-choice.selected,.search-result.selected
-){background:#dde7f5!important;color:var(--text-main)!important;border-color:#b8cbe8!important;box-shadow:none}
+){background:#e8e8e8!important;color:var(--text-main)!important;border-color:#c8c8c8!important;box-shadow:none}
 
 :root[data-theme="light"] :is(
   .nav-button,.project-button,.session-item,.ghost-button,.settings-hub-nav button,.shell-panel-button,
   .project-header-button,.project-branch-badge,.composer-attach-button,.mode-inline-button,.message-copy-button,.model-picker-trigger,
   .message-cuppet-toggle,.cuppet-select-option,.model-picker-option,.model-picker-effort-option,.model-picker-back,
-  .diff-action-button,.diff-file-item,.nav-context-menu button,.command-option,.composer-mode-option,
+  .diff-action-button,.diff-file-item,.nav-context-menu button,.project-header-dropdown button,.project-branch-item,.model-picker-custom button,.command-option,.composer-mode-trigger,.composer-mode-option,
   .project-new-chat-button,.project-menu-button,.session-menu-button,.repo-result,.question-choice,.permission-inline-button,.settings-close-button
-):hover:not(:disabled){background:#e4ebf5!important;color:var(--text-main)!important;box-shadow:none}
+):hover:not(:disabled){background:#eeeeee!important;color:var(--text-main)!important;box-shadow:none}
 
 :root[data-theme="light"] :is(.primary-button,.send-button){background:#253b58!important;color:#ffffff!important;box-shadow:0 2px 5px rgba(37,59,88,.15)}
 :root[data-theme="light"] :is(.primary-button,.send-button):hover{background:#324e73!important}
 :root[data-theme="light"] :is(.sidebar-danger-button,.stop-button){background:#b42318!important;color:#ffffff!important;border-color:#b42318!important}
-:root[data-theme="light"] :is(.sidebar-cancel-button,.diff-action-button){background:#e9eef5!important;color:var(--text-main)!important;border-color:var(--line)!important}
+:root[data-theme="light"] :is(.sidebar-cancel-button,.diff-action-button){background:var(--panel-2)!important;color:var(--text-main)!important;border-color:var(--line)!important}
 
 /* Code, diffs, and semantic status colors. */
 :root[data-theme="light"] .message.assistant .message-content.markdown-rendered pre,
