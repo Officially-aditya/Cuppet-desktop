@@ -1572,7 +1572,9 @@ function QueuedTurnBar({
           title="Interrupt Cuppet and steer with this message immediately"
           onClick={onSteer}
         >
-          Steer
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+            <path d="M3 12V9a3 3 0 0 1 3-3h7M9 2l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
         <button
           type="button"
@@ -1581,7 +1583,9 @@ function QueuedTurnBar({
           title="Put back into input box"
           onClick={onEdit}
         >
-          Edit
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+            <path d="M11 2.5 13.5 5 5 13.5H2.5V11L11 2.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
         <button
           type="button"
@@ -1590,7 +1594,9 @@ function QueuedTurnBar({
           title="Delete queued message"
           onClick={onCancel}
         >
-          Cancel
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
+            <path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
     </div>

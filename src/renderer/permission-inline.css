@@ -8,7 +8,7 @@
 .queued-turn-content{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:1.4;color:#d0d7de}
 .queued-turn-attachments{font-size:11px;color:#707b88}
 .queued-turn-actions{flex:0 0 auto;display:flex;align-items:center;gap:6px}
-.queued-turn-button{height:26px;padding:0 9px;border:1px solid #303844;border-radius:6px;background:transparent;color:#bdc5cf;font-size:11px;line-height:24px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
+.queued-turn-button{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid #303844;border-radius:6px;background:transparent;color:#bdc5cf;font-size:11px;line-height:24px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
 .queued-turn-button:hover{background:#20262e;border-color:#484f58;color:#f1f4f7}
 .queued-turn-button.steer{border-color:rgba(88,166,255,.4);color:#58a6ff;background:rgba(88,166,255,.08);font-weight:600}
 .queued-turn-button.steer:hover{background:rgba(88,166,255,.2);border-color:rgba(88,166,255,.65);color:#79c0ff}
