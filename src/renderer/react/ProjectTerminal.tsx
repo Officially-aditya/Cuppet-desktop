@@ -133,8 +133,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
 
     const term = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'block',
-      cursorInactiveStyle: 'outline',
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'bar',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 11,
       lineHeight: 1.2,
