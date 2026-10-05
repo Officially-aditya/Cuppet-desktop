@@ -105,6 +105,7 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(activities[0].status, 'running');
   assert.equal(activities[1].text, 'done');
   assert.equal(activities[2].usage.totalTokens, 31);
+  assert.deepEqual(activities[2].contextUsage, { usedTokens: 7, windowTokens: 258400 });
   assert.equal(activities[3].status, 'completed');
   assert.ok(!activities.some((activity) => activity.type.startsWith('activity.tool.')), 'provider transport must not duplicate ToolRuntime execution cards');
   assert.equal(toolCalls.length, 1);

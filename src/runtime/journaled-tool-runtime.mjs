@@ -72,6 +72,7 @@ export class JournaledToolRuntime {
       projectRoot: options.projectRoot,
       adapter,
       previewPolicy,
+      contextWindow: options.contextWindow,
       executionKernel: this.#executionKernel,
       onReasoning: (segment) => {
         if (!messageId || !segment) return;
@@ -163,9 +164,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
+  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
+  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#contextWindow = contextWindow; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
   }
 
   async stream(messages, options) {
@@ -200,6 +201,15 @@ class ToolMutationCapture {
         }
       : undefined;
     const providerTools = this.#executionKernel.toolsForProvider?.(options?.tools, { sessionId: this.#sessionId, projectRoot: this.#projectRoot }) ?? options?.tools;
+    if (Number.isFinite(this.#contextWindow) && this.#contextWindow > 0) {
+      const requestText = JSON.stringify({
+        messages: messages.map(({ role, content, tool_calls }) => ({ role, content, tool_calls })),
+        tools: providerTools,
+      });
+      this.#onActivity(providerActivity('activity.usage', {
+        contextUsage: { usedTokens: Math.ceil(requestText.length / 4), windowTokens: this.#contextWindow, estimated: true },
+      }));
+    }
     let response;
     try {
       response = await this.#adapter.stream(messages, {

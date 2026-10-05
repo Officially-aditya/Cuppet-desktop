@@ -213,7 +213,15 @@ export class CodexSessionRuntime {
         const nextUsage = normalizeUsage(tokenUsage.total) ?? normalizeUsage(tokenUsage.last);
         if (nextUsage) {
           turn.usage = nextUsage;
-          void notifyObserver(turn.hooks.onActivity, providerActivity('activity.usage', { usage: nextUsage }));
+          const lastUsage = normalizeUsage(tokenUsage.last);
+          const windowTokens = number(tokenUsage.modelContextWindow);
+          const contextUsage = lastUsage && windowTokens > 0
+            ? { usedTokens: lastUsage.totalTokens || lastUsage.inputTokens + lastUsage.outputTokens, windowTokens }
+            : null;
+          void notifyObserver(turn.hooks.onActivity, providerActivity('activity.usage', {
+            usage: nextUsage,
+            ...(contextUsage ? { contextUsage } : {}),
+          }));
         }
         return;
       }

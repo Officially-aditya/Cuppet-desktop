@@ -623,7 +623,8 @@ html, body {
 .nav-context-menu,
 .model-picker-menu,
 .composer-mode-menu,
-.cuppet-select-menu {
+.cuppet-select-menu,
+.command-palette {
   background: var(--panel-2) !important;
   backdrop-filter: blur(24px) saturate(190%) !important;
   -webkit-backdrop-filter: blur(24px) saturate(190%) !important;

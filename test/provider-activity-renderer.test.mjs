@@ -4,6 +4,7 @@ import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { activityFromToolRuntimeEvent, providerActivity } from '../src/runtime/providers/activity.mjs';
 import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
+import { hydrateTranscript, reduceTranscriptEvent } from '../src/renderer/react/chat-transcript.ts';
 
 function managedAdapter(config = { providerID: 'opencode' }) {
   return {
@@ -97,6 +98,64 @@ test('JournaledToolRuntime emits canonical provider Activity and preserves execu
     assert.equal(emitted.some((event) => event.type === 'message.reasoning'), false, 'provider reasoning must not be re-materialized as a legacy runtime event');
     assert.ok(emitted.some((event) => event.type === 'tool.started' && event.tool === 'cuppet_plan'), 'execution lifecycle tool.started must remain available');
     assert.ok(emitted.some((event) => event.type === 'tool.finished' && event.tool === 'cuppet_plan'), 'execution lifecycle tool.finished must remain available');
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('context usage persists request estimates, updates after tools, and accepts measured usage', async () => {
+  const rows = [];
+  const requests = [];
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    db: {
+      getSession: () => ({ messages: [{ id: 'assistant-usage', role: 'assistant', status: 'streaming' }] }),
+      appendMessageActivity: (row) => {
+        const saved = { ...row, sequence: rows.length + 1 };
+        rows.push(saved);
+        return saved;
+      },
+      createToolExecution: () => ({}),
+      finishToolExecution: () => ({}),
+    },
+    tst: { configured: false },
+    planStore: { toolResult: async () => 'Retained plan. '.repeat(100) },
+    permissions: { authorize: async () => ({ source: 'test' }) },
+    questions: null,
+  });
+  try {
+    await runtime.run({
+      sessionId: 'chat-usage',
+      contextWindow: 128000,
+      messages: [{ role: 'user', content: 'Inspect the plan.', imageAttachments: [{ dataUrl: 'x'.repeat(400000) }] }],
+      onDelta: async () => {},
+      adapter: {
+        async stream(_messages, options) {
+          const usage = hydrateTranscript(rows)['assistant-usage'].contextUsage;
+          assert.equal(usage.estimated, true);
+          assert.equal(usage.windowTokens, 128000);
+          assert.ok(usage.usedTokens > 4, 'request estimate includes policy and tool schemas');
+          assert.ok(usage.usedTokens < 10000, 'image bytes are not counted as text tokens');
+          requests.push(usage);
+          if (requests.length === 1) {
+            return { text: '', toolCalls: [{ id: 'plan-call', name: 'cuppet_plan', arguments: '{"action":"overview"}' }] };
+          }
+          assert.ok(usage.usedTokens > requests[0].usedTokens, 'latest request includes the tool result');
+          await options.onActivity(providerActivity('activity.usage', {
+            contextUsage: { usedTokens: 6000, windowTokens: 258400 },
+          }));
+          return { text: 'Done.', toolCalls: [] };
+        },
+      },
+    });
+    assert.equal(requests.length, 2);
+    const hydrated = hydrateTranscript(rows);
+    const lastRow = rows.at(-1);
+    assert.deepEqual(hydrated['assistant-usage'].contextUsage, {
+      usedTokens: 6000, windowTokens: 258400, sequence: lastRow.sequence,
+    });
+    const stale = reduceTranscriptEvent(hydrated, { type: 'runtime.activity', ...rows[0] });
+    assert.deepEqual(stale, hydrated, 'an older estimate cannot replace the measured request');
   } finally {
     await runtime.close();
   }

@@ -537,6 +537,7 @@ export class RuntimeService {
         projectRoot,
         integrations,
         mode: this.#cognitive.mode(sessionId),
+        contextWindow: contextWindow(provider),
         signal,
         onDelta: async (delta, meta = {}) => {
           if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;

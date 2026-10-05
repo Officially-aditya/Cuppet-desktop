@@ -14,7 +14,7 @@ import {
   readPermissionMode,
   readSendBehavior,
 } from './behavior-preferences';
-import { formatWorkedDuration, orderedTranscriptItems, type TranscriptState } from './chat-transcript';
+import { formatWorkedDuration, orderedTranscriptItems, type ContextUsage, type TranscriptState } from './chat-transcript';
 import { useClientTranscript } from './client-transcript';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -96,6 +96,8 @@ export function ChatPane({
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name?: string } | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const transcript = useClientTranscript(session);
+  const latestAssistant = [...(session?.messages ?? [])].reverse().find((message) => message.role === 'assistant' && transcript[message.id]?.contextUsage);
+  const contextUsage = latestAssistant ? transcript[latestAssistant.id]?.contextUsage : undefined;
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -621,9 +623,9 @@ function imageMimeFromName(name: string): string | null {
             ))}
           </div>
         )}
-        {commandResult && <CommandResultView result={commandResult} onDismiss={() => setCommandResult(null)} />}
+        {commandResult && <CommandResultView result={commandResult} contextUsage={contextUsage} onDismiss={() => setCommandResult(null)} />}
         {integrationMentionQuery !== null && browserControlMentionMatches(integrationMentionQuery) && !hasBrowserControlMention(value) && <IntegrationMentionPalette onChoose={chooseBrowserControl} />}
-        {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} onChoose={choose} />}
+        {palette.length > 0 && <CommandPalette items={palette} selected={selected} sessionAvailable={Boolean(session)} contextUsage={contextUsage} onChoose={choose} />}
         <form className="composer react-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input ref={fileInput} className="composer-file-input" type="file" multiple accept="image/*,.pdf,.txt,.md,.json,.js,.ts,.tsx,.jsx" tabIndex={-1} aria-hidden="true" onChange={addFiles} />
           <textarea
@@ -1180,7 +1182,23 @@ function IntegrationMentionPalette({ onChoose }: { onChoose: () => void }) {
   );
 }
 
-function CommandPalette({ items, selected, sessionAvailable, onChoose }: { items: CommandDefinition[]; selected: number; sessionAvailable: boolean; onChoose: (item: CommandDefinition) => void | Promise<void> }) {
+function ContextUsageBar({ usage }: { usage?: ContextUsage }) {
+  const percent = usage ? Math.min(100, usage.usedTokens / usage.windowTokens * 100) : 0;
+  const percentLabel = percent > 0 && percent < 0.1 ? '<0.1' : percent.toFixed(1).replace(/\.0$/, '');
+  const label = usage
+    ? `${usage.estimated ? '≈ ' : ''}${usage.usedTokens.toLocaleString()} / ${usage.windowTokens.toLocaleString()} tokens · ${percentLabel}%${usage.estimated ? ' estimated' : ''}`
+    : 'Usage unavailable';
+  return (
+    <div className="command-context-usage">
+      <div className="command-context-label"><span>Context window · last request</span><span>{label}</span></div>
+      <div className="command-context-track" role="progressbar" aria-label="Current chat context window" aria-valuemin={0} aria-valuemax={usage?.windowTokens} aria-valuenow={usage ? Math.min(usage.usedTokens, usage.windowTokens) : undefined} aria-valuetext={label}>
+        <span className="command-context-fill" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CommandPalette({ items, selected, sessionAvailable, contextUsage, onChoose }: { items: CommandDefinition[]; selected: number; sessionAvailable: boolean; contextUsage?: ContextUsage; onChoose: (item: CommandDefinition) => void | Promise<void> }) {
   return (
     <div className="command-palette react-command-palette" role="listbox" aria-label="Cuppet commands">
       {items.map((item, index) => (
@@ -1196,6 +1214,7 @@ function CommandPalette({ items, selected, sessionAvailable, onChoose }: { items
         >
           <div className="command-name">{item.slash ? `/${item.slash}` : item.title || item.id}</div>
           <div className="command-description">{item.description}</div>
+          {item.id === 'compact' && <ContextUsageBar usage={contextUsage} />}
           <div className="command-meta">{item.paletteOnly ? 'action' : item.requiresSession ? 'session' : 'global'}{item.aliases?.length ? ` · aliases: ${item.aliases.map((alias) => `/${alias}`).join(', ')}` : ''}</div>
         </button>
       ))}
@@ -1203,12 +1222,15 @@ function CommandPalette({ items, selected, sessionAvailable, onChoose }: { items
   );
 }
 
-function CommandResultView({ result, onDismiss }: { result: CommandResult; onDismiss: () => void }) {
+function CommandResultView({ result, contextUsage, onDismiss }: { result: CommandResult; contextUsage?: ContextUsage; onDismiss: () => void }) {
   const text = result.presentation || summarize(result.result);
   return (
     <div className="command-result react-command-result" role="status">
       <strong>{result.slash || result.id || 'Command'}</strong>
-      <span>{text}</span>
+      <div className="command-result-copy">
+        <span>{text}</span>
+        {result.id === 'compact' && <ContextUsageBar usage={contextUsage} />}
+      </div>
       <button type="button" className="text-button" onClick={onDismiss} aria-label="Dismiss">×</button>
     </div>
   );

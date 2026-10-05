@@ -21,7 +21,8 @@ export type TranscriptTool = {
 };
 
 export type TranscriptItem = TranscriptReasoning | TranscriptTool;
-export type TranscriptMessageState = { items: TranscriptItem[]; preview: string };
+export type ContextUsage = { usedTokens: number; windowTokens: number; sequence: number; estimated?: boolean };
+export type TranscriptMessageState = { items: TranscriptItem[]; preview: string; contextUsage?: ContextUsage };
 export type TranscriptState = Record<string, TranscriptMessageState>;
 
 export function hydrateTranscript(rows: MessageActivity[] = []): TranscriptState {
@@ -63,9 +64,12 @@ export function mergeTranscriptState(live: TranscriptState, durable: TranscriptS
         if (item.status !== 'running' && durableItem.status === 'running') byId.set(item.id, item);
       }
     }
+    const contextUsage = current.contextUsage && (!persisted.contextUsage || current.contextUsage.sequence >= persisted.contextUsage.sequence)
+      ? current.contextUsage : persisted.contextUsage;
     next[messageId] = {
       items: boundItems(orderedTranscriptItems([...byId.values()])),
       preview: current.preview,
+      ...(contextUsage ? { contextUsage } : {}),
     };
   }
   return next;
@@ -93,6 +97,18 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   const activityType = text(activity.type);
   if (!activityType) return state;
   const sequence = finiteSequence(event.sequence);
+
+  if (event.source === 'provider' && activityType === 'activity.usage') {
+    const usage = record(activity.contextUsage);
+    const usedTokens = usage.usedTokens;
+    const windowTokens = usage.windowTokens;
+    if (!Number.isFinite(usedTokens) || usedTokens < 0 || !Number.isFinite(windowTokens) || windowTokens <= 0) return state;
+    return updateMessageState(state, messageId, (current) => {
+      const usageSequence = sequence ?? (current.contextUsage?.sequence ?? -1) + 1;
+      if (current.contextUsage && usageSequence < current.contextUsage.sequence) return current;
+      return { ...current, contextUsage: { usedTokens, windowTokens, sequence: usageSequence, ...(usage.estimated === true ? { estimated: true } : {}) } };
+    });
+  }
 
   if (event.source === 'provider' && activityType === 'activity.reasoning.delta') {
     const segment = typeof activity.text === 'string' ? activity.text : '';
