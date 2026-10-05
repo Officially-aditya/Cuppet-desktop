@@ -77,27 +77,20 @@ jobs:
           test/antigravity-model-discovery.test.mjs
           test/antigravity-provider.test.mjs
       - name: Run Phase 1 tail regressions
-        run: >-
-          node --test --test-concurrency=1
-          test/runtime-cognitive.test.mjs
-          test/runtime-pe3.test.mjs
-          test/pe3-transaction.test.mjs
-          test/runtime-process.test.mjs
-          test/runtime-project-binding.test.mjs
-          test/runtime-queue-contract.test.mjs
-          test/turn-store.test.mjs
-          test/run-state-projection.test.mjs
-          test/run-phase-lifecycle.test.mjs
-          test/session-command-serializer.test.mjs
-          test/runtime-service-run-authority.test.mjs
-          test/runtime-service-provider-lifecycle.test.mjs
-          test/runtime-service.test.mjs
-          test/session-retention.test.mjs
-          test/title-generator.test.mjs
-          test/tool-runtime.test.mjs
-          test/tst-data-alias.test.mjs
-          test/usage-ledger.test.mjs
-          test/workspace-enhancements.test.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node --test --test-concurrency=1 test/runtime-cognitive.test.mjs test/runtime-pe3.test.mjs test/pe3-transaction.test.mjs test/runtime-process.test.mjs test/runtime-project-binding.test.mjs test/runtime-queue-contract.test.mjs test/turn-store.test.mjs test/run-state-projection.test.mjs test/run-phase-lifecycle.test.mjs test/session-command-serializer.test.mjs test/runtime-service-run-authority.test.mjs test/runtime-service-provider-lifecycle.test.mjs test/runtime-service.test.mjs test/session-retention.test.mjs test/title-generator.test.mjs test/tool-runtime.test.mjs test/tst-data-alias.test.mjs test/usage-ledger.test.mjs test/workspace-enhancements.test.mjs > "$RUNNER_TEMP/provider-tail-tests.log" 2>&1; then
+            cat "$RUNNER_TEMP/provider-tail-tests.log"
+          else
+            cat "$RUNNER_TEMP/provider-tail-tests.log"
+            release_test_failure="$(awk '/^not ok/{remaining=24} remaining>0{print;remaining--}' "$RUNNER_TEMP/provider-tail-tests.log")"
+            release_test_failure="${release_test_failure//%/%25}"
+            release_test_failure="${release_test_failure//$'\r'/%0D}"
+            release_test_failure="${release_test_failure//$'\n'/%0A}"
+            printf '::error::%s\n' "$release_test_failure"
+            exit 1
+          fi
       - name: Smoke released OpenCode ACP transport
         run: |
           npm install -g opencode-ai@1.18.30

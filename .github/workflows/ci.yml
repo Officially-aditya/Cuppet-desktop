@@ -31,7 +31,21 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm run renderer:verify
       - run: npm run phase0:verify
-      - run: npm run phase1:verify
+      - name: Verify Phase 1 and annotate failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          if npm run phase1:verify > "$RUNNER_TEMP/phase1-tests.log" 2>&1; then
+            cat "$RUNNER_TEMP/phase1-tests.log"
+          else
+            cat "$RUNNER_TEMP/phase1-tests.log"
+            release_test_failure="$(awk '/^not ok/{remaining=24} remaining>0{print;remaining--}' "$RUNNER_TEMP/phase1-tests.log")"
+            release_test_failure="${release_test_failure//%/%25}"
+            release_test_failure="${release_test_failure//$'\r'/%0D}"
+            release_test_failure="${release_test_failure//$'\n'/%0A}"
+            printf '::error::%s\n' "$release_test_failure"
+            exit 1
+          fi
       - run: npm run phaseb:verify
       - run: npm run phaseb1:verify
       - run: npm run phaseb2:verify
