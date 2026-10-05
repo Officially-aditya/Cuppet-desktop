@@ -202,4 +202,40 @@ test('resolveFallbackTerminalRoot returns drive root on Windows when needed', as
   assert.equal(winRoot, 'D:\\');
 });
 
+test('Windows terminal cleanup disposes the PTY without unsupported signal arguments', { skip: process.platform !== 'win32' }, async () => {
+  const processes = [];
+  const manager = new ProjectTerminalManager({
+    request: async () => null,
+    ptyModule: {
+      spawn() {
+        const child = {
+          kills: 0,
+          onData() {},
+          onExit(handler) { this.exit = handler; },
+          kill(...args) {
+            assert.equal(args.length, 0, 'Windows PTYs reject POSIX signals');
+            this.kills += 1;
+          },
+        };
+        processes.push(child);
+        return child;
+      },
+    },
+  });
+  const owner = sender(30);
+  try {
+    const first = await manager.start(owner, 'default');
+    manager.stop(owner, first.sessionId);
+    assert.equal(processes[0].kills, 1, 'stopping the terminal must dispose the native process');
+    processes[0].exit({ exitCode: 0 });
+    assert.equal(processes[0].kills, 1, 'a stopped terminal must not be disposed twice');
+
+    const second = await manager.start(owner, 'default');
+    processes[1].exit({ exitCode: 0 });
+    assert.equal(processes[1].kills, 1, 'natural shell exit must also dispose the ConPTY worker');
+    assert.throws(() => manager.write(owner, second.sessionId, 'echo test\r'), /not active/i);
+  } finally {
+    manager.stopAll();
+  }
+});
 

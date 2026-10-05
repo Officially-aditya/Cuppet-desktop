@@ -86,7 +86,7 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Verify Windows OpenCode setup and ACP
-        run: node --test test/windows-local-cli.test.mjs test/opencode-setup.test.mjs test/provider-version-policy.test.mjs test/local-provider-version-check.test.mjs test/opencode-auth-status.test.mjs test/opencode-provider.test.mjs
+        run: node --test test/project-terminal-manager.test.mjs test/windows-local-cli.test.mjs test/opencode-setup.test.mjs test/provider-version-policy.test.mjs test/local-provider-version-check.test.mjs test/opencode-auth-status.test.mjs test/opencode-provider.test.mjs
 
       - name: Build unsigned Windows release
         run: npm run release:win

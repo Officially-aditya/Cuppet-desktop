@@ -17,14 +17,16 @@ const MAX_EVENT_BYTES = 128 * 1024;
 export class ProjectTerminalManager {
   #request;
   #spawn;
+  #pty;
   #usePty;
   #sessions = new Map();
   #startTokens = new Map();
 
-  constructor({ request, spawnProcess = spawn, usePty = true } = {}) {
+  constructor({ request, spawnProcess = spawn, usePty = true, ptyModule = pty } = {}) {
     if (typeof request !== 'function') throw new TypeError('ProjectTerminalManager requires a runtime request function');
     this.#request = request;
     this.#spawn = spawnProcess;
+    this.#pty = ptyModule;
     this.#usePty = spawnProcess === spawn && usePty !== false;
   }
 
@@ -51,9 +53,9 @@ export class ProjectTerminalManager {
     let ptyProcess = null;
     let child = null;
 
-    if (this.#usePty && pty && typeof pty.spawn === 'function') {
+    if (this.#usePty && this.#pty && typeof this.#pty.spawn === 'function') {
       try {
-        ptyProcess = pty.spawn(shell, [], {
+        ptyProcess = this.#pty.spawn(shell, [], {
           name: 'xterm-256color',
           cols,
           rows,
@@ -122,7 +124,13 @@ export class ProjectTerminalManager {
     if (ptyProcess) {
       ptyProcess.onData((data) => this.#emitOutput(session, 'stdout', data));
       ptyProcess.onExit(({ exitCode, signal }) => {
+        const alreadyClosed = session.closed;
         session.closed = true;
+        // ConPTY's output worker remains alive after the shell exits until kill
+        // disposes it. Windows node-pty rejects POSIX signal arguments.
+        if (process.platform === 'win32' && !alreadyClosed) {
+          try { ptyProcess.kill(); } catch {}
+        }
         this.#emit(session, { type: 'exit', code: Number.isInteger(exitCode) ? exitCode : null, signal: signal || null });
         this.#sessions.delete(session.id);
       });
@@ -217,7 +225,10 @@ export class ProjectTerminalManager {
     if (!session || session.closed) return { stopped: false };
     session.closed = true;
     if (session.ptyProcess?.kill) {
-      try { session.ptyProcess.kill('SIGTERM'); } catch {}
+      try {
+        if (process.platform === 'win32') session.ptyProcess.kill();
+        else session.ptyProcess.kill('SIGTERM');
+      } catch {}
     }
     try { session.child?.stdin?.end(); } catch {}
     try { session.child?.kill?.('SIGTERM'); } catch {}
@@ -471,4 +482,3 @@ finally:
     },
   };
 }
-
