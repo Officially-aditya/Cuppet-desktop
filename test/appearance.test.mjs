@@ -68,12 +68,12 @@ test('theme changes notify the terminal and provide readable terminal palettes',
   const f = await fixture(t, { saved: 'dark' });
   let palette = f.appearance.terminalAppearance();
   window.addEventListener(f.appearance.APPEARANCE_CHANGED_EVENT, () => { palette = f.appearance.terminalAppearance(); });
-  assert.equal(palette.background, '#050608');
+  assert.equal(palette.background, '#1e1e1e');
   f.appearance.writeAppearancePreference('light');
-  assert.equal(palette.background, '#f6f8fb');
+  assert.equal(palette.background, '#ffffff');
   assert.equal(palette.foreground, '#242f3e');
   f.appearance.writeAppearancePreference('dark');
-  assert.equal(palette.background, '#050608');
+  assert.equal(palette.background, '#1e1e1e');
   assert.equal(palette.foreground, '#c9d1d9');
 });
 
