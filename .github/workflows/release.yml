@@ -8,6 +8,8 @@ on:
         required: true
         type: string
   push:
+    branches:
+      - 'release/v*'
     tags:
       - 'v*'
 
@@ -39,6 +41,8 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             RELEASE_TAG='${{ inputs.tag }}'
+          elif [[ "$GITHUB_REF_NAME" == release/v* ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME#release/}"
           else
             RELEASE_TAG="$GITHUB_REF_NAME"
           fi
@@ -56,13 +60,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100")"
-          for workflow in "CI" "Provider V2 Selected"; do
-            count="$(printf '%s' "$RUNS_JSON" | jq --arg workflow "$workflow" '[.workflow_runs[] | select(.name == $workflow and .status == "completed" and .conclusion == "success")] | length')"
-            if [[ "$count" -lt 1 ]]; then
-              echo "Exact release head $GITHUB_SHA has no successful completed $workflow run." >&2
+          for attempt in {1..210}; do
+            RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100")"
+            ready=true
+            for workflow in "CI" "Provider V2 Selected"; do
+              count="$(printf '%s' "$RUNS_JSON" | jq --arg workflow "$workflow" '[.workflow_runs[] | select(.name == $workflow and .status == "completed" and .conclusion == "success")] | length')"
+              if [[ "$count" -lt 1 ]]; then
+                ready=false
+                failed="$(printf '%s' "$RUNS_JSON" | jq --arg workflow "$workflow" '[.workflow_runs[] | select(.name == $workflow and .status == "completed" and .conclusion != "success")] | length')"
+                if [[ "$failed" -gt 0 ]]; then
+                  echo "Exact release head $GITHUB_SHA failed $workflow." >&2
+                  exit 1
+                fi
+              fi
+            done
+            if [[ "$ready" == "true" ]]; then break; fi
+            if [[ "$GITHUB_REF_NAME" != release/v* || "$attempt" -eq 210 ]]; then
+              echo "Exact release head $GITHUB_SHA is missing successful stabilization gates." >&2
               exit 1
             fi
+            echo "Waiting for CI and Provider V2 Selected on $GITHUB_SHA..."
+            sleep 10
           done
 
       - uses: actions/checkout@v6

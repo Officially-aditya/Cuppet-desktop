@@ -6,9 +6,11 @@ on:
     branches:
       - feat/e2-apple-silicon-test
       - feat/provider-architecture-v2
+      - 'release/v*'
     paths:
       - .github/test-trigger
       - .github/provider-v2-test-trigger
+      - .github/release-trigger
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref_name }}

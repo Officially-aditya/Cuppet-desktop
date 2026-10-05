@@ -5,8 +5,10 @@ on:
   push:
     branches:
       - feat/provider-architecture-v2
+      - 'release/v*'
     paths:
       - .github/provider-v2-test-trigger
+      - .github/release-trigger
 
 concurrency:
   group: provider-v2-${{ github.ref_name }}

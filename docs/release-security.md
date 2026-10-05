@@ -20,4 +20,4 @@ Automatic macOS updates are disabled for unsigned releases, including stable ver
 
 ## Cutting a release
 
-Either push a `v<package-version>` tag or use **Production Release → Run workflow** and provide the exact tag. The workflow still rejects mismatched tags, missing successful validation runs, invalid staged runtime resources, and missing packaged artifacts. Versions containing a prerelease suffix are published as GitHub prereleases.
+Push the release commit to `release/v<package-version>` with an updated `.github/release-trigger` to run CI, Provider V2 Selected, and both platform builds. The macOS build waits for successful validation of that commit. Alternatively, push a `v<package-version>` tag or use **Production Release → Run workflow** and provide the exact tag. The workflow still rejects mismatched tags, missing successful validation runs, invalid staged runtime resources, and missing packaged artifacts. Versions containing a prerelease suffix are published as GitHub prereleases.
