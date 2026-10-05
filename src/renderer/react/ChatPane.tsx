@@ -87,8 +87,22 @@ export function ChatPane({
   permission,
   onResolvePermission,
 }: Props) {
-  const [value, setValue] = useState('');
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const composerKey = session?.id ? `session:${session.id}` : `draft:${draft?.projectId ?? 'general'}`;
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, { text: string; attachments: Attachment[] }>>({});
+  const value = composerDrafts[composerKey]?.text ?? '';
+  const attachments = composerDrafts[composerKey]?.attachments ?? [];
+  const setValue = (next: string | ((current: string) => string)) => {
+    setComposerDrafts((current) => {
+      const composer = current[composerKey] ?? { text: '', attachments: [] };
+      return { ...current, [composerKey]: { ...composer, text: typeof next === 'function' ? next(composer.text) : next } };
+    });
+  };
+  const setAttachments = (next: Attachment[] | ((current: Attachment[]) => Attachment[])) => {
+    setComposerDrafts((current) => {
+      const composer = current[composerKey] ?? { text: '', attachments: [] };
+      return { ...current, [composerKey]: { ...composer, attachments: typeof next === 'function' ? next(composer.attachments) : next } };
+    });
+  };
   const [selected, setSelected] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
@@ -104,6 +118,8 @@ export function ChatPane({
   const paneRef = useRef<HTMLElement | null>(null);
   const historyRef = useRef<{ messageId: string; draft: { text: string; attachments: Attachment[] } } | null>(null);
   const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(null);
+  const composerRef = useRef({ key: composerKey, value, attachments });
+  composerRef.current = { key: composerKey, value, attachments };
 
   useEffect(() => {
     const updateSelection = () => {
@@ -172,18 +188,19 @@ export function ChatPane({
   const integrationMentionQuery = currentIntegrationMentionQuery(value);
   const browserControlMentioned = hasBrowserControlMention(value);
 
-  useEffect(() => setSelected(0), [value]);
+  useEffect(() => setSelected(0), [value, composerKey]);
 
   useEffect(() => {
     resize(textarea.current);
   }, [value]);
 
   useEffect(() => {
-    setAttachments([]);
     historyRef.current = null;
     setSelectionMenu(null);
+    setCommandResult(null);
+    setIsDraggingOver(false);
     if (fileInput.current) fileInput.current.value = '';
-  }, [session?.id, draft?.projectId]);
+  }, [composerKey]);
 
   useEffect(() => {
     void applyPermissionPreference(session);
@@ -270,9 +287,16 @@ export function ChatPane({
   }, [session?.id, session?.messages?.length]);
 
   const clearComposer = () => {
+    setComposerDrafts((current) => {
+      const composer = current[composerKey];
+      if (!composer || composer.text !== value || composer.attachments !== attachments) return current;
+      const next = { ...current };
+      delete next[composerKey];
+      return next;
+    });
+    const latest = composerRef.current;
+    if (latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
     historyRef.current = null;
-    setValue('');
-    setAttachments([]);
     if (fileInput.current) fileInput.current.value = '';
     if (textarea.current) textarea.current.style.height = '54px';
     textarea.current?.focus();
@@ -288,7 +312,7 @@ export function ChatPane({
     // The runtime owns queueing so queued work survives renderer reloads and there is
     // only one authority for ordering, capacity, dispatch, and failure semantics.
     const result = await onSend(raw, deliveryMode, attachments);
-    if (result.commandResult) setCommandResult(result.commandResult);
+    if (result.commandResult && composerRef.current.key === composerKey) setCommandResult(result.commandResult);
     if (result.clear) clearComposer();
   };
 
@@ -405,8 +429,9 @@ function imageMimeFromName(name: string): string | null {
   const choose = async (item: CommandDefinition) => {
     if (item.paletteOnly) {
       const result = await executePaletteAction(item, session?.id ?? null, mode);
-      if (result) setCommandResult(result);
       setValue('');
+      if (composerRef.current.key !== composerKey) return;
+      if (result) setCommandResult(result);
       textarea.current?.focus();
       return;
     }
