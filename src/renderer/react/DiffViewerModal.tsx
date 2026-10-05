@@ -137,6 +137,17 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
                 {copied ? <CheckIcon /> : <CopyIcon />}
               </span>
             </button>
+            <button
+              type="button"
+              className="diff-action-button"
+              title="Close diff viewer"
+              aria-label="Close diff viewer"
+              onClick={onClose}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </header>
 
