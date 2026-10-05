@@ -875,10 +875,10 @@ function MessageView({
       {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
       {assistant ? (
         content ? (
-          <div
+          <MarkdownContent
             ref={responseRef}
             className="message-content markdown-rendered"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            content={content}
             onClick={(event) => {
               const target = event.target as HTMLElement;
               if (target.tagName === 'IMG') {
@@ -967,12 +967,18 @@ function MessageView({
   );
 }
 
+function MarkdownContent({ content, ...props }: React.ComponentProps<'div'> & { content: string }) {
+  // Replacing unchanged HTML destroys the browser's active text selection.
+  const html = useMemo(() => ({ __html: renderMarkdown(content) }), [content]);
+  return <div {...props} dangerouslySetInnerHTML={html} />;
+}
+
 function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
-        <div key={item.id} className="message-trace-reasoning markdown-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />
+        <MarkdownContent key={item.id} className="message-trace-reasoning markdown-rendered" content={item.text} />
       ) : (
         <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
       ))}
