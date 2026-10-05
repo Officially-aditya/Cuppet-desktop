@@ -584,7 +584,7 @@ function ContextMenu(props: Props & {
     void action();
   };
 
-  return (
+  return createPortal(
     <div className="nav-context-menu react-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
       {project && <>
         {onOpenProjectGraph && (
@@ -602,7 +602,8 @@ function ContextMenu(props: Props & {
         <hr />
         <button type="button" className="danger" onClick={() => onStartDeleteSession(session)}>Delete chat…</button>
       </>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
