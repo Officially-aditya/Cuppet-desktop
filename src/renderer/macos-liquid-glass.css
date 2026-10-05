@@ -57,6 +57,11 @@ html, body {
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35);
 }
 
+/* Non-macOS sidebars use the same opaque neutral surface as the other pages. */
+.react-app:has(.shell-panel-header.is-non-mac) :is(.react-sidebar, .react-sidebar.collapsed) {
+  background: var(--bg-main-surface) !important;
+}
+
 .react-sidebar .sidebar-top {
   border-bottom: 1px solid var(--glass-border-subtle) !important;
 }
