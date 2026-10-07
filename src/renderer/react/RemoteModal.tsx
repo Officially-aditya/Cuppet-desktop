@@ -100,7 +100,6 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
       return;
     }
     setBusy(false);
-    void preparePairing();
   };
 
   const activeDevice = status.activeDevice ?? status.activeDevices?.[0] ?? null;
@@ -136,6 +135,8 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
             </div>
           </div>
         )}
+
+        {!status.running && !status.starting && !busy && <button type="button" className="ghost-button" onClick={() => void preparePairing()}>Start remote control</button>}
 
         {note && <div className="settings-note remote-note">{note}</div>}
       </section>

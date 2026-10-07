@@ -32,9 +32,10 @@ async function bootstrap() {
   const syncProviderConfig = () => runtime.request('provider.config.sync', { provider: settings.runtimeValue() });
   runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
-  runtime.on('recovered', () => { void syncProviderConfig().catch(() => undefined); });
+  runtime.on('recovered', () => { void syncProviderConfig().then(() => runtime.request('remote.resume')).catch(() => undefined); });
   await runtime.start();
   await syncProviderConfig().catch(() => undefined);
+  void runtime.request('remote.resume').catch(() => undefined);
   terminals = new ProjectTerminalManager({ request: (method, params) => runtime.request(method, params) });
   registerIpc();
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON_MACOS);

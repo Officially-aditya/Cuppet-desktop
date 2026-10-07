@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { RemoteBridge } from './bridge.mjs';
 import { RemoteCommandAdapter } from './commands.mjs';
 import { WebSocketTransport } from './connection.mjs';
@@ -13,6 +14,21 @@ const DEFAULT_CUPPET_API_BASE='https://connect.cuppet.in';
 export class RemoteManager {
   #remoteDir; #call; #emit; #identity; #bridge; #transport; #commands; #relayUrl; #provider={}; #startedAt; #starting; #setup;
   constructor({dataDir,call,emit=()=>{}}){this.#remoteDir=join(dataDir,'remote');this.#call=call;this.#emit=emit;}
+  async resume(){
+    const saved=await this.#loadConfig();
+    if(saved.enabled!==true||!saved.relayUrl)return {resumed:false};
+    await this.start({relayUrl:saved.relayUrl,createInvite:false});
+    return {resumed:true};
+  }
+  async #loadConfig(){
+    try{return JSON.parse(await readFile(join(this.#remoteDir,'config.json'),'utf8'));}
+    catch{return {};}
+  }
+  async #saveConfig(enabled){
+    if(!this.#relayUrl)return;
+    await mkdir(this.#remoteDir,{recursive:true,mode:0o700});
+    await writeFile(join(this.#remoteDir,'config.json'),JSON.stringify({relayUrl:this.#relayUrl,enabled}),{mode:0o600});
+  }
   async ready(){this.#identity??=await ensureHostIdentity(this.#remoteDir);return this.#identity;}
   setProviderConfig(config={}){
     this.#provider={...config};
@@ -37,7 +53,7 @@ export class RemoteManager {
     return this.#starting;
   }
   async #start({relayUrl,apiBase,authToken,setup,provider,createInvite,signal}){
-    let identity=await this.ready();if(provider)this.setProviderConfig(provider);let resolvedRelay=relayUrl||this.#relayUrl;const connectBase=apiBase||DEFAULT_CUPPET_API_BASE;
+    let identity=await this.ready();if(provider)this.setProviderConfig(provider);const saved=await this.#loadConfig();let resolvedRelay=relayUrl||this.#relayUrl||saved.relayUrl;const connectBase=apiBase||DEFAULT_CUPPET_API_BASE;
     if(authToken){
       const enrollment=await registerHost({apiBase:connectBase,token:authToken,identity,relaySecret:identity.relaySecret});resolvedRelay??=enrollment.relayUrl;
       if(enrollment.remoteTokenPublicKey)identity=await setRemoteTokenPublicKey(this.#remoteDir,enrollment.remoteTokenPublicKey);
@@ -66,11 +82,13 @@ export class RemoteManager {
       buildAttachSnapshot:async()=>({host:await commands.execute({deviceID:'attach'},'host.get',{},{}),workspaces:await commands.execute({deviceID:'attach'},'workspace.list',{},{}),permissions:await this.#call('permission.list',{}),questions:[]}),
       onDeviceChange:(devices)=>this.#emit({type:'remote.device',devices}),
     });
+    transport.onStatusChange((connected)=>this.#emit({type:'remote.connection',connected}));
     this.#transport=transport;this.#commands=commands;this.#bridge=bridge;this.#startedAt=Date.now();bridge.start();
     try{await transport.waitUntilConnected();}catch(error){bridge.stop();this.#bridge=undefined;this.#transport=undefined;this.#commands=undefined;this.#startedAt=undefined;throw error;}
+    await this.#saveConfig(true);
     const invite=createInvite?await this.createInvite({role:'trusted'}):null;this.#emit({type:'remote.started',status:await this.status(),invite});return {status:await this.status(),invite};
   }
-  async stop(){if(!this.#bridge)return {stopped:false,status:await this.status()};this.#bridge.stop();this.#bridge=undefined;this.#transport=undefined;this.#commands=undefined;this.#startedAt=undefined;this.#emit({type:'remote.stopped'});return {stopped:true,status:await this.status()};}
+  async stop({persist=true}={}){if(persist)await this.#saveConfig(false);if(!this.#bridge)return {stopped:false,status:await this.status()};this.#bridge.stop();this.#bridge=undefined;this.#transport=undefined;this.#commands=undefined;this.#startedAt=undefined;this.#emit({type:'remote.stopped'});return {stopped:true,status:await this.status()};}
   async createInvite({role='trusted',ttlMs}={}){const identity=await this.ready();const invite=await createPairingInvite(this.#remoteDir,{role,...(Number.isFinite(ttlMs)?{ttlMs}:{}),...(this.#relayUrl?{relayUrl:this.#relayUrl}:{}),hostId:identity.hostId});this.#emit({type:'remote.invite',invite:{code:invite.code,expiresAt:invite.expiresAt,role:invite.role,url:invite.url??null}});return invite;}
   async devices(){return listPairedDevices(this.#remoteDir);}
   async revoke(deviceId){
@@ -85,7 +103,7 @@ export class RemoteManager {
     // user never opened or started remote control. `stop()` intentionally
     // returns a full status snapshot and therefore calls `ready()`; avoid that
     // side effect on the process teardown path.
-    if(this.#bridge) await this.stop().catch(()=>undefined);
+    if(this.#bridge) await this.stop({persist:false}).catch(()=>undefined);
     else {
       try{this.#transport?.close();}catch{}
       this.#transport=undefined;this.#commands=undefined;this.#starting=undefined;this.#setup=undefined;

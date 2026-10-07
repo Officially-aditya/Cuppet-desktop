@@ -164,6 +164,7 @@ async function handle(method, params = {}, context = {}) {
     case 'session.restore': return archiveSession(params, false);
     case 'session.delete': return deleteSession(params);
     case 'project.rename': return renameProject(params);
+    case 'remote.resume': return remote.resume();
     case 'remote.status': return remote.status();
     case 'remote.start': return remote.start({ ...params, provider: boundedProvider(params.provider) });
     case 'remote.stop': return remote.stop();

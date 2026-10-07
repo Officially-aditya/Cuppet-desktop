@@ -43,6 +43,10 @@ export function reduceClientRemoteEvent(event: RuntimeEvent) {
     hydrateClientRemoteStatus({ ...status, starting: true, setup: normalizeRemoteSetup(event.setup) });
     return true;
   }
+  if (type === 'remote.connection') {
+    hydrateClientRemoteStatus({ ...status, connected: event.connected === true });
+    return true;
+  }
   if (type === 'remote.device') {
     const activeDevices = Array.isArray(event?.devices) ? event.devices : [];
     hydrateClientRemoteStatus({
