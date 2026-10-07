@@ -166,3 +166,25 @@ test('explicit revoke immediately ejects an authenticated live device', async ()
   assert.match(String(transport.sent.find((frame)=>frame.replyTo==='after-explicit-revoke')?.error),/not authenticated/i);
   bridge.stop();
 });
+
+
+test('oversized command replies return an explicit cached error instead of timing out', async () => {
+  const transport = new FakeTransport();
+  let calls = 0;
+  const bridge = new RemoteBridge({ hostId: 'host_large', transport,
+    commandAdapter: { detachDevice() {}, async execute() { calls++; return { history: 'x'.repeat(600 * 1024) }; } },
+    authenticateDevice: async () => ({ scopes: ['session.write'], name: 'phone' }),
+  });
+  await authenticate(transport, bridge);
+  transport.receive(command('large', 'session.resume', { sessionID: 's1' }));
+  await settle();
+  transport.receive(command('large', 'session.resume', { sessionID: 's1' }));
+  await settle();
+  const replies = transport.sent.filter((frame) => frame.replyTo === 'large');
+  assert.equal(calls, 1);
+  assert.equal(replies.length, 2);
+  assert.equal(replies[0].ok, false);
+  assert.equal(replies[0].code, 'REMOTE_RESPONSE_TOO_LARGE');
+  assert.deepEqual(replies[1], replies[0]);
+  bridge.stop();
+});

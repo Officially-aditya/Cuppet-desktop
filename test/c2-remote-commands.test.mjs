@@ -64,7 +64,7 @@ test('session snapshot is the durable remote transcript projection',async()=>{
   const snapshot=await adapter.execute(actor,'session.snapshot');
   assert.equal(snapshot.projectionVersion,1);
   assert.equal(snapshot.session.id,'s1');
-  assert.deepEqual(snapshot.session.messages,[{id:'m1',role:'assistant',status:'complete',content:'ok'}]);
+  assert.deepEqual(snapshot.session.messages,[{id:'m1',role:'assistant',status:'complete',content:'ok',sequence:1}]);
   assert.equal(snapshot.session.activities[0]?.activity?.type,'activity.tool.closed');
   assert.equal(snapshot.session.toolExecutions[0]?.callId,'c1');
   assert.equal(snapshot.run,null);

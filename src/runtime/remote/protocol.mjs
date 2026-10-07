@@ -19,6 +19,7 @@ export const COMMAND_SCOPES = Object.freeze({
   'provider.list':'session.read',
   'agent.mode.get':'session.read',
   'workspace.attach':'session.write',
+  'workspace.create':'session.write',
   'session.new':'session.write',
   'session.resume':'session.write',
   'session.submit':'session.write',
@@ -79,6 +80,7 @@ export function publicEventFor(event) {
     return { type:'session.projection.invalidated', payload:{}, sessionId };
   }
   switch (event.type) {
+    case 'project.created': case 'project.updated': case 'project.removed': return {type:'workspace.projection.invalidated',payload:{}};
     case 'permission.requested': return { type:'permission.requested', payload:{ request:event.request }, sessionId:stringOr(event.request?.sessionId ?? event.sessionId) };
     case 'permission.resolved': return { type:'permission.resolved', payload:{ requestID:event.requestId, reply:event.reply ?? null }, sessionId:stringOr(event.sessionId) };
     case 'question.requested': return { type:'question.requested', payload:{ request:event.request }, sessionId:stringOr(event.request?.sessionId ?? event.sessionId) };

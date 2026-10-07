@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { PROTOCOL_VERSION } from './protocol.mjs';
+import { sessionProjection, sessionSummary } from './session-projection.mjs';
 import {
   normalizeProviderConfiguration,
   providerProjection,
@@ -41,10 +42,11 @@ export class RemoteCommandAdapter {
       case 'status': return buildRuntimeStatus({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.9.0-alpha.1' });
       case 'doctor': return buildRuntimeDoctor({ call:(method,value)=>this.#call(method,value), providerConfig:this.#provider, version:'0.9.0-alpha.1' });
       case 'workspace.list': return this.#workspaceList(state);
+      case 'workspace.create': return this.#workspaceCreate(actor,state,params,envelope);
       case 'workspace.attach': return this.#workspaceAttach(state,params.workspaceId ?? params.projectId);
-      case 'session.list': return this.#call('session.list',state.projectId?{projectId:state.projectId}:{});
-      case 'session.snapshot': return this.#sessionSnapshot(state,explicitSession);
-      case 'session.messages': return this.#sessionMessages(state,explicitSession);
+      case 'session.list': { const projectId=stringOr(params.workspaceId)??stringOr(params.projectId)??state.projectId;return this.#call('session.list',projectId?{projectId}:{}); }
+      case 'session.snapshot': return this.#sessionSnapshot(state,explicitSession,params);
+      case 'session.messages': return this.#sessionMessages(state,explicitSession,params);
       case 'session.new': return this.#sessionNew(actor,state,params,envelope);
       case 'session.resume': return this.#sessionResume(state,explicitSession);
       case 'session.submit': return this.#sessionSubmit(actor,state,explicitSession,params,envelope);
@@ -75,15 +77,21 @@ export class RemoteCommandAdapter {
   async #workspaceList(state){
     const projects=await this.#call('project.list',{});
     const sessions=await this.#call('session.list',{});
-    return projects.map((project)=>({workspaceId:project.id,name:project.name,pathDisplay:displayPath(project.canonicalPath,project.name),activeSessionId:state.projectId===project.id?state.sessionId??sessions.find((session)=>session.projectId===project.id)?.id??null:null,missing:project.missing===true}));
+    return projects.map((project)=>({workspaceId:project.id,name:project.name,pathDisplay:displayPath(project.canonicalPath,project.name),gitBranch:project.branch??null,sessionCount:sessions.filter((session)=>session.projectId===project.id).length,activeSessionId:state.projectId===project.id?state.sessionId??sessions.find((session)=>session.projectId===project.id)?.id??null:null,missing:project.missing===true}));
   }
   async #workspaceAttach(state,id){
     const projectId=String(id??''); if(!projectId)throw new Error('workspaceId is required');
     const project=await this.#call('project.get',{projectId}); if(!project)throw new Error('unknown workspace'); if(project.missing)throw new Error('workspace folder is missing');
-    state.projectId=project.id; if(state.sessionId){const session=await this.#call('session.get',{sessionId:state.sessionId}).catch(()=>null);if(session?.projectId!==project.id)state.sessionId=null;}
+    state.projectId=project.id; if(state.sessionId){const session=(await this.#call('session.list',{})).find((item)=>item.id===state.sessionId);if(session?.projectId!==project.id)state.sessionId=null;}
     return {workspaceId:project.id,name:project.name,pathDisplay:displayPath(project.canonicalPath,project.name),activeSessionId:state.sessionId??null,attached:true};
   }
-  async #sessionSnapshot(state,explicit){
+  async #workspaceCreate(actor,state,params,envelope){
+    const name=String(params.name??'').trim();if(!name||name.length>120)throw new Error('A project name of 1–120 characters is required');
+    const project=await this.#call('project.create-folder',{name,...(stringOr(params.path)?{path:params.path}:{})},remoteCommandContext(actor,envelope));
+    state.projectId=project.id;state.sessionId=null;
+    return {workspaceId:project.id,name:project.name,pathDisplay:displayPath(project.canonicalPath,project.name),gitBranch:project.branch??null,sessionCount:0,missing:false};
+  }
+  async #sessionSnapshot(state,explicit,params={}){
     const sessionId=this.#requireSession(state,explicit);
     const [session,mode,auto,run]=await Promise.all([
       this.#call('session.get',{sessionId}),
@@ -91,13 +99,13 @@ export class RemoteCommandAdapter {
       this.#call('session.auto.get',{sessionId}),
       this.#call('session.run.latest',{sessionId}),
     ]);
-    return {projectionVersion:1,session,run,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
+    return {projectionVersion:1,...sessionProjection(session,params),run:run?{id:run.id,status:run.status,sessionId:run.sessionId}:null,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
-  async #sessionMessages(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return session.messages??[];}
+  async #sessionMessages(state,explicit,params={}){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return sessionProjection(session,params).session.messages;}
   async #sessionNew(actor,state,params,envelope){
     const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId},remoteCommandContext(actor,envelope)); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
   }
-  async #sessionResume(state,explicit){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});state.sessionId=session.id;state.projectId=session.projectId??state.projectId;return session;}
+  async #sessionResume(state,explicit){const id=this.#requireSession(state,explicit);const session=(await this.#call('session.list',{})).find((item)=>item.id===id);if(!session)throw new Error('unknown session');state.sessionId=session.id;state.projectId=session.projectId??null;return sessionSummary(session);}
   async #sessionSubmit(actor,state,explicit,params,envelope){
     const sessionId=this.#requireSession(state,explicit); const prompt=String(params.prompt??params.text??'').trim(); if(!prompt)throw new Error('prompt is required');
     const commandId=remoteCommandId(actor,envelope);

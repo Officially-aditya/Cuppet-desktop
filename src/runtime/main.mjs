@@ -148,6 +148,7 @@ async function handle(method, params = {}, context = {}) {
       return { cancelled: result };
     }
     case 'session.run.latest': return turnStore.latestRun(boundedId(params.sessionId));
+    case 'project.create-folder': return runReceiptProtectedCommand('project.create-folder', params, context.commandId, () => service.handle('project.create-folder', params));
     case 'session.create': return runReceiptProtectedCommand('session.create', params, context.commandId, () => context.commandId
       ? receiptDatabase.run({ commandId: context.commandId, method: 'session.create' }, () => service.handle('session.create', params))
       : service.handle('session.create', params));

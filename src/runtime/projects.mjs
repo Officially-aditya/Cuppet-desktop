@@ -1,6 +1,7 @@
-import { access, lstat, realpath, rm } from 'node:fs/promises';
+import { access, lstat, mkdir, realpath, rm, rmdir } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 
 const MAX_OUTPUT = 512 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -45,6 +46,26 @@ export class ProjectManager {
     const project = this.#db.getProject(id);
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', `Unknown project: ${id}`);
     return this.status(project);
+  }
+
+  async createFolder({ id, name, path }) {
+    const projectName = cleanName(name);
+    if (!projectName || projectName === '.' || projectName === '..') throw new ProjectError('PROJECT_NAME_REQUIRED', 'Enter a project name.');
+    const folderName = projectName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-');
+    const root = join(homedir(), 'Cuppet Projects');
+    const requested = typeof path === 'string' ? path.trim() : '';
+    if (requested && !requested.startsWith('~/') && !isAbsolute(requested)) throw new ProjectError('PROJECT_PATH_INVALID', 'Use an absolute folder path on your computer.');
+    const destination = requested
+      ? resolve(requested.startsWith('~/') ? join(homedir(), requested.slice(2)) : requested)
+      : join(root, folderName);
+    await mkdir(join(destination, '..'), { recursive: true });
+    try { await mkdir(destination); }
+    catch (error) {
+      if (error.code === 'EEXIST') throw new ProjectError('PROJECT_FOLDER_EXISTS', 'This folder already exists. Choose a new folder, or add the existing folder in Cuppet on your computer.');
+      throw error;
+    }
+    try { return await this.addLocal({ id, name: projectName, path: destination }); }
+    catch (error) { await rmdir(destination).catch(() => undefined); throw error; }
   }
 
   async addLocal({ id, path, name }) {

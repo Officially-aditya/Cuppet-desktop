@@ -71,7 +71,9 @@ export class RemoteBridge {
     try{
       const actor={kind:'remote',deviceID:deviceId,deviceName:authorized.name,scopes:[...authorized.scopes]};
       const result=await this.#commands.execute(actor,envelope.type,envelope.payload??{},envelope);
-      return {version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId};
+      const frame={version:PROTOCOL_VERSION,replyTo:envelope.id,ok:true,...(result!==undefined?{result}:{}),deviceId};
+      try{encodeFrame(frame);}catch{return this.#errorFrame(envelope.id,'The desktop response is too large for the relay. Request a smaller history page.',deviceId,'REMOTE_RESPONSE_TOO_LARGE');}
+      return frame;
     }catch(error){return this.#errorFrame(envelope.id,cleanError(error),deviceId,errorCode(error));}
   }
   async #reauthorize(deviceId,device){

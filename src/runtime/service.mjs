@@ -136,6 +136,7 @@ export class RuntimeService {
       case 'project.list': return this.#projects.list();
       case 'project.get': return this.#projects.get(params.projectId);
       case 'project.open': return this.#projects.open(params.projectId);
+      case 'project.create-folder': return this.#addProject(() => this.#projects.createFolder({ id: `project_${randomUUID()}`, ...params }));
       case 'project.add-local': return this.#addProject(() => this.#projects.addLocal({ id: `project_${randomUUID()}`, ...params }));
       case 'project.clone-url': return this.#addProject(() => this.#projects.cloneUrl({ id: `project_${randomUUID()}`, ...params }));
       case 'project.github-list': return this.#projects.listGithubRepositories(params);
