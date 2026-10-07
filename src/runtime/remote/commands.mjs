@@ -4,10 +4,9 @@ import { PROTOCOL_VERSION } from './protocol.mjs';
 import { sessionProjection, sessionSummary } from './session-projection.mjs';
 import {
   normalizeProviderConfiguration,
-  providerProjection,
-  providerRequest,
   resolveAdvertisedSelection,
 } from '../provider-policy.mjs';
+import { remoteProviderProjection, remoteProviderRequest } from './provider-config.mjs';
 import { modelMatchesProvider } from '../provider-catalog.mjs';
 import { buildRuntimeDoctor, buildRuntimeStatus } from '../diagnostics.mjs';
 import { executeCommand, parseSlashCommand } from '../commands.mjs';
@@ -17,7 +16,7 @@ export class RemoteCommandAdapter {
   constructor({ call, identity, providerConfig={} }) { this.#call=call; this.#identity=identity; this.setProviderConfig(providerConfig); }
   setProviderConfig(config={}) {
     this.#provider=normalizeProviderConfiguration(config);
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     for(const state of this.#states.values()){
       if(state.providerID){
         const provider=projection.catalog.find((item)=>item.id===state.providerID||item.integrationIds.includes(state.providerID));
@@ -153,7 +152,7 @@ export class RemoteCommandAdapter {
   }
 
   #modelList(state){
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     const selected=state.selection??this.#defaultSelection(state);
     return projection.models.filter((model)=>this.#modelVisibleForProvider(state,model)).map((model)=>({
       providerID:model.providerID,
@@ -182,7 +181,7 @@ export class RemoteCommandAdapter {
   }
 
   #providerList(state){
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     return projection.catalog.map((provider)=>({
       id:provider.id,
       name:provider.id==='openai-compatible'?'OpenAI-compatible':provider.label,
@@ -192,7 +191,7 @@ export class RemoteCommandAdapter {
   }
   #providerSelect(state,params){
     const requested=String(params.providerID??params.id??'');
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     const provider=projection.catalog.find((item)=>item.id===requested||item.integrationIds.includes(requested));
     if(!provider)throw new Error('unknown provider');
     if(!projection.models.some((model)=>modelMatchesProvider(model,provider)))throw new Error('provider has no configured coding model');
@@ -220,15 +219,15 @@ export class RemoteCommandAdapter {
     };
   }
   #selectedProvider(state){
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     if(!projection.configured)throw new Error('Host provider is not configured');
     const selected=state.selection??this.#defaultSelection(state);
     if(!selected)throw new Error('Host provider is not configured');
-    return providerRequest(this.#provider,selected);
+    return remoteProviderRequest(this.#provider,selected);
   }
   #defaultSelection(state){
     if(!state.providerID)return this.#provider.primary?{...this.#provider.primary}:null;
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     const provider=projection.catalog.find((item)=>item.id===state.providerID);
     if(!provider)return null;
     if(this.#provider.primary&&modelMatchesProvider(this.#provider.primary,provider))return{...this.#provider.primary};
@@ -237,16 +236,16 @@ export class RemoteCommandAdapter {
   }
   #modelVisibleForProvider(state,model){
     if(!state.providerID)return true;
-    const provider=providerProjection(this.#provider).catalog.find((item)=>item.id===state.providerID);
+    const provider=remoteProviderProjection(this.#provider).catalog.find((item)=>item.id===state.providerID);
     return provider?modelMatchesProvider(model,provider):false;
   }
   #selectionMatchesProvider(providerID,selection){
     if(!selection)return false;
-    const provider=providerProjection(this.#provider).catalog.find((item)=>item.id===providerID||item.integrationIds.includes(providerID));
+    const provider=remoteProviderProjection(this.#provider).catalog.find((item)=>item.id===providerID||item.integrationIds.includes(providerID));
     return Boolean(provider&&modelMatchesProvider(selection,provider));
   }
   #providerStatus(state){
-    const projection=providerProjection(this.#provider);
+    const projection=remoteProviderProjection(this.#provider);
     const selected=state.selection??this.#defaultSelection(state);
     const provider=projection.catalog.find((item)=>selected&&modelMatchesProvider(selected,item));
     return {configured:projection.configured,ready:projection.configured,selectedProvider:provider?.id??null,selectedModel:selected?.modelID??null,selectedVariant:selected?.variant??null};

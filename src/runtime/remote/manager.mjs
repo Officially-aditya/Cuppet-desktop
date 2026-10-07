@@ -7,6 +7,7 @@ import { ensureHostIdentity, setRemoteTokenPublicKey } from './identity.mjs';
 import { authenticateDevice, claimPairingInvite, createPairingInvite, listPairedDevices, relayWebSocketUrl, revokeDevice } from './pairing.mjs';
 import { registerHost } from './enroll.mjs';
 import { runRemoteSetup } from './setup.mjs';
+import { remoteProviderProjection } from './provider-config.mjs';
 import { verifyRemoteToken } from './token.mjs';
 
 const DEFAULT_CUPPET_API_BASE='https://connect.cuppet.in';
@@ -37,13 +38,13 @@ export class RemoteManager {
     // Provider configuration is pushed at ordinary desktop startup. Updating
     // it must not call status()/ready() and create remote identity/state until
     // the user actually opens or starts Remote.
-    return {providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model)};
+    return {providerConfigured:remoteProviderProjection(this.#provider).configured};
   }
   handleRuntimeEvent(event){this.#bridge?.onRuntimeEvent(event);}
   async status(){
     const identity=await this.ready();
     const activeDevices=this.#bridge?.activeDevices??[];
-    return {running:Boolean(this.#bridge),starting:Boolean(this.#starting&&!this.#bridge),connected:Boolean(this.#transport?.connected),deviceConnected:activeDevices.length>0,activeDevice:activeDevices[0]??null,activeDevices,setup:this.#setup?normalizeSetup(this.#setup):null,hostId:identity.hostId,name:identity.deviceName,relayUrl:this.#relayUrl??null,startedAt:this.#startedAt??null,pairedDevices:(await listPairedDevices(this.#remoteDir)).length,providerConfigured:Boolean(this.#provider.apiKey&&this.#provider.model),protocolVersion:1};
+    return {running:Boolean(this.#bridge),starting:Boolean(this.#starting&&!this.#bridge),connected:Boolean(this.#transport?.connected),deviceConnected:activeDevices.length>0,activeDevice:activeDevices[0]??null,activeDevices,setup:this.#setup?normalizeSetup(this.#setup):null,hostId:identity.hostId,name:identity.deviceName,relayUrl:this.#relayUrl??null,startedAt:this.#startedAt??null,pairedDevices:(await listPairedDevices(this.#remoteDir)).length,providerConfigured:remoteProviderProjection(this.#provider).configured,protocolVersion:1};
   }
 
   async start({relayUrl,apiBase,authToken,setup=false,provider,createInvite=true,signal}={}){
