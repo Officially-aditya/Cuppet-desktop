@@ -1,0 +1,135 @@
+name: Windows and macOS Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+            arch: x64
+            installer: exe
+            build-script: release:win
+          - platform: macos-arm64
+            os: macos-15
+            arch: arm64
+            installer: dmg
+            build-script: release:mac
+    defaults:
+      run:
+        shell: bash
+    env:
+      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/checkout@v6
+        if: runner.os == 'macOS'
+        with:
+          repository: Officially-aditya/Cuppet-code
+          ref: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+          path: .release/cuppet-code
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Officially-aditya/browserControl
+          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          path: .release/browsercontrol
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'macOS'
+        with:
+          toolchain: '1.88'
+
+      - name: Build pinned native TST daemon
+        if: runner.os == 'macOS'
+        run: cargo build --locked -p tst-daemon --release --manifest-path .release/cuppet-code/Cargo.toml
+
+      - name: Build standalone TST artifact
+        if: runner.os == 'macOS'
+        working-directory: .release/cuppet-code
+        env:
+          GITHUB_SHA: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
+        run: node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output="${{ github.workspace }}/.release/tst-runtime"
+
+      - name: Stage verified TST resource
+        if: runner.os == 'macOS'
+        run: npm run f1:stage-tst -- --source=.release/tst-runtime
+
+      - name: Stage pinned official Codex app-server
+        run: npm run e2:stage-codex
+
+      - name: Build pinned browserControl runtime
+        working-directory: .release/browsercontrol
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage verified browserControl resource
+        run: npm run browsercontrol:stage -- --source=.release/browsercontrol
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build unsigned desktop package
+        run: npm run ${{ matrix.build-script }}
+
+      - name: Verify packaged interactive terminal
+        run: node scripts/smoke-packaged-terminal.mjs
+
+      - name: Generate SHA-256 checksums
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+          INSTALLER_EXTENSION: ${{ matrix.installer }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const checksums = [process.env.INSTALLER_EXTENSION, 'zip'].map((extension) => {
+            const name = `Cuppet-${version}-${process.env.BUILD_ARCH}.${extension}`;
+            const digest = createHash('sha256').update(readFileSync(`dist/${name}`)).digest('hex');
+            return `${digest}  ${name}`;
+          });
+          writeFileSync('dist/SHA256SUMS.txt', checksums.join('\n') + '\n');
+          NODE
+
+      - name: Upload desktop build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuppet-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            dist/Cuppet-*-${{ matrix.arch }}.${{ matrix.installer }}
+            dist/Cuppet-*-${{ matrix.arch }}.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
