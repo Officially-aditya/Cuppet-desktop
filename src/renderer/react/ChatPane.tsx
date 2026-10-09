@@ -41,6 +41,7 @@ type TraceTool = {
 type TraceItem = TraceReasoning | TraceTool;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 const BROWSERCONTROL_MENTION = '@browserControl';
+const MAX_VISIBLE_USER_LINES = 10;
 
 type Props = {
   session: Session | null;
@@ -758,6 +759,10 @@ function MessageView({
   const status = message.status && message.status !== 'complete' ? statusLabel(message.status) : null;
   const assistant = message.role === 'assistant';
   const content = String(message.content ?? '');
+  const [messageExpanded, setMessageExpanded] = useState(false);
+  const userLines = message.role === 'user' ? content.split(/\r\n|\r|\n/) : [];
+  const canExpand = userLines.length > MAX_VISIBLE_USER_LINES;
+  const visibleContent = canExpand && !messageExpanded ? userLines.slice(0, MAX_VISIBLE_USER_LINES).join('\n') : content;
   const hasTrace = assistant && trace.length > 0;
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
@@ -919,7 +924,18 @@ function MessageView({
         ) : null
       ) : (
         <div className="message-content">
-          {content}
+          <span id={`message-text-${message.id}`} className="message-text">{visibleContent}</span>
+          {canExpand && (
+            <button
+              type="button"
+              className="message-show-more"
+              aria-expanded={messageExpanded}
+              aria-controls={`message-text-${message.id}`}
+              onClick={() => setMessageExpanded((current) => !current)}
+            >
+              {messageExpanded ? 'Show less' : 'Show more'}
+            </button>
+          )}
           {Array.isArray(message.attachments) && message.attachments.some((a) => a.dataUrl) && (
             <div className="message-image-gallery">
               {message.attachments

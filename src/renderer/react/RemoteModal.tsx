@@ -136,7 +136,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
           </div>
         )}
 
-        {!status.running && !status.starting && !busy && <button type="button" className="ghost-button" onClick={() => void preparePairing()}>Start remote control</button>}
+        {!status.running && !status.starting && !busy && <button type="button" className="ghost-button" onClick={() => void preparePairing()}>Retry pairing</button>}
 
         {note && <div className="settings-note remote-note">{note}</div>}
       </section>
