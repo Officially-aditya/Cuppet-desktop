@@ -298,7 +298,6 @@ export type CuppetApi = {
       status: () => Promise<BrowserControlStatus>;
       connect: () => Promise<BrowserControlStatus>;
       disconnect: () => Promise<BrowserControlStatus>;
-      reloadTools: () => Promise<BrowserControlStatus>;
     };
   };
   cognitive: {

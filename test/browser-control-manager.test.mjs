@@ -34,14 +34,14 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for browserControl tool refresh');
 }
 
-test('manual reload replaces tools and schemas in the same runtime and preserves them on failure', async (t) => {
+test('connect refreshes tools and schemas and reconnect discards the previous tool list', async (t) => {
   const { manager, health, events } = setup(t);
   assert.equal((await manager.connect()).connected, true);
   const original = await configure(manager);
   await configure(manager, { tools: [statusTool, inspectTool, { name: 'browser_tabs', inputSchema: { type: 'object', properties: {} } }] });
-  const reloaded = await manager.reloadTools();
-  assert.equal(reloaded.toolCount, 3);
-  assert.equal(reloaded.connected, true);
+  const connected = await manager.connect();
+  assert.equal(connected.toolCount, 3);
+  assert.equal(connected.connected, true);
   const inspect = manager.definitions().find((tool) => tool.function.name === 'browser_inspect');
   assert.match(inspect.function.description, /Inspect the refreshed page/);
   assert.deepEqual(inspect.function.parameters, inspectTool.inputSchema);
@@ -49,7 +49,7 @@ test('manual reload replaces tools and schemas in the same runtime and preserves
   assert.equal(events.at(-1).status.toolCount, 3);
 
   await configure(manager, { tools: [statusTool], listError: true });
-  await assert.rejects(manager.reloadTools(), /Test tools\/list failure/);
+  await assert.rejects(manager.connect(), /Test tools\/list failure/);
   assert.equal(manager.has('browser_inspect'), true);
   assert.equal(manager.definitions().length, 3);
   await configure(manager, { listError: false });
@@ -61,6 +61,8 @@ test('manual reload replaces tools and schemas in the same runtime and preserves
   await assert.rejects(manager.reloadTools(), /Connect Chrome before reloading/);
   health.startupProbe = true;
   assert.equal((await manager.connect()).toolCount, 1);
+  assert.equal(manager.has('browser_inspect'), false);
+  assert.notEqual((await configure(manager)).pid, original.pid);
 });
 
 test('MCP notifications and Chrome reconnection refresh the tool list automatically', async (t) => {

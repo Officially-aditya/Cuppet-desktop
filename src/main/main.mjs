@@ -49,7 +49,6 @@ function registerIpc() {
   ipcMain.handle('cuppet:browser-control:status', () => request('integration.browser.status'));
   ipcMain.handle('cuppet:browser-control:connect', () => request('integration.browser.connect'));
   ipcMain.handle('cuppet:browser-control:disconnect', () => request('integration.browser.disconnect'));
-  ipcMain.handle('cuppet:browser-control:reload-tools', () => request('integration.browser.reload-tools'));
   ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
   ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
   ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));

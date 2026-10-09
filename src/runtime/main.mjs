@@ -124,7 +124,6 @@ async function handle(method, params = {}, context = {}) {
     case 'integration.browser.status': return browserControl.status();
     case 'integration.browser.connect': return browserControl.connect();
     case 'integration.browser.disconnect': return browserControl.disconnect();
-    case 'integration.browser.reload-tools': return browserControl.reloadTools();
     case 'session.list': { await purgeExpiredDeleted(); return service.handle('session.list', params); }
     case 'session.deleted.list': {
       await purgeExpiredDeleted();

@@ -61,14 +61,6 @@ export function GeneralPanel() {
     } finally { setBrowserBusy(false); }
   };
 
-  const reloadBrowserTools = async () => {
-    setBrowserBusy(true);
-    try { setBrowserControl(await window.cuppet.integrations.browserControl.reloadTools()); }
-    catch (error) {
-      setBrowserControl((current) => ({ ...current, message: error instanceof Error ? error.message : String(error) }));
-    } finally { setBrowserBusy(false); }
-  };
-
   const browserState = browserControl?.connected ? 'Connected' : browserControl?.running ? 'Waiting for Chrome' : browserControl?.available === false ? 'Unavailable' : browserControl ? 'Ready' : 'Checking…';
   const browserDescription = browserControl?.message || 'Connect the browserControl Chrome extension to give Cuppet a local browser MCP.';
 
@@ -111,12 +103,6 @@ export function GeneralPanel() {
           <span>browserControl · {browserDescription}</span>
         </div>
         <div className="integration-actions">
-          {browserControl?.running && <button
-            type="button"
-            className="ghost-button settings-action-button"
-            disabled={browserBusy}
-            onClick={() => void reloadBrowserTools()}
-          >Reload tools</button>}
           <button
             type="button"
             className={browserControl?.running ? 'ghost-button settings-action-button' : 'primary-button settings-action-button'}

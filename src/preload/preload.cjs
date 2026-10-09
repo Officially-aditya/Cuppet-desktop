@@ -10,7 +10,6 @@ contextBridge.exposeInMainWorld('cuppet', {
       status: () => ipcRenderer.invoke('cuppet:browser-control:status'),
       connect: () => ipcRenderer.invoke('cuppet:browser-control:connect'),
       disconnect: () => ipcRenderer.invoke('cuppet:browser-control:disconnect'),
-      reloadTools: () => ipcRenderer.invoke('cuppet:browser-control:reload-tools'),
     },
   },
   cognitive: {
