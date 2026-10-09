@@ -102,6 +102,54 @@ test('without connected Chrome, ordinary chat works and explicit mentions explai
   }
 });
 
+
+test('refreshed browser tools reach the next model call and later turns', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-browser-refresh-'));
+  const events = [];
+  let availableTools = [browserTool('browser_observe')];
+  let step = 0;
+  const runtime = new RuntimeService({
+    databasePath: join(dir, 'db.sqlite3'),
+    emit: (event) => events.push(event),
+    browserControl: {
+      async status() { return { connected: true }; },
+      definitions() { return availableTools; },
+      has(name) { return availableTools.some((tool) => tool.function.name === name); },
+      async call() {
+        availableTools = [browserTool('browser_tabs')];
+        return { output: 'Tools refreshed.' };
+      },
+    },
+    providerFactory: () => ({
+      async stream(messages, { tools, onDelta }) {
+        if (!tools.length) return { text: 'Browser refresh' };
+        const names = tools.map((tool) => tool.function.name);
+        if (step++ === 0) {
+          assert.ok(names.includes('browser_observe'));
+          return { toolCalls: [{ id: 'observe', name: 'browser_observe', arguments: '{}' }] };
+        }
+        assert.ok(names.includes('browser_tabs'));
+        assert.equal(names.includes('browser_observe'), false);
+        await onDelta('Updated tools are available.');
+        return { text: 'Updated tools are available.' };
+      },
+    }),
+  });
+  try {
+    const session = await runtime.handle('session.create');
+    for (const text of ['Inspect Chrome.', 'List the tabs.']) {
+      const accepted = await runtime.handle('session.send', { sessionId: session.id, text, provider: {} });
+      await waitForTurn(events, accepted.messageId);
+      const stored = await runtime.handle('session.get', { sessionId: session.id });
+      assert.equal(stored.messages.at(-1).content, 'Updated tools are available.', events.find((event) => event.type === 'runtime.error')?.providerError?.diagnostic);
+      assert.equal(stored.messages.at(-1).status, 'complete');
+    }
+  } finally {
+    await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('plain-language browser control still goes through the permission broker', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-browser-permission-'));
   const events = [];

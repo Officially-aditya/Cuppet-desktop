@@ -22,6 +22,7 @@ export class BrowserControlManager {
   #extensionConnected = false;
   #healthTimer;
   #starting;
+  #loadingTools;
 
   constructor({ emit = () => {}, entry = null } = {}) {
     this.#emit = emit;
@@ -57,12 +58,22 @@ export class BrowserControlManager {
   }
 
   async connect() {
-    if (this.#child && this.#child.exitCode === null) return this.status();
+    if (this.#child && this.#child.exitCode === null) return this.reloadTools();
     if (this.#starting) return this.#starting;
     const starting = this.#start();
     this.#starting = starting;
     try { return await starting; }
     finally { if (this.#starting === starting) this.#starting = undefined; }
+  }
+
+  async reloadTools() {
+    if (this.#starting) await this.#starting;
+    if (!this.#child || this.#child.exitCode !== null) throw new Error('Connect Chrome before reloading browserControl tools.');
+    await this.#loadTools();
+    await this.#refreshHealth();
+    const status = this.#statusSync(this.#entry);
+    this.#emit({ type: 'integration.browser-control.updated', status });
+    return status;
   }
 
   async disconnect() {
@@ -127,8 +138,8 @@ export class BrowserControlManager {
 
     try {
       await this.#initialize();
-      await this.#loadTools();
       await this.#refreshHealth();
+      if (!this.#extensionConnected) await this.#loadTools();
       this.#healthTimer = setInterval(() => void this.#refreshHealth().catch(() => undefined), 1_000);
       this.#healthTimer.unref?.();
       const status = this.#statusSync(entry);
@@ -158,6 +169,15 @@ export class BrowserControlManager {
   }
 
   async #loadTools() {
+    const child = this.#child;
+    if (this.#loadingTools?.child === child) return this.#loadingTools.promise;
+    const loading = { child, promise: this.#readTools(child) };
+    this.#loadingTools = loading;
+    try { return await loading.promise; }
+    finally { if (this.#loadingTools === loading) this.#loadingTools = undefined; }
+  }
+
+  async #readTools(child) {
     const collected = [];
     let cursor;
     for (let page = 0; page < 8; page += 1) {
@@ -166,7 +186,7 @@ export class BrowserControlManager {
       cursor = typeof result?.nextCursor === 'string' && result.nextCursor ? result.nextCursor : null;
       if (!cursor) break;
     }
-    this.#tools.clear();
+    const tools = new Map();
     const names = new Set();
     for (const source of collected.slice(0, 128)) {
       const mcpName = String(source?.name ?? '').trim();
@@ -175,7 +195,7 @@ export class BrowserControlManager {
       let suffix = 2;
       while (names.has(hostName)) hostName = `${browserToolName(mcpName).slice(0, 60)}_${suffix++}`.slice(0, 64);
       names.add(hostName);
-      this.#tools.set(hostName, {
+      tools.set(hostName, {
         mcpName,
         definition: {
           type: 'function',
@@ -187,6 +207,8 @@ export class BrowserControlManager {
         },
       });
     }
+    if (this.#child !== child || child?.exitCode !== null) throw new Error('browserControl MCP runtime stopped while reloading tools.');
+    this.#tools = tools;
   }
 
   async #refreshHealth() {
@@ -194,8 +216,13 @@ export class BrowserControlManager {
       this.#setExtensionConnected(false);
       return null;
     }
+    const child = this.#child;
     const health = await probeHealth();
-    this.#setExtensionConnected(Boolean(health?.ok && health?.service === 'browsercontrol-local' && health?.extensionConnected));
+    if (this.#child !== child) return null;
+    const connected = Boolean(health?.ok && health?.service === 'browsercontrol-local' && health?.extensionConnected);
+    if (connected && !this.#extensionConnected) await this.#loadTools();
+    if (this.#child !== child) return null;
+    this.#setExtensionConnected(connected);
     return health;
   }
 
@@ -232,7 +259,14 @@ export class BrowserControlManager {
     let message;
     try { message = JSON.parse(line); }
     catch { return; }
-    if (!Object.prototype.hasOwnProperty.call(message, 'id')) return;
+    if (!Object.prototype.hasOwnProperty.call(message, 'id')) {
+      if (message.method === 'notifications/tools/list_changed') {
+        void this.reloadTools().catch((error) => {
+          this.#emit({ type: 'integration.browser-control.updated', status: this.#statusSync(this.#entry, cleanError(error)) });
+        });
+      }
+      return;
+    }
     const pending = this.#pending.get(message.id);
     if (!pending) return;
     this.#pending.delete(message.id);

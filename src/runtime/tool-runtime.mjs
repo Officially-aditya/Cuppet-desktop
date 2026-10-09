@@ -60,7 +60,6 @@ export class ToolRuntime {
         }
       } catch {}
     }
-    const definitions = this.definitions({ projectRoot: resolvedProjectRoot, integrations });
     const conversation = injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode);
     let toolSteps = 0;
     let usage = null;
@@ -83,7 +82,8 @@ export class ToolRuntime {
         const response = await adapter.stream(conversation, {
           signal,
           onDelta,
-          tools: definitions,
+          tools: this.definitions({ projectRoot: resolvedProjectRoot, integrations }),
+          getTools: () => this.definitions({ projectRoot: resolvedProjectRoot, integrations }),
           projectRoot: resolvedProjectRoot,
           executeTool,
           requestAgentPermission: async (request) => {

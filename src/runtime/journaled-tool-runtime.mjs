@@ -200,7 +200,8 @@ class ToolMutationCapture {
           });
         }
       : undefined;
-    const providerTools = this.#executionKernel.toolsForProvider?.(options?.tools, { sessionId: this.#sessionId, projectRoot: this.#projectRoot }) ?? options?.tools;
+    const definitions = typeof options?.getTools === 'function' ? options.getTools() : options?.tools;
+    const providerTools = this.#executionKernel.toolsForProvider?.(definitions, { sessionId: this.#sessionId, projectRoot: this.#projectRoot }) ?? definitions;
     if (Number.isFinite(this.#contextWindow) && this.#contextWindow > 0) {
       const requestText = JSON.stringify({
         messages: messages.map(({ role, content, tool_calls }) => ({ role, content, tool_calls })),
