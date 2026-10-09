@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeCommand, listCommands, parseSlashCommand } from '../src/runtime/commands.mjs';
 
-const EXPECTED = [
-  'status','doctor','remote','remote-stop','memory','auto','background','orchestrator',
-  'platform','effort','steer','abort','plan','compact','undo','models',
+const EXPECTED = ['status','doctor','memory','background','compact','undo'];
+const REMOVED = [
+  'remote','remote-stop','remote-control','auto','orchestrator','platform','login',
+  'effort','steer','abort','plan','models',
 ];
 const PALETTE = [
   'cuppet.memory.remember','cuppet.memory.forget','cuppet.memory.clear',
@@ -18,9 +19,10 @@ test('original C2 registry freezes the reviewed slash and palette inventory', ()
   assert.deepEqual(slash.map((item) => item.slash), EXPECTED);
   assert.deepEqual(palette.map((item) => item.id), PALETTE);
   assert.equal(new Set(all.map((item) => item.id)).size, all.length);
-  assert.equal(parseSlashCommand('/remote-control').id, 'remote');
-  assert.equal(parseSlashCommand('/login').id, 'platform');
-  assert.equal(parseSlashCommand('/models').id, 'models');
+  for (const name of REMOVED) {
+    assert.equal(parseSlashCommand(`/${name}`).kind, 'unknown', name);
+    assert.equal(parseSlashCommand(`/${name} status`).kind, 'unknown', name);
+  }
   assert.equal(parseSlashCommand('/model').kind, 'unknown');
 });
 
@@ -39,19 +41,11 @@ test('dispatcher delegates to existing authorities and never synthesizes a send 
   const calls = [];
   const call = async (method, params = {}) => {
     calls.push({ method, params });
-    if (method === 'session.auto.get') return { sessionId: params.sessionId, enabled: false };
-    if (method === 'session.auto.set') return { sessionId: params.sessionId, enabled: params.enabled };
-    if (method === 'session.mode.get') return { sessionId: params.sessionId, mode: 'build' };
-    if (method === 'session.mode.set') return { sessionId: params.sessionId, mode: params.mode };
-    if (method === 'session.steer') return { accepted: true, sessionId: params.sessionId, steered: true };
-    if (method === 'session.stop') return { stopped: true, sessionId: params.sessionId };
     if (method === 'session.undo') return { undone: true, sessionId: params.sessionId };
     if (method === 'background.status') return { paused: false };
     if (method === 'background.pause') return { paused: true };
     if (method === 'background.resume') return { paused: false };
     if (method === 'background.flush') return { status: 'empty' };
-    if (method === 'orchestrator.status') return { enabled: false };
-    if (method === 'orchestrator.set') return { enabled: params.enabled };
     if (method === 'memory.query') return { available: true, records: [] };
     if (method === 'context.compact') return { abort: false };
     throw new Error(`unexpected runtime call: ${method}`);
@@ -63,28 +57,25 @@ test('dispatcher delegates to existing authorities and never synthesizes a send 
     host: {
       status: async () => ({ ok: true }),
       doctor: async () => ({ ok: true }),
-      remoteStatus: async () => ({ running: false }),
-      remoteStart: async () => ({ running: true }),
-      remoteStop: async () => ({ running: false }),
     },
-    provider: {
-      models: async () => ({ models: [{ modelID: 'local-model' }] }),
-      providers: async () => ({ catalog: [{ id: 'local' }] }),
-      selectProvider: async (id) => ({ selected: true, providerID: id }),
-      effort: async () => ({ variant: 'medium' }),
-      setEffort: async (variant) => ({ variant }),
-    },
+    provider: {},
   };
 
   assert.equal((await executeCommand(parseSlashCommand('/status'), context)).result.ok, true);
-  assert.equal((await executeCommand(parseSlashCommand('/auto on'), context)).result.enabled, true);
-  assert.equal((await executeCommand(parseSlashCommand('/plan plan'), context)).result.mode, 'plan');
-  await executeCommand(parseSlashCommand('/steer focus on tests'), context);
-  await executeCommand(parseSlashCommand('/abort'), context);
-  await executeCommand(parseSlashCommand('/undo'), context);
-  assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
-  const steer = calls.find((entry) => entry.method === 'session.steer');
-  assert.deepEqual(steer, { method: 'session.steer', params: { sessionId: 's1', text: 'focus on tests', provider: { model: 'local-model' } } });
+  assert.equal((await executeCommand(parseSlashCommand('/doctor'), context)).result.ok, true);
+  assert.equal((await executeCommand(parseSlashCommand('/memory two words'), context)).result.available, true);
+  assert.equal((await executeCommand(parseSlashCommand('/background pause'), context)).result.paused, true);
+  assert.equal((await executeCommand(parseSlashCommand('/compact'), context)).result.abort, false);
+  assert.equal((await executeCommand(parseSlashCommand('/undo'), context)).result.undone, true);
+  assert.deepEqual(calls, [
+    { method: 'memory.query', params: { sessionId: 's1', query: 'two words', limit: 20 } },
+    { method: 'background.pause', params: {} },
+    { method: 'context.compact', params: { sessionId: 's1', provider: { model: 'local-model' } } },
+    { method: 'session.undo', params: { sessionId: 's1' } },
+  ]);
+  for (const id of REMOVED) {
+    await assert.rejects(() => executeCommand(id, context), /unknown command/);
+  }
 });
 
 test('palette-only actions delegate through the same registry contract', async () => {
@@ -97,7 +88,9 @@ test('palette-only actions delegate through the same registry contract', async (
   await executeCommand('cuppet.background.pause', context, {});
   await executeCommand('cuppet.background.resume', context, {});
   await executeCommand('cuppet.steer.interrupt', context, { text: 'new direction' });
+  await executeCommand('cuppet.plan.agent', context, { mode: 'plan' });
   assert.deepEqual(calls.map((entry) => entry.method), [
     'memory.remember','memory.forget','memory.clear','background.pause','background.resume','session.steer',
+    'session.mode.get','session.mode.set',
   ]);
 });

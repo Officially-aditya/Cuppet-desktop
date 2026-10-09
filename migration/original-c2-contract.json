@@ -7,27 +7,26 @@
   "slashCommands": [
     "status",
     "doctor",
+    "memory",
+    "background",
+    "compact",
+    "undo"
+  ],
+  "aliases": {},
+  "excludedSlashCommands": [
+    "model",
     "remote",
     "remote-stop",
-    "memory",
+    "remote-control",
     "auto",
-    "background",
     "orchestrator",
     "platform",
+    "login",
     "effort",
     "steer",
     "abort",
     "plan",
-    "compact",
-    "undo",
     "models"
-  ],
-  "aliases": {
-    "remote-control": "remote",
-    "login": "platform"
-  },
-  "excludedSlashCommands": [
-    "model"
   ],
   "paletteActions": [
     "cuppet.memory.remember",
@@ -74,10 +73,11 @@
   },
   "remoteScopes": {
     "status": "session.read",
-    "models": "session.read",
-    "effort": "model.write",
-    "platform": "model.write",
-    "mutatingSessionCommands": "session.write"
+    "doctor": "session.read",
+    "memory": "session.read",
+    "background": "session.write",
+    "compact": "session.write",
+    "undo": "session.write"
   },
   "next": "remaining original-plan migration inventory"
 }

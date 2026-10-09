@@ -47,15 +47,19 @@ test('recognized and unknown slash commands fail before provider creation and do
       () => service.handle('session.send', { sessionId: session.id, text: '/definitely-unknown', provider: { model: 'm' } }),
       /Unknown Cuppet command/,
     );
+    await assert.rejects(
+      () => service.handle('session.send', { sessionId: session.id, text: '/plan status', provider: { model: 'm' } }),
+      /Unknown Cuppet command/,
+    );
     assert.equal(providerCreations, 0);
     assert.equal((await service.handle('session.get', { sessionId: session.id })).messages.length, 0);
 
-    const command = await executeCommand(parseSlashCommand('/plan status'), {
+    const command = await executeCommand(parseSlashCommand('/background status'), {
       sessionId: session.id,
       call: (method, params) => service.handle(method, params),
       host: {}, provider: {}, providerRequest: {},
     });
-    assert.equal(command.result.mode, 'build');
+    assert.equal(command.result.paused, false);
     assert.equal((await service.handle('session.get', { sessionId: session.id })).messages.length, 0);
 
     await service.handle('session.send', { sessionId: session.id, text: 'ordinary prompt', provider: { model: 'm' } });

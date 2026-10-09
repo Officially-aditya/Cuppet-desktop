@@ -10,8 +10,8 @@ function fixture() {
       case 'session.get': return { id: params.sessionId, projectId: 'p1', title: 'Session', messages: [] };
       case 'session.steer': return { accepted: true, sessionId: params.sessionId, steered: true };
       case 'session.send': return { accepted: true, sessionId: params.sessionId, messageId: 'm1' };
-      case 'session.mode.get': return { sessionId: params.sessionId, mode: 'build' };
-      case 'session.auto.get': return { sessionId: params.sessionId, enabled: false };
+      case 'memory.query': return { available: true, records: [] };
+      case 'session.undo': return { undone: true, sessionId: params.sessionId };
       default: throw new Error(`unexpected runtime call: ${method}`);
     }
   };
@@ -32,35 +32,40 @@ test('remote session.submit reauthorizes the inner slash command scope', async (
   const { adapter, calls } = fixture();
   const writer = { deviceID: 'writer', scopes: ['session.write'] };
   await assert.rejects(
-    () => adapter.execute(writer, 'session.submit', { prompt: '/effort status' }, { id: 'effort-denied', sessionId: 's1' }),
-    /missing scope 'model\.write'/,
+    () => adapter.execute(writer, 'session.submit', { prompt: '/memory query' }, { id: 'memory-denied', sessionId: 's1' }),
+    /missing scope 'session\.read'/,
   );
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 
-  const modelWriter = { deviceID: 'model-writer', scopes: ['model.write'] };
-  const result = await adapter.execute(modelWriter, 'session.submit', { prompt: '/effort status' }, { id: 'effort-status', sessionId: 's1' });
+  const reader = { deviceID: 'reader', scopes: ['session.read'] };
+  const result = await adapter.execute(reader, 'session.submit', { prompt: '/memory query' }, { id: 'memory-query', sessionId: 's1' });
   assert.equal(result.command, true);
-  assert.equal(result.id, 'effort');
+  assert.equal(result.id, 'memory');
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 });
 
-test('remote slash steer delegates to canonical runtime session.steer and unknown slash stays out of send', async () => {
+test('remote undo and steer controls delegate while removed slash commands stay out of send', async () => {
   const { adapter, calls } = fixture();
   const actor = { deviceID: 'writer', scopes: ['session.write'] };
 
-  const steered = await adapter.execute(actor, 'session.submit', { prompt: '/steer focus on the failing test' }, { id: 'slash-steer', sessionId: 's1' });
-  assert.equal(steered.command, true);
-  assert.equal(steered.id, 'steer');
+  const undone = await adapter.execute(actor, 'session.submit', { prompt: '/undo' }, { id: 'slash-undo', sessionId: 's1' });
+  assert.equal(undone.command, true);
+  assert.equal(undone.id, 'undo');
+  assert.equal(undone.result.undone, true);
+  const steered = await adapter.execute(actor, 'session.steer', { instruction: 'focus on the failing test' }, { id: 'steer-control', sessionId: 's1' });
+  assert.equal(steered.steered, true);
   const steerCall = calls.find((entry) => entry.method === 'session.steer');
   assert.equal(steerCall.params.sessionId, 's1');
   assert.equal(steerCall.params.text, 'focus on the failing test');
   assert.equal(calls.some((entry) => entry.method === 'session.stop'), false);
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 
-  await assert.rejects(
-    () => adapter.execute(actor, 'session.submit', { prompt: '/unknown-cuppet-command' }, { id: 'slash-unknown', sessionId: 's1' }),
-    /Unknown Cuppet command/,
-  );
+  for (const prompt of ['/steer focus on the failing test', '/effort status', '/remote-control', '/login', '/unknown-cuppet-command']) {
+    await assert.rejects(
+      () => adapter.execute(actor, 'session.submit', { prompt }, { id: 'slash-unknown', sessionId: 's1' }),
+      /Unknown Cuppet command/,
+    );
+  }
   assert.equal(calls.some((entry) => entry.method === 'session.send'), false);
 });
 
