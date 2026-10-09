@@ -98,7 +98,7 @@ export class RemoteCommandAdapter {
       this.#call('session.auto.get',{sessionId}),
       this.#call('session.run.latest',{sessionId}),
     ]);
-    return {projectionVersion:1,...sessionProjection(session,params),run:run?{id:run.id,status:run.status,sessionId:run.sessionId}:null,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
+    return {projectionVersion:1,...sessionProjection(session,params),run:run??null,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
   async #sessionMessages(state,explicit,params={}){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return sessionProjection(session,params).session.messages;}
   async #sessionNew(actor,state,params,envelope){

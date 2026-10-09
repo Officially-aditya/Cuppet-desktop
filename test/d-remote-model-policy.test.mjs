@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RemoteCommandAdapter } from '../src/runtime/remote/commands.mjs';
+import { providerRequest } from '../src/runtime/provider-policy.mjs';
 
 function fixture() {
   const calls = [];
@@ -55,14 +56,17 @@ test('Remote lists sanitized host variants and lowers only the selected advertis
     { id: 'model-policy-submit' },
   );
   const send = calls.findLast((entry) => entry.method === 'session.send');
-  assert.equal(send.params.provider.model, 'transport-coder');
-  assert.equal(send.params.provider.variant, 'high');
-  assert.deepEqual(send.params.provider.requestBody.reasoning, { effort: 'high' });
-  assert.equal(send.params.provider.requestBody.injected, undefined);
-  assert.equal(send.params.provider.requestHeaders['x-reasoning'], 'high');
-  assert.equal(send.params.provider.requestHeaders.authorization, undefined);
-  assert.equal(send.params.provider.baseUrl, 'https://private-provider.example/v1');
-  assert.equal(send.params.provider.apiKey, 'private-key');
+  assert.deepEqual(send.params.provider.primary, { providerID: 'future-provider', modelID: 'coder', variant: 'high' });
+  assert.deepEqual(send.params.provider.secondary, { providerID: 'future-provider', modelID: 'coder', variant: 'high' });
+  const request = providerRequest(send.params.provider, 'primary');
+  assert.equal(request.model, 'transport-coder');
+  assert.equal(request.variant, 'high');
+  assert.deepEqual(request.requestBody.reasoning, { effort: 'high' });
+  assert.equal(request.requestBody.injected, undefined);
+  assert.equal(request.requestHeaders['x-reasoning'], 'high');
+  assert.equal(request.requestHeaders.authorization, undefined);
+  assert.equal(request.baseUrl, 'https://private-provider.example/v1');
+  assert.equal(request.apiKey, 'private-key');
   assert.match(send.context.commandId, /^remote:[a-f0-9]{64}$/);
   assert.doesNotMatch(send.context.commandId, /phone|model-policy-submit|private-key/);
 });
