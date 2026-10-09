@@ -116,6 +116,15 @@
   background-color: var(--bg-main-surface);
 }
 
+/* Keep caret feedback when reduced motion or the shell disables xterm's blink. */
+.project-terminal-xterm-container .xterm-rows.xterm-focus .xterm-cursor-bar {
+  animation: project-terminal-cursor-blink 1s step-end infinite !important;
+}
+
+@keyframes project-terminal-cursor-blink {
+  50% { box-shadow: none; }
+}
+
 .project-terminal:focus-within {
   border-top-color: rgba(125, 166, 201, 0.2);
 }
