@@ -15,7 +15,7 @@ expect(text['src/preload/preload.cjs'].includes('modeSet') && text['src/preload/
 const chatPane=text['src/renderer/react/ChatPane.tsx'];
 const modePicker=text['src/renderer/react/ModePicker.tsx'];
 expect(chatPane.includes('onModeChange') && chatPane.includes('<ModePicker value={activeMode}') && ['Build','Plan','Orchestrate'].every((label)=>modePicker.includes(`label: '${label}'`)) && text['src/renderer/react/App.tsx'].includes('window.cuppet.commands.list'),'React cognitive/command surface missing');
-expect(text['src/runtime/commands.mjs'].includes("command('background'") && text['src/runtime/commands.mjs'].includes("command('orchestrator'") && text['src/runtime/commands.mjs'].includes("command('plan'"),'visible slash cognitive controls missing');
+expect(text['src/runtime/commands.mjs'].includes("command('background'") && text['src/runtime/commands.mjs'].includes("palette('cuppet.plan.agent'"),'visible cognitive command controls missing');
 expect(text['src/main/provider-settings.mjs'].includes('backgroundModel'),'secondary model setting missing');
 const tests=['test/context-compiler.test.mjs','test/lossless-plan.test.mjs','test/candidate-ledger.test.mjs','test/background-enricher.test.mjs','test/cognitive-state.test.mjs','test/runtime-cognitive.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
 console.log('Phase B1 gate passed: detached context, plans, TST, evidence-gated background memory, and React-accessible cognitive controls verified.');
