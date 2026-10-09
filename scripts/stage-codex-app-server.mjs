@@ -30,12 +30,13 @@ const temporary = join(tmpdir(), `cuppet-codex-stage-${process.pid}-${Date.now()
 
 try {
   if (!args.archive) await download(`https://github.com/openai/codex/releases/download/${RELEASE}/${artifact.asset}`, downloaded);
-  const digest = sha256(await readFile(downloaded));
+  const archive = await readFile(downloaded);
+  const digest = sha256(archive);
   if (digest !== artifact.sha256) throw new Error(`Codex app-server package checksum mismatch for ${runtime}: expected ${artifact.sha256}, got ${digest}`);
 
   await rm(temporary, { recursive: true, force: true });
   await mkdir(temporary, { recursive: true });
-  const extracted = spawnSync('tar', ['-xzf', downloaded, '-C', temporary], { stdio: 'inherit' });
+  const extracted = spawnSync('tar', ['-xzf', '-'], { cwd: temporary, input: archive, stdio: ['pipe', 'inherit', 'inherit'] });
   if (extracted.status !== 0) throw new Error(`Unable to extract ${artifact.asset}`);
 
   const packageRoot = await findPackageRoot(temporary, runtime);

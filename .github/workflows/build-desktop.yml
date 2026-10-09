@@ -78,9 +78,7 @@ jobs:
       - name: Build standalone TST artifact
         if: runner.os == 'macOS'
         working-directory: .release/cuppet-code
-        env:
-          GITHUB_SHA: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
-        run: node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output="${{ github.workspace }}/.release/tst-runtime"
+        run: GITHUB_SHA=9f2a8ae63555b7534ee1ccfe211efce1ad46f630 node scripts/package-tst-runtime.mjs --source=target/release/tst-daemon --output="${{ github.workspace }}/.release/tst-runtime"
 
       - name: Stage verified TST resource
         if: runner.os == 'macOS'
