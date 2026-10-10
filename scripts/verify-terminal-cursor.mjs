@@ -65,7 +65,7 @@ try {
     window.output('line\\r\\n'.repeat(100) + 'test $ ');
     await wait();
     const states = [];
-    const sample = async (name, data, reduced) => {
+    const sample = async (name, data, reduced, expectedStyle = 'bar', expectedBlink = !reduced) => {
       document.body.classList.toggle('reduce-motion', reduced);
       if (data) window.output(data);
       const textarea = document.querySelector('.xterm-helper-textarea');
@@ -78,23 +78,28 @@ try {
       const values = [];
       if (blink) for (const time of [0, 750]) {
         blink.pause(); blink.currentTime = time;
-        values.push(getComputedStyle(cursor).boxShadow);
+        const style = getComputedStyle(cursor);
+        values.push([style.boxShadow, style.borderBottomStyle, style.backgroundColor, style.color]);
       }
-      states.push({ name, classes: cursor?.className, animation: cursor ? getComputedStyle(cursor).animationName : null,
+      states.push({ name, expectedStyle, expectedBlink, classes: cursor?.className, animation: cursor ? getComputedStyle(cursor).animationName : null,
+        paint: cursor ? { boxShadow: getComputedStyle(cursor).boxShadow, borderBottomStyle: getComputedStyle(cursor).borderBottomStyle, backgroundColor: getComputedStyle(cursor).backgroundColor } : null,
         focused: document.activeElement?.className, rows: document.querySelector('.xterm-rows')?.className, visibility: document.visibilityState, screen: document.querySelector('.xterm-screen')?.getBoundingClientRect().toJSON(), cursorRect: cursor?.getBoundingClientRect().toJSON(), body: document.querySelector('.project-terminal-body')?.getBoundingClientRect().toJSON(), values });
     };
     await sample('normal', '', false);
     await sample('reduced-motion', '', true);
-    await sample('shell-hidden', '\\x1b[?25l', false);
-    await sample('shell-block', '\\x1b[?25h\\x1b[2 q', false);
-    await sample('shell-underline', '\\x1b[4 q', false);
-    await sample('shell-steady-bar', '\\x1b[6 q', false);
-    window.output('\\x1b[?1049h\\x1b[2 q\\x1b[?25l');
-    await wait();
-    if (document.querySelector('.xterm-cursor')) throw new Error('Full-screen programs must still be able to hide their cursor');
-    window.output('\\x1b[?1049l\\x1b[?25h');
-    await wait();
-    await sample('returned-to-shell', '', false);
+    await sample('shell-hidden', '\\x1b[?25l', false, null, false);
+    await sample('shell-shown', '\\x1b[?25h', false);
+    await sample('shell-block', '\\x1b[2 q', false, 'block', false);
+    await sample('shell-blinking-block', '\\x1b[1 q', false, 'block');
+    await sample('shell-underline', '\\x1b[4 q', false, 'underline', false);
+    await sample('shell-blinking-underline', '\\x1b[3 q', false, 'underline');
+    await sample('shell-steady-bar', '\\x1b[6 q', false, 'bar', false);
+    await sample('shell-blinking-bar', '\\x1b[5 q', false);
+    await sample('shell-blink-disabled', '\\x1b[0 q\\x1b[?12l', false, 'bar', false);
+    await sample('shell-blink-enabled', '\\x1b[?12h', false);
+    await sample('fullscreen-hidden', '\\x1b[?1049h\\x1b[2 q\\x1b[?25l', false, null, false);
+    await sample('returned-hidden', '\\x1b[?1049l', false, null, false);
+    await sample('returned-to-shell', '\\x1b[?25h', false, 'block', false);
     document.documentElement.dataset.theme = 'light';
     window.dispatchEvent(new Event('cuppet:appearance-changed'));
     await sample('light', '\\x1b[0 q', false);
@@ -107,9 +112,21 @@ try {
   })()`);
 
   for (const state of result) {
-    assert.ok(state.values.length === 2 && state.values[0] !== state.values[1], state.name + ': cursor does not blink');
+    if (state.expectedStyle === null) {
+      assert.equal(state.classes, undefined, state.name + ': cursor hide control was ignored');
+      continue;
+    }
     assert.ok(state.cursorRect?.height > 0 && state.cursorRect.bottom <= Math.min(600, state.body.bottom) && state.cursorRect.top >= state.body.top, state.name + ': cursor is clipped');
-    assert.match(state.classes, /xterm-cursor-bar/, state.name + ': cursor is not a bar');
+    assert.match(state.classes, new RegExp('xterm-cursor-' + state.expectedStyle), state.name + ': cursor style control was ignored');
+    if (state.expectedBlink) {
+      assert.equal(state.values.length, 2, state.name + ': cursor does not blink');
+      assert.notDeepEqual(state.values[0], state.values[1], state.name + ': cursor does not blink');
+    } else {
+      assert.equal(state.animation, 'none', state.name + ': cursor still blinks');
+      if (state.expectedStyle === 'bar') assert.notEqual(state.paint.boxShadow, 'none', state.name + ': steady caret is invisible');
+      if (state.expectedStyle === 'underline') assert.equal(state.paint.borderBottomStyle, 'solid', state.name + ': steady underline is invisible');
+      if (state.expectedStyle === 'block') assert.notEqual(state.paint.backgroundColor, 'rgba(0, 0, 0, 0)', state.name + ': steady block is invisible');
+    }
   }
   const rect = result.at(-1).cursorRect;
   const crop = { x: Math.floor(rect.x), y: Math.floor(rect.y), width: 3, height: Math.floor(rect.height) };
@@ -126,7 +143,7 @@ try {
     pixels.push((await win.webContents.capturePage(crop)).toBitmap());
   }
   assert.notDeepEqual(pixels[0], pixels[1], 'Caret has CSS animation but its rendered pixels do not change');
-  console.log('Terminal cursor visibility and blink passed for: ' + result.map(state => state.name).join(', '));
+  console.log('Terminal cursor visibility and shell controls passed for: ' + result.map(state => state.name).join(', '));
 } finally {
   clearTimeout(timeout);
   win.destroy();

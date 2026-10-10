@@ -145,15 +145,6 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
       scrollback: 5000,
     });
 
-    // Keep the shell prompt caret visible; full-screen apps retain cursor control.
-    term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) =>
-      term.buffer.active.type === 'normal' && params.length === 1 && params[0] === 25);
-    term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) =>
-      term.buffer.active.type === 'normal' && params[0] !== 0);
-    term.buffer.onBufferChange((buffer) => {
-      if (buffer.type === 'normal') term.write('\x1b[0 q\x1b[?25h');
-    });
-
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
