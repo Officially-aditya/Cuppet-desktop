@@ -36,7 +36,7 @@ function applyAppearance(preference: AppearancePreference, systemDark: boolean) 
 
 export function terminalAppearance() {
   if (document.documentElement.dataset.theme === 'light') return {
-    background: '#ffffff', foreground: '#242f3e', cursor: '#2563eb', cursorAccent: '#ffffff',
+    background: '#ffffff', foreground: '#242f3e', cursor: '#202c3d', cursorAccent: '#ffffff',
     selectionBackground: 'rgba(37,99,235,.18)', selectionForeground: '#17212e',
     black: '#242f3e', red: '#b42318', green: '#18723b', yellow: '#8f650d', blue: '#2563eb',
     magenta: '#7e3fbd', cyan: '#0e7490', white: '#657184', brightBlack: '#657184',
@@ -44,7 +44,7 @@ export function terminalAppearance() {
     brightMagenta: '#9333ea', brightCyan: '#0891b2', brightWhite: '#17212e',
   };
   return {
-    background: '#1e1e1e', foreground: '#c9d1d9', cursor: '#58a6ff', cursorAccent: '#1e1e1e',
+    background: '#1e1e1e', foreground: '#c9d1d9', cursor: '#f4f6f8', cursorAccent: '#1e1e1e',
     selectionBackground: 'rgba(56,139,253,.35)', selectionForeground: '#ffffff',
     black: '#0d1117', red: '#ff7b72', green: '#3fb950', yellow: '#d29922', blue: '#58a6ff',
     magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4', brightBlack: '#6e7681',
