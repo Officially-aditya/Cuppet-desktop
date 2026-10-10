@@ -44,9 +44,9 @@ const fixture = await build({
   loader: { '.css': 'empty' },
 });
 
-const entry = await readFile(resolve(root, 'src/renderer/main.tsx'), 'utf8');
-const cssPaths = [...entry.matchAll(/import '([^']+css)'/g)].map(match => 'src/renderer/' + match[1].slice(2));
-cssPaths.push('node_modules/@xterm/xterm/css/xterm.css');
+const entry = await readFile(resolve(root, 'dist-renderer/index.html'), 'utf8');
+const cssPaths = [...entry.matchAll(/href="([^" ]+\.css)"/g)].map(match => 'dist-renderer/' + match[1].replace(/^\.\//, ''));
+assert.ok(cssPaths.length, 'Built renderer stylesheet is missing');
 const css = (await Promise.all(cssPaths.map(path => readFile(resolve(root, path), 'utf8')))).join('\n');
 const win = new BrowserWindow({ show: false, width: 900, height: 600, webPreferences: { offscreen: true, backgroundThrottling: false } });
 try {
@@ -55,14 +55,25 @@ try {
     fixture.outputFiles[0].text.replaceAll('</script', '<\\/script') + '</script></body></html>'
   ));
   const result = await win.webContents.executeJavaScript(`(async () => {
-    const wait = () => new Promise(resolve => setTimeout(resolve, 50));
-    // Offscreen windows cannot receive OS focus; simulate a focused document.
-    document.hasFocus = () => true;
+    const wait = async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+    };
     while (!document.querySelector('.shell-panel-controls-right .shell-panel-button')) await wait();
     document.querySelector('.shell-panel-controls-right .shell-panel-button').click();
     while (!window.output || !document.querySelector('.xterm-helper-textarea')) await wait();
     await wait();
     window.output('line\\r\\n'.repeat(100) + 'test $ ');
+    await wait();
+    const idleCursor = document.querySelector('.xterm-cursor');
+    if (!idleCursor || getComputedStyle(idleCursor).boxShadow === 'none') {
+      throw new Error('Terminal opened without a focus event and has no visible idle caret');
+    }
+    const idleRect = idleCursor.getBoundingClientRect().toJSON();
+    // Offscreen windows cannot receive OS focus; simulate it once after checking startup.
+    document.hasFocus = () => true;
+    document.querySelector('.xterm-helper-textarea').dispatchEvent(new FocusEvent('focus'));
     await wait();
     const states = [];
     const sample = async (name, data, reduced, expectedStyle = 'bar', expectedBlink = !reduced) => {
@@ -70,7 +81,6 @@ try {
       if (data) window.output(data);
       const textarea = document.querySelector('.xterm-helper-textarea');
       textarea.focus();
-      textarea.dispatchEvent(new FocusEvent('focus'));
       await wait();
       const cursor = document.querySelector('.xterm-cursor');
       const animations = cursor?.getAnimations() ?? [];
@@ -87,6 +97,8 @@ try {
     };
     await sample('normal', '', false);
     await sample('reduced-motion', '', true);
+    await sample('prompt-hidden-during-redraw', '\\x1b[?25l\\r\\nredrawn $ ', false, null, false);
+    await sample('prompt-shown-after-redraw', '\\x1b[?25h', false);
     await sample('shell-hidden', '\\x1b[?25l', false, null, false);
     await sample('shell-shown', '\\x1b[?25h', false);
     await sample('shell-block', '\\x1b[2 q', false, 'block', false);
@@ -108,10 +120,13 @@ try {
     document.querySelector('.shell-panel-controls-right .shell-panel-button').click();
     await wait();
     await sample('reopened', '', false);
-    return states;
+    return { states, idleRect };
   })()`);
 
-  for (const state of result) {
+  const states = result.states;
+  assert.ok(result.idleRect.height > 0, 'Unfocused terminal caret has no height');
+  assert.ok(states.find(state => state.name === 'prompt-shown-after-redraw')?.cursorRect, 'Shell restored the cursor after drawing the prompt, but the caret is still missing');
+  for (const state of states) {
     if (state.expectedStyle === null) {
       assert.equal(state.classes, undefined, state.name + ': cursor hide control was ignored');
       continue;
@@ -128,7 +143,7 @@ try {
       if (state.expectedStyle === 'block') assert.notEqual(state.paint.backgroundColor, 'rgba(0, 0, 0, 0)', state.name + ': steady block is invisible');
     }
   }
-  const rect = result.at(-1).cursorRect;
+  const rect = states.at(-1).cursorRect;
   const crop = { x: Math.floor(rect.x), y: Math.floor(rect.y), width: 3, height: Math.floor(rect.height) };
   const pixels = [];
   for (const time of [0, 750]) {
@@ -143,7 +158,7 @@ try {
     pixels.push((await win.webContents.capturePage(crop)).toBitmap());
   }
   assert.notDeepEqual(pixels[0], pixels[1], 'Caret has CSS animation but its rendered pixels do not change');
-  console.log('Terminal cursor visibility and shell controls passed for: ' + result.map(state => state.name).join(', '));
+  console.log('Terminal cursor visibility and shell controls passed for: ' + ['unfocused-startup', ...states.map(state => state.name)].join(', '));
 } finally {
   clearTimeout(timeout);
   win.destroy();

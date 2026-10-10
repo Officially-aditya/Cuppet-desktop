@@ -148,6 +148,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
+    // Paint the idle caret before the window delivers its first focus event.
+    (term as any)._core.coreService.isCursorInitialized = true;
+    term.refresh(0, term.rows - 1);
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
