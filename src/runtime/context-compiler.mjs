@@ -1,4 +1,8 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { renderLosslessPlanContext } from './lossless-plan.mjs';
+
+const execFileAsync = promisify(execFile);
 
 export const STM_EVENT_CONTEXT_MAX_TOKENS = 15_000;
 export const GRAPH_CAPSULE_MAX_TOKENS = 768;
@@ -9,7 +13,7 @@ export class ContextCompiler {
   #tst; #planStore; #state; #epochs = new Map();
   constructor({ tst, planStore, cognitiveState }) { this.#tst = tst; this.#planStore = planStore; this.#state = cognitiveState; }
 
-  async compile({ sessionId, messages, usableTokens = 128_000, estimatedTokens, userMessageId }) {
+  async compile({ sessionId, messages, usableTokens = 128_000, estimatedTokens, userMessageId, projectRoot = null }) {
     const mode = this.#state?.mode(sessionId) === 'plan' ? 'plan' : 'foreground';
     const orchestrator = this.#state?.snapshot().orchestratorEnabled === true || process.env.CUPPET_ORCHESTRATOR === '1';
     const source = messages.map((message) => ({ ...message }));
@@ -27,7 +31,7 @@ export class ContextCompiler {
     const epochKey = `${sessionId}\0${userMessageId}\0${experimentMode}`;
     let epoch = this.#epochs.get(epochKey);
     if (!epoch) {
-      epoch = await this.#buildEpoch({ sessionId, prompt, mode: experimentMode, usableTokens });
+      epoch = await this.#buildEpoch({ sessionId, prompt, mode: experimentMode, usableTokens, projectRoot });
       this.#rememberEpoch(epochKey, epoch);
     }
 
@@ -53,13 +57,13 @@ export class ContextCompiler {
     for (const key of this.#epochs.keys()) if (key.startsWith(`${sessionId}\0`)) this.#epochs.delete(key);
   }
 
-  async #buildEpoch({ sessionId, prompt, mode, usableTokens }) {
+  async #buildEpoch({ sessionId, prompt, mode, usableTokens, projectRoot }) {
     const planMode = mode === 'plan';
     const budgetTokens = planMode ? Math.min(16_384, Math.max(0, Math.floor(usableTokens * 0.12))) : mode === 'stm_events' ? Math.min(STM_EVENT_CONTEXT_MAX_TOKENS, Math.max(0, usableTokens)) : Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)));
     if (!this.#tst?.configured || budgetTokens <= 0) return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false };
     const projectionBudget = planMode ? Math.floor(budgetTokens * 0.70) : 0;
     let prepared;
-    try { prepared = await this.#tst.prepareContext(sessionId, prompt, retrievalHints(prompt), [], mode, projectionBudget); }
+    try { prepared = await this.#tst.prepareContext(sessionId, prompt, await retrievalHints(prompt, projectRoot), [], mode, projectionBudget); }
     catch { return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false }; }
     const block = renderPrepared(prepared ?? {}, budgetTokens, planMode, mode);
     return { block, budgetTokens, observationComplete: prepared?.observation_complete === true, hasStm: Array.isArray(prepared?.stm) && prepared.stm.length > 0, projectionComplete: planMode && projectionComplete(prepared?.plan_projection) };
@@ -134,7 +138,35 @@ function selectRecentTurns(messages, count) {
   const userIndexes = messages.flatMap((message, i) => message.role === 'user' ? [i] : []); if (userIndexes.length <= count) return messages.map((message) => ({ ...message }));
   return messages.slice(userIndexes[userIndexes.length - count]).map((message) => ({ ...message }));
 }
-function retrievalHints(prompt) { return [...new Set([...extractPaths(prompt), ...(String(prompt).match(/[A-Za-z_$][\w$]{2,}/g) ?? []).slice(0, 16)])].slice(0, 32); }
+async function retrievalHints(prompt, projectRoot) {
+  const paths = await gitRetrievalPaths(projectRoot);
+  return [...new Set([...extractPaths(prompt), ...paths, ...(String(prompt).match(/[A-Za-z_$][\w$]{2,}/g) ?? []).slice(0, 16)])].slice(0, 32);
+}
+async function gitRetrievalPaths(projectRoot) {
+  if (!projectRoot) return [];
+  const git = (args) => execFileAsync('git', ['--no-optional-locks', ...args], { cwd: projectRoot, timeout: 2_000, maxBuffer: 1024 * 1024, windowsHide: true });
+  try {
+    const [status, prefixResult] = await Promise.all([
+      git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.']),
+      git(['rev-parse', '--show-prefix']),
+    ]);
+    const paths = [];
+    if (status.stdout) {
+      const entries = status.stdout.split('\0');
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (!entry) continue;
+        paths.push(entry.slice(3));
+        if (/[RC]/.test(entry.slice(0, 2))) i++; // Rename/copy source follows the destination.
+      }
+    } else {
+      const commit = await git(['show', '--format=', '--name-only', '-z', '--first-parent', 'HEAD', '--', '.']);
+      paths.push(...commit.stdout.split('\0').filter(Boolean));
+    }
+    const prefix = prefixResult.stdout.replace(/\r?\n$/, '');
+    return paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length));
+  } catch { return []; }
+}
 function extractPaths(value) { return [...new Set((String(value).match(/(?:^|[\s`'"(])([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.@+-]+)+)/g) ?? []).map((item) => item.trim().replace(/^[`'"(]+|[`'"),.;:]+$/g, ''))) ].slice(0, 32); }
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }
 function clipTokens(value, tokens) { const chars = Math.max(0, Math.floor(tokens * 4)); return value.length <= chars ? value : `${value.slice(0, Math.max(0, chars - 1))}…`; }

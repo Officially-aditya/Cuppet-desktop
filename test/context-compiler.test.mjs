@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { ContextCompiler } from '../src/runtime/context-compiler.mjs';
+
+const execFileAsync = promisify(execFile);
+
+async function gitProject(t) {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-context-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => execFileAsync('git', ['-c', 'user.name=Cuppet Tests', '-c', 'user.email=cuppet-tests@example.invalid', '-c', 'commit.gpgSign=false', ...args], { cwd: root });
+  await git('init', '--quiet');
+  return { root, git };
+}
 
 function state({ mode = 'build', orchestrator = false } = {}) {
   return { mode: () => mode, snapshot: () => ({ orchestratorEnabled: orchestrator }) };
@@ -72,6 +87,85 @@ test('plan mode uses 12 percent budget and orchestrator bypasses automatic TST c
   const output = await orchestrated.compile({ sessionId: 'o1', messages: [{ id: 'u', role: 'user', content: 'Do the work' }], userMessageId: 'u' });
   assert.equal(output.mode, 'orchestrator');
   assert.equal(orchestratedTst.calls.length, 0);
+});
+
+test('retrieval hints prioritize prompt paths and uncommitted files over latest-commit paths', async (t) => {
+  const { root, git } = await gitProject(t);
+  await mkdir(join(root, 'src'));
+  for (const name of ['committed.mjs', 'staged.mjs', 'unstaged.mjs', 'deleted.mjs', 'rename-old.mjs']) {
+    await writeFile(join(root, 'src', name), 'export const value = 1;\n');
+  }
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'Initial files');
+  await writeFile(join(root, 'src/staged.mjs'), 'export const value = 2;\n');
+  await git('add', 'src/staged.mjs');
+  await writeFile(join(root, 'src/unstaged.mjs'), 'export const value = 3;\n');
+  await writeFile(join(root, 'src/new file.mjs'), 'export const value = 4;\n');
+  await rm(join(root, 'src/deleted.mjs'));
+  await git('mv', 'src/rename-old.mjs', 'src/rename new.mjs');
+
+  const tst = fakeTst({});
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  await compiler.compile({ sessionId: 'dirty', projectRoot: root, messages: [{ role: 'user', content: 'Update src/staged.mjs' }], userMessageId: 'u' });
+  const hints = tst.calls[0][2];
+  assert.equal(hints[0], 'src/staged.mjs');
+  assert.equal(hints.filter((hint) => hint === 'src/staged.mjs').length, 1);
+  for (const path of ['src/unstaged.mjs', 'src/new file.mjs', 'src/deleted.mjs', 'src/rename new.mjs']) assert.ok(hints.includes(path), path);
+  assert.equal(hints.includes('src/committed.mjs'), false, 'dirty worktree must not use latest-commit files');
+  assert.equal(hints.includes('src/rename-old.mjs'), false, 'rename source is not a separate status entry');
+  assert.ok(hints.includes('Update'), 'existing keyword hints remain');
+});
+
+test('clean retrieval hints use only the latest commit, including the initial commit', async (t) => {
+  const { root, git } = await gitProject(t);
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'src/initial.mjs'), 'export const initial = 1;\n');
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'Initial file');
+  const tst = fakeTst({});
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  await compiler.compile({ sessionId: 'clean', projectRoot: root, messages: [{ role: 'user', content: 'ok' }], userMessageId: 'u1' });
+  assert.deepEqual(tst.calls[0][2], ['src/initial.mjs']);
+
+  await writeFile(join(root, 'src/latest file.mjs'), 'export const latest = 2;\n');
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'Latest file');
+  await compiler.compile({ sessionId: 'clean', projectRoot: root, messages: [{ role: 'user', content: 'ok' }], userMessageId: 'u2' });
+  assert.deepEqual(tst.calls[1][2], ['src/latest file.mjs']);
+});
+
+test('retrieval paths stay relative to the session project and within the hint cap', async (t) => {
+  const { root, git } = await gitProject(t);
+  const projectRoot = join(root, 'nested');
+  await mkdir(projectRoot);
+  await writeFile(join(root, 'outside.mjs'), 'export const outside = 1;\n');
+  await writeFile(join(projectRoot, 'committed.mjs'), 'export const committed = 1;\n');
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'Initial files');
+  const tst = fakeTst({});
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  await compiler.compile({ sessionId: 'nested', projectRoot, messages: [{ role: 'user', content: 'ok' }], userMessageId: 'u1' });
+  assert.deepEqual(tst.calls[0][2], ['committed.mjs']);
+
+  for (let i = 0; i < 40; i++) await writeFile(join(projectRoot, `new-${i}.mjs`), 'export const value = 1;\n');
+  await compiler.compile({ sessionId: 'nested', projectRoot, messages: [{ role: 'user', content: 'Update src/explicit.mjs' }], userMessageId: 'u2' });
+  const hints = tst.calls[1][2];
+  assert.equal(hints.length, 32);
+  assert.equal(hints[0], 'src/explicit.mjs');
+  assert.ok(hints.slice(1).every((hint) => /^new-\d+\.mjs$/.test(hint)));
+});
+
+test('Git failures preserve prompt hints in non-Git and unborn projects', async (t) => {
+  const { root, git } = await gitProject(t);
+  await mkdir(join(root, 'plain'));
+  for (const projectRoot of [root, join(root, 'plain'), join(root, 'missing')]) {
+    if (projectRoot.endsWith('plain')) await rm(join(root, '.git'), { recursive: true, force: true });
+    const tst = fakeTst({});
+    const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+    await compiler.compile({ sessionId: 'no-git', projectRoot, messages: [{ role: 'user', content: 'Update src/explicit.mjs' }], userMessageId: 'u' });
+    assert.equal(tst.calls[0][2][0], 'src/explicit.mjs');
+    assert.ok(tst.calls[0][2].includes('Update'));
+  }
 });
 
 test('STM compaction aborts without TST and never authorizes transcript mutation', async () => {

@@ -521,7 +521,7 @@ export class RuntimeService {
             : [];
           return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
         });
-      const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: userId });
+      const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: userId, projectRoot });
       const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
       this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
       const adapter = this.#providerFactory(provider ?? {});
