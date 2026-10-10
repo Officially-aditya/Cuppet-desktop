@@ -6,6 +6,7 @@ import { delimiter, dirname, join, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { localCliLaunch } from '../local-cli-launch.mjs';
+import { resolveCopilotAcpRuntime } from '../copilot-acp-runtime.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
 import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 import { localProviderVersionLabel } from './version-policy.mjs';
@@ -92,6 +93,8 @@ export function localProviderOperations(providerID, {
   executableIdentityImpl = executableIdentity,
   resolveAntigravityInstallationImpl = resolveAntigravityAcpInstallation,
   antigravityInstallOptions = {},
+  resolveCopilotRuntimeImpl = resolveCopilotAcpRuntime,
+  copilotRuntimeOptions = {},
 } = {}) {
   const descriptor = localCliDescriptor(providerID);
   if (!descriptor) throw new Error('Unsupported local CLI provider.');
@@ -118,6 +121,40 @@ export function localProviderOperations(providerID, {
           detected: Boolean(runtimeInstallation), executable: runtimeInstallation?.command,
           version: runtimeInstallation?.version, source: runtimeInstallation?.source,
           ownedByCuppet: runtimeInstallation?.source === 'managed', canUpdate: false, identity,
+        }),
+      };
+    }
+    if (descriptor.id === 'github-copilot') {
+      const state = await providerState(userData, descriptor.id);
+      const recordedIdentity = normalizeStoredIdentity(state.executableIdentity);
+      let runtimeInstallation = await resolveCopilotRuntimeImpl({}, {
+        ...copilotRuntimeOptions, platform,
+        additionalCommands: state.installedByCuppet && recordedIdentity?.resolvedPath ? [recordedIdentity.resolvedPath] : [],
+      });
+      if (!runtimeInstallation && platform === 'win32' && !process.env[descriptor.envOverride]) {
+        const npmExecutable = await findNpmExecutable(descriptor, runImpl);
+        if (npmExecutable) {
+          runtimeInstallation = await resolveCopilotRuntimeImpl({ cliCommand: npmExecutable }, { ...copilotRuntimeOptions, platform });
+          if (runtimeInstallation) extendCliSearchPath([dirname(npmExecutable)]);
+        }
+      }
+      const executable = runtimeInstallation?.command;
+      if (executable && executable === recordedIdentity?.resolvedPath) extendCliSearchPath([dirname(executable)]);
+      const identity = executable ? await executableIdentityImpl(executable).catch(() => null) : null;
+      const ownershipMatches = Boolean(runtimeInstallation) && state.installedByCuppet === true && executableIdentityMatches(recordedIdentity, identity);
+      const result = executable
+        ? await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' }).catch(() => null)
+        : null;
+      const version = result ? localProviderVersionLabel(descriptor.id, result) : null;
+      return {
+        providerID: descriptor.id, label: descriptor.label, officialApp,
+        installed: Boolean(runtimeInstallation), version, error: null,
+        installation: normalizeProviderInstallation({
+          detected: Boolean(runtimeInstallation), executable, version,
+          source: ownershipMatches ? state.installSource : runtimeInstallation?.source,
+          ownedByCuppet: ownershipMatches,
+          canUpdate: ownershipMatches && Boolean(updateSpec(descriptor.id, platform, state.installSource)),
+          identity,
         }),
       };
     }
@@ -332,7 +369,7 @@ function statusProjection(descriptor, state, platform) {
       ? state.error
         ? `${descriptor.label} could not be started: ${state.error}`
         : state.officialApp
-          ? `${state.officialApp.label} was detected. Cuppet still needs ${descriptor.label === 'GitHub Copilot' ? 'the Copilot CLI' : 'the Antigravity connection runtime'} to connect. It will install the missing runtime when you connect.`
+          ? `${state.officialApp.label} was detected. Cuppet still needs ${descriptor.label === 'GitHub Copilot' ? 'a usable Copilot ACP runtime' : 'the Antigravity connection runtime'} to connect. It will install the missing runtime when you connect.`
           : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
