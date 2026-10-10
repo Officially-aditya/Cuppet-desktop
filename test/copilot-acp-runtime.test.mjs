@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +72,21 @@ test('VS Code extension runtime is reused for Install, Connect and chat without 
     assert.equal((await runtime.runTurn({ messages: [] })).text, 'Done.');
   } finally { await runtime.close(); }
   assert.ok(calls.filter(([, args]) => args.includes('--version')).every(([actual]) => actual === command));
+});
+
+
+test('fresh ACP verification is reused until the executable or environment changes', unix, async (t) => {
+  const { root, options } = await setup(t);
+  const command = await executable(join(root, 'copilot'));
+  const log = join(root, 'initializations');
+  const env = { ...options.environment, FAKE_ACP_INITIALIZE_LOG: log };
+  assert.equal(await verifyCopilotAcpExecutable(command, env), true);
+  assert.equal(await verifyCopilotAcpExecutable(command, env), true);
+  assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, 1);
+  assert.equal(await verifyCopilotAcpExecutable(command, { ...env, GH_TOKEN: 'fixture-token' }), true);
+  assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, 2);
+  await executable(command, '#!/bin/sh\nprintf "Copilot 1.0.95\\n"\n');
+  assert.equal(await verifyCopilotAcpExecutable(command, env), false);
 });
 
 test('a usable standalone runtime takes precedence over app copies', unix, async (t) => {

@@ -9,6 +9,8 @@ export class AcpRpcChannel {
   #pending = new Map();
   #nextId = 1;
   #closed = false;
+  #diagnosticError;
+  #failure = null;
   #notificationHandler = async () => {};
   #requestHandler = async (message) => {
     const error = new Error(`Unsupported ACP client request: ${message.method}`);
@@ -16,9 +18,11 @@ export class AcpRpcChannel {
     throw error;
   };
 
-  constructor({ processHandle, label = 'ACP provider' }) {
+  constructor({ processHandle, label = 'ACP provider', diagnosticError }) {
     this.#process = processHandle;
     this.#label = label;
+    this.#diagnosticError = diagnosticError;
+    processHandle.onStderrLine?.((line) => this.#onDiagnostic(line));
     processHandle.onLine((line) => this.#onLine(line));
     processHandle.onExit(({ code, signal, expected }) => {
       if (expected || this.#closed) return;
@@ -57,6 +61,7 @@ export class AcpRpcChannel {
   }
 
   #requestOnce(method, params, timeoutMs) {
+    if (this.#failure) return Promise.reject(this.#failure);
     if (this.#closed) {
       return Promise.reject(providerFailureError(`${this.#label} ACP channel is closed.`, {
         code: 'PROVIDER_TRANSPORT_CLOSED',
@@ -116,7 +121,7 @@ export class AcpRpcChannel {
 
   #onLine(line) {
     let message;
-    try { message = JSON.parse(line); } catch { return; }
+    try { message = JSON.parse(line); } catch { this.#onDiagnostic(line); return; }
     if (!message || typeof message !== 'object') return;
 
     if (Object.prototype.hasOwnProperty.call(message, 'id') && !message.method) {
@@ -141,6 +146,15 @@ export class AcpRpcChannel {
     }
 
     if (message.method) void Promise.resolve(this.#notificationHandler(message)).catch(() => undefined);
+  }
+
+  #onDiagnostic(line) {
+    if (this.#closed || this.#failure || typeof this.#diagnosticError !== 'function') return;
+    const error = this.#diagnosticError(String(line));
+    if (!(error instanceof Error)) return;
+    this.#failure = error;
+    this.#failAll(error);
+    this.#process.terminate();
   }
 
   #failAll(error) {

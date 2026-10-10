@@ -70,7 +70,7 @@ export class AcpSessionRuntime {
       ? configuration.cliArgs.map((value) => String(value))
       : [...descriptor.args];
     this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: this.#environment, label: descriptor.label });
-    this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label });
+    this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label, diagnosticError: (line) => descriptor.diagnosticError?.(line, configuration) });
     this.#rpc.setRequestHandler(async (message) => {
       const turn = this.#activeTurn;
       if (turn) turn.pendingHostRequests += 1;
@@ -98,6 +98,8 @@ export class AcpSessionRuntime {
         if (!installation) throw providerFailureError(`No usable ${this.#descriptor.label} ACP runtime was found. Reconnect to install the missing runtime.`, {
           code: 'PROVIDER_EXECUTABLE_MISSING', category: 'executable_missing', retryable: false, action: 'reconnect_provider',
         });
+        if (Array.isArray(installation.args)) this.#configuration = { ...this.#configuration, cliArgs: installation.args.map(String) };
+        if (installation.env) this.#environment = { ...this.#environment, ...installation.env };
         this.#startProcess(installation.command);
       }
       await this.#rpc.ready();
@@ -119,9 +121,14 @@ export class AcpSessionRuntime {
   async newSession({ mcpServers = [], selection } = {}) {
     if (this.#state === 'idle') return this.start({ mcpServers, selection });
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
-    await this.#closeRetiredSession();
-    await this.#openSession(mcpServers, selection);
-    return this.snapshot();
+    try {
+      await this.#closeRetiredSession();
+      await this.#openSession(mcpServers, selection);
+      return this.snapshot();
+    } catch (error) {
+      if (this.#state !== 'closed') this.#state = 'error';
+      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
+    }
   }
 
   setHostHandlers(handlers = {}) {
@@ -532,7 +539,19 @@ function serializeConversation(messages) { const value=(Array.isArray(messages)?
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
 function supportsSessionClose(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.close !== undefined && sessions.close !== false;}
 async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
-function enrichProviderError(descriptor,error,stderr){if(providerFailureMetadata(error))return error;const message=cleanError(error); const detail=cleanError(stderr).trim(); if(/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`); return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);}
+function enrichProviderError(descriptor, error, stderr) {
+  if (providerFailureMetadata(error)) return error;
+  const message = cleanError(error);
+  if (/authentication required|not authenticated|unauthenticated|(?:log|sign)[ -]?in required/i.test(message)) {
+    return providerFailureError(`${descriptor.label} sign-in is required. Connect again in Settings.`, {
+      code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication',
+      action: 'reauthenticate', providerID: descriptor.id, cause: error,
+    });
+  }
+  const detail = cleanError(stderr).trim();
+  if (/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`);
+  return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);
+}
 function cleanError(error){return error instanceof Error?error.message:String(error??'');}
 function stalledError(descriptor){const error=new Error(`${descriptor.label} stopped responding via ACP. The provider/model may be unavailable, rate-limited, out of quota, or the agent process may have stalled.`); error.code='ACP_STALLED'; return error;}
 function abortError(){const error=new Error('Provider request aborted.'); error.name='AbortError'; return error;}

@@ -6,6 +6,12 @@ import { mkdir } from 'node:fs/promises';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 12_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export function runtimeRequestTimeoutMs(method) {
+  if (method === 'provider.local.connect') return 15 * 60_000;
+  if (method === 'provider.models') return 10 * 60_000;
+  if (method === 'provider.local.status' || method === 'provider.local.detect' || method === 'provider.local.probe') return 60_000;
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
 const DEFAULT_IDLE_PROBE_AFTER_MS = 5 * 60_000;
 const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const DEFAULT_RESTART_DELAYS_MS = [0, 250, 1_000];
@@ -202,7 +208,7 @@ export class RuntimeClient extends EventEmitter {
     });
   }
 
-  async request(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  async request(method, params = {}, timeoutMs = runtimeRequestTimeoutMs(method)) {
     const requestId = randomUUID();
     if (this.#recoveryPromise) await this.#recoveryPromise;
     if (!this.#child?.stdin.writable || !this.#readyEvent) {

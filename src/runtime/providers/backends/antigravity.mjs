@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
 import { discoverAcpRuntimeCatalog } from '../transports/acp/acp-discovery.mjs';
 import { AcpProviderAdapter } from './acp.mjs';
+import { providerFailureError } from '../provider-failure.mjs';
 import { resolveAntigravityAcpInstallation } from './antigravity-install.mjs';
 
 export function antigravityBackendDefinition() {
@@ -15,7 +16,8 @@ export function antigravityBackendDefinition() {
         const install = typeof options.resolveInstallation === 'function'
           ? options.resolveInstallation
           : resolveAntigravityAcpInstallation;
-        const installation = await install(configuration, options.installOptions ?? {});
+        const installation = await install(configuration, { ...options.installOptions, allowInstall: false });
+        if (!installation) throw new Error('Connect Google Antigravity in Settings to install its missing ACP runtime.');
         const descriptor = antigravityAcpDescriptor(installation);
         const runtimeConfiguration = antigravityRuntimeConfiguration(configuration, installation);
         const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpRuntimeCatalog;
@@ -42,26 +44,21 @@ export function antigravityBackendDefinition() {
 }
 
 export class ManagedAntigravityProvider {
-  #configuration;
-  #resolveInstallation;
+  #adapter;
 
   constructor(configuration = {}, { resolveInstallation = resolveAntigravityAcpInstallation } = {}) {
-    this.#configuration = { ...configuration };
-    this.#resolveInstallation = resolveInstallation;
+    this.#adapter = new AcpProviderAdapter(configuration, {
+      descriptor: antigravityAcpDescriptor(null, { resolveInstallation }),
+    });
   }
 
-  async stream(messages, options = {}) {
-    const installation = await this.#resolveInstallation(this.#configuration, this.#configuration.installOptions ?? {});
-    const descriptor = antigravityAcpDescriptor(installation);
-    const configuration = antigravityRuntimeConfiguration(this.#configuration, installation);
-    const provider = new AcpProviderAdapter(configuration, { descriptor });
-    return provider.stream(messages, options);
-  }
+  cuppetManagedRuntime() { return this.#adapter.cuppetManagedRuntime(); }
+  stream(messages, options = {}) { return this.#adapter.stream(messages, options); }
 }
 
-export function antigravityAcpDescriptor(installation) {
-  const command = requiredText(installation?.command, 'Antigravity ACP command');
-  const harnessPath = requiredText(installation?.harnessPath, 'Antigravity harness path');
+export function antigravityAcpDescriptor(installation, { resolveInstallation = resolveAntigravityAcpInstallation } = {}) {
+  const command = installation ? requiredText(installation.command, 'Antigravity ACP command') : 'agy_acp_server';
+  const harnessPath = installation ? requiredText(installation.harnessPath, 'Antigravity harness path') : '';
   const args = Array.isArray(installation?.args) ? installation.args.map(String) : [];
   return {
     id: 'antigravity',
@@ -70,10 +67,23 @@ export function antigravityAcpDescriptor(installation) {
     command,
     args,
     versionArgs: [],
-    envOverride: 'CUPPET_ANTIGRAVITY_ACP_BIN',
+    envOverride: installation ? 'CUPPET_ANTIGRAVITY_ACP_BIN' : '',
     loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
     authentication: { methods: [{ id: 'oauth-personal' }] },
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
+    diagnosticError: (line, configuration) => {
+      if (configuration.allowInteractiveAuth === true || !line.startsWith('Open the following link to authenticate the ACP server:')) return null;
+      return providerFailureError('Sign in to Google Antigravity in Settings before continuing.', {
+        code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: 'antigravity',
+      });
+    },
+    ...(!installation ? {
+      resolveRuntime: async (configuration, { environment } = {}) => {
+        const resolved = await resolveInstallation(configuration, { ...configuration.installOptions, allowInstall: false });
+        if (!resolved) return null;
+        return { ...resolved, env: antigravityEnvironment(environment ?? {}, requiredText(resolved.harnessPath, 'Antigravity harness path')) };
+      },
+    } : {}),
   };
 }
 
@@ -108,7 +118,7 @@ function antigravityEnvironment(inherited, harnessPath) {
     'ANTIGRAVITY_HARNESS_PATH',
     'ELECTRON_RUN_AS_NODE',
   ]) delete environment[key];
-  environment.ANTIGRAVITY_HARNESS_PATH = harnessPath;
+  if (harnessPath) environment.ANTIGRAVITY_HARNESS_PATH = harnessPath;
   environment.AGY_ACP_FORCE_FILE_STORAGE = '1';
   environment.PYTHONUNBUFFERED = '1';
   return environment;

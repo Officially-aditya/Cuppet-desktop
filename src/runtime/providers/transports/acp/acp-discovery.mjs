@@ -3,6 +3,8 @@ import { localCliDescriptor } from '../../../local-cli-descriptors.mjs';
 import { modelRuntimeSetting, reasoningRuntimeSetting } from '../../capabilities.mjs';
 import { AcpSessionRuntime } from './acp-session.mjs';
 import { verifyLocalProviderExecutableVersion } from '../../local-provider-version-check.mjs';
+import { providerFailureMetadata } from '../../provider-failure.mjs';
+import { clearProviderRuntimeFailure, recordProviderRuntimeFailure } from '../../runtime-health-registry.mjs';
 
 /**
  * Discover provider-authoritative ACP model/config metadata through the same
@@ -28,26 +30,37 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
   await verifyLocalProviderExecutableVersion(descriptor, configuration);
   const cwd = text(options.cwd) || tmpdir();
   const baselineConfiguration = withoutRuntimeSelections(configuration);
-  const baselineCapabilities = await discoverCapabilities(descriptor, baselineConfiguration, cwd);
-  const baseline = catalogFromAcpCapabilities(id, baselineCapabilities);
-  const defaultModel = exactAdvertisedModel(baseline.currentModel, baseline.models);
-  const configuredModel = text(record(configuration.primary).modelID || configuration.model || configuration.modelID);
+  const runtime = new AcpSessionRuntime({ descriptor, configuration: baselineConfiguration, projectRoot: cwd });
+  try {
+    await runtime.start();
+    clearProviderRuntimeFailure(id);
+    const baseline = catalogFromAcpCapabilities(id, await runtime.capabilities());
+    const defaultModel = exactAdvertisedModel(baseline.currentModel, baseline.models);
+    const configuredModel = text(record(configuration.primary).modelID || configuration.model || configuration.modelID);
 
-  let selected = baseline;
-  if (configuredModel && configuredModel !== 'cli-default') {
-    const modelConfiguration = withModelSelection(baselineConfiguration, configuredModel);
-    const selectedCapabilities = await discoverCapabilities(descriptor, modelConfiguration, cwd);
-    selected = catalogFromAcpCapabilities(id, selectedCapabilities);
+    let selected = baseline;
+    if (exactAdvertisedModel(configuredModel, baseline.models)) {
+      await runtime.newSession({ selection: { model: configuredModel } });
+      selected = catalogFromAcpCapabilities(id, await runtime.capabilities());
+    }
+
+    return {
+      ...baseline,
+      currentModel: exactAdvertisedModel(selected.currentModel, baseline.models) || selected.currentModel || null,
+      defaultModel,
+      configId: selected.configId || baseline.configId || null,
+      configOptions: selected.configOptions,
+      ...(selected.reasoning ? { reasoning: selected.reasoning } : {}),
+    };
+  } catch (error) {
+    const failure = providerFailureMetadata(error);
+    if (failure?.category === 'authentication') recordProviderRuntimeFailure(id, {
+      code: error.code, category: failure.category, retryable: false, at: Date.now(),
+    });
+    throw error;
+  } finally {
+    await runtime.close().catch(() => undefined);
   }
-
-  return {
-    ...baseline,
-    currentModel: exactAdvertisedModel(selected.currentModel, baseline.models) || selected.currentModel || null,
-    defaultModel,
-    configId: selected.configId || baseline.configId || null,
-    configOptions: selected.configOptions,
-    ...(selected.reasoning ? { reasoning: selected.reasoning } : {}),
-  };
 }
 
 export function catalogFromAcpCapabilities(providerID, capabilities = {}) {
@@ -92,16 +105,6 @@ export function catalogFromAcpCapabilities(providerID, capabilities = {}) {
   };
 }
 
-async function discoverCapabilities(descriptor, configuration, projectRoot) {
-  const runtime = new AcpSessionRuntime({ descriptor, configuration, projectRoot });
-  try {
-    await runtime.start();
-    return await runtime.capabilities();
-  } finally {
-    await runtime.close().catch(() => undefined);
-  }
-}
-
 function withoutRuntimeSelections(configuration) {
   const source = { ...record(configuration) };
   delete source.model;
@@ -113,13 +116,6 @@ function withoutRuntimeSelections(configuration) {
   delete primary.model;
   delete primary.variant;
   source.primary = primary;
-  return source;
-}
-
-function withModelSelection(configuration, modelID) {
-  const source = { ...record(configuration) };
-  source.model = modelID;
-  source.primary = { ...record(source.primary), modelID };
   return source;
 }
 

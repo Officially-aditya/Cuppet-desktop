@@ -58,9 +58,8 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     try {
       const next = await window.cuppet.settings.get();
       setCurrent(next);
-      if (!providerID) setProviderID(next.providerID || next.presetID || 'openai');
     } catch (error) { onError(error); }
-  }, [onError, providerID]);
+  }, [onError]);
 
   const invalidateModelCatalogs = useCallback(() => {
     invalidateModelCatalogCache();
@@ -69,8 +68,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
 
   const providerSettingsCommitted = useCallback(() => {
     notifyProviderSettingsChanged();
-    invalidateModelCatalogs();
-  }, [invalidateModelCatalogs]);
+  }, []);
 
   const codexWatch = useRef<number | null>(null);
   const codexWatchDeadline = useRef(0);
@@ -110,11 +108,15 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
 
   useEffect(() => stopCodexWatch, [stopCodexWatch]);
 
-  const refreshCliStatus = useCallback(async () => {
+  useEffect(() => {
     if (!isLocalCli || !providerID) { setCliStatus(null); return; }
+    let cancelled = false;
     setCliStatus((current) => current?.providerID === providerID ? current : { providerID, available: false, message: 'Checking local CLI…' });
-    try { setCliStatus(await window.cuppet.cliAgents.status(providerID)); }
-    catch (error) { setCliStatus({ providerID, available: false, message: error instanceof Error ? error.message : String(error) }); }
+    void window.cuppet.cliAgents.status(providerID).then(
+      (status) => { if (!cancelled) setCliStatus(status); },
+      (error) => { if (!cancelled) setCliStatus({ providerID, available: false, message: error instanceof Error ? error.message : String(error) }); },
+    );
+    return () => { cancelled = true; };
   }, [isLocalCli, providerID]);
 
   const refreshDevices = useCallback(async () => {
@@ -140,7 +142,6 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   }, []);
 
   useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); void refreshSandbox(); }, [refresh, refreshCodex, refreshDevices, refreshSandbox]);
-  useEffect(() => { void refreshCliStatus(); }, [refreshCliStatus]);
   useEffect(() => { if (section === 'usage') void refreshUsage(); }, [refreshUsage, section]);
   useEffect(() => { if (section === 'security') void refreshSandbox(); }, [refreshSandbox, section]);
 
@@ -183,6 +184,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setCliStatus((current) => ({ ...(current ?? { providerID }), providerID, available: false, connected: false, message: current?.installed === false ? `Installing ${selected.label || selected.id}…` : `Opening ${selected.label || selected.id} sign-in…` }));
       const linked = await window.cuppet.cliAgents.connect(providerID);
       setCliStatus(linked);
+      invalidateModelCatalogs();
       if (!(linked.connected ?? linked.available)) throw new Error(linked.message || `${selected.label || selected.id} did not finish connecting.`);
       const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '' });
       setCurrent(saved);
@@ -233,6 +235,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       setApiKey('');
       onSaved(saved);
       providerSettingsCommitted();
+      invalidateModelCatalogs();
       setNote(`${selected.label || selected.id} credential updated.`);
     } catch (error) { setNote(error instanceof Error ? error.message : String(error)); onError(error); }
     finally { setBusy(false); }

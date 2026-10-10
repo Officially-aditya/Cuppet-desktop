@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { localProviderOperations } from './local-provider-operations.mjs';
 import { discoverProviderCapabilitySnapshot } from './default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from './capability-snapshot.mjs';
-import { providerRuntimeHealth } from './runtime-health-registry.mjs';
+import { clearProviderRuntimeFailure, providerRuntimeHealth } from './runtime-health-registry.mjs';
 import {
   assertLocalProviderVersionSupported,
   localProviderVersionCompatibility,
@@ -24,6 +24,8 @@ export class ProviderControlPlane {
   #capabilityDiscovery;
   #runtimeHealth;
   #capabilityState = new Map();
+  #statusCache = new Map();
+  #now;
 
   constructor({
     dataDir,
@@ -32,26 +34,48 @@ export class ProviderControlPlane {
     operationsFactory = localProviderOperations,
     capabilityDiscovery = discoverProviderCapabilitySnapshot,
     runtimeHealth = providerRuntimeHealth,
+    now = () => Date.now(),
   } = {}) {
     this.#userData = userData;
     this.#resourcesPath = resourcesPath;
     this.#operationsFactory = operationsFactory;
     this.#capabilityDiscovery = capabilityDiscovery;
     this.#runtimeHealth = runtimeHealth;
+    this.#now = now;
   }
 
   async localStatus(providerID) {
     const id = requiredProviderID(providerID);
-    const operations = this.#operations(id);
-    const detected = withVersionCompatibility(id, await operations.detect());
-    const status = detected.installed === true && versionBlocked(detected)
-      ? incompatibleLocalState(detected)
-      : withVersionCompatibility(id, await operations.status());
+    let entry = this.#statusCache.get(id);
+    if (!entry || (entry.status && this.#now() - entry.checkedAt >= 30_000)) {
+      entry = {};
+      const current = entry;
+      entry.promise = (async () => {
+        const operations = this.#operations(id);
+        const detected = localProviderVersionPolicy(id)
+          ? withVersionCompatibility(id, await operations.detect())
+          : null;
+        const status = detected?.installed === true && versionBlocked(detected)
+          ? incompatibleLocalState(detected)
+          : withVersionCompatibility(id, await operations.status(detected));
+        if (this.#statusCache.get(id) === current) {
+          current.status = status;
+          current.checkedAt = this.#now();
+        }
+        return status;
+      })().catch((error) => {
+        if (this.#statusCache.get(id) === current) this.#statusCache.delete(id);
+        throw error;
+      });
+      this.#statusCache.set(id, entry);
+    }
+    const status = entry.status ?? await entry.promise;
     return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localConnect(providerID) {
     const id = requiredProviderID(providerID);
+    this.#statusCache.delete(id);
     const operations = this.#operations(id);
     let detected = withVersionCompatibility(id, await operations.detect());
     if (detected.installed !== true) detected = withVersionCompatibility(id, await operations.install());
@@ -61,11 +85,14 @@ export class ProviderControlPlane {
     if (versionBlocked(detected)) {
       assertLocalProviderVersionSupported(id, detected.version || detected.installation?.version, detected.label || id);
     }
-    const status = withVersionCompatibility(id, await operations.connect());
+    const forceAuthentication = this.#runtimeHealth(id)?.lastFailure?.category === 'authentication';
+    const status = withVersionCompatibility(id, await operations.connect({ forceAuthentication }));
     if (versionBlocked(status)) {
       assertLocalProviderVersionSupported(id, status.version || status.installation?.version, status.label || id);
     }
     if (status.connected !== true && status.available !== true) this.#capabilityState.delete(id);
+    if (status.connected === true || status.available === true) clearProviderRuntimeFailure(id);
+    this.#statusCache.set(id, { status, checkedAt: this.#now() });
     return withControlState(status, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
@@ -77,17 +104,19 @@ export class ProviderControlPlane {
 
   async localProbe(providerID) {
     const id = requiredProviderID(providerID);
+    this.#statusCache.delete(id);
     const operations = this.#operations(id);
     const detected = withVersionCompatibility(id, await operations.detect());
     const state = detected.installed === true && versionBlocked(detected)
       ? incompatibleLocalState(detected)
-      : withVersionCompatibility(id, await operations.probe());
+      : withVersionCompatibility(id, await operations.probe(detected));
     if (state.connected !== true && state.available !== true) this.#capabilityState.delete(id);
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
   async localUpdate(providerID) {
     const id = requiredProviderID(providerID);
+    this.#statusCache.delete(id);
     const state = withVersionCompatibility(id, await this.#operations(id).update());
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
@@ -143,7 +172,9 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
   const installed = status.installed === true || status.installation?.detected === true;
   const compatibility = normalizeVersionCompatibility(status.compatibility);
   const compatibilityBlocked = installed && compatibility.required === true && compatibility.supported === false;
-  const connected = !compatibilityBlocked && (status.connected === true || status.available === true);
+  const runtime = normalizeRuntimeHealth(runtimeHealth);
+  const authenticationRequired = runtime.lastFailure?.category === 'authentication';
+  const connected = !compatibilityBlocked && !authenticationRequired && (status.connected === true || status.available === true);
   const installationState = !installed
     ? 'missing'
     : status.installation?.ownedByCuppet === true
@@ -156,7 +187,6 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
       : installed
         ? 'required'
         : 'unknown';
-  const runtime = normalizeRuntimeHealth(runtimeHealth);
   const capabilities = connected && !compatibilityBlocked ? normalizeCapabilityControl(capabilityState) : blockedCapabilities();
   const runtimeNeedsRetry = runtime.state === 'crashed' || runtime.state === 'unhealthy';
   const overall = !installed
@@ -170,6 +200,7 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
           : 'ready';
   return {
     ...status,
+    ...(authenticationRequired ? { message: 'Provider sign-in is required. Connect again in Settings.' } : {}),
     connected,
     available: connected,
     control: {

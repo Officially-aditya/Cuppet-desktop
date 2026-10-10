@@ -221,8 +221,8 @@ export function localProviderOperations(providerID, {
     };
   };
 
-  const probe = async () => {
-    const detected = await detect();
+  const probe = async (detected = null) => {
+    detected ??= await detect();
     if (!detected.installed) return { ...detected, connected: false, available: false, probe: 'not-installed' };
     const marker = await providerState(userData, descriptor.id);
     let providerReady = false;
@@ -299,20 +299,20 @@ export function localProviderOperations(providerID, {
     return detect();
   };
 
-  const authenticate = async () => {
+  const authenticate = async ({ forceAuthentication = false } = {}) => {
     const detected = await detect();
     if (!detected.installed) throw new Error(`${descriptor.label} must be installed before authentication.`);
-    const current = await probe();
+    const current = await probe(detected);
     if (descriptor.id === 'antigravity') {
       const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
       if (!installation) throw new Error('Antigravity ACP must be installed before authentication.');
-      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation) });
+      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), configuration: { allowInteractiveAuth: true } });
       try { await runtime.start(); }
       finally { await runtime.close(); }
       await markLinked(userData, descriptor.id, now());
       return { ...await probe(), connected: true, available: true, probe: 'provider' };
     }
-    if (current.connected) return current;
+    if (current.connected && !forceAuthentication) return current;
     const login = loginSpec(descriptor.id, detected.installation.executable);
     if (!login) {
       await markLinked(userData, descriptor.id, now());
@@ -336,11 +336,11 @@ export function localProviderOperations(providerID, {
     };
   };
 
-  const status = async () => statusProjection(descriptor, await probe(), platform);
-  const connect = async () => {
+  const status = async (detected = null) => statusProjection(descriptor, await probe(detected), platform);
+  const connect = async (options = {}) => {
     const detected = await detect();
     if (!detected.installed) await install();
-    await authenticate();
+    await authenticate(options);
     return status();
   };
 

@@ -73,10 +73,11 @@ export class SupervisedAcpSessionRuntime {
   async runTurn(input = {}, hooks = {}) {
     try {
       const result = await this.#runtime.runTurn(input, hooks);
+      this.#lastFailure = null;
       clearProviderRuntimeFailure(this.#providerID);
       return result;
     } catch (error) {
-      if (isProviderTransportFailure(error)) {
+      if (isProviderTransportFailure(error) || providerFailureMetadata(error)?.category === 'authentication') {
         this.#lastFailure = failureSnapshot(error);
         recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
       }
@@ -120,10 +121,11 @@ export class SupervisedAcpSessionRuntime {
       try {
         await this.#verifyVersion();
         const result = await this.#runtime[operation](options);
+        this.#lastFailure = null;
         clearProviderRuntimeFailure(this.#providerID);
         return result;
       } catch (error) {
-        if (isProviderTransportFailure(error)) {
+        if (isProviderTransportFailure(error) || providerFailureMetadata(error)?.category === 'authentication') {
           this.#lastFailure = failureSnapshot(error);
           recordProviderRuntimeFailure(this.#providerID, this.#lastFailure);
         }

@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { appendFileSync } from 'node:fs';
 
 const rl = createInterface({ input: process.stdin });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -23,11 +24,16 @@ function options() {
 rl.on('line', (line) => {
   const message = JSON.parse(line);
   if (message.method === 'initialize') {
+    if (process.env.FAKE_ACP_INITIALIZE_LOG) appendFileSync(process.env.FAKE_ACP_INITIALIZE_LOG, String(process.pid) + '\n');
     write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
     return;
   }
   if (message.method === 'session/new') {
     sessionNewAttempts += 1;
+    if (process.env.FAKE_ACP_AUTH_REQUIRED === '1') {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Authentication required' } });
+      return;
+    }
     if (process.env.FAKE_ACP_SESSION_NEW_INTERNAL_ONCE === '1' && sessionNewAttempts === 1) {
       write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Internal error', data: { service: 'directory' } } });
       return;
@@ -51,5 +57,7 @@ rl.on('line', (line) => {
     write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'config-session', update: { sessionUpdate: 'tool_call_update', toolCallId: 'tool-1', status: 'completed', kind: 'search', title: 'Search files', rawInput: { query: 'TODO' }, rawOutput: { matches: 2 } } } });
     write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'config-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } } } });
     write({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+    return;
   }
+  if (message.id !== undefined) write({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } });
 });

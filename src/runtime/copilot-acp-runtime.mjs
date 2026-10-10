@@ -1,4 +1,5 @@
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, win32 as win32Path } from 'node:path';
@@ -6,6 +7,9 @@ import { detectLocalProviderApp, getEnv, localCliEnvironment, resolveLocalCliExe
 import { localCliDescriptor } from './local-cli-descriptors.mjs';
 import { AcpProcess } from './providers/transports/acp/acp-process.mjs';
 import { AcpRpcChannel } from './providers/transports/acp/acp-rpc.mjs';
+
+const verifiedExecutables = new Map();
+const VERIFICATION_FRESH_MS = 30_000;
 
 /** Resolve only runtimes that answer ACP initialize; app/SDK presence alone is insufficient. */
 export async function resolveCopilotAcpRuntime(configuration = {}, options = {}) {
@@ -83,6 +87,12 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
 /** Read-only handshake: do not authenticate or create a provider session during detection. */
 export async function verifyCopilotAcpExecutable(command, environment, { timeoutMs = 8_000 } = {}) {
   const descriptor = localCliDescriptor('github-copilot');
+  const identity = await stat(command).catch(() => null);
+  const key = createHash('sha256').update(JSON.stringify([command, environment])).digest('hex');
+  const signature = identity ? [identity.dev, identity.ino, identity.size, identity.mtimeMs, identity.ctimeMs].join(':') : null;
+  const cached = verifiedExecutables.get(key);
+  if (signature && cached?.signature === signature && Date.now() - cached.checkedAt < VERIFICATION_FRESH_MS) return true;
+  verifiedExecutables.delete(key);
   let rpc;
   try {
     const processHandle = new AcpProcess({ command, args: descriptor.args, env: environment, label: descriptor.label });
@@ -93,10 +103,12 @@ export async function verifyCopilotAcpExecutable(command, environment, { timeout
       clientCapabilities: {},
       clientInfo: { name: 'Cuppet Desktop', version: '0.9.0' },
     }, timeoutMs);
-    return initialized?.protocolVersion === 1
+    const verified = initialized?.protocolVersion === 1
       && initialized.agentCapabilities !== null
       && typeof initialized.agentCapabilities === 'object'
       && !Array.isArray(initialized.agentCapabilities);
+    if (verified && signature) verifiedExecutables.set(key, { signature, checkedAt: Date.now() });
+    return verified;
   } catch {
     return false;
   } finally {

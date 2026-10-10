@@ -65,7 +65,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   useEffect(() => {
     if (!settings) return;
     setAdvertised(cachedModelCatalog(settings) ?? cachedProviderCatalog(settings) ?? EMPTY_ADVERTISED);
-    void refreshCatalog(settings, true).catch((value) => setError(message(value)));
+    void refreshCatalog(settings).catch((value) => setError(message(value)));
   }, [settings?.primary?.providerID, settings?.providerID, settings?.baseUrl]);
 
   useEffect(() => {

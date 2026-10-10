@@ -9,6 +9,7 @@ export class AcpProcess {
   #stderr = '';
   #lineHandlers = new Set();
   #exitHandlers = new Set();
+  #stderrLineHandlers = new Set();
   #readyPromise;
   #state = 'starting';
   #startedAt = null;
@@ -60,6 +61,12 @@ export class AcpProcess {
     this.#child.stderr.on('data', (chunk) => {
       this.#stderr = `${this.#stderr}${String(chunk)}`.slice(-16_000);
     });
+    const stderrLines = createInterface({ input: this.#child.stderr });
+    stderrLines.on('line', (line) => {
+      for (const handler of this.#stderrLineHandlers) {
+        try { handler(line); } catch {}
+      }
+    });
     this.#child.on('exit', (code, signal) => {
       this.#exitedAt = Date.now();
       this.#exit = { code, signal, expected: this.#closed };
@@ -74,6 +81,7 @@ export class AcpProcess {
   stderr() { return this.#stderr; }
   onLine(handler) { this.#lineHandlers.add(handler); return () => this.#lineHandlers.delete(handler); }
   onExit(handler) { this.#exitHandlers.add(handler); return () => this.#exitHandlers.delete(handler); }
+  onStderrLine(handler) { this.#stderrLineHandlers.add(handler); return () => this.#stderrLineHandlers.delete(handler); }
   isRunning() { return this.#state === 'running'; }
   snapshot() {
     return Object.freeze({
