@@ -151,7 +151,7 @@ jobs:
               fi
             done
             if [[ "$ready" == "true" ]]; then break; fi
-            if [[ "$GITHUB_REF_NAME" != release/v* || "$attempt" -eq 210 ]]; then
+            if [[ "$attempt" -eq 210 ]]; then
               echo "Exact release head $GITHUB_SHA is missing successful stabilization gates." >&2
               exit 1
             fi
