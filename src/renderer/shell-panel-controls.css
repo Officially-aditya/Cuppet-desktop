@@ -206,8 +206,8 @@
 .cuppet-shell-header .react-sidebar.collapsed .sidebar-collapsed-brand{top:9px}
 .cuppet-shell-header .react-sidebar.collapsed .sidebar-compact-nav{top:43px}
 
-/* TST: graph only, floating as a square workspace panel. */
-.cuppet-shell-header .memory-sidebar{position:fixed;z-index:14;top:50px;right:12px;width:clamp(286px,30vw,380px);min-width:0;max-width:calc(100vw - 36px);height:auto;aspect-ratio:1/1;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#030405;box-shadow:0 18px 46px rgba(0,0,0,.34);overflow:hidden}
+/* TST: horizontal tree, floating as a wide workspace panel. */
+.cuppet-shell-header .memory-sidebar{position:fixed;z-index:14;top:50px;right:12px;width:clamp(320px,58vw,760px);min-width:0;max-width:calc(100vw - 36px);height:min(70vh,560px);border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#030405;box-shadow:0 18px 46px rgba(0,0,0,.34);overflow:hidden}
 .cuppet-shell-header .memory-sidebar-header,
 .cuppet-shell-header .memory-sidebar-stats,
 .cuppet-shell-header .memory-graph-legend,
@@ -234,6 +234,6 @@
 .cuppet-shell-header .project-terminal.open .project-terminal-body{height:100%}
 
 @media(max-height:700px){.cuppet-shell-header .project-terminal.open{height:190px}}
-@media(max-width:960px){.cuppet-shell-header .memory-sidebar{width:min(320px,calc(100vw - 28px));right:8px}.shell-panel-header{padding-right:8px}}
+@media(max-width:960px){.cuppet-shell-header .memory-sidebar{width:min(620px,calc(100vw - 28px));right:8px}.shell-panel-header{padding-right:8px}}
 @media(max-width:680px){.shell-panel-header-center{max-width:210px}.project-header-name{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 @media(max-width:540px){.shell-panel-header-center{max-width:150px}.project-header-name{max-width:80px}}

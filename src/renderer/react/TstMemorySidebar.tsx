@@ -32,7 +32,8 @@ type GraphNode = {
   kind: 'file' | 'group';
   x: number;
   y: number;
-  z: number;
+  childCount?: number;
+  expanded?: boolean;
   editedAt: number;
   tool?: string;
 };
@@ -54,6 +55,9 @@ const MAX_GRAPH_ZOOM = 8.0;
 const NODE_CLICK_RADIUS = 13;
 const DRAG_THRESHOLD = 5;
 const ROOT_NODE_PATH = '__cuppet_root__';
+const GRAPH_COLUMN_GAP = 172;
+const GRAPH_ROW_GAP = 30;
+const GRAPH_LABEL_WIDTH = 148;
 
 export function TstMemorySidebar({ sessionId, projectName, running = false, open: openProp, onOpenChange }: Props) {
   const [snapshot, setSnapshot] = useState<MemoryGraphSnapshot | null>(null);
@@ -215,17 +219,16 @@ export function TstMemorySidebar({ sessionId, projectName, running = false, open
 
 function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: string[]; edits: EditedFile[]; selectedPath: string | null; onSelect: (path: string | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const scene = useMemo(() => buildScene(files, edits), [files, edits]);
+  const [expandedPaths, setExpandedPaths] = useState(() => new Set([ROOT_NODE_PATH]));
+  const scene = useMemo(() => buildScene(files, edits, expandedPaths), [files, edits, expandedPaths]);
   const sceneRef = useRef(scene);
   const selectedRef = useRef(selectedPath);
-  const rotationRef = useRef({ x: -0.16, y: 0.1 });
   const zoomRef = useRef(1);
   const [zoomDisplay, setZoomDisplay] = useState(100);
   const panRef = useRef({ x: 0, y: 0 });
-  const customPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  const customPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const draggedNodeRef = useRef<GraphNode | null>(null);
   const hoveredNodeIdRef = useRef<string | null>(null);
-  const hasInteractedRef = useRef(false);
   const pointerRef = useRef<{
     x: number;
     y: number;
@@ -233,7 +236,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     startY: number;
     dragging: boolean;
     moved: boolean;
-    mode: 'node' | 'pan' | 'rotate';
+    mode: 'node' | 'pan';
     node: GraphNode | null;
   }>({
     x: 0,
@@ -245,7 +248,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     mode: 'pan',
     node: null,
   });
-  const projectedRef = useRef<Array<{ node: GraphNode; x: number; y: number; r: number }>>([]);
+  const projectedRef = useRef<Array<{ node: GraphNode; x: number; y: number; r: number; labelWidth: number }>>([]);
 
   useEffect(() => {
     for (const node of scene.nodes) {
@@ -253,13 +256,22 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       if (custom) {
         node.x = custom.x;
         node.y = custom.y;
-        node.z = custom.z;
       }
     }
     sceneRef.current = scene;
   }, [scene]);
 
-  useEffect(() => { selectedRef.current = selectedPath; }, [selectedPath]);
+  useEffect(() => {
+    selectedRef.current = selectedPath;
+    if (!selectedPath) return;
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      for (const path of graphTracePaths(selectedPath)) {
+        if (path !== selectedPath) next.add(path);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [selectedPath]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -267,7 +279,6 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const context = canvas.getContext('2d');
     if (!context) return;
     let frame = 0;
-    let last = performance.now();
     let width = 1;
     let height = 1;
     let dpr = 1;
@@ -290,17 +301,11 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     resize();
 
     const render = (now: number) => {
-      const elapsed = Math.min(48, now - last);
-      last = now;
-      if (!pointerRef.current.dragging && !hasInteractedRef.current) {
-        rotationRef.current.y += elapsed * 0.000055;
-      }
       drawScene(
         context,
         width,
         height,
         sceneRef.current,
-        rotationRef.current,
         zoomRef.current,
         panRef.current,
         selectedRef.current,
@@ -325,18 +330,17 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const px = event.clientX - rect.left;
     const py = event.clientY - rect.top;
 
-    let hit: { node: GraphNode; x: number; y: number; r: number } | null = null;
+    let hit: { node: GraphNode; x: number; y: number; r: number; labelWidth: number } | null = null;
     let bestDistance = Infinity;
     for (const item of [...projectedRef.current].reverse()) {
       const distance = Math.hypot(item.x - px, item.y - py);
       const hitRadius = Math.max(NODE_CLICK_RADIUS, item.r + 8);
-      if (distance <= hitRadius && distance < bestDistance) {
+      const onLabel = item.labelWidth > 0 && px >= item.x + 10 && px <= item.x + 10 + item.labelWidth && Math.abs(py - item.y) <= 9;
+      if ((distance <= hitRadius || onLabel) && distance < bestDistance) {
         hit = item;
         bestDistance = distance;
       }
     }
-
-    const isRotate = event.button === 2 || event.shiftKey || event.altKey;
 
     pointerRef.current = {
       x: event.clientX,
@@ -345,7 +349,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       startY: event.clientY,
       dragging: true,
       moved: false,
-      mode: hit ? 'node' : isRotate ? 'rotate' : 'pan',
+      mode: hit ? 'node' : 'pan',
       node: hit ? hit.node : null,
     };
 
@@ -366,7 +370,8 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       let hoveredNode: GraphNode | null = null;
       for (const item of [...projectedRef.current].reverse()) {
         const distance = Math.hypot(item.x - px, item.y - py);
-        if (distance <= Math.max(NODE_CLICK_RADIUS, item.r + 7)) {
+        const onLabel = item.labelWidth > 0 && px >= item.x + 10 && px <= item.x + 10 + item.labelWidth && Math.abs(py - item.y) <= 9;
+        if (distance <= Math.max(NODE_CLICK_RADIUS, item.r + 7) || onLabel) {
           hovering = true;
           hoveredNode = item.node;
           break;
@@ -386,42 +391,19 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       return;
     }
     pointerRef.current.moved = true;
-    hasInteractedRef.current = true;
 
     if (pointerRef.current.mode === 'node' && draggedNodeRef.current) {
       const node = draggedNodeRef.current;
       const rect = canvas.getBoundingClientRect();
       const width = Math.max(1, rect.width);
       const height = Math.max(1, rect.height);
-      const scale = Math.min(width, height) * 0.54 * zoomRef.current;
-
-      const cosy = Math.cos(rotationRef.current.y);
-      const siny = Math.sin(rotationRef.current.y);
-      const cosx = Math.cos(rotationRef.current.x);
-      const sinx = Math.sin(rotationRef.current.x);
-      const z1 = node.x * siny + node.z * cosy;
-      const z2 = node.y * sinx + z1 * cosx;
-      const perspective = 1 / Math.max(0.45, 1.7 + z2 * 0.38);
-      const currentScale = Math.max(1, scale * perspective);
-
-      const dScreenX = dx / currentScale;
-      const dScreenY = dy / currentScale;
-
-      const dwx = dScreenX * cosy - dScreenY * sinx * siny;
-      const dwy = dScreenY * cosx;
-      const dwz = -dScreenX * siny - dScreenY * sinx * cosy;
-
-      node.x += dwx;
-      node.y += dwy;
-      node.z += dwz;
-
-      customPositionsRef.current.set(node.id, { x: node.x, y: node.y, z: node.z });
+      const view = getGraphView(sceneRef.current, width, height, zoomRef.current, panRef.current);
+      node.x += dx / view.scale;
+      node.y += dy / view.scale;
+      customPositionsRef.current.set(node.id, { x: node.x, y: node.y });
     } else if (pointerRef.current.mode === 'pan') {
       panRef.current.x += dx;
       panRef.current.y += dy;
-    } else if (pointerRef.current.mode === 'rotate') {
-      rotationRef.current.y += dx * 0.0065;
-      rotationRef.current.x = Math.max(-1.1, Math.min(1.1, rotationRef.current.x + dy * 0.005));
     }
 
     pointerRef.current.x = event.clientX;
@@ -436,15 +418,25 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       const rect = event.currentTarget.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      let hit: { node: GraphNode; x: number; y: number; r: number } | null = null;
+      let hit: { node: GraphNode; x: number; y: number; r: number; labelWidth: number } | null = null;
       let bestDistance = Infinity;
       for (const item of [...projectedRef.current].reverse()) {
         const distance = Math.hypot(item.x - x, item.y - y);
         const hitRadius = Math.max(NODE_CLICK_RADIUS, item.r + 7);
-        if (distance <= hitRadius && distance < bestDistance) {
+        const onLabel = item.labelWidth > 0 && x >= item.x + 10 && x <= item.x + 10 + item.labelWidth && Math.abs(y - item.y) <= 9;
+        if ((distance <= hitRadius || onLabel) && distance < bestDistance) {
           hit = item;
           bestDistance = distance;
         }
+      }
+      if (hit?.node.kind === 'group' && hit.node.childCount) {
+        const path = hit.node.path;
+        setExpandedPaths((current) => {
+          const next = new Set(current);
+          if (next.has(path)) next.delete(path);
+          else next.add(path);
+          return next;
+        });
       }
       onSelect(hit?.node.path ?? null);
     } else if (pointerRef.current.mode === 'node' && draggedNodeRef.current) {
@@ -474,13 +466,12 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const newZoom = Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, next));
 
     if (Math.abs(newZoom - oldZoom) > 0.001) {
-      const currentCenterX = width / 2 + panRef.current.x;
-      const currentCenterY = height / 2 - 4 + panRef.current.y;
+      const currentView = getGraphView(sceneRef.current, width, height, oldZoom, panRef.current);
+      const nextView = getGraphView(sceneRef.current, width, height, newZoom, { x: 0, y: 0 });
       const zoomRatio = newZoom / oldZoom;
-      panRef.current.x = mouseX - width / 2 - (mouseX - currentCenterX) * zoomRatio;
-      panRef.current.y = mouseY - (height / 2 - 4) - (mouseY - currentCenterY) * zoomRatio;
+      panRef.current.x = mouseX - nextView.x - (mouseX - currentView.x) * zoomRatio;
+      panRef.current.y = mouseY - nextView.y - (mouseY - currentView.y) * zoomRatio;
       zoomRef.current = newZoom;
-      hasInteractedRef.current = true;
       setZoomDisplay(Math.round(newZoom * 100));
     }
   };
@@ -489,7 +480,6 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const oldZoom = zoomRef.current;
     const newZoom = Math.min(MAX_GRAPH_ZOOM, Number((oldZoom * 1.35).toFixed(2)));
     zoomRef.current = newZoom;
-    hasInteractedRef.current = true;
     setZoomDisplay(Math.round(newZoom * 100));
   };
 
@@ -497,21 +487,18 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
     const oldZoom = zoomRef.current;
     const newZoom = Math.max(MIN_GRAPH_ZOOM, Number((oldZoom / 1.35).toFixed(2)));
     zoomRef.current = newZoom;
-    hasInteractedRef.current = true;
     setZoomDisplay(Math.round(newZoom * 100));
   };
 
   const resetView = () => {
     zoomRef.current = 1;
     panRef.current = { x: 0, y: 0 };
-    rotationRef.current = { x: -0.16, y: 0.1 };
-    hasInteractedRef.current = false;
     setZoomDisplay(100);
   };
 
   const resetLayout = () => {
     customPositionsRef.current.clear();
-    const freshScene = buildScene(files, edits);
+    const freshScene = buildScene(files, edits, expandedPaths);
     sceneRef.current = freshScene;
     resetView();
   };
@@ -521,6 +508,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
       <canvas
         ref={canvasRef}
         className="memory-graph-canvas"
+        aria-label="Project tree. Click folders to expand or collapse; drag to pan and scroll to zoom."
         onContextMenu={(e) => e.preventDefault()}
         onWheel={wheel}
         onPointerDown={pointerDown}
@@ -551,7 +539,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
         <button
           type="button"
           className="memory-graph-control-btn"
-          title="Reset view (center & 100% zoom)"
+          title="Reset tree view"
           aria-label="Reset view"
           onClick={resetView}
         >⊙</button>
@@ -567,7 +555,7 @@ function MemoryGraphCanvas({ files, edits, selectedPath, onSelect }: { files: st
   );
 }
 
-function buildScene(filesInput: string[], edits: EditedFile[]) {
+function buildScene(filesInput: string[], edits: EditedFile[], expandedPaths = new Set([ROOT_NODE_PATH])) {
   const editByPath = new Map(edits.map((item) => [normalizePath(item.path), item]));
   const uniqueFiles = [...new Set([...filesInput, ...edits.map((item) => item.path)].map(normalizePath).filter(Boolean))];
   const prioritized = uniqueFiles
@@ -585,83 +573,114 @@ function buildScene(filesInput: string[], edits: EditedFile[]) {
     }
   }
 
-  const branchNames = [...new Set(prioritized.map(({ path }) => pathSegments(path)[0]).filter(Boolean))].sort();
-  const branchAngle = new Map(branchNames.map((name, index) => [name, (index / Math.max(branchNames.length, 1)) * Math.PI * 2]));
-  const maxDepth = Math.max(1, ...prioritized.map(({ path }) => pathSegments(path).length));
-
-  nodes.push({ id: `group:${ROOT_NODE_PATH}`, path: ROOT_NODE_PATH, label: 'root', kind: 'group', x: 0, y: 0, z: 0, editedAt: 0 });
+  const root: GraphNode = { id: `group:${ROOT_NODE_PATH}`, path: ROOT_NODE_PATH, label: 'root', kind: 'group', x: 0, y: 0, editedAt: 0 };
+  nodes.push(root);
 
   const sortedFolders = [...folderPaths].sort((a, b) => pathSegments(a).length - pathSegments(b).length || a.localeCompare(b));
   for (const folderPath of sortedFolders) {
     const segments = pathSegments(folderPath);
-    const depth = segments.length;
-    const baseAngle = branchAngle.get(segments[0]) ?? 0;
-    const seed = hashNumber(folderPath);
-    const spread = 0.1 + (depth / maxDepth) * 0.34;
-    const angle = baseAngle + ((((seed >>> 8) % 1000) / 1000) - 0.5) * spread;
-    const radius = 0.78 * (depth / maxDepth);
-    const y = ((((seed >>> 20) % 1000) / 1000) - 0.5) * (0.18 + 0.34 * (depth / maxDepth));
     nodes.push({
       id: `group:${folderPath}`,
       path: folderPath,
       label: segments.at(-1) || folderPath,
       kind: 'group',
-      x: Math.cos(angle) * radius,
-      y,
-      z: Math.sin(angle) * radius,
+      x: 0,
+      y: 0,
       editedAt: 0,
     });
     const parentPath = segments.slice(0, -1).join('/');
-    edges.push({ from: parentPath ? `group:${parentPath}` : `group:${ROOT_NODE_PATH}`, to: `group:${folderPath}` });
+    edges.push({ from: parentPath ? `group:${parentPath}` : root.id, to: `group:${folderPath}` });
   }
 
   for (const { path } of prioritized) {
     const edit = editByPath.get(path);
     const segments = pathSegments(path);
-    const depth = Math.max(1, segments.length);
     const parentPath = segments.slice(0, -1).join('/');
-    const baseAngle = branchAngle.get(segments[0]) ?? 0;
-    const seed = hashNumber(path);
-    const spread = 0.16 + (depth / maxDepth) * 0.48;
-    const angle = baseAngle + ((((seed >>> 8) % 1000) / 1000) - 0.5) * spread;
-    const radius = 0.88 * (depth / maxDepth);
-    const y = ((((seed >>> 20) % 1000) / 1000) - 0.5) * (0.24 + 0.46 * (depth / maxDepth));
     nodes.push({
       id: `file:${path}`,
       path,
       label: leafName(path),
       kind: 'file',
-      x: Math.cos(angle) * radius,
-      y,
-      z: Math.sin(angle) * radius,
+      x: 0,
+      y: 0,
       editedAt: Number(edit?.updatedAt ?? 0),
       tool: edit?.tool,
     });
-    edges.push({ from: parentPath ? `group:${parentPath}` : `group:${ROOT_NODE_PATH}`, to: `file:${path}` });
+    edges.push({ from: parentPath ? `group:${parentPath}` : root.id, to: `file:${path}` });
   }
 
-  return { nodes, edges };
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const children = new Map<string, GraphNode[]>();
+  for (const edge of edges) {
+    const child = byId.get(edge.to)!;
+    const siblings = children.get(edge.from) ?? [];
+    siblings.push(child);
+    children.set(edge.from, siblings);
+  }
+  for (const siblings of children.values()) {
+    siblings.sort((a, b) => Number(b.kind === 'group') - Number(a.kind === 'group') || a.label.localeCompare(b.label));
+  }
+
+  const visibleNodes: GraphNode[] = [];
+  const visibleEdges: GraphEdge[] = [];
+  let row = 0;
+  let maxDepth = 0;
+  const layout = (node: GraphNode, depth: number) => {
+    const descendants = children.get(node.id) ?? [];
+    node.x = depth * GRAPH_COLUMN_GAP;
+    maxDepth = Math.max(maxDepth, depth);
+    visibleNodes.push(node);
+    if (node.kind === 'group') {
+      node.childCount = descendants.length;
+      node.expanded = expandedPaths.has(node.path);
+    }
+    if (descendants.length && node.expanded) {
+      for (const child of descendants) {
+        visibleEdges.push({ from: node.id, to: child.id });
+        layout(child, depth + 1);
+      }
+      node.y = (descendants[0].y + descendants[descendants.length - 1].y) / 2;
+    } else {
+      node.y = row++ * GRAPH_ROW_GAP;
+    }
+  };
+  layout(root, 0);
+
+  return {
+    nodes: visibleNodes,
+    edges: visibleEdges,
+    width: maxDepth * GRAPH_COLUMN_GAP + GRAPH_LABEL_WIDTH,
+    height: Math.max(0, row - 1) * GRAPH_ROW_GAP,
+  };
 }
 
 function drawScene(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
-  scene: { nodes: GraphNode[]; edges: GraphEdge[] },
-  rotation: { x: number; y: number },
+  scene: ReturnType<typeof buildScene>,
   zoom: number,
   pan: { x: number; y: number },
   selectedPath: string | null,
   draggedNodeId: string | null,
   hoveredNodeId: string | null,
-  projectedRef: React.MutableRefObject<Array<{ node: GraphNode; x: number; y: number; r: number }>>,
+  projectedRef: React.MutableRefObject<Array<{ node: GraphNode; x: number; y: number; r: number; labelWidth: number }>>,
   now: number,
 ) {
   context.clearRect(0, 0, width, height);
-  const centerX = width / 2 + pan.x;
-  const centerY = height / 2 - 4 + pan.y;
-  const scale = Math.min(width, height) * 0.54 * zoom;
-  const projected = scene.nodes.map((node) => ({ node, ...project(node, rotation, centerX, centerY, scale) })).sort((a, b) => a.depth - b.depth);
+  const view = getGraphView(scene, width, height, zoom, pan);
+  const font = `500 ${Math.max(9, Math.min(13, 11 * Math.sqrt(zoom)))}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.font = font;
+  const projected = scene.nodes.map((node) => {
+    let label = node.kind === 'group' && node.childCount ? `${node.expanded ? '−' : '+'} ${node.label}` : node.label;
+    const maxLabelWidth = Math.max(16, GRAPH_COLUMN_GAP * view.scale - 26);
+    if (view.scale < 0.45) label = '';
+    else if (context.measureText(label).width > maxLabelWidth) {
+      while (label.length > 1 && context.measureText(`${label}…`).width > maxLabelWidth) label = label.slice(0, -1);
+      label += '…';
+    }
+    return { node, x: view.x + node.x * view.scale, y: view.y + node.y * view.scale, label, labelWidth: context.measureText(label).width };
+  });
   const byId = new Map(projected.map((item) => [item.node.id, item]));
   const selectedTrace = selectedPath ? graphTracePaths(selectedPath) : null;
 
@@ -672,7 +691,11 @@ function drawScene(
     const highlighted = Boolean(selectedTrace?.has(from.node.path) && selectedTrace?.has(to.node.path));
     const isDraggedEdge = Boolean(draggedNodeId && (from.node.id === draggedNodeId || to.node.id === draggedNodeId));
     context.beginPath();
-    context.moveTo(from.x, from.y);
+    const startX = from.x + (from.labelWidth ? from.labelWidth + 14 : 7);
+    const elbowX = startX + (to.x - startX) * 0.5;
+    context.moveTo(startX, from.y);
+    context.lineTo(elbowX, from.y);
+    context.lineTo(elbowX, to.y);
     context.lineTo(to.x, to.y);
     context.strokeStyle = isDraggedEdge
       ? 'rgba(121, 215, 255, .85)'
@@ -683,18 +706,17 @@ function drawScene(
     context.stroke();
   }
 
-  const clickTargets: Array<{ node: GraphNode; x: number; y: number; r: number }> = [];
+  const clickTargets: Array<{ node: GraphNode; x: number; y: number; r: number; labelWidth: number }> = [];
   for (const item of projected) {
-    const { node, x, y, depth } = item;
-    const depthScale = Math.max(0.55, Math.min(1.35, 1.03 - depth * 0.24));
+    const { node, x, y, label, labelWidth } = item;
     const selected = node.path === selectedPath;
     const isDragged = draggedNodeId === node.id;
     const isHovered = hoveredNodeId === node.id;
     const age = node.editedAt ? Math.max(0, Date.now() - node.editedAt) : Infinity;
     const active = age < ACTIVE_EDIT_MS;
     const baseRadius = node.path === ROOT_NODE_PATH ? 5.2 : node.kind === 'group' ? 4.2 : active ? 4.8 : 2.6;
-    const zoomScale = Math.min(2.2, Math.max(0.65, Math.sqrt(zoom)));
-    const radius = baseRadius * depthScale * zoomScale;
+    const zoomScale = Math.min(2.2, Math.max(0.35, Math.sqrt(view.scale)));
+    const radius = baseRadius * zoomScale;
 
     if (active) {
       const wave = 0.5 + 0.5 * Math.sin(now * 0.006 + hashNumber(node.path));
@@ -740,9 +762,15 @@ function drawScene(
         ? 'rgba(128, 219, 255, .96)'
         : selected || isDragged
           ? 'rgba(230, 245, 255, .96)'
-          : `rgba(181, 198, 224, ${Math.max(.32, .7 - Math.abs(depth) * .2)})`;
+          : 'rgba(181, 198, 224, .78)';
     context.fill();
-    clickTargets.push({ node, x, y, r: radius });
+    clickTargets.push({ node, x, y, r: radius, labelWidth });
+
+    if (label) {
+      context.font = font;
+      context.fillStyle = selected || isHovered ? 'rgba(235, 241, 249, .96)' : active ? '#79d7ff' : 'rgba(181, 198, 224, .86)';
+      context.fillText(label, x + 10, y + 3);
+    }
 
     if (selected || isDragged || isHovered) {
       context.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -760,15 +788,10 @@ function drawScene(
   projectedRef.current = clickTargets;
 }
 
-function project(node: GraphNode, rotation: { x: number; y: number }, cx: number, cy: number, scale: number) {
-  const cosy = Math.cos(rotation.y); const siny = Math.sin(rotation.y);
-  const cosx = Math.cos(rotation.x); const sinx = Math.sin(rotation.x);
-  const x1 = node.x * cosy - node.z * siny;
-  const z1 = node.x * siny + node.z * cosy;
-  const y1 = node.y * cosx - z1 * sinx;
-  const z2 = node.y * sinx + z1 * cosx;
-  const perspective = 1 / Math.max(0.45, 1.7 + z2 * 0.38);
-  return { x: cx + x1 * scale * perspective, y: cy + y1 * scale * perspective, depth: z2 };
+function getGraphView(scene: ReturnType<typeof buildScene>, width: number, height: number, zoom: number, pan: { x: number; y: number }) {
+  const fit = Math.max(0.5, Math.min(1, Math.max(1, width - 48) / scene.width, Math.max(1, height - 76) / (scene.height + GRAPH_ROW_GAP)));
+  const scale = fit * zoom;
+  return { x: 24 + pan.x, y: height / 2 - 4 - scene.height * scale / 2 + pan.y, scale };
 }
 
 function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
