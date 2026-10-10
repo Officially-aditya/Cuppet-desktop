@@ -4,7 +4,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { localCliEnvironment, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../src/runtime/local-cli-environment.mjs';
+import { detectLocalProviderApp, localCliEnvironment, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../src/runtime/local-cli-environment.mjs';
+
+test('official apps are detected separately from their provider runtime', () => {
+  for (const [providerID, product, label] of [
+    ['github-copilot', 'Microsoft VS Code', 'Visual Studio Code'],
+    ['antigravity', 'Antigravity', 'Google Antigravity'],
+  ]) {
+    const expected = `C:\\Users\\test\\AppData\\Local\\Programs\\${product}`;
+    const app = detectLocalProviderApp(providerID, { LocalAppData: 'C:\\Users\\test\\AppData\\Local' }, {
+      platform: 'win32', home: 'C:\\Users\\test',
+      accessSyncImpl: (path) => { if (path !== `${expected}\\${providerID === 'github-copilot' ? 'Code.exe' : 'Antigravity.exe'}`) throw new Error('missing'); },
+    });
+    assert.deepEqual(app, { label, path: expected });
+  }
+  assert.equal(detectLocalProviderApp('github-copilot', {}, {
+    platform: 'win32', accessSyncImpl: () => { throw new Error('missing'); },
+  }), null);
+});
 
 const bootstrapPath = fileURLToPath(new URL('../src/main/bootstrap.mjs', import.meta.url));
 
@@ -123,6 +140,11 @@ test('Windows local CLI environment includes system directories and preserves Pa
   assert.ok(entries.includes('C:\\Windows\\System32'));
   assert.ok(entries.includes('C:\\Program Files\\PowerShell\\7'));
   assert.equal(result.Path, result.PATH);
+  assert.ok(entries.includes('C:\\Users\\test\\AppData\\Local\\Microsoft\\WinGet\\Links'));
+  assert.ok(entries.includes('C:\\Program Files\\WinGet\\Links'));
+  assert.ok(entries.includes('C:\\Users\\test\\scoop\\shims'));
+  assert.ok(entries.includes('C:\\Program Files\\Kiro-Cli'));
+  assert.ok(entries.includes('C:\\Users\\test\\AppData\\Local\\Microsoft\\WindowsApps'));
 });
 
 test('resolveWindowsPowerShell resolves absolute path when present or falls back cleanly', () => {

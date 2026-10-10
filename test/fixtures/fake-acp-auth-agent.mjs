@@ -19,7 +19,7 @@ rl.on('line', (line) => {
   }
   if (message.method === 'authenticate') {
     authenticated = message.params?.methodId ?? null;
-    write({ jsonrpc: '2.0', id: message.id, result: {} });
+    setTimeout(() => write({ jsonrpc: '2.0', id: message.id, result: {} }), Number(process.env.TEST_AUTH_DELAY_MS) || 0);
     return;
   }
   if (message.method === 'session/new') {

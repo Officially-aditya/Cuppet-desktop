@@ -19,6 +19,8 @@ import { AcpActivityNormalizer } from './acp-activity.mjs';
 import { AcpTurnCompletionGate } from './acp-turn-completion.mjs';
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const STARTUP_TIMEOUT_MS = 120_000;
+const AUTHENTICATION_TIMEOUT_MS = 5 * 60_000;
 const PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 120_000;
@@ -40,12 +42,16 @@ export class AcpSessionRuntime {
   #normalizer = new AcpActivityNormalizer();
   #inactivityTimeoutMs;
   #cancelGraceMs;
+  #startupTimeoutMs;
+  #authenticationTimeoutMs;
 
   constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {} }) {
     this.#descriptor = descriptor;
     this.#configuration = configuration;
     this.#inactivityTimeoutMs = positiveMs(liveness.inactivityMs, DEFAULT_INACTIVITY_TIMEOUT_MS);
     this.#cancelGraceMs = positiveMs(liveness.cancelGraceMs, DEFAULT_CANCEL_GRACE_MS);
+    this.#startupTimeoutMs = positiveMs(liveness.startupMs, STARTUP_TIMEOUT_MS);
+    this.#authenticationTimeoutMs = positiveMs(liveness.authenticationMs, AUTHENTICATION_TIMEOUT_MS);
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
     this.#environment = providerEnvironment(descriptor, configuration);
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
@@ -57,12 +63,16 @@ export class AcpSessionRuntime {
     this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label });
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     this.#rpc.setRequestHandler(async (message) => {
+      const turn = this.#activeTurn;
+      if (turn) turn.pendingHostRequests += 1;
       this.#touchActiveTurn();
       const finishCompletionRequest = this.#activeTurn?.completion?.beginRequest?.() ?? (() => {});
       try {
         return await this.#hostBridge.handle(message);
       } finally {
         finishCompletionRequest();
+        if (turn) turn.pendingHostRequests -= 1;
+        if (this.#activeTurn === turn) this.#touchActiveTurn();
       }
     });
   }
@@ -78,8 +88,8 @@ export class AcpSessionRuntime {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
-      }, REQUEST_TIMEOUT_MS);
-      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment);
+      }, this.#startupTimeoutMs);
+      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs);
       await this.#openSession(mcpServers, selection);
       this.#state = 'ready';
       return this.snapshot();
@@ -121,6 +131,7 @@ export class AcpSessionRuntime {
     const turn = {
       cancelled: false,
       stalled: false,
+      pendingHostRequests: 0,
       activityTimer: null,
       terminateTimer: null,
       completion: new AcpTurnCompletionGate(this.#descriptor),
@@ -210,6 +221,8 @@ export class AcpSessionRuntime {
 
   #armActivityWatchdog(turn) {
     clearTimeout(turn.activityTimer);
+    // The agent is waiting on Cuppet while a tool or permission request is pending.
+    if (turn.pendingHostRequests > 0) return;
     turn.activityTimer = setTimeout(() => {
       if (this.#activeTurn !== turn || turn.cancelled || turn.stalled) return;
       turn.stalled = true;
@@ -245,7 +258,7 @@ export class AcpSessionRuntime {
       mcpServers: normalizeMcpServers(mcpServers),
       ...(Object.keys(descriptorMeta).length ? { _meta: { ...descriptorMeta } } : {}),
     };
-    this.#session = await this.#rpc.request('session/new', params, REQUEST_TIMEOUT_MS);
+    this.#session = await this.#rpc.request('session/new', params, this.#startupTimeoutMs);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
     this.#refreshCapabilities();
     await this.#refreshCommandSettings();
@@ -374,7 +387,7 @@ export class AcpSessionRuntime {
   }
 }
 
-async function authenticateIfNeeded(rpc, descriptor, initialized, environment) {
+async function authenticateIfNeeded(rpc, descriptor, initialized, environment, timeoutMs) {
   const policy = record(descriptor?.authentication);
   const preferred = Array.isArray(policy.methods) ? policy.methods : [];
   if (!preferred.length) return;
@@ -389,7 +402,7 @@ async function authenticateIfNeeded(rpc, descriptor, initialized, environment) {
   const methodId = text(record(selected).id);
   if (!methodId) throw new Error(descriptor.loginHint);
   const meta = record(policy.meta);
-  await rpc.request('authenticate', { methodId, ...(Object.keys(meta).length ? { _meta: meta } : {}) }, REQUEST_TIMEOUT_MS);
+  await rpc.request('authenticate', { methodId, ...(Object.keys(meta).length ? { _meta: meta } : {}) }, timeoutMs);
 }
 
 function commandConfigOption(setting, result, session, override) {

@@ -167,6 +167,7 @@ function fallbackCliPaths(environment, home, platform) {
 
   const candidates = [
     pnpmHome,
+    getEnv(environment, 'GROK_BIN_DIR'),
     bunInstall ? pathJoin(bunInstall, 'bin') : '',
     appData ? pathJoin(appData, 'npm') : '',
     localAppData ? pathJoin(localAppData, 'agy', 'bin') : '',
@@ -195,11 +196,45 @@ function fallbackCliPaths(environment, home, platform) {
       pathJoin(programFiles, 'Git', 'bin'),
       localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'cmd') : '',
       localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'bin') : '',
+      localAppData ? pathJoin(localAppData, 'Microsoft', 'WinGet', 'Links') : '',
+      pathJoin(programFiles, 'WinGet', 'Links'),
+      localAppData ? pathJoin(localAppData, 'Microsoft', 'WindowsApps') : '',
+      pathJoin(programFiles, 'Kiro-Cli'),
+      home ? pathJoin(home, 'scoop', 'shims') : '',
       pathJoin(programFiles, 'nodejs'),
       pathJoin(programFilesX86, 'nodejs'),
     );
   }
   return candidates.filter((value) => typeof value === 'string' && value.trim());
+}
+
+/** App presence is discovery evidence, not proof of an authenticated ACP runtime. */
+export function detectLocalProviderApp(providerID, inherited = process.env, options = {}) {
+  const platform = options.platform || process.platform;
+  const home = options.home || homedir();
+  const check = options.accessSyncImpl || accessSync;
+  const copilot = providerID === 'github-copilot';
+  if (!copilot && providerID !== 'antigravity') return null;
+  const product = copilot ? 'Microsoft VS Code' : 'Antigravity';
+  const label = copilot ? 'Visual Studio Code' : 'Google Antigravity';
+  let candidates = [];
+  if (platform === 'win32') {
+    const local = getEnv(inherited, 'LOCALAPPDATA') || win32Path.join(home, 'AppData', 'Local');
+    const system = getEnv(inherited, 'ProgramFiles') || 'C:\\Program Files';
+    candidates = [win32Path.join(local, 'Programs', product), win32Path.join(system, product)];
+  } else if (platform === 'darwin') {
+    const bundle = copilot ? 'Visual Studio Code.app' : 'Antigravity.app';
+    candidates = [join('/Applications', bundle), join(home, 'Applications', bundle)];
+  } else if (platform === 'linux') {
+    candidates = [copilot ? '/usr/share/code' : '/usr/share/antigravity', copilot ? '/opt/visual-studio-code' : '/opt/Antigravity'];
+  }
+  for (const path of candidates) {
+    const executable = platform === 'win32'
+      ? win32Path.join(path, copilot ? 'Code.exe' : 'Antigravity.exe')
+      : platform === 'darwin' ? join(path, 'Contents', 'MacOS', 'Electron') : join(path, copilot ? 'code' : 'antigravity');
+    try { check(executable, fsConstants.F_OK); return { label, path }; } catch {}
+  }
+  return null;
 }
 
 /** Resolve PowerShell executable on Windows, checking canonical system paths before bare fallback. */

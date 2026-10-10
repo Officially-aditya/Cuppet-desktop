@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
-import { resolveWindowsPowerShell } from '../../local-cli-environment.mjs';
+import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../../local-cli-environment.mjs';
 
 const VERSION = 'agy_acp_server_1.1.1';
 const MAX_ARCHIVE_BYTES = 800 * 1024 * 1024;
@@ -63,6 +63,7 @@ export async function resolveAntigravityAcpInstallation(configuration = {}, opti
   const overrideHarness = text(configuration.antigravityHarnessPath || process.env.CUPPET_ANTIGRAVITY_HARNESS_PATH);
   if (overrideCommand || overrideHarness) {
     if (!overrideCommand || !overrideHarness) throw new Error('Antigravity ACP override requires both the ACP executable and local harness paths.');
+    if (!await isFile(overrideCommand) || !await isFile(overrideHarness)) throw new Error('Antigravity ACP override executable or harness was not found.');
     return {
       command: overrideCommand,
       harnessPath: overrideHarness,
@@ -74,12 +75,28 @@ export async function resolveAntigravityAcpInstallation(configuration = {}, opti
 
   const platform = text(options.platform) || process.platform;
   const arch = text(options.arch) || process.arch;
+  const executableName = platform === 'win32' ? 'agy_acp_server.exe' : 'agy_acp_server.par';
+  const harnessName = platform === 'win32' ? 'localharness_external.exe' : 'localharness_external';
+  const externalCommand = resolveLocalCliExecutable(executableName, process.env, { platform });
+  if (externalCommand !== executableName && await isFile(externalCommand)) {
+    const harnessPath = join(dirname(externalCommand), harnessName);
+    if (await isFile(harnessPath)) return externalInstallation(externalCommand, harnessPath, platform);
+  }
+  const app = detectLocalProviderApp('antigravity', process.env, { platform });
+  for (const directory of options.appDirectories ?? (app ? [app.path] : [])) {
+    const command = await findNamedFile(directory, executableName).catch(() => null);
+    if (!command) continue;
+    const harnessPath = join(dirname(command), harnessName);
+    if (await isFile(harnessPath)) return externalInstallation(command, harnessPath, platform);
+  }
   const release = antigravityReleaseAsset(platform, arch);
+  if (!release && options.allowInstall === false) return null;
   if (!release) throw new Error(`Google Antigravity ACP is not published for ${platform}-${arch}.`);
   const root = resolve(text(options.installRoot) || join(homedir(), '.cuppet', 'providers', 'antigravity'));
   const versionDirectory = join(root, VERSION, `${platform}-${arch}`);
   const existing = await validatedInstallation(versionDirectory, release, platform);
   if (existing) return existing;
+  if (options.allowInstall === false) return null;
 
   if (!installPromise) {
     installPromise = installRelease({ release, root, versionDirectory, platform, fetchImpl: options.fetchImpl ?? globalThis.fetch })
@@ -134,10 +151,6 @@ async function validatedInstallation(directory, release, platform) {
   try {
     await verifyFile(executablePath, release.executable.bytes, release.executable.name);
     await verifyFile(harnessPath, release.harness.bytes, release.harness.name);
-    if (platform !== 'win32') {
-      await chmod(executablePath, 0o755);
-      await chmod(harnessPath, 0o755);
-    }
     return {
       command: executablePath,
       harnessPath,
@@ -148,6 +161,14 @@ async function validatedInstallation(directory, release, platform) {
   } catch {
     return null;
   }
+}
+
+async function isFile(path) {
+  return (await stat(path).catch(() => null))?.isFile() === true;
+}
+
+function externalInstallation(command, harnessPath, platform) {
+  return { command, harnessPath, args: platform === 'linux' ? ['--uid='] : [], version: null, source: 'native' };
 }
 
 async function downloadVerifiedArchive(release, destination, fetchImpl) {

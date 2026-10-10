@@ -2,9 +2,62 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { installSpec, loginSpec } from '../src/main/cli-agent-status.mjs';
 import { localProviderOperations } from '../src/main/local-provider-operations.mjs';
+
+test('connecting an already installed provider does not run its installer or login again', async () => {
+  const calls = [];
+  const operations = localProviderOperations('claude-code', {
+    runImpl: async (command, args) => { calls.push(args); return { stdout: '1.0.0', stderr: '' }; },
+  });
+  const status = await operations.connect();
+  assert.equal(status.connected, true);
+  assert.ok(calls.every((args) => args.includes('--version') || args.includes('status')));
+});
+
+test('Antigravity detection is read-only and Connect verifies the same ACP runtime used for chat', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'cuppet-agy-connect-'));
+  const fixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
+  const calls = [];
+  const installation = { command: process.execPath, args: [fixture], harnessPath: fixture, source: 'native' };
+  const operations = localProviderOperations('antigravity', {
+    userData,
+    runImpl: async () => { throw new Error('agy CLI should not run'); },
+    resolveAntigravityInstallationImpl: async (_, options) => { calls.push(options); return installation; },
+  });
+  try {
+    assert.equal((await operations.detect()).installed, true);
+    assert.equal((await operations.probe()).connected, false);
+    assert.ok(calls.every((options) => options.allowInstall === false));
+    const status = await operations.connect();
+    assert.equal(status.connected, true);
+    assert.equal(status.installation.executable, process.execPath);
+    assert.equal(status.installation.source, 'native');
+    assert.equal(status.installation.ownedByCuppet, false);
+    assert.ok(calls.every((options) => options.allowInstall === false));
+  } finally { await rm(userData, { recursive: true, force: true }); }
+});
+
+test('Antigravity installs only its missing ACP runtime', async () => {
+  let installed = false;
+  let installs = 0;
+  const operations = localProviderOperations('antigravity', {
+    runImpl: async () => { throw new Error('agy CLI should not run'); },
+    resolveAntigravityInstallationImpl: async (_, options) => {
+      if (options.allowInstall === false) return installed ? { command: process.execPath, source: 'managed' } : null;
+      installed = true;
+      installs += 1;
+    },
+  });
+  assert.equal((await operations.detect()).installed, false);
+  assert.equal((await operations.install()).installed, true);
+  await operations.install();
+  assert.equal(installs, 1);
+  await assert.rejects(() => operations.update(), /ACP runtime updates are delivered with Cuppet releases/);
+  assert.equal(installs, 1);
+});
 
 const providers = ['opencode', 'claude-code', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity'];
 
@@ -180,14 +233,22 @@ test('Windows provider detection handles "not recognized" cmd errors as uninstal
   assert.equal(detected.installation.detected, false);
 });
 
-test('Windows installSpec for opencode and claude-code includes idempotency and force fallback', () => {
+test('Windows npm installers use batch launchers, verify results and propagate failures', () => {
   const opencodeSpec = installSpec('opencode', 'win32');
   assert.ok(opencodeSpec);
   assert.match(opencodeSpec.args.join(' '), /Get-Command opencode/);
-  assert.match(opencodeSpec.args.join(' '), /npm install -g opencode-ai --force/);
+  assert.match(opencodeSpec.args.join(' '), /install -g opencode-ai --force/);
 
   const claudeSpec = installSpec('claude-code', 'win32');
   assert.ok(claudeSpec);
-  assert.match(claudeSpec.args.join(' '), /Get-Command claude-agent-acp/);
-  assert.match(claudeSpec.args.join(' '), /npm install -g @agentclientprotocol\/claude-agent-acp --force/);
+  assert.match(claudeSpec.args.join(' '), /Get-Command npm.cmd/);
+  assert.match(claudeSpec.args.join(' '), /install -g @agentclientprotocol\/claude-agent-acp --force/);
+  for (const id of providers) {
+    const spec = installSpec(id, 'win32');
+    assert.match(spec.args.at(-1), /catch.*exit 1/s);
+  }
+  const copilotSpec = installSpec('github-copilot', 'win32');
+  assert.match(copilotSpec.args.at(-1), /@github\/copilot --ignore-scripts=false/);
+  assert.match(copilotSpec.args.at(-1), /winget install/);
+  assert.match(claudeSpec.args.at(-1), /__CUPPET_INSTALLED_CLI__/);
 });

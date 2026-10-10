@@ -10,6 +10,43 @@ import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
 const lateContinuationFixture = fileURLToPath(new URL('./fixtures/fake-acp-late-continuation-agent.mjs', import.meta.url));
+test('ACP browser authentication has a separate timeout from startup requests', async () => {
+  const descriptor = { ...localCliDescriptor('grok-build'), authentication: { methods: [{ id: 'cached_token' }] } };
+  const runtime = new AcpSessionRuntime({
+    descriptor,
+    configuration: { cliCommand: process.execPath, cliArgs: [authFixture], cliEnv: { TEST_AUTH_DELAY_MS: '250' } },
+    liveness: { startupMs: 100, authenticationMs: 1_000 },
+  });
+  try {
+    await runtime.start();
+    assert.equal((await runtime.runTurn({ messages: [] })).text, 'cached_token');
+  } finally { await runtime.close(); }
+});
+
+test('ACP does not stall while Cuppet handles a slow permission or tool request', async () => {
+  const fixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
+  const runtime = new AcpSessionRuntime({
+    descriptor: localCliDescriptor('claude-code'),
+    configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
+    projectRoot: tmpdir(),
+    liveness: { inactivityMs: 100, cancelGraceMs: 20 },
+  });
+  const warnings = [];
+  try {
+    await runtime.start();
+    const result = await runtime.runTurn({ messages: [] }, {
+      requestAgentPermission: async () => { await new Promise((resolve) => setTimeout(resolve, 250)); return 'once'; },
+      executeTool: async (call) => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return { success: true, output: call.name === 'workspace_read' ? 'hello' : 'ok' };
+      },
+      onActivity: async (activity) => { if (activity.type === 'activity.warning') warnings.push(activity); },
+    });
+    assert.equal(result.text, 'Working. Done.');
+    assert.deepEqual(warnings, []);
+  } finally { await runtime.close(); }
+});
+
 const acpDescriptor = () => localCliDescriptor('claude-code');
 
 test('ACP v2 applies exact model-dependent config and emits Cuppet Activity', async () => {

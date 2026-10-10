@@ -4,25 +4,59 @@ import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
-import { resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
+import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { localCliLaunch } from '../local-cli-launch.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
 import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 import { localProviderVersionLabel } from './version-policy.mjs';
+import { antigravityReleaseAsset, resolveAntigravityAcpInstallation } from './backends/antigravity-install.mjs';
+import { antigravityAcpDescriptor } from './backends/antigravity.mjs';
+import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const STATUS_TIMEOUT_MS = 8_000;
 const LINK_STATE_FILE = 'cli-agent-links.json';
 const INSTALLED_CLI_MARKER = '__CUPPET_INSTALLED_CLI__=';
 
+const WINDOWS_CLAUDE_INSTALL = String.raw`
+$ErrorActionPreference='Stop'
+$npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop).Source
+& $npm install -g @agentclientprotocol/claude-agent-acp
+if ($LASTEXITCODE -ne 0) { & $npm install -g @agentclientprotocol/claude-agent-acp --force }
+if ($LASTEXITCODE -ne 0) { throw 'Claude Code ACP npm installation failed.' }
+$prefix = (& $npm prefix -g | Select-Object -Last 1).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the Claude Code ACP installation directory.' }
+$cli = Join-Path $prefix 'claude-agent-acp.cmd'
+if (-not (Test-Path -LiteralPath $cli)) { throw 'Claude Code ACP installer did not produce a CLI launcher.' }
+Write-Output "__CUPPET_INSTALLED_CLI__=$cli"
+`;
+
+const WINDOWS_COPILOT_INSTALL = String.raw`
+$ErrorActionPreference='Stop'
+$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue
+if ($npm) {
+  & $npm.Source install -g @github/copilot --ignore-scripts=false
+  if ($LASTEXITCODE -ne 0) { throw 'GitHub Copilot npm installation failed.' }
+  $prefix = (& $npm.Source prefix -g | Select-Object -Last 1).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the Copilot installation directory.' }
+  $cli = Join-Path $prefix 'copilot.cmd'
+  if (-not (Test-Path -LiteralPath $cli)) { throw 'Copilot installer did not produce a CLI launcher.' }
+  Write-Output "__CUPPET_INSTALLED_CLI__=$cli"
+} else {
+  winget install --id GitHub.Copilot -e --silent --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) { throw 'GitHub Copilot WinGet installation failed. Install Node.js 22+ or fix WinGet, then retry.' }
+}
+`;
+
 const WINDOWS_OPENCODE_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
 $cli = $null
-if (Get-Command npm -ErrorAction SilentlyContinue) {
-  npm install -g opencode-ai
-  if ($LASTEXITCODE -ne 0) { npm install -g opencode-ai --force }
+$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue
+if ($npm) {
+  & $npm.Source install -g opencode-ai
+  if ($LASTEXITCODE -ne 0) { & $npm.Source install -g opencode-ai --force }
   if ($LASTEXITCODE -ne 0) { throw 'OpenCode npm installation failed.' }
-  $prefix = (npm prefix -g | Select-Object -Last 1).Trim()
+  $prefix = (& $npm.Source prefix -g | Select-Object -Last 1).Trim()
   if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the OpenCode npm installation directory.' }
   $cli = Join-Path $prefix 'opencode.cmd'
 } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
@@ -56,6 +90,8 @@ export function localProviderOperations(providerID, {
   platform = process.platform,
   now = () => Date.now(),
   executableIdentityImpl = executableIdentity,
+  resolveAntigravityInstallationImpl = resolveAntigravityAcpInstallation,
+  antigravityInstallOptions = {},
 } = {}) {
   const descriptor = localCliDescriptor(providerID);
   if (!descriptor) throw new Error('Unsupported local CLI provider.');
@@ -66,6 +102,25 @@ export function localProviderOperations(providerID, {
   };
 
   const detect = async () => {
+    const officialApp = detectLocalProviderApp(descriptor.id, process.env, { platform });
+    if (descriptor.id === 'antigravity') {
+      let runtimeInstallation;
+      let error = null;
+      try {
+        runtimeInstallation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
+      } catch (failure) { error = cleanError(failure); }
+      const identity = runtimeInstallation ? await executableIdentityImpl(runtimeInstallation.command).catch(() => null) : null;
+      return {
+        providerID: descriptor.id, label: descriptor.label,
+        installed: Boolean(runtimeInstallation), version: runtimeInstallation?.version ?? null,
+        officialApp, error,
+        installation: normalizeProviderInstallation({
+          detected: Boolean(runtimeInstallation), executable: runtimeInstallation?.command,
+          version: runtimeInstallation?.version, source: runtimeInstallation?.source,
+          ownedByCuppet: runtimeInstallation?.source === 'managed', canUpdate: false, identity,
+        }),
+      };
+    }
     const rawCommand = command();
     const state = await providerState(userData, descriptor.id);
     let resolved = await resolveExecutablePath(rawCommand);
@@ -80,8 +135,8 @@ export function localProviderOperations(providerID, {
     try {
       result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
     } catch (error) { probeError = error; }
-    if (probeError && !resolved && descriptor.id === 'opencode' && platform === 'win32' && !process.env[descriptor.envOverride]) {
-      const npmExecutable = await findOpenCodeNpmExecutable(runImpl);
+    if (probeError && !resolved && platform === 'win32' && !process.env[descriptor.envOverride]) {
+      const npmExecutable = await findNpmExecutable(descriptor, runImpl);
       if (npmExecutable) {
         resolved = executable = npmExecutable;
         extendCliSearchPath([dirname(executable)]);
@@ -99,6 +154,7 @@ export function localProviderOperations(providerID, {
       return {
         providerID: descriptor.id,
         label: descriptor.label,
+        officialApp,
         installed: false,
         installation: normalizeProviderInstallation({ detected: false, executable, source: state.installSource }),
         error: missing ? null : cleanError(probeError),
@@ -112,6 +168,7 @@ export function localProviderOperations(providerID, {
     return {
       providerID: descriptor.id,
       label: descriptor.label,
+      officialApp,
       installed: true,
       version,
       ...(probeError ? { error: cleanError(probeError) } : {}),
@@ -160,6 +217,13 @@ export function localProviderOperations(providerID, {
   const install = async () => {
     const before = await detect();
     if (before.installed) return before;
+    if (descriptor.id === 'antigravity') {
+      if (before.error) throw new Error(before.error);
+      await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform });
+      const detected = await detect();
+      if (!detected.installed || detected.error) throw new Error(detected.error || 'Antigravity ACP installation could not be verified.');
+      return detected;
+    }
     const spec = installSpec(descriptor.id, platform);
     if (!spec) throw new Error(`Automatic ${descriptor.label} installation is not available on this platform yet.`);
     const installed = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
@@ -178,6 +242,7 @@ export function localProviderOperations(providerID, {
   const update = async () => {
     const detected = await detect();
     if (!detected.installed) throw new Error(`${descriptor.label} is not installed.`);
+    if (descriptor.id === 'antigravity') throw new Error('Antigravity ACP runtime updates are delivered with Cuppet releases.');
     if (!detected.installation.ownedByCuppet || detected.installation.source === 'unknown') {
       throw new Error(`Cuppet does not own this ${descriptor.label} installation, so it will not update it automatically.`);
     }
@@ -201,6 +266,15 @@ export function localProviderOperations(providerID, {
     const detected = await detect();
     if (!detected.installed) throw new Error(`${descriptor.label} must be installed before authentication.`);
     const current = await probe();
+    if (descriptor.id === 'antigravity') {
+      const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
+      if (!installation) throw new Error('Antigravity ACP must be installed before authentication.');
+      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation) });
+      try { await runtime.start(); }
+      finally { await runtime.close(); }
+      await markLinked(userData, descriptor.id, now());
+      return { ...await probe(), connected: true, available: true, probe: 'provider' };
+    }
     if (current.connected) return current;
     const login = loginSpec(descriptor.id, detected.installation.executable);
     if (!login) {
@@ -240,7 +314,9 @@ function statusProjection(descriptor, state, platform) {
   const installed = state.installed === true;
   const connected = state.connected === true;
   const version = state.version ?? null;
-  const canAutoInstall = Boolean(installSpec(descriptor.id, platform));
+  const canAutoInstall = descriptor.id === 'antigravity'
+    ? Boolean(antigravityReleaseAsset(platform))
+    : Boolean(installSpec(descriptor.id, platform));
   return {
     providerID: descriptor.id,
     label: descriptor.label,
@@ -251,10 +327,13 @@ function statusProjection(descriptor, state, platform) {
     action: connected ? 'ready' : 'connect',
     canAutoInstall,
     installation: state.installation,
+    officialApp: state.officialApp ?? null,
     message: !installed
       ? state.error
         ? `${descriptor.label} could not be started: ${state.error}`
-        : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
+        : state.officialApp
+          ? `${state.officialApp.label} was detected. Cuppet still needs ${descriptor.label === 'GitHub Copilot' ? 'the Copilot CLI' : 'the Antigravity connection runtime'} to connect. It will install the missing runtime when you connect.`
+          : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
         : descriptor.id === 'opencode' && state.authentication?.connected === false
@@ -280,9 +359,9 @@ export function installSpec(providerID, platform = process.platform) {
   }
   if (platform === 'win32') {
     const specs = {
-      'claude-code': { source: 'npm', script: "$ErrorActionPreference='Stop'; $npmDir = if ($env:APPDATA) { Join-Path $env:APPDATA 'npm' } else { '' }; if ($npmDir -and (Test-Path (Join-Path $npmDir 'claude-agent-acp.cmd'))) { exit 0 }; if (Get-Command claude-agent-acp -ErrorAction SilentlyContinue) { exit 0 }; if ($npmDir -and (Test-Path $npmDir) -and -not ($env:PATH -split ';' -contains $npmDir)) { $env:PATH = \"$npmDir;$env:PATH\" }; if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'Claude Code ACP installation requires npm/Node.js 22+' }; npm install -g @agentclientprotocol/claude-agent-acp; if ($LASTEXITCODE -ne 0) { if ($npmDir -and (Test-Path (Join-Path $npmDir 'claude-agent-acp.cmd'))) { exit 0 }; npm install -g @agentclientprotocol/claude-agent-acp --force }" },
+      'claude-code': { source: 'npm', script: WINDOWS_CLAUDE_INSTALL },
       'grok-build': { source: 'managed', script: 'irm https://x.ai/cli/install.ps1 | iex' },
-      'github-copilot': { source: 'managed', script: 'winget install --id GitHub.Copilot -e --silent --accept-package-agreements --accept-source-agreements' },
+      'github-copilot': { source: 'managed', script: WINDOWS_COPILOT_INSTALL },
       'mistral-vibe': { source: 'managed', script: "$ErrorActionPreference='Stop'; if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { irm https://astral.sh/uv/install.ps1 | iex }; $uv=(Get-Command uv -ErrorAction SilentlyContinue).Source; if (-not $uv) { $uv=Join-Path $env:USERPROFILE '.local\\bin\\uv.exe' }; & $uv tool install mistral-vibe" },
       kiro: { source: 'managed', script: "irm 'https://cli.kiro.dev/install.ps1' | iex" },
       antigravity: { source: 'managed', script: 'irm https://antigravity.google/cli/install.ps1 | iex' },
@@ -290,7 +369,8 @@ export function installSpec(providerID, platform = process.platform) {
     };
     const spec = specs[id];
     const powerShellCmd = resolveWindowsPowerShell(platform);
-    return spec ? { command: powerShellCmd, args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', spec.script], source: spec.source } : null;
+    const script = spec ? `$ErrorActionPreference='Stop'; $global:LASTEXITCODE=0; try {\n${spec.script}\nif ($LASTEXITCODE -ne 0) { throw 'Provider installer failed.' }\n} catch { Write-Error $_ -ErrorAction Continue; exit 1 }` : '';
+    return spec ? { command: powerShellCmd, args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], source: spec.source } : null;
   }
   return null;
 }
@@ -348,7 +428,7 @@ async function probeConnection(descriptor, command, runImpl) {
     if (process.env.MISTRAL_API_KEY) return true;
     return nonEmpty(join(homedir(), '.vibe', '.env'));
   }
-  if (descriptor.id === 'antigravity') return Boolean(process.env.GEMINI_API_KEY);
+  if (descriptor.id === 'antigravity') return false;
   return false;
 }
 
@@ -393,6 +473,7 @@ function extendCliSearchPath(additional = []) {
   const candidates = [
     process.env.CUPPET_CLI_PATH,
     process.env.PNPM_HOME,
+    process.env.GROK_BIN_DIR,
     process.env.BUN_INSTALL ? join(process.env.BUN_INSTALL, 'bin') : '',
     process.env.APPDATA ? (process.platform === 'win32' ? win32Path.join(process.env.APPDATA, 'npm') : join(process.env.APPDATA, 'npm')) : (process.platform === 'win32' && home ? win32Path.join(home, 'AppData', 'Roaming', 'npm') : ''),
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'agy', 'bin') : '',
@@ -422,6 +503,11 @@ function extendCliSearchPath(additional = []) {
       win32Path.join(programFiles, 'Git', 'bin'),
       localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'cmd') : '',
       localAppData ? win32Path.join(localAppData, 'Programs', 'Git', 'bin') : '',
+      localAppData ? win32Path.join(localAppData, 'Microsoft', 'WinGet', 'Links') : '',
+      win32Path.join(programFiles, 'WinGet', 'Links'),
+      localAppData ? win32Path.join(localAppData, 'Microsoft', 'WindowsApps') : '',
+      win32Path.join(programFiles, 'Kiro-Cli'),
+      home ? win32Path.join(home, 'scoop', 'shims') : '',
       win32Path.join(programFiles, 'nodejs'),
       win32Path.join(programFilesX86, 'nodejs'),
     );
@@ -457,12 +543,12 @@ async function resolveExecutablePath(command) {
   return resolved && await executableAt(resolved) ? resolved : null;
 }
 
-async function findOpenCodeNpmExecutable(runImpl) {
+async function findNpmExecutable(descriptor, runImpl) {
   try {
-    const result = await runImpl('npm', ['prefix', '-g'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+    const result = await runImpl('npm.cmd', ['prefix', '-g'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
     const prefix = String(result.stdout ?? '').trim().split(/\r?\n/).at(-1)?.trim();
     if (!prefix || !win32Path.isAbsolute(prefix)) return null;
-    for (const name of ['opencode.cmd', 'opencode.exe']) {
+    for (const name of [`${descriptor.command}.cmd`, `${descriptor.command}.exe`]) {
       const path = win32Path.join(prefix, name);
       if (await executableAt(path)) return path;
     }
