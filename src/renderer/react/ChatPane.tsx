@@ -750,7 +750,7 @@ function MessageView({
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
   onOpenLightbox?: (image: { src: string; name?: string }) => void;
 }) {
-  const [traceOpen, setTraceOpen] = useState(live);
+  const [traceOpen, setTraceOpen] = useState(live || message.status === 'stopped');
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
   const prevLiveRef = useRef(live);
@@ -768,11 +768,11 @@ function MessageView({
 
   useEffect(() => {
     if (prevLiveRef.current && !live) {
-      setTraceOpen(false);
+      if (message.status !== 'stopped') setTraceOpen(false);
       setCompletedAt(Date.now());
     }
     prevLiveRef.current = live;
-  }, [live]);
+  }, [live, message.status]);
 
   const workedDurationText = useMemo(() => {
     if (live || message.status === 'streaming') return null;
