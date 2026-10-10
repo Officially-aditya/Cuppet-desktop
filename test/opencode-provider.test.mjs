@@ -125,7 +125,7 @@ test('OpenCode ACP authentication failure reaches the generic reauthentication c
     error = caught;
   }
   assert.ok(error instanceof Error);
-  assert.match(error.message, /provider authentication required/i);
+  assert.match(error.message, /sign-in is required/i);
   const failure = classifyProviderError(error, { providerID: 'opencode' });
   assert.equal(failure.category, 'authentication');
   assert.equal(failure.action, 'reauthenticate');
