@@ -41,6 +41,12 @@ export class AcpRpcChannel {
         },
       ));
     });
+    processHandle.onWriteError?.((error) => {
+      if (this.#closed || this.#failure) return;
+      this.#failure = error;
+      this.#failAll(error);
+      this.#process.terminate();
+    });
   }
 
   ready() { return this.#process.ready(); }

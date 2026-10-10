@@ -10,6 +10,7 @@ export class AcpProcess {
   #lineHandlers = new Set();
   #exitHandlers = new Set();
   #stderrLineHandlers = new Set();
+  #writeErrorHandlers = new Set();
   #readyPromise;
   #state = 'starting';
   #startedAt = null;
@@ -32,6 +33,20 @@ export class AcpProcess {
       this.#state = 'crashed';
       throw launchError(label, command, error);
     }
+
+    this.#child.stdin.on('error', (error) => {
+      const failure = providerFailureError(`${this.label} ACP transport could not write to the provider process.`, {
+        code: 'PROVIDER_TRANSPORT_WRITE',
+        category: 'transport_write',
+        retryable: true,
+        action: 'retry',
+        cause: error,
+        diagnostic: String(error?.message ?? error ?? ''),
+      });
+      for (const handler of this.#writeErrorHandlers) {
+        try { handler(failure); } catch {}
+      }
+    });
 
     this.#readyPromise = new Promise((resolveReady, rejectReady) => {
       let settled = false;
@@ -82,6 +97,7 @@ export class AcpProcess {
   onLine(handler) { this.#lineHandlers.add(handler); return () => this.#lineHandlers.delete(handler); }
   onExit(handler) { this.#exitHandlers.add(handler); return () => this.#exitHandlers.delete(handler); }
   onStderrLine(handler) { this.#stderrLineHandlers.add(handler); return () => this.#stderrLineHandlers.delete(handler); }
+  onWriteError(handler) { this.#writeErrorHandlers.add(handler); return () => this.#writeErrorHandlers.delete(handler); }
   isRunning() { return this.#state === 'running'; }
   snapshot() {
     return Object.freeze({
