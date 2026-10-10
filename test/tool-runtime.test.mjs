@@ -236,7 +236,7 @@ test('background_process starts, reads logs, and stops a long-lived project serv
           assert.match(latest?.content ?? '', /BACKGROUND PROCESS STARTED/);
           processId = latest.content.match(/process_id: (process_[^\s]+)/)?.[1] ?? '';
           assert.ok(processId);
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, process.platform === 'win32' ? 900 : 400));
           return { text: '', toolCalls: [{ id: 'call_logs', name: 'background_process', arguments: JSON.stringify({ action: 'logs', process_id: processId }) }], usage: null };
         }
         if (step === 3) {
@@ -256,11 +256,14 @@ test('background_process starts, reads logs, and stops a long-lived project serv
     assert.equal(db.listToolExecutions('s1').every((execution) => execution.status === 'complete'), true);
   } finally {
     await toolRuntime.close();
-    broker.close(); db.close(); await rm(dir, { recursive: true, force: true });
+    broker.close(); db.close(); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
 function shellQuote(value) {
+  if (process.platform === 'win32') {
+    return `"${String(value).replaceAll('"', '""')}"`;
+  }
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
 

@@ -72,7 +72,9 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
     authentication: { methods: [{ id: 'oauth-personal' }] },
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
     diagnosticError: (line, configuration) => {
-      if (configuration.allowInteractiveAuth === true || !line.startsWith('Open the following link to authenticate the ACP server:')) return null;
+      if (configuration?.allowInteractiveAuth === true) return null;
+      const text = String(line || '').trim();
+      if (!text.includes('Open the following link to authenticate the ACP server:') && !text.includes('accounts.google.com')) return null;
       return providerFailureError('Sign in to Google Antigravity in Settings before continuing.', {
         code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: 'antigravity',
       });

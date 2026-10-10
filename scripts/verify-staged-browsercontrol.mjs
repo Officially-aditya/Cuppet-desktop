@@ -33,7 +33,7 @@ await new Promise((resolvePromise, reject) => {
   child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`browserControl runtime syntax check failed: ${stderr.trim()}`)));
 });
 
-const manager = new BrowserControlManager({ entry: runtime });
+const manager = new BrowserControlManager({ entry: runtime, port: 18765 });
 try {
   const running = await manager.connect();
   assert.equal(running.available, true, running.message || 'staged browserControl runtime was not discovered');

@@ -173,14 +173,18 @@ export class ProviderRuntimeManager {
       };
       const allowExternalMcp = descriptor?.mcpToolBridge === true;
       if (allowExternalMcp && Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
-        toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
-        await toolSession.start();
+        if (!entry.activeToolSession) {
+          toolSession = this.#toolSessionFactory({ sessionId, backendId, projectRoot });
+          await toolSession.start();
+          entry.activeToolSession = toolSession;
+        } else {
+          toolSession = entry.activeToolSession;
+        }
         toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
-        entry.activeToolSession = toolSession;
         if (options.signal?.addEventListener) {
           abortToolSession = () => {
-            if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
             void Promise.resolve(toolSession?.close?.()).catch(() => undefined);
+            if (entry.activeToolSession === toolSession) entry.activeToolSession = null;
           };
           options.signal.addEventListener('abort', abortToolSession, { once: true });
           if (options.signal.aborted) abortToolSession();
@@ -233,8 +237,12 @@ export class ProviderRuntimeManager {
       throw error;
     } finally {
       if (abortToolSession) options.signal?.removeEventListener?.('abort', abortToolSession);
-      await toolSession?.close().catch(() => undefined);
-      if (entry?.activeToolSession === toolSession) entry.activeToolSession = null;
+      if (descriptor?.mcpConfigArg) {
+        toolSession?.setTurn({ tools: [], executeTool: null, signal: null });
+      } else {
+        await toolSession?.close().catch(() => undefined);
+        if (entry?.activeToolSession === toolSession) entry.activeToolSession = null;
+      }
       this.#releaseConversationGroup({ sessionId, fingerprint, group, entry });
     }
   }
@@ -418,6 +426,7 @@ export function acpRuntimeFingerprint({ backendId, descriptor = null, configurat
     cliEnv: stableValue(source.cliEnv),
     sessionMeta: stableValue(descriptor?.sessionMeta),
     mcpToolBridge: descriptor?.mcpToolBridge === true,
+    mcpConfigArg: text(descriptor?.mcpConfigArg),
     textStream: stableValue(descriptor?.textStream),
     runtimeSettings: stableValue(source.runtimeSettings),
   };

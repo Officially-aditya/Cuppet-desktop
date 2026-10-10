@@ -57,12 +57,16 @@ export class BackgroundProcessManager {
       entry.exitCode = code;
       entry.signal = signal;
       entry.endedAt = Date.now();
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
       this.#trimRetained();
     });
     child.once('error', (error) => {
       entry.status = 'error';
       entry.stderr = appendLog(entry.stderr, Buffer.from(`${error.message}\n`, 'utf8'));
       entry.endedAt = Date.now();
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
       this.#trimRetained();
     });
 
@@ -163,7 +167,7 @@ function snapshot(entry) {
 async function terminate(entry) {
   if (entry.status !== 'running') return;
   if (process.platform === 'win32') {
-    await taskkill(entry.pid).catch(() => entry.child.kill('SIGTERM'));
+    await taskkill(entry.pid, true).catch(() => entry.child.kill('SIGKILL'));
   } else {
     try { process.kill(-entry.pid, 'SIGTERM'); }
     catch { try { entry.child.kill('SIGTERM'); } catch {} }

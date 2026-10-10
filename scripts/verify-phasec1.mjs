@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['src/runtime/tool-runtime.mjs','src/runtime/permissions.mjs','src/runtime/provider.mjs','src/runtime/database.mjs','src/runtime/service.mjs','src/main/main.mjs','src/preload/preload.cjs','src/renderer/react/PermissionModal.tsx'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const tools=text['src/runtime/tool-runtime.mjs'];for(const name of ['cuppet_plan','cuppet_memory_search','tst_explore','tst_read','workspace_edit','workspace_write','bash'])expect(tools.includes(`'${name}'`),`model tool missing: ${name}`);

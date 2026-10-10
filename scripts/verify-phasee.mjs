@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['package.json','src/runtime/database.mjs','src/runtime/lossless-plan.mjs','src/runtime/questions.mjs','src/runtime/mutation-journal.mjs','src/runtime/journaled-tool-runtime.mjs','src/runtime/service.mjs','src/runtime/remote/protocol.mjs','src/runtime/remote/commands.mjs','src/cli/main.mjs','src/main/main.mjs','src/preload/preload.cjs','src/renderer/react/App.tsx','src/renderer/react/ChatPane.tsx','src/renderer/react/QuestionModal.tsx','src/remote-app/index.html','src/remote-app/app.js','src/remote-app/sw.js','migration/phase-e-contract.json'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const dense=Object.fromEntries(Object.entries(text).map(([p,v])=>[p,v.replace(/\s+/g,'')]));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const db=text['src/runtime/database.mjs'];expect(db.includes('forkSession({ sourceSessionId')&&db.includes('this.transaction(() =>'),'transactional fork missing');expect(db.includes('projectId: source.projectId'),'fork project binding missing');

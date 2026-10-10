@@ -17,12 +17,12 @@ test('buildMacSeatbeltProfile generates valid profile with path and credential r
 
   assert.match(profile, /\(version 1\)/);
   assert.match(profile, /\(deny file-write\*\)/);
-  assert.match(profile, new RegExp(`\\(allow file-write\\* \\(subpath "${realDir}"\\)\\)`));
+  assert.ok(profile.includes(`(allow file-write* (subpath "${realDir.replaceAll('\\', '\\\\')}"))`));
   assert.match(profile, /\(deny file-read\* \(subpath ".*\.ssh"\)\)/);
   assert.match(profile, /\(deny file-read\* \(subpath ".*\.aws"\)\)/);
   assert.doesNotMatch(profile, /\(deny network\*\)/);
 
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('buildMacSeatbeltProfile includes network denial when offline is true', async () => {
@@ -36,7 +36,7 @@ test('buildMacSeatbeltProfile includes network denial when offline is true', asy
   assert.match(profile, /\(deny network\*\)/);
   assert.match(profile, /\(deny network-outbound\)/);
 
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('SandboxManager executes basic command inside sandbox on macOS', async (t) => {

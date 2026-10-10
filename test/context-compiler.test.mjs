@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
 
 async function gitProject(t) {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-context-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const git = (...args) => execFileAsync('git', ['-c', 'user.name=Cuppet Tests', '-c', 'user.email=cuppet-tests@example.invalid', '-c', 'commit.gpgSign=false', ...args], { cwd: root });
   await git('init', '--quiet');
   return { root, git };

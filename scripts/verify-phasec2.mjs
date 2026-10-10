@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['src/runtime/remote/protocol.mjs','src/runtime/remote/pairing.mjs','src/runtime/remote/token.mjs','src/runtime/remote/setup.mjs','src/runtime/remote/bridge.mjs','src/runtime/remote/commands.mjs','src/runtime/remote/manager.mjs','src/runtime/remote/relay.mjs','src/runtime/main.mjs','src/main/main.mjs','src/preload/preload.cjs','src/renderer/react/RemoteModal.tsx','src/cli/main.mjs','src/remote-app/index.html','src/remote-app/app.js','migration/phase-c2-contract.json'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const dense=Object.fromEntries(Object.entries(text).map(([p,v])=>[p,v.replace(/\s+/g,'')]));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const protocol=text['src/runtime/remote/protocol.mjs'];expect(protocol.includes('PROTOCOL_VERSION = 1')&&protocol.includes('MAX_FRAME_BYTES = 512 * 1024'),'remote protocol/frame cap changed');for(const scope of ['session.read','session.write','permission.write','question.write','model.write'])expect(protocol.includes(scope),`remote scope missing: ${scope}`);

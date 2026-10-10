@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join, win32 as win32Path } from 'node:path';
+import { delimiter, dirname, join, posix as posixPath, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
 import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { localCliLaunch } from '../local-cli-launch.mjs';
@@ -405,7 +405,7 @@ export function installSpec(providerID, platform = process.platform) {
       opencode: { source: 'managed', script: WINDOWS_OPENCODE_INSTALL },
     };
     const spec = specs[id];
-    const powerShellCmd = resolveWindowsPowerShell(platform);
+    const powerShellCmd = 'powershell.exe';
     const script = spec ? `$ErrorActionPreference='Stop'; $global:LASTEXITCODE=0; try {\n${spec.script}\nif ($LASTEXITCODE -ne 0) { throw 'Provider installer failed.' }\n} catch { Write-Error $_ -ErrorAction Continue; exit 1 }` : '';
     return spec ? { command: powerShellCmd, args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], source: spec.source } : null;
   }
@@ -507,12 +507,15 @@ async function patchProviderState(userData, providerID, patch) {
 function extendCliSearchPath(additional = []) {
   const home = homedir();
   const existing = String(process.env.PATH ?? process.env.Path ?? '').split(delimiter).filter(Boolean);
+  const npmPrefix = process.env.NPM_CONFIG_PREFIX || process.env.npm_config_prefix;
+  const npmPrefixPath = npmPrefix ? (process.platform === 'win32' ? npmPrefix : join(npmPrefix, 'bin')) : '';
   const candidates = [
     process.env.CUPPET_CLI_PATH,
+    npmPrefixPath,
     process.env.PNPM_HOME,
     process.env.GROK_BIN_DIR,
     process.env.BUN_INSTALL ? join(process.env.BUN_INSTALL, 'bin') : '',
-    process.env.APPDATA ? (process.platform === 'win32' ? win32Path.join(process.env.APPDATA, 'npm') : join(process.env.APPDATA, 'npm')) : (process.platform === 'win32' && home ? win32Path.join(home, 'AppData', 'Roaming', 'npm') : ''),
+    npmPrefixPath ? '' : (process.env.APPDATA ? (process.platform === 'win32' ? win32Path.join(process.env.APPDATA, 'npm') : join(process.env.APPDATA, 'npm')) : (process.platform === 'win32' && home ? win32Path.join(home, 'AppData', 'Roaming', 'npm') : '')),
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'agy', 'bin') : '',
     home ? join(home, '.local', 'bin') : '',
     home ? join(home, '.opencode', 'bin') : '',
@@ -582,8 +585,12 @@ async function resolveExecutablePath(command) {
 
 async function findNpmExecutable(descriptor, runImpl) {
   try {
-    const result = await runImpl('npm.cmd', ['prefix', '-g'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
-    const prefix = String(result.stdout ?? '').trim().split(/\r?\n/).at(-1)?.trim();
+    const prefixOverride = process.env.NPM_CONFIG_PREFIX || process.env.npm_config_prefix;
+    let prefix = prefixOverride && win32Path.isAbsolute(prefixOverride) ? prefixOverride : null;
+    if (!prefix) {
+      const result = await runImpl('npm.cmd', ['prefix', '-g'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+      prefix = String(result.stdout ?? '').trim().split(/\r?\n/).at(-1)?.trim();
+    }
     if (!prefix || !win32Path.isAbsolute(prefix)) return null;
     for (const name of [`${descriptor.command}.cmd`, `${descriptor.command}.exe`]) {
       const path = win32Path.join(prefix, name);
@@ -684,7 +691,10 @@ function run(command, args, timeoutMs, options = {}) {
 function siblingCommand(command, sibling) {
   const value = String(command || '');
   if (!value.includes('/') && !value.includes('\\')) return sibling;
-  return join(dirname(value), process.platform === 'win32' ? `${sibling}.exe` : sibling);
+  if (value.includes('/') && !value.includes('\\')) {
+    return posixPath.join(posixPath.dirname(value), value.toLowerCase().endsWith('.exe') ? `${sibling}.exe` : sibling);
+  }
+  return join(dirname(value), (process.platform === 'win32' || value.toLowerCase().endsWith('.exe')) ? `${sibling}.exe` : sibling);
 }
 async function exists(path) { try { await access(path, fsConstants.F_OK); return true; } catch { return false; } }
 async function nonEmpty(path) { try { return (await readFile(path, 'utf8')).trim().length > 0; } catch { return false; } }

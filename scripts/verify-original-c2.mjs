@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { listCommands, parseSlashCommand } from '../src/runtime/commands.mjs';
-const root=new URL('..',import.meta.url).pathname;const read=(p)=>readFile(join(root,p),'utf8');
+const root=fileURLToPath(new URL('..',import.meta.url));const read=(p)=>readFile(join(root,p),'utf8');
 const [commands,service,main,preload,remote,cli,app,chat,css,contractText]=await Promise.all(['src/runtime/commands.mjs','src/runtime/service.mjs','src/main/main.mjs','src/preload/preload.cjs','src/runtime/remote/commands.mjs','src/cli/main.mjs','src/renderer/react/App.tsx','src/renderer/react/ChatPane.tsx','src/renderer/commands.css','migration/original-c2-contract.json'].map(read));
 const expect=(c,m)=>{if(!c)throw new Error(m)};
 const expectedSlash=['status','doctor','memory','background','compact','undo'];

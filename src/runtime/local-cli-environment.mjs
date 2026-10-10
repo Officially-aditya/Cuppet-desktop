@@ -37,6 +37,8 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
   const pathValue = getEnv(environment, 'PATH', 'Path');
   const existing = splitPath(pathValue, pathDelimiter);
   const explicit = splitPath(getEnv(environment, 'CUPPET_CLI_PATH'), pathDelimiter);
+  const npmPrefix = getEnv(environment, 'NPM_CONFIG_PREFIX', 'npm_config_prefix');
+  const explicitNpm = npmPrefix ? [platform === 'win32' ? npmPrefix : posixPath.join(npmPrefix, 'bin')] : [];
   const recovered = platform === 'darwin'
     ? splitPath(recoverDarwinLoginPath(environment, options), pathDelimiter)
     : [];
@@ -44,6 +46,7 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
 
   const merged = dedupePath([
     ...explicit,
+    ...explicitNpm,
     ...recovered,
     ...existing,
     ...candidates,
@@ -79,9 +82,7 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
     : [''];
 
   for (const directory of pathEntries) {
-    const pathJoin = process.platform === 'win32'
-      ? win32Path.join
-      : (directory.startsWith('/') ? join : win32Path.join);
+    const pathJoin = platform === 'win32' ? win32Path.join : posixPath.join;
     for (const extension of extensions) {
       const fileName = platform === 'win32' && !value.toLowerCase().endsWith(extension.toLowerCase())
         ? `${value}${extension}`
@@ -159,17 +160,20 @@ function markerPath(stdout) {
 
 function fallbackCliPaths(environment, home, platform) {
   const isWin = platform === 'win32';
-  const pathJoin = isWin ? win32Path.join : join;
+  const pathJoin = isWin ? win32Path.join : posixPath.join;
   const pnpmHome = getEnv(environment, 'PNPM_HOME');
   const bunInstall = getEnv(environment, 'BUN_INSTALL');
+  const npmConfigPrefix = getEnv(environment, 'NPM_CONFIG_PREFIX', 'npm_config_prefix');
+  const npmPrefixPath = npmConfigPrefix ? (isWin ? npmConfigPrefix : pathJoin(npmConfigPrefix, 'bin')) : '';
   const appData = getEnv(environment, 'APPDATA', 'AppData') || (isWin && home ? pathJoin(home, 'AppData', 'Roaming') : '');
   const localAppData = getEnv(environment, 'LOCALAPPDATA', 'LocalAppData') || (isWin && home ? pathJoin(home, 'AppData', 'Local') : '');
 
   const candidates = [
+    npmPrefixPath,
     pnpmHome,
     getEnv(environment, 'GROK_BIN_DIR'),
     bunInstall ? pathJoin(bunInstall, 'bin') : '',
-    appData ? pathJoin(appData, 'npm') : '',
+    npmPrefixPath ? '' : (appData ? pathJoin(appData, 'npm') : ''),
     localAppData ? pathJoin(localAppData, 'agy', 'bin') : '',
     home ? pathJoin(home, '.local', 'bin') : '',
     home ? pathJoin(home, '.opencode', 'bin') : '',
@@ -224,14 +228,14 @@ export function detectLocalProviderApp(providerID, inherited = process.env, opti
     candidates = [win32Path.join(local, 'Programs', product), win32Path.join(system, product)];
   } else if (platform === 'darwin') {
     const bundle = copilot ? 'Visual Studio Code.app' : 'Antigravity.app';
-    candidates = [join('/Applications', bundle), join(home, 'Applications', bundle)];
+    candidates = [posixPath.join('/Applications', bundle), posixPath.join(home, 'Applications', bundle)];
   } else if (platform === 'linux') {
     candidates = [copilot ? '/usr/share/code' : '/usr/share/antigravity', copilot ? '/opt/visual-studio-code' : '/opt/Antigravity'];
   }
   for (const path of candidates) {
     const executable = platform === 'win32'
       ? win32Path.join(path, copilot ? 'Code.exe' : 'Antigravity.exe')
-      : platform === 'darwin' ? join(path, 'Contents', 'MacOS', 'Electron') : join(path, copilot ? 'code' : 'antigravity');
+      : platform === 'darwin' ? posixPath.join(path, 'Contents', 'MacOS', 'Electron') : posixPath.join(path, copilot ? 'code' : 'antigravity');
     try { check(executable, fsConstants.F_OK); return { label, path }; } catch {}
   }
   return null;

@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { localCliDescriptor } from './local-cli-descriptors.mjs';
+import { localCliLaunch } from './local-cli-launch.mjs';
 
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const PROMPT_TIMEOUT_MS = 30 * 60_000;
@@ -31,7 +32,8 @@ export class AntigravityHeadlessProvider {
     const args = [...baseArgs, '--mode=plan', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '30m', ...modelArgs, ...effortArgs, '-p', prompt];
     let child;
     try {
-      child = spawn(command, args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
+      const launch = localCliLaunch(command, args);
+      child = spawn(launch.command, launch.args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
     } catch (error) {
       throw launchError(this.#descriptor, error);
     }

@@ -345,7 +345,19 @@ function shellTokens(source) {
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     if (escaped) { token += char; escaped = false; continue; }
-    if (char === '\\' && quote !== "'") { escaped = true; continue; }
+    if (char === '\\' && quote !== "'") {
+      if (process.platform === 'win32') {
+        const next = source[index + 1];
+        if (next === '"' || next === '\\' || (next && /\s/.test(next))) {
+          escaped = true;
+          continue;
+        }
+        token += char;
+        continue;
+      }
+      escaped = true;
+      continue;
+    }
     if (quote) {
       if (char === quote) quote = '';
       else token += char;

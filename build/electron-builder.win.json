@@ -3,6 +3,7 @@
   "productName": "Cuppet",
   "executableName": "cuppet",
   "artifactName": "${productName}-${version}-${arch}.${ext}",
+  "npmRebuild": false,
   "asar": true,
   "asarUnpack": [
     "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs",
@@ -39,7 +40,7 @@
     "output": "dist"
   },
   "win": {
-    "icon": "build/icon.png",
+    "icon": "build/icon.ico",
     "target": [
       {
         "target": "nsis",

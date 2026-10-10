@@ -114,7 +114,7 @@ export class AcpRpcChannel {
 
   terminate() { this.#process.terminate(); }
 
-  close() {
+  async close() {
     if (this.#closed) return;
     this.#closed = true;
     this.#failAll(providerFailureError(`${this.#label} ACP channel closed.`, {
@@ -122,7 +122,7 @@ export class AcpRpcChannel {
       category: 'transport_closed',
       retryable: false,
     }));
-    this.#process.close();
+    await this.#process.close?.();
   }
 
   #onLine(line) {

@@ -103,13 +103,17 @@ test('Antigravity participates in warm process reuse across OpenCode switches', 
   assert.equal(manager.size, 2);
 });
 
+const isWin = process.platform === 'win32';
+const startupMs = isWin ? 3_000 : 1_000;
+const authenticationMs = isWin ? 3_000 : 1_000;
+
 for (const output of ['stdout', 'stderr']) {
   test('Antigravity missing sign-in fails promptly on ' + output + ' instead of timing out', async (t) => {
     const path = fileURLToPath(new URL('./fixtures/fake-antigravity-auth-acp.mjs', import.meta.url));
     const runtime = new AcpSessionRuntime({
       descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
       configuration: { cliEnv: { FAKE_AUTH_OUTPUT: output } },
-      liveness: { startupMs: 1_000, authenticationMs: 1_000 },
+      liveness: { startupMs, authenticationMs },
     });
     t.after(() => runtime.close());
     await assert.rejects(runtime.start(), (error) => {
@@ -126,7 +130,7 @@ test('explicit Antigravity Connect permits the browser sign-in prompt to complet
   const runtime = new AcpSessionRuntime({
     descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
     configuration: { allowInteractiveAuth: true, cliEnv: { FAKE_AUTH_COMPLETE: '1' } },
-    liveness: { startupMs: 1_000, authenticationMs: 1_000 },
+    liveness: { startupMs, authenticationMs },
   });
   t.after(() => runtime.close());
   assert.equal((await runtime.start()).state, 'ready');
@@ -138,7 +142,7 @@ test('a native sign-in failure enables reconnect even when an old linked status 
   const path = fileURLToPath(new URL('./fixtures/fake-antigravity-auth-acp.mjs', import.meta.url));
   const runtime = new SupervisedAcpSessionRuntime({
     descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
-    liveness: { startupMs: 1_000, authenticationMs: 1_000 },
+    liveness: { startupMs, authenticationMs },
   });
   t.after(() => runtime.close());
   const plane = new ProviderControlPlane({

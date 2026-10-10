@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['src/runtime/provider-catalog.mjs','src/runtime/provider-variants.mjs','src/runtime/provider-policy.mjs','src/runtime/provider.mjs','src/runtime/background-enricher.mjs','src/runtime/remote/commands.mjs','src/main/provider-settings.mjs','src/main/provider-presets.mjs','src/renderer/react/SettingsModal.tsx','src/remote-app/index.html','src/remote-app/app.js','src/cli/main.mjs','migration/phase-d-contract.json'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const catalog=text['src/runtime/provider-catalog.mjs'];expect(catalog.includes('buildProviderCatalog')&&catalog.includes('modelSupportsCodingAgent')&&catalog.includes('resolveLiveModelRef'),'provider catalog missing');

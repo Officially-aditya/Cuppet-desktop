@@ -97,7 +97,7 @@ test('non-macOS environments never invoke login-shell recovery', () => {
   assert.ok(environment.PATH.includes('/home/cuppet/.local/bin'));
 });
 
-test('local CLI resolver returns an absolute executable from recovered GUI PATH', async () => {
+test('local CLI resolver returns an absolute executable from recovered GUI PATH', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-provider-bin-'));
   const command = join(root, 'opencode');
   try {

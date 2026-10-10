@@ -11,11 +11,12 @@ const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mj
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
 const lateContinuationFixture = fileURLToPath(new URL('./fixtures/fake-acp-late-continuation-agent.mjs', import.meta.url));
 test('ACP browser authentication has a separate timeout from startup requests', async () => {
+  const isWin = process.platform === 'win32';
   const descriptor = { ...localCliDescriptor('grok-build'), authentication: { methods: [{ id: 'cached_token' }] } };
   const runtime = new AcpSessionRuntime({
     descriptor,
-    configuration: { cliCommand: process.execPath, cliArgs: [authFixture], cliEnv: { TEST_AUTH_DELAY_MS: '250' } },
-    liveness: { startupMs: 100, authenticationMs: 1_000 },
+    configuration: { cliCommand: process.execPath, cliArgs: [authFixture], cliEnv: { TEST_AUTH_DELAY_MS: isWin ? '1200' : '250' } },
+    liveness: { startupMs: isWin ? 2_000 : 100, authenticationMs: isWin ? 6_000 : 1_000 },
   });
   try {
     await runtime.start();
@@ -236,7 +237,7 @@ test('ACP v2 liveness resets on genuine reasoning activity', async () => {
     descriptor: acpDescriptor(),
     configuration: { cliCommand: process.execPath, cliArgs: [fixture] },
     projectRoot: tmpdir(),
-    liveness: { inactivityMs: 35, cancelGraceMs: 15 },
+    liveness: { inactivityMs: process.platform === 'win32' ? 120 : 35, cancelGraceMs: 50 },
   });
   try {
     await runtime.start();

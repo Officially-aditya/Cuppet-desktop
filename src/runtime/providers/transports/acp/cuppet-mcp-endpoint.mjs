@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { posix as posixPath } from 'node:path';
 
 // Darwin sockaddr_un.sun_path is only 104 bytes including termination.
 // Keep a little headroom so the bridge works from long /var/folders/... temp roots.
@@ -22,10 +22,10 @@ export function createCuppetMcpBridgeEndpoint({
   // Keep the filename deliberately short. macOS temp directories are normally
   // nested under /var/folders and a UUID-sized filename can exceed sun_path.
   const filename = `cm-${safePid}-${safeSuffix}.sock`;
-  const preferred = join(String(temporaryDirectory || '/tmp'), filename);
+  const preferred = posixPath.join(String(temporaryDirectory || '/tmp'), filename);
   if (Buffer.byteLength(preferred) <= MAX_CUPPET_UNIX_SOCKET_PATH_BYTES) return preferred;
 
-  const fallback = join('/tmp', filename);
+  const fallback = posixPath.join('/tmp', filename);
   if (Buffer.byteLength(fallback) > MAX_CUPPET_UNIX_SOCKET_PATH_BYTES) {
     throw new Error('Unable to create a Darwin-safe Cuppet MCP bridge socket path.');
   }

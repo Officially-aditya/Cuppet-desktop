@@ -4,8 +4,7 @@ import { access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const LOCAL_PORT = 8765;
-const HEALTH_URL = `http://127.0.0.1:${LOCAL_PORT}/health`;
+const DEFAULT_LOCAL_PORT = 8765;
 const REQUEST_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 12_000;
 const MAX_STDERR = 16 * 1024;
@@ -14,6 +13,7 @@ const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 export class BrowserControlManager {
   #emit;
   #entry;
+  #port;
   #child;
   #pending = new Map();
   #nextId = 1;
@@ -24,9 +24,10 @@ export class BrowserControlManager {
   #starting;
   #loadingTools;
 
-  constructor({ emit = () => {}, entry = null } = {}) {
+  constructor({ emit = () => {}, entry = null, port = Number(process.env.BROWSERCONTROL_LOCAL_PORT || DEFAULT_LOCAL_PORT) } = {}) {
     this.#emit = emit;
     this.#entry = entry;
+    this.#port = Number(port) || DEFAULT_LOCAL_PORT;
   }
 
   definitions() {
@@ -104,7 +105,7 @@ export class BrowserControlManager {
   async #start() {
     const entry = await this.#resolveEntry();
     if (!entry) return this.#status(null, 'browserControl runtime is not bundled in this build.');
-    const occupied = await probeHealth();
+    const occupied = await probeHealth(this.#port);
     if (occupied?.ok) {
       return this.#status(entry, 'Another browserControl local runtime is already using Chrome. Stop it, then try Connect Chrome again.');
     }
@@ -113,7 +114,7 @@ export class BrowserControlManager {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        BROWSERCONTROL_LOCAL_PORT: String(LOCAL_PORT),
+        BROWSERCONTROL_LOCAL_PORT: String(this.#port),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -217,7 +218,7 @@ export class BrowserControlManager {
       return null;
     }
     const child = this.#child;
-    const health = await probeHealth();
+    const health = await probeHealth(this.#port);
     if (this.#child !== child) return null;
     const connected = Boolean(health?.ok && health?.service === 'browsercontrol-local' && health?.extensionConnected);
     if (connected && !this.#extensionConnected) await this.#loadTools();
@@ -307,7 +308,7 @@ export class BrowserControlManager {
       connected: running && this.#extensionConnected,
       extensionConnected: running && this.#extensionConnected,
       toolCount: running ? this.#tools.size : 0,
-      port: LOCAL_PORT,
+      port: this.#port,
       message: message || (running
         ? this.#extensionConnected
           ? `Chrome connected through browserControl (${this.#tools.size} MCP tools).`
@@ -319,9 +320,9 @@ export class BrowserControlManager {
   }
 }
 
-async function probeHealth() {
+async function probeHealth(port = DEFAULT_LOCAL_PORT) {
   try {
-    const response = await fetch(HEALTH_URL, { cache: 'no-store', signal: AbortSignal.timeout(900) });
+    const response = await fetch(`http://127.0.0.1:${port}/health`, { cache: 'no-store', signal: AbortSignal.timeout(900) });
     if (!response.ok) return null;
     const value = await response.json();
     return value && typeof value === 'object' ? value : null;

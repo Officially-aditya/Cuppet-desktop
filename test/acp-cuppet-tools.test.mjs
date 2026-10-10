@@ -63,3 +63,11 @@ test('source MCP bridge path remains unchanged outside a packaged app', () => {
   const source = fileURLToPath(new URL('../src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs', import.meta.url));
   assert.equal(resolveCuppetMcpServerScript({ resourcesPath: '', sourcePath: source, exists: () => false }), source);
 });
+
+test('GitHub Copilot descriptor enables mcpToolBridge so connected browserControl and Cuppet tools are exposed in ACP sessions', () => {
+  const descriptor = localCliDescriptor('github-copilot');
+  assert.equal(descriptor.transport, 'acp');
+  assert.equal(descriptor.mcpToolBridge, true);
+  assert.equal(descriptor.mcpConfigArg, '--additional-mcp-config');
+  assert.ok(descriptor.args.includes('--allow-all-tools'));
+});

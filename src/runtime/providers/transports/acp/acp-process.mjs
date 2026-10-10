@@ -133,12 +133,18 @@ export class AcpProcess {
     try { this.#child.kill(); } catch {}
   }
 
-  close() {
+  async close() {
     if (this.#closed) return;
     this.#closed = true;
     if (!['stopped', 'crashed'].includes(this.#state)) this.#state = 'stopping';
-    try { this.#child.stdin.end(); } catch {}
-    try { this.#child.kill(); } catch {}
+    try { this.#child.stdin?.end(); } catch {}
+    try { this.#child?.kill(); } catch {}
+    if (this.#child && this.#child.exitCode === null) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        this.#child.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
     if (this.#state === 'crashed') this.#state = 'stopped';
   }
 }

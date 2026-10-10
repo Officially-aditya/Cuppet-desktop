@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['src/runtime/pe3/router.mjs','src/runtime/pe3/registry.mjs','src/runtime/pe3/task-agents.mjs','src/runtime/service.mjs','src/renderer/react/App.tsx','src/renderer/react/client-run-state.ts','migration/phase-b2-contract.json'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 const pe3Router=text['src/runtime/pe3/router.mjs'], taskRouter=text['src/runtime/pe3/task-agents.mjs'];

@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-cli-environment.mjs';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
@@ -45,6 +47,7 @@ export class AcpSessionRuntime {
   #cancelGraceMs;
   #startupTimeoutMs;
   #authenticationTimeoutMs;
+  #mcpConfigFile = null;
 
   constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {}, resolveRuntimeImpl = descriptor?.resolveRuntime }) {
     this.#descriptor = descriptor;
@@ -58,7 +61,8 @@ export class AcpSessionRuntime {
     this.#resolveRuntime = resolveRuntimeImpl;
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
-    if (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride])) {
+    const deferStartForMcp = Boolean(descriptor?.mcpConfigArg);
+    if (!deferStartForMcp && (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]))) {
       this.#startProcess(resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment }));
     }
   }
@@ -86,6 +90,34 @@ export class AcpSessionRuntime {
     });
   }
 
+  async #applyMcpConfigFile(mcpServers) {
+    if (!this.#descriptor?.mcpConfigArg || !Array.isArray(mcpServers) || !mcpServers.length) return;
+    const servers = normalizeMcpServers(mcpServers);
+    if (!servers.length) return;
+    const mcpConfig = {
+      mcpServers: Object.fromEntries(servers.map((server) => [
+        server.name,
+        {
+          type: 'local',
+          tools: ['*'],
+          command: server.command,
+          args: server.args,
+          env: Object.fromEntries(server.env.map((e) => [e.name, e.value])),
+        },
+      ])),
+    };
+    const configFile = join(tmpdir(), `cuppet-${this.#descriptor.id}-mcp-${randomUUID()}.json`);
+    await writeFile(configFile, JSON.stringify(mcpConfig, null, 2), 'utf8');
+    this.#mcpConfigFile = configFile;
+    const currentArgs = Array.isArray(this.#configuration.cliArgs) && this.#configuration.cliArgs.length
+      ? [...this.#configuration.cliArgs]
+      : [...this.#descriptor.args];
+    this.#configuration = {
+      ...this.#configuration,
+      cliArgs: [...currentArgs, this.#descriptor.mcpConfigArg, `@${configFile}`],
+    };
+  }
+
   async start({ mcpServers = [], selection } = {}) {
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
@@ -93,14 +125,22 @@ export class AcpSessionRuntime {
     this.#state = 'starting';
     try {
       if (!this.#rpc) {
-        const installation = await this.#resolveRuntime(this.#configuration, { environment: this.#environment });
-        if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
-        if (!installation) throw providerFailureError(`No usable ${this.#descriptor.label} ACP runtime was found. Reconnect to install the missing runtime.`, {
-          code: 'PROVIDER_EXECUTABLE_MISSING', category: 'executable_missing', retryable: false, action: 'reconnect_provider',
-        });
-        if (Array.isArray(installation.args)) this.#configuration = { ...this.#configuration, cliArgs: installation.args.map(String) };
-        if (installation.env) this.#environment = { ...this.#environment, ...installation.env };
-        this.#startProcess(installation.command);
+        let command;
+        if (this.#resolveRuntime && !text(this.#configuration.cliCommand) && !text(this.#environment[this.#descriptor.envOverride])) {
+          const installation = await this.#resolveRuntime(this.#configuration, { environment: this.#environment });
+          if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
+          if (!installation) throw providerFailureError(`No usable ${this.#descriptor.label} ACP runtime was found. Reconnect to install the missing runtime.`, {
+            code: 'PROVIDER_EXECUTABLE_MISSING', category: 'executable_missing', retryable: false, action: 'reconnect_provider',
+          });
+          if (Array.isArray(installation.args)) this.#configuration = { ...this.#configuration, cliArgs: installation.args.map(String) };
+          if (installation.env) this.#environment = { ...this.#environment, ...installation.env };
+          command = installation.command;
+        } else {
+          const requestedCommand = text(this.#configuration.cliCommand) || text(this.#environment[this.#descriptor.envOverride]) || this.#descriptor.command;
+          command = resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment });
+        }
+        await this.#applyMcpConfigFile(mcpServers);
+        this.#startProcess(command);
       }
       await this.#rpc.ready();
       this.#initialized = await this.#rpc.request('initialize', {
@@ -108,7 +148,7 @@ export class AcpSessionRuntime {
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, this.#startupTimeoutMs);
-      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs);
+      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
       await this.#openSession(mcpServers, selection);
       this.#state = 'ready';
       return this.snapshot();
@@ -234,7 +274,12 @@ export class AcpSessionRuntime {
     this.#state = 'closed';
     if (this.#activeTurn) await this.cancel().catch(() => undefined);
     this.setHostHandlers();
-    this.#rpc?.close();
+    await this.#rpc?.close?.();
+    if (this.#mcpConfigFile) {
+      const file = this.#mcpConfigFile;
+      this.#mcpConfigFile = null;
+      await rm(file, { force: true }).catch(() => undefined);
+    }
   }
 
   #touchActiveTurn() {
@@ -411,7 +456,7 @@ export class AcpSessionRuntime {
   }
 }
 
-async function authenticateIfNeeded(rpc, descriptor, initialized, environment, timeoutMs) {
+async function authenticateIfNeeded(rpc, descriptor, initialized, environment, timeoutMs, configuration = {}) {
   const policy = record(descriptor?.authentication);
   const preferred = Array.isArray(policy.methods) ? policy.methods : [];
   if (!preferred.length) return;
@@ -423,8 +468,15 @@ async function authenticateIfNeeded(rpc, descriptor, initialized, environment, t
     const requiredEnv = text(item.requiresEnv);
     return id && advertised.has(id) && (!requiredEnv || text(environment?.[requiredEnv]));
   });
-  const methodId = text(record(selected).id);
+  const selectedRecord = record(selected);
+  const methodId = text(selectedRecord.id);
   if (!methodId) throw new Error(descriptor.loginHint);
+  const isInteractive = selectedRecord.interactive === true || methodId === 'oauth-personal' || methodId.includes('oauth');
+  if (isInteractive && configuration.allowInteractiveAuth !== true) {
+    throw providerFailureError(`Sign in to ${descriptor.label} in Settings before continuing.`, {
+      code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: descriptor.id,
+    });
+  }
   const meta = record(policy.meta);
   await rpc.request('authenticate', { methodId, ...(Object.keys(meta).length ? { _meta: meta } : {}) }, timeoutMs);
 }

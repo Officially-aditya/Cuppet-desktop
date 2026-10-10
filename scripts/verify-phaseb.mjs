@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const paths = ['src/runtime/database.mjs','src/runtime/projects.mjs','src/runtime/service.mjs','src/main/main.mjs','src/preload/preload.cjs','src/renderer/react/App.tsx','src/renderer/react/AddProjectModal.tsx'];
 const text = Object.fromEntries(await Promise.all(paths.map(async (path) => [path, await readFile(join(root, path), 'utf8')])));
 const expect=(condition,message)=>{if(!condition)throw new Error(message)};

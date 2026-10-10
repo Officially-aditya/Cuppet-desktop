@@ -28,7 +28,7 @@ async function fixture() {
   await writeFile(join(root, '.cuppet', 'credentials.json'), '{}\n');
   await writeFile(join(root, '.cuppet', 'ltm-trie.json'), '{}\n');
   await writeFile(join(outside, 'secret.txt'), 'outside\n');
-  await symlink(outside, join(root, 'escape'));
+  await symlink(outside, join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
   return { dir, root };
 }
 

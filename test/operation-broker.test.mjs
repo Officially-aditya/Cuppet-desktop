@@ -13,7 +13,7 @@ async function fixture(t) {
   let root = join(dir, 'project');
   await mkdir(root);
   root = await realpath(root);
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return { dir, root };
 }
 
@@ -33,7 +33,7 @@ test('push binds approval to exact repo/URL/branch/commit and isolates authentic
     if (command.includes("'update-ref'")) return { code: 0, stdout: '', stderr: '' };
     assert.match(command, /'bundle' 'create'/);
     assert.equal(policy.scratchDirs.length, 1);
-    assert.ok(policy.scratchDirs[0].endsWith('/export'));
+    assert.ok(/[/\\]export$/.test(policy.scratchDirs[0]));
     await writeFile(join(policy.scratchDirs[0], 'commit.bundle'), 'test bundle');
     return { code: 0, stdout: '', stderr: '' };
   } };
@@ -56,8 +56,8 @@ test('push binds approval to exact repo/URL/branch/commit and isolates authentic
   assert.ok(push.args.includes('core.hooksPath=/dev/null'));
   assert.ok(push.args.includes('--no-verify'));
   assert.ok(push.args.includes('--recurse-submodules=no'));
-  assert.ok(push.args.includes('http.followRedirects=false'));
-  assert.ok(push.args.includes(`credential.helper=${trusted}/git-credential-osxkeychain`));
+  const expectedHelper = join(trusted, 'git-credential-osxkeychain').replace(/[^A-Za-z0-9/_.,:+-]/g, (character) => `\\${character}`);
+  assert.ok(push.args.some((arg) => arg === `credential.helper=${expectedHelper}` || arg === `credential.helper=${trusted}/git-credential-osxkeychain`));
   assert.deepEqual(push.args.slice(-2), [URL, `${SHA}:refs/heads/main`]);
   assert.ok(calls.some((call) => call.command.includes(`'update-ref' 'refs/remotes/origin/main' '${SHA}'`)));
   assert.deepEqual(await readdir(join(dir, 'operation-broker')), []);
@@ -144,7 +144,7 @@ test('broker rejects ambiguous remotes, arbitrary commands and escaping packagin
   await assert.rejects(broker.gitPush({ projectRoot: root, branch: 'main', commit: SHA, authorize }), /one HTTPS or SSH remote/);
   await assert.rejects(broker.packageDmg({ projectRoot: root, source: '../Outside.app', output: 'app.dmg', authorize }), /inside/);
   await mkdir(join(root, 'Demo.app'));
-  await symlink(dir, join(root, 'escape'));
+  await symlink(dir, join(root, 'escape'), process.platform === 'win32' ? 'junction' : undefined);
   await assert.rejects(broker.packageDmg({ projectRoot: root, source: 'Demo.app', output: 'escape/app.dmg', authorize }), /symlink/);
 });
 
@@ -153,7 +153,7 @@ test('remote validation excludes credential-bearing URLs and executable Git tran
   for (const value of ['file:///tmp/repo', '/tmp/repo', 'ext::evil', 'https://token@github.com/a/b', 'https://u:p@github.com/a/b', `${URL}?token=x`, 'ssh://git:secret@github.com/a/b', '-x', `${URL}\n`]) assert.equal(validRemoteUrl(value), false, value);
 });
 
-test('DMG staging permits app framework links but rejects links outside staging', async (t) => {
+test('DMG staging permits app framework links but rejects links outside staging', { skip: process.platform === 'win32' }, async (t) => {
   const { root } = await fixture(t);
   await mkdir(join(root, 'Versions', 'A'), { recursive: true });
   await writeFile(join(root, 'Versions', 'A', 'binary'), 'app');

@@ -14,7 +14,7 @@ async function fixture() {
   await mkdir(outside, { recursive: true });
   await writeFile(join(root, '.env'), 'SECRET=1\n');
   await writeFile(join(outside, 'secret.txt'), 'outside\n');
-  await symlink(outside, join(root, 'escape'));
+  await symlink(outside, join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
   return { dir, root, outside };
 }
 

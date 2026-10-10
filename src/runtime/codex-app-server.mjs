@@ -4,6 +4,7 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { localCliLaunch } from './local-cli-launch.mjs';
 
 const STARTUP_TIMEOUT_MS = 12_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -29,11 +30,12 @@ export class CodexAppServerClient extends EventEmitter {
 
   async start() {
     if (this.#started) return this;
-    const child = spawn(this.#command, this.#args, {
+    const launch = localCliLaunch(this.#command, this.#args);
+    const child = spawn(launch.command, launch.args, {
       env: this.#env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      shell: process.platform === 'win32',
+      shell: launch.shell,
     });
     this.#child = child;
     this.#stderr = '';
@@ -97,7 +99,13 @@ export class CodexAppServerClient extends EventEmitter {
     this.#started = false;
     if (!child) return;
     try { child.stdin?.end(); } catch {}
-    if (child.exitCode === null) child.kill('SIGTERM');
+    if (child.exitCode === null) {
+      child.kill('SIGTERM');
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        child.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
   }
 
   #write(message) {
@@ -179,7 +187,8 @@ async function executableCommand(command, args) {
 }
 function commandWorks(command, args, env) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { env, stdio: 'ignore', windowsHide: true, shell: process.platform === 'win32' });
+    const launch = localCliLaunch(command, args);
+    const child = spawn(launch.command, launch.args, { env, stdio: 'ignore', windowsHide: true, shell: launch.shell });
     const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(false); }, 3_000);
     child.once('error', () => { clearTimeout(timer); resolve(false); });
     child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0); });

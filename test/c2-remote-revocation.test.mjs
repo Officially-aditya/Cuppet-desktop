@@ -20,7 +20,7 @@ class FakeTransport {
   receive(value) { const data = JSON.stringify(value); for (const listener of this.messages) listener(data); }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 15));
+const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 const command = (id, type, deviceId) => ({ version: 1, id, type, ts: Date.now(), payload: {}, deviceId });
 
 test('deleting a real paired credential invalidates the already-authenticated bridge session on its next command', async () => {

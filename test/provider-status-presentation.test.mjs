@@ -7,7 +7,7 @@ const settingsSource = await readFile(new URL('../src/renderer/react/SettingsMod
 
 function project(status, providerLabel = 'OpenCode', busy = false) {
   const transformed = source
-    .replace(/export type ProviderStatusPresentation = \{[\s\S]*?\};\n\n/, '')
+    .replace(/export type ProviderStatusPresentation = \{[\s\S]*?\};(?:\r?\n)+/, '')
     .replace('export function providerStatusPresentation', 'function providerStatusPresentation')
     .replace(/: unknown/g, '')
     .replace(/: string/g, '')

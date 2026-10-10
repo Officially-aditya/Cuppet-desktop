@@ -10,7 +10,7 @@ async function fixture(t) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'cuppet-resources-')));
   const root = join(dir, 'project');
   await mkdir(root);
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return { dir, root, cacheRoot: join(dir, 'caches') };
 }
 const mac = { skip: process.platform !== 'darwin' };
@@ -56,7 +56,10 @@ test('Full Access can write outside the project and use an existing Git credenti
   const outside = join(dir, 'outside.txt');
   const manager = new SandboxManager({ protectedPaths: [dir] });
   const policy = { projectRoot: root, fullAccess: true, envOverrides: { GIT_CONFIG_GLOBAL: globalConfig } };
-  const written = await manager.execute(`printf allowed > '${outside}'`, root, policy);
+  const writeCommand = process.platform === 'win32'
+    ? `node -e "require('node:fs').writeFileSync(process.argv[1], 'allowed')" "${outside}"`
+    : `printf allowed > '${outside}'`;
+  const written = await manager.execute(writeCommand, root, policy);
   assert.equal(written.code, 0, written.stderr);
   assert.equal(await readFile(outside, 'utf8'), 'allowed');
   const configured = await manager.execute('git config --global --get credential.helper', root, policy);

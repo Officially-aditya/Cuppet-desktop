@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const paths=['src/runtime/context-compiler.mjs','src/runtime/lossless-plan.mjs','src/runtime/tst-client.mjs','src/runtime/candidate-ledger.mjs','src/runtime/background-enricher.mjs','src/runtime/cognitive-state.mjs','src/runtime/service.mjs','src/runtime/commands.mjs','src/preload/preload.cjs','src/renderer/react/App.tsx','src/renderer/react/ChatPane.tsx','src/renderer/react/ModePicker.tsx','src/main/provider-settings.mjs'];
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 expect(text['src/runtime/context-compiler.mjs'].includes('Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)))'),'foreground context budget changed');
