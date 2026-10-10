@@ -568,6 +568,18 @@ function imageMimeFromName(name: string): string | null {
     }
   };
 
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const updateOnline = () => setOnline(navigator.onLine);
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    updateOnline();
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
+
   const messages = session?.messages?.filter((message) => message.role !== 'system') ?? [];
   const runningAssistant = running ? [...messages].reverse().find((message) => message.role === 'assistant') ?? null : null;
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
@@ -585,6 +597,12 @@ function imageMimeFromName(name: string): string | null {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {!online && (
+        <div className="chat-offline-banner" role="status">
+          <strong>No internet</strong>
+          <span>Check your connection. Messages may be interrupted while offline.</span>
+        </div>
+      )}
       {selectionMenu && (
         <div className="chat-selection-menu" role="group" aria-label="Selected text actions"
           style={{ left: selectionMenu.x, top: selectionMenu.y }}

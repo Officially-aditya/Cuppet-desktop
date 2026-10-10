@@ -9,7 +9,9 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
-function fixture(messages = []) {
+function fixture(messages = [], initiallyOnline = true) {
+  const navigator = { onLine: initiallyOnline };
+  const connectionListeners = new Map();
   const states = [], refs = [], effects = [], frames = [], copied = [], sends = [], readers = [];
   let stateIndex = 0, refIndex = 0, tree, selection = null;
   const listeners = new Map();
@@ -28,6 +30,7 @@ function fixture(messages = []) {
   const exports = {};
   vm.runInNewContext(compiled, {
     exports,
+    navigator,
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
@@ -38,7 +41,8 @@ function fixture(messages = []) {
     },
     window: {
       innerWidth: 800, innerHeight: 600, getSelection: () => selection,
-      addEventListener: () => {}, removeEventListener: () => {},
+      addEventListener: (name, listener) => connectionListeners.set(name, listener),
+      removeEventListener: (name) => connectionListeners.delete(name),
       cuppet: { native: { copyText: async (text) => { copied.push(text); } } },
     },
     document: {
@@ -79,6 +83,15 @@ function fixture(messages = []) {
   }
   return {
     props, copied, node, refs, render, nodes, sends, readers,
+    watchConnection() {
+      return effects.find((effect) => effect.toString().includes("updateOnline"))();
+    },
+    setOnline(online) {
+      navigator.onLine = online;
+      connectionListeners.get(online ? 'online' : 'offline')?.();
+      flush();
+    },
+    connectionListeners,
     value: () => textarea().props.value,
     attachmentNames: () => nodes().filter((item) => item.props?.className === 'composer-attachment-name').map((item) => item.props.children),
     attach(files) { nodes().find((item) => item.type === 'input' && item.props.type === 'file').props.onChange({ currentTarget: { files, value: '' } }); },
@@ -115,6 +128,21 @@ function fixture(messages = []) {
     },
   };
 }
+
+test('offline banner tracks connection loss, recovery, and cleans up listeners', () => {
+  const chat = fixture();
+  const banner = () => chat.nodes().find((node) => node.props?.className === 'chat-offline-banner');
+  const cleanup = chat.watchConnection();
+  assert.equal(banner(), undefined);
+  chat.setOnline(false);
+  assert.equal(banner().props.role, 'status');
+  assert.equal(banner().props.children[0].props.children, 'No internet');
+  chat.setOnline(true);
+  assert.equal(banner(), undefined);
+  cleanup();
+  assert.equal(chat.connectionListeners.size, 0);
+  assert.ok(fixture([], false).nodes().some((node) => node.props?.className === 'chat-offline-banner'));
+});
 
 const sent = [
   { id: 'first', role: 'user', content: 'first message' },
