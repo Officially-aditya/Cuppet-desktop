@@ -549,7 +549,7 @@ const BASH_TOOL = tool('bash', 'Run a finite shell command with cwd fixed to the
 const BACKGROUND_PROCESS_TOOL = tool('background_process', 'Start and manage long-lived project processes such as dev servers and watchers without blocking the tool runtime. Use this instead of shell &, nohup, or spawning a detached child from bash.', {
   action: { type: 'string', enum: ['start', 'status', 'logs', 'list', 'stop'] }, command: { type: 'string' }, process_id: { type: 'string' }, label: { type: 'string', maxLength: 120 }, max_bytes: { type: 'integer', minimum: 1024, maximum: MAX_TOOL_OUTPUT },
 }, ['action']);
-const GIT_PUSH_TOOL = tool('git_push', 'Push the exact current HEAD to a configured remote and destination branch through Cuppet’s credential broker. Requires operation-specific approval; force pushes, hooks and repository credential helpers are disabled.', {
+const GIT_PUSH_TOOL = tool('git_push', 'Push the exact current HEAD to a configured remote and destination branch through Cuppet’s credential broker. Full Access skips approval; other modes require operation-specific approval. Force pushes, hooks and repository credential helpers are disabled.', {
   remote: { type: 'string' }, branch: { type: 'string' }, commit: { type: 'string' },
 }, ['remote', 'branch', 'commit']);
 const PACKAGE_DMG_TOOL = tool('package_dmg', 'Create a verified DMG from a project .app using Cuppet’s constrained macOS packaging helper. Source and output must be inside the project; the helper handles only its own image.', {
@@ -568,7 +568,7 @@ function injectToolPolicy(messages, projectBound, mode) {
     'Use the question tool only when a user decision or missing requirement genuinely blocks safe progress; do not ask for facts available from tools or project context.',
     'Do not repeat an identical tst_explore query; narrow or change it when more detail is needed.',
     'For long-lived dev servers, watchers, or other commands intended to keep running, use background_process action=start. Do not emulate backgrounding with shell &, nohup, disown, or a child process that inherits bash stdio.',
-    ['darwin', 'linux'].includes(process.platform) ? 'Builds, tests, package scripts, git staging and commits run inside the project sandbox with dedicated caches/temp storage, including Full Access mode. Use git_push for authenticated pushes; never request credentials in shell. On macOS use package_dmg for disk images instead of host hdiutil commands.' : '',
+    ['darwin', 'linux'].includes(process.platform) ? 'Default and Auto commands run inside the project sandbox with dedicated caches/temp storage. Full Access commands use host permissions and existing Git/SSH configuration. Use git_push for authenticated pushes; Full Access skips push and packaging approval. Never request credentials in shell. On macOS use package_dmg for disk images instead of host hdiutil commands.' : '',
     projectBound ? 'This session is project-bound; workspace tools are available through the runtime permission boundary. Never delete paths outside the active project root.' : 'This is a general chat; filesystem and shell tools are unavailable.',
     mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, and agent side effects are blocked.' : '',
     '</CUPPET_TOOL_POLICY>',

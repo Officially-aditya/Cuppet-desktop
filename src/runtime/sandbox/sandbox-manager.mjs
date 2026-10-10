@@ -68,14 +68,19 @@ export class SandboxManager {
    * @returns {Promise<{ command: string, args: string[], shell: boolean, env: Record<string, string>, driverName: string }>}
    */
   async getSpawnSpec(command, policy, { enabled = true } = {}) {
+    const isFullAccess = Boolean(policy?.fullAccess || policy?.protectSensitiveCredentials === false);
+    if (isFullAccess) {
+      return { command, args: [], shell: true,
+        env: sanitizeEnvironment(process.env, policy?.envOverrides, { fullAccess: true }),
+        driverName: 'host-fallback' };
+    }
     if (this.#platform === 'darwin' || this.#platform === 'linux') {
       if (!enabled || !(await this.isAvailable())) {
         throw new Error(`Protected command execution requires ${this.#platform === 'darwin' ? 'macOS sandbox-exec' : 'bubblewrap (bwrap) on Linux'}. No command was run.`);
       }
       policy = await this.#projectPolicy(policy);
     }
-    const isFullAccess = Boolean(policy?.fullAccess || policy?.protectSensitiveCredentials === false);
-    const env = sanitizeEnvironment(process.env, policy?.envOverrides, { fullAccess: isFullAccess });
+    const env = sanitizeEnvironment(process.env, policy?.envOverrides);
 
     if (!enabled) {
       return { command, args: [], shell: true, env, driverName: 'host-fallback' };
@@ -106,7 +111,7 @@ export class SandboxManager {
       if (await realpath(path) !== resolve(path)) throw new Error('Execution cache directories must not be symlinks.');
     }
     const identity = await gitIdentity(root);
-    // Full Access controls approvals, never host credentials or OS isolation on Unix.
+    // Default and Auto commands use project-scoped caches and credential protection.
     return {
       ...policy, projectRoot: root, fullAccess: false, protectSensitiveCredentials: true,
       protectedPaths: [...this.#protectedPaths, ...(policy.protectedPaths ?? [])],

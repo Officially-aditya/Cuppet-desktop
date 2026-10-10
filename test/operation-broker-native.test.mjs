@@ -32,7 +32,7 @@ test('native sandbox stages and commits with hooks confined; broker exports/impo
   const outside = join(dir, 'outside');
   await writeFile(hook, `#!/bin/sh\nprintf escape > '${outside}'\nprintf ok > "$TMPDIR/hook-proof"\n`);
   await chmod(hook, 0o755);
-  const committed = await sandbox.execute('git add app.txt && git commit -m test', root, { projectRoot: root, fullAccess: true });
+  const committed = await sandbox.execute('git add app.txt && git commit -m test', root, { projectRoot: root });
   assert.equal(committed.code, 0, committed.stderr);
   await assert.rejects(readFile(outside));
   const env = (await sandbox.getSpawnSpec('git status', { projectRoot: root })).env;

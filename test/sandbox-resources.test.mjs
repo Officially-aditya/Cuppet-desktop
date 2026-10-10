@@ -26,7 +26,46 @@ test('Windows keeps unrestricted spawn and Full Access environment without creat
   assert.equal(spec.env.npm_config_cache, undefined);
 });
 
-test('Unix refuses an explicit sandbox bypass instead of falling back to host execution', async () => {
+test('Unix Full Access uses host execution and Git/SSH configuration without requiring sandbox resources', async (t) => {
+  const { dir, root } = await fixture(t);
+  const savedSocket = process.env.SSH_AUTH_SOCK;
+  process.env.SSH_AUTH_SOCK = join(dir, 'test-agent.sock');
+  t.after(() => { if (savedSocket === undefined) delete process.env.SSH_AUTH_SOCK; else process.env.SSH_AUTH_SOCK = savedSocket; });
+  for (const platform of ['darwin', 'linux']) {
+    const manager = new SandboxManager({ platform, cacheRoot: join(dir, 'unused-cache') });
+    manager.isAvailable = async () => { throw new Error('Full Access must not require a sandbox driver'); };
+    const command = 'git status';
+    const spec = await manager.getSpawnSpec(command, { projectRoot: root, fullAccess: true });
+    assert.equal(spec.command, command);
+    assert.deepEqual(spec.args, []);
+    assert.equal(spec.shell, true);
+    assert.equal(spec.driverName, 'host-fallback');
+    assert.equal(spec.env.SSH_AUTH_SOCK, process.env.SSH_AUTH_SOCK);
+    assert.equal(spec.env.GIT_CONFIG_GLOBAL, undefined);
+    assert.equal(spec.env.GIT_CONFIG_COUNT, undefined);
+    assert.equal(spec.env.GIT_ASKPASS, undefined);
+    assert.equal(spec.env.npm_config_userconfig, undefined);
+    await assert.rejects(readFile(join(dir, 'unused-cache')));
+  }
+});
+
+test('Full Access can write outside the project and use an existing Git credential helper', async (t) => {
+  const { dir, root } = await fixture(t);
+  const globalConfig = join(dir, 'gitconfig');
+  await writeFile(globalConfig, '[credential]\n\thelper = full-access-test\n');
+  const outside = join(dir, 'outside.txt');
+  const manager = new SandboxManager({ protectedPaths: [dir] });
+  const policy = { projectRoot: root, fullAccess: true, envOverrides: { GIT_CONFIG_GLOBAL: globalConfig } };
+  const written = await manager.execute(`printf allowed > '${outside}'`, root, policy);
+  assert.equal(written.code, 0, written.stderr);
+  assert.equal(await readFile(outside, 'utf8'), 'allowed');
+  const configured = await manager.execute('git config --global --get credential.helper', root, policy);
+  assert.equal(configured.code, 0, configured.stderr);
+  assert.equal(configured.stdout.trim(), 'full-access-test');
+  assert.equal(configured.driverName, 'host-fallback');
+});
+
+test('Unix Default and Auto refuse an explicit sandbox bypass instead of falling back to host execution', async () => {
   for (const platform of ['darwin', 'linux']) {
     await assert.rejects(new SandboxManager({ platform }).getSpawnSpec('echo unsafe', { projectRoot: '/tmp' }, { enabled: false }), /No command was run/);
   }
@@ -36,7 +75,7 @@ test('Linux exposes selected toolchains instead of all home credentials, grants 
   const { dir, root } = await fixture(t);
   const cache = join(dir, 'cache');
   await mkdir(cache);
-  const { args } = await getLinuxBwrapSpawnSpec('npm test', { projectRoot: root, scratchDirs: [cache], fullAccess: true });
+  const { args } = await getLinuxBwrapSpawnSpec('npm test', { projectRoot: root, scratchDirs: [cache] });
   const homeIndex = args.findIndex((value, i) => value === '--ro-bind' && args[i + 1] === homedir());
   const rootIndex = args.findIndex((value, i) => value === '--bind' && args[i + 1] === root);
   assert.equal(homeIndex, -1);
@@ -47,10 +86,10 @@ test('Linux exposes selected toolchains instead of all home credentials, grants 
   assert.ok(args.some((value, i) => value === '--bind' && args[i + 1] === cache));
 });
 
-test('Mac caches/temp are writable, reused only by this project, and sibling temporary folders remain protected in Full Access', mac, async (t) => {
+test('Mac sandbox caches/temp are writable, reused only by this project, and sibling temporary folders remain protected', mac, async (t) => {
   const { dir, root, cacheRoot } = await fixture(t);
   const manager = new SandboxManager({ cacheRoot });
-  const policy = { projectRoot: root, fullAccess: true };
+  const policy = { projectRoot: root };
   const spec = await manager.getSpawnSpec('npm test', policy);
   assert.equal(spec.env.SSH_AUTH_SOCK, undefined);
   assert.equal(spec.env.GH_TOKEN, undefined);
@@ -79,7 +118,7 @@ test('Mac protects broker storage from agent commands while a fixed broker expor
   await mkdir(job, { recursive: true });
   await writeFile(join(job, 'private'), 'protected');
   const manager = new SandboxManager({ cacheRoot, protectedPaths: [dataDir] });
-  const blocked = await manager.execute(`cat '${job}/private'`, root, { projectRoot: root, fullAccess: true });
+  const blocked = await manager.execute(`cat '${job}/private'`, root, { projectRoot: root });
   assert.notEqual(blocked.code, 0);
   const exportResult = await manager.execute(`printf export > '${job}/export'`, root, { projectRoot: root, scratchDirs: [job], brokerJobDirs: [job] });
   assert.equal(exportResult.code, 0, exportResult.stderr);

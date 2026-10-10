@@ -134,11 +134,10 @@ test('SandboxManager blocks network connections when offline is true', async (t)
   await rm(dir, { recursive: true, force: true });
 });
 
-test('Full Access retains workspace write limits and credential protection on macOS', async () => {
+test('Default macOS profile retains workspace write limits and credential protection', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-sandbox-full-'));
   const profile = await buildMacSeatbeltProfile({
     projectRoot: dir,
-    fullAccess: true,
   });
 
   assert.match(profile, /\(allow default\)/);

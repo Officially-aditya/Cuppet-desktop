@@ -107,7 +107,7 @@ test('plan mode remains read-only even when full access is selected', async () =
 
 
 
-test('macOS Full access shell blocks indirect writes and deletion outside the project at the syscall boundary', { skip: process.platform !== 'darwin' }, async () => {
+test('macOS sandbox blocks indirect writes and deletion outside the project at the syscall boundary', { skip: process.platform !== 'darwin' }, async () => {
   const { dir, root, outside } = await fixture();
   const outsideFile = join(outside, 'secret.txt');
   const insideFile = join(root, 'src', 'tmp', 'inside.txt');
@@ -120,7 +120,7 @@ test('macOS Full access shell blocks indirect writes and deletion outside the pr
       root,
       10_000,
       undefined,
-      { fullAccess: true },
+      { fullAccess: false },
     );
     assert.notEqual(outsideWrite.code, 0, 'outside-project write unexpectedly succeeded');
 
@@ -129,7 +129,7 @@ test('macOS Full access shell blocks indirect writes and deletion outside the pr
       root,
       10_000,
       undefined,
-      { fullAccess: true },
+      { fullAccess: false },
     );
     assert.notEqual(outsideDelete.code, 0, 'outside-project unlink unexpectedly succeeded');
     assert.equal(await readFile(outsideFile, 'utf8'), 'outside\n');
@@ -139,7 +139,7 @@ test('macOS Full access shell blocks indirect writes and deletion outside the pr
       root,
       10_000,
       undefined,
-      { fullAccess: true },
+      { fullAccess: false },
     );
     assert.notEqual(symlinkDelete.code, 0, 'symlink escape unlink unexpectedly succeeded');
     assert.equal(await readFile(outsideFile, 'utf8'), 'outside\n');
@@ -149,7 +149,7 @@ test('macOS Full access shell blocks indirect writes and deletion outside the pr
       root,
       10_000,
       undefined,
-      { fullAccess: true },
+      { fullAccess: false },
     );
     assert.equal(insideDelete.code, 0, insideDelete.stderr);
     await assert.rejects(readFile(insideFile, 'utf8'));
