@@ -10,6 +10,10 @@ test('provider settings apply changes immediately and expose Reset instead of Sa
   assert.doesNotMatch(source, />Cancel<\/button><button type="submit"[^>]*>Save<\/button>/);
   assert.doesNotMatch(source, /const save = async \(event: React\.FormEvent\)/);
   assert.match(source, /resolveDefault: true/);
+  const activation = source.slice(source.indexOf('const activateProvider'), source.indexOf('const persistApiKey'));
+  const connection = source.slice(source.indexOf('const connectLocalCli'), source.indexOf('const activateProvider'));
+  assert.doesNotMatch(activation, /resolveDefault/);
+  assert.doesNotMatch(connection, /resolveDefault/);
   assert.doesNotMatch(source, /Save \${providerLabel} first/);
 });
 

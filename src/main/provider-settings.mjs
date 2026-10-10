@@ -35,6 +35,7 @@ export class ProviderSettingsStore {
   #primaryEffort = '';
   #secondaryAuto = true;
   #customModels = {};
+  #providerStates = Object.create(null);
 
   constructor(path, { safeStorageImpl = safeStorage, credentialStorageStatusImpl = credentialStorageStatus } = {}) {
     this.#path = path;
@@ -50,12 +51,28 @@ export class ProviderSettingsStore {
       this.#primaryEffort = effortID(parsed.primaryEffort);
       this.#secondaryAuto = parsed.secondaryAuto !== false;
       this.#customModels = normalizeCustomModelRegistry(parsed.customModels);
+      this.#providerStates = Object.create(null);
+      const states = parsed.providerStates && typeof parsed.providerStates === 'object' && !Array.isArray(parsed.providerStates)
+        ? parsed.providerStates : {};
+      for (const [providerID, state] of Object.entries(states)) {
+        if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+        this.#providerStates[providerID] = {
+          ...serializableProviderConfiguration({ ...state, providerID }),
+          primaryEffort: effortID(state.primaryEffort),
+          secondaryAuto: state.secondaryAuto !== false,
+        };
+      }
+      // Seed the active state when loading settings written before per-provider persistence.
+      this.#providerStates[this.#value.providerID] = {
+        ...this.#value, primaryEffort: this.#primaryEffort, secondaryAuto: this.#secondaryAuto,
+      };
     } catch {
       this.#value = structuredClone(DEFAULTS);
       this.#encryptedApiKey = undefined;
       this.#primaryEffort = '';
       this.#secondaryAuto = true;
       this.#customModels = {};
+      this.#providerStates = Object.create(null);
     }
   }
 
@@ -114,17 +131,19 @@ export class ProviderSettingsStore {
     const providerID = preset?.id ?? requestedProviderID;
     const previousProviderID = this.#value.providerID;
     const providerChanged = Boolean(previousProviderID && previousProviderID !== providerID);
-    const baseUrl = preset?.baseUrl ?? (typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '');
+    const savedState = providerChanged ? this.#providerStates[providerID] : {
+      ...this.#value, primaryEffort: this.#primaryEffort, secondaryAuto: this.#secondaryAuto,
+    };
+    const current = savedState ?? DEFAULTS;
+    const baseUrl = preset?.baseUrl ?? (typeof source.baseUrl === 'string' ? source.baseUrl.trim() : savedState?.baseUrl || '');
     const requestedModel = modelID(source.model);
     const requestedBackgroundModel = modelID(source.backgroundModel);
-    const currentPrimaryModel = !providerChanged ? modelID(this.#value.primary?.modelID ?? this.#value.model) : '';
-    const currentSecondaryModel = !providerChanged ? modelID(this.#value.secondary?.modelID ?? this.#value.backgroundModel) : '';
-    // Provider presets own endpoint/auth defaults, but the active model is user-selectable.
-    // When the provider itself changes, fall back to that provider's preset model instead of
-    // accidentally carrying a model id across providers.
+    const currentPrimaryModel = modelID(current.primary?.modelID ?? current.model);
+    const currentSecondaryModel = modelID(current.secondary?.modelID ?? current.backgroundModel);
+    // Reuse this provider's choices; presets supply defaults only on its first selection.
     const model = requestedModel || currentPrimaryModel || modelID(preset?.model);
     const secondaryAutoProvided = Object.prototype.hasOwnProperty.call(source, 'secondaryAuto');
-    const secondaryAuto = providerChanged ? true : secondaryAutoProvided ? source.secondaryAuto !== false : this.#secondaryAuto;
+    const secondaryAuto = secondaryAutoProvided ? source.secondaryAuto !== false : savedState?.secondaryAuto !== false;
     const backgroundModel = secondaryAuto
       ? autoSecondaryModel(preset, model)
       : requestedBackgroundModel || currentSecondaryModel || model;
@@ -134,10 +153,13 @@ export class ProviderSettingsStore {
     const persistentEffortProvider = providerID === 'codex' || localCliProvider;
     const primaryEffortProvided = Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
     const persistedPrimaryEffort = persistentEffortProvider
-      ? (primaryEffortProvided ? effortID(source.primaryEffort) : (!providerChanged ? this.#primaryEffort : ''))
+      ? (primaryEffortProvided ? effortID(source.primaryEffort) : savedState?.primaryEffort || '')
       : '';
-    const primaryEffort = preset ? '' : (typeof source.primaryEffort === 'string' ? source.primaryEffort.trim() : '');
-    const secondaryEffort = secondaryAuto ? '' : preset ? '' : (typeof source.secondaryEffort === 'string' ? source.secondaryEffort.trim() : '');
+    const primaryEffort = preset ? '' : primaryEffortProvided
+      ? effortID(source.primaryEffort) : model === currentPrimaryModel ? current.primary?.variant || '' : '';
+    const secondaryEffortProvided = Object.prototype.hasOwnProperty.call(source, 'secondaryEffort');
+    const secondaryEffort = secondaryAuto || preset ? '' : secondaryEffortProvided
+      ? effortID(source.secondaryEffort) : backgroundModel === currentSecondaryModel ? current.secondary?.variant || '' : '';
 
     if (!baseUrl) throw new Error('Provider base URL is required');
     if (!externalCredentialProvider) {
@@ -148,7 +170,8 @@ export class ProviderSettingsStore {
     if (!model) throw new Error('Primary model is required');
 
     let next = normalizeProviderConfiguration({
-      ...this.#value,
+      ...current,
+      primaryEffort: '',
       providerID,
       baseUrl: externalCredentialProvider ? baseUrl : baseUrl.replace(/\/+$/, ''),
       model,
@@ -207,11 +230,15 @@ export class ProviderSettingsStore {
   }
 
   async #persist() {
+    this.#providerStates[this.#value.providerID] = {
+      ...this.#value, primaryEffort: this.#primaryEffort, secondaryAuto: this.#secondaryAuto,
+    };
     await writeSettingsAtomically(this.#path, `${JSON.stringify({
       ...this.#value,
       ...(this.#primaryEffort ? { primaryEffort: this.#primaryEffort } : {}),
       secondaryAuto: this.#secondaryAuto,
       customModels: this.#customModels,
+      providerStates: this.#providerStates,
       apiKey: this.#encryptedApiKey,
     }, null, 2)}\n`);
   }

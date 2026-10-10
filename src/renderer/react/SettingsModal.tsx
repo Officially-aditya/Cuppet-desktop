@@ -184,7 +184,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
       const linked = await window.cuppet.cliAgents.connect(providerID);
       setCliStatus(linked);
       if (!(linked.connected ?? linked.available)) throw new Error(linked.message || `${selected.label || selected.id} did not finish connecting.`);
-      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '', resolveDefault: true });
+      const saved = await window.cuppet.settings.save({ providerID: selected.id, apiKey: '' });
       setCurrent(saved);
       setApiKey('');
       const projected = { ...saved, credentialConfigured: true, configured: Boolean(saved.primary?.modelID) };
@@ -207,7 +207,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     if (!nextProviderID) return;
     setBusy(true);
     try {
-      const saved = await window.cuppet.settings.save({ providerID: nextProviderID, apiKey: '', resolveDefault: true });
+      const saved = await window.cuppet.settings.save({ providerID: nextProviderID, apiKey: '' });
       setCurrent(saved);
       onSaved(saved);
       providerSettingsCommitted();
