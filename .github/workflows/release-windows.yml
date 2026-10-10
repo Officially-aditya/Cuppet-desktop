@@ -93,7 +93,7 @@ jobs:
             cat "$RUNNER_TEMP/windows-provider-tests.log"
           else
             cat "$RUNNER_TEMP/windows-provider-tests.log"
-            release_test_failure="$(awk '/^not ok/{remaining=32} remaining>0{print;remaining--}' "$RUNNER_TEMP/windows-provider-tests.log")"
+            release_test_failure="$(awk '/^[[:space:]]*not ok/{remaining=32} remaining>0{print;remaining--}' "$RUNNER_TEMP/windows-provider-tests.log")"
             release_test_failure="${release_test_failure//%/%25}"
             release_test_failure="${release_test_failure//$'\r'/%0D}"
             release_test_failure="${release_test_failure//$'\n'/%0A}"
