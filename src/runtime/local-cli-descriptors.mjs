@@ -1,3 +1,5 @@
+import { resolveCopilotAcpRuntime } from './copilot-acp-runtime.mjs';
+
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
@@ -37,6 +39,7 @@ const DESCRIPTORS = Object.freeze({
   'github-copilot': descriptor({
     id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--disable-builtin-mcps'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
     loginHint: 'Run `copilot` in Terminal once and complete GitHub sign-in, then retry.',
+    resolveRuntime: resolveCopilotAcpRuntime,
     // Copilot ACP can frame ordinary assistant text as extremely small chunks with
     // transport whitespace around each fragment. It can also emit pre-tool planning
     // through agent_message_chunk rather than agent_thought_chunk. Reassemble framing

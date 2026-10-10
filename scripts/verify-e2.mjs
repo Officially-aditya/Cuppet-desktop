@@ -41,7 +41,7 @@ assert.match(settings, /Continue with ChatGPT/);
 assert.match(settings, /window\.cuppet\.codexAuth\.login\(\)/, 'React settings surface does not start Codex-owned OAuth');
 assert.match(settings, /window\.cuppet\.codexAuth\.logout\(\)/, 'React settings surface does not expose Codex sign-out');
 assert.match(settings, /if \(!selected \|\| isCodex \|\| isLocalCli \|\| !value \|\| busy\) return;/, 'React settings surface allows API-key persistence for an externally authenticated provider');
-assert.match(settings, /window\.cuppet\.settings\.save\(\{ providerID: selected\.id, apiKey: '', resolveDefault: true \}\)/, 'local CLI connection does not explicitly clear renderer-supplied API keys');
+assert.match(settings, /window\.cuppet\.settings\.save\(\{ providerID: selected\.id, apiKey: '' \}\)/, 'local CLI connection does not explicitly clear renderer-supplied API keys');
 assert.match(providerSettingsHost, /apiKey:\s*\['chatgpt', 'local-cli'\]\.includes\(selectedPreset\?\.authType\) \? '' : this\.#decryptApiKey\(\)/, 'host runtime can expose a Cuppet-owned API key to externally authenticated providers');
 assert.match(providerSettingsHost, /if \(externalCredentialProvider \|\| source\.clearApiKey === true/, 'host settings do not clear stored API keys for externally authenticated providers');
 assert.match(settings, /isCodex\s*\?\s*\(/, 'React provider form does not branch to the Codex subscription surface');

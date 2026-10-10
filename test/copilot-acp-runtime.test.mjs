@@ -65,7 +65,7 @@ test('VS Code extension runtime is reused for Install, Connect and chat without 
   const runtime = new AcpSessionRuntime({
     descriptor: localCliDescriptor('github-copilot'),
     configuration: { primary: { modelID: 'provider/model-b' }, primaryEffort: 'max' },
-    resolveCopilotRuntimeImpl: (configuration) => resolveCopilotAcpRuntime(configuration, options),
+    resolveRuntimeImpl: (configuration) => resolveCopilotAcpRuntime(configuration, options),
   });
   try {
     await runtime.start();
@@ -146,7 +146,7 @@ test('an unstarted Copilot session can be closed without spawning discovery', as
   let calls = 0;
   const runtime = new AcpSessionRuntime({
     descriptor: localCliDescriptor('github-copilot'),
-    resolveCopilotRuntimeImpl: async () => { calls += 1; return null; },
+    resolveRuntimeImpl: async () => { calls += 1; return null; },
   });
   await runtime.close();
   assert.equal(calls, 0);
@@ -155,7 +155,7 @@ test('an unstarted Copilot session can be closed without spawning discovery', as
 
 test('missing Copilot runtime reports reconnect and closes safely', async () => {
   const runtime = new AcpSessionRuntime({
-    descriptor: localCliDescriptor('github-copilot'), resolveCopilotRuntimeImpl: async () => null,
+    descriptor: localCliDescriptor('github-copilot'), resolveRuntimeImpl: async () => null,
   });
   await assert.rejects(() => runtime.start(), { code: 'PROVIDER_EXECUTABLE_MISSING' });
   await runtime.close();

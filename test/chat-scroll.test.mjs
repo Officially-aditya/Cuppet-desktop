@@ -23,6 +23,7 @@ function fixture() {
   };
   vm.runInNewContext(compiled, {
     exports,
+    navigator: { onLine: true },
     require: (name) => {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null };

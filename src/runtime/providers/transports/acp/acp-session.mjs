@@ -4,7 +4,6 @@ import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-c
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
 import { providerFailureError, providerFailureMetadata } from '../../provider-failure.mjs';
-import { resolveCopilotAcpRuntime } from '../../../copilot-acp-runtime.mjs';
 import { AcpProcess } from './acp-process.mjs';
 import { AcpRpcChannel } from './acp-rpc.mjs';
 import { AcpHostBridge } from './acp-host-bridge.mjs';
@@ -35,7 +34,7 @@ export class AcpSessionRuntime {
   #rpc;
   #hostBridge;
   #environment;
-  #resolveCopilotRuntime;
+  #resolveRuntime;
   #initialized = null;
   #session = null;
   #capabilities = null;
@@ -47,7 +46,7 @@ export class AcpSessionRuntime {
   #startupTimeoutMs;
   #authenticationTimeoutMs;
 
-  constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {}, resolveCopilotRuntimeImpl = resolveCopilotAcpRuntime }) {
+  constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {}, resolveRuntimeImpl = descriptor?.resolveRuntime }) {
     this.#descriptor = descriptor;
     this.#configuration = configuration;
     this.#inactivityTimeoutMs = positiveMs(liveness.inactivityMs, DEFAULT_INACTIVITY_TIMEOUT_MS);
@@ -56,10 +55,10 @@ export class AcpSessionRuntime {
     this.#authenticationTimeoutMs = positiveMs(liveness.authenticationMs, AUTHENTICATION_TIMEOUT_MS);
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
     this.#environment = providerEnvironment(descriptor, configuration);
-    this.#resolveCopilotRuntime = resolveCopilotRuntimeImpl;
+    this.#resolveRuntime = resolveRuntimeImpl;
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
-    if (descriptor.id !== 'github-copilot' || requestedCommand !== 'copilot' || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride])) {
+    if (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride])) {
       this.#startProcess(resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment }));
     }
   }
@@ -94,9 +93,9 @@ export class AcpSessionRuntime {
     this.#state = 'starting';
     try {
       if (!this.#rpc) {
-        const installation = await this.#resolveCopilotRuntime(this.#configuration, { environment: this.#environment });
+        const installation = await this.#resolveRuntime(this.#configuration, { environment: this.#environment });
         if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
-        if (!installation) throw providerFailureError('No usable GitHub Copilot ACP runtime was found. Reconnect to install the missing runtime.', {
+        if (!installation) throw providerFailureError(`No usable ${this.#descriptor.label} ACP runtime was found. Reconnect to install the missing runtime.`, {
           code: 'PROVIDER_EXECUTABLE_MISSING', category: 'executable_missing', retryable: false, action: 'reconnect_provider',
         });
         this.#startProcess(installation.command);
