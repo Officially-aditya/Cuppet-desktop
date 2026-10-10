@@ -21,7 +21,7 @@ const INSTALLED_CLI_MARKER = '__CUPPET_INSTALLED_CLI__=';
 
 const WINDOWS_CLAUDE_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
-$npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop).Source
+$npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 & $npm install -g @agentclientprotocol/claude-agent-acp
 if ($LASTEXITCODE -ne 0) { & $npm install -g @agentclientprotocol/claude-agent-acp --force }
 if ($LASTEXITCODE -ne 0) { throw 'Claude Code ACP npm installation failed.' }
@@ -34,7 +34,7 @@ Write-Output "__CUPPET_INSTALLED_CLI__=$cli"
 
 const WINDOWS_COPILOT_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
-$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue
+$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($npm) {
   & $npm.Source install -g @github/copilot --ignore-scripts=false
   if ($LASTEXITCODE -ne 0) { throw 'GitHub Copilot npm installation failed.' }
@@ -52,7 +52,7 @@ if ($npm) {
 const WINDOWS_OPENCODE_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
 $cli = $null
-$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue
+$npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($npm) {
   & $npm.Source install -g opencode-ai
   if ($LASTEXITCODE -ne 0) { & $npm.Source install -g opencode-ai --force }
