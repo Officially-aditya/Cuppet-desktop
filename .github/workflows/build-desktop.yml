@@ -39,7 +39,7 @@ jobs:
       run:
         shell: bash
     env:
-      BROWSERCONTROL_SOURCE_REVISION: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+      BROWSERCONTROL_SOURCE_REVISION: 9586272ee9b56d11057ce38177e0b9c92114e478
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v6
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: Officially-aditya/browserControl
-          ref: 7079b761ccd3814e6eeeccf4f6dd4f97fd3598a8
+          ref: 9586272ee9b56d11057ce38177e0b9c92114e478
           path: .release/browsercontrol
           persist-credentials: false
 
