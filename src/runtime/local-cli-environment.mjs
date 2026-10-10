@@ -82,7 +82,9 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
     : [''];
 
   for (const directory of pathEntries) {
-    const pathJoin = platform === 'win32' ? win32Path.join : posixPath.join;
+    const pathJoin = process.platform === 'win32'
+      ? win32Path.join
+      : (directory.startsWith('/') ? posixPath.join : win32Path.join);
     for (const extension of extensions) {
       const fileName = platform === 'win32' && !value.toLowerCase().endsWith(extension.toLowerCase())
         ? `${value}${extension}`
@@ -91,7 +93,15 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
       try {
         accessSync(candidate, platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
         return candidate;
-      } catch {}
+      } catch {
+        if (platform === 'win32' && process.platform !== 'win32' && extension) {
+          try {
+            const lowerCandidate = pathJoin(directory, `${value}${extension.toLowerCase()}`);
+            accessSync(lowerCandidate, fsConstants.F_OK);
+            return lowerCandidate;
+          } catch {}
+        }
+      }
     }
   }
   return value;
