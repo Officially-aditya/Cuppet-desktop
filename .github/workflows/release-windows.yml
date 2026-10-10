@@ -86,7 +86,20 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Verify Windows OpenCode setup and ACP
-        run: node --test test/project-terminal-manager.test.mjs test/windows-local-cli.test.mjs test/opencode-setup.test.mjs test/provider-version-policy.test.mjs test/local-provider-version-check.test.mjs test/opencode-auth-status.test.mjs test/opencode-provider.test.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node --test test/project-terminal-manager.test.mjs test/windows-local-cli.test.mjs test/opencode-setup.test.mjs test/provider-version-policy.test.mjs test/local-provider-version-check.test.mjs test/opencode-auth-status.test.mjs test/opencode-provider.test.mjs > "$RUNNER_TEMP/windows-provider-tests.log" 2>&1; then
+            cat "$RUNNER_TEMP/windows-provider-tests.log"
+          else
+            cat "$RUNNER_TEMP/windows-provider-tests.log"
+            release_test_failure="$(awk '/^not ok/{remaining=32} remaining>0{print;remaining--}' "$RUNNER_TEMP/windows-provider-tests.log")"
+            release_test_failure="${release_test_failure//%/%25}"
+            release_test_failure="${release_test_failure//$'\r'/%0D}"
+            release_test_failure="${release_test_failure//$'\n'/%0A}"
+            printf '::error::%s\n' "$release_test_failure"
+            exit 1
+          fi
 
       - name: Build unsigned Windows release
         run: npm run release:win
