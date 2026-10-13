@@ -182,7 +182,7 @@ export class ToolRuntime {
       case 'workspace_write': return this.#mutating(projectRoot, () => this.#write(projectRoot, args, authorize));
       case 'bash': return this.#bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId);
       case 'background_process': return this.#backgroundProcess(projectRoot, args, authorize, signal, sessionId);
-      case 'git_push': return this.#operations.gitPush({ projectRoot, remote: args.remote, branch: args.branch, commit: args.commit, authorize, signal });
+      case 'git_push': return this.#operations.gitPush({ projectRoot, repositoryPath: args.repository_path, remote: args.remote, branch: args.branch, commit: args.commit, authorize, signal });
       case 'package_dmg': return this.#mutating(projectRoot, () => this.#operations.packageDmg({ projectRoot, source: args.source, output: args.output, authorize, signal }));
       default: throw new Error(`Unknown tool: ${name}`);
     }
@@ -549,7 +549,8 @@ const BASH_TOOL = tool('bash', 'Run a finite shell command with cwd fixed to the
 const BACKGROUND_PROCESS_TOOL = tool('background_process', 'Start and manage long-lived project processes such as dev servers and watchers without blocking the tool runtime. Use this instead of shell &, nohup, or spawning a detached child from bash.', {
   action: { type: 'string', enum: ['start', 'status', 'logs', 'list', 'stop'] }, command: { type: 'string' }, process_id: { type: 'string' }, label: { type: 'string', maxLength: 120 }, max_bytes: { type: 'integer', minimum: 1024, maximum: MAX_TOOL_OUTPUT },
 }, ['action']);
-const GIT_PUSH_TOOL = tool('git_push', 'Push the exact current HEAD to a configured remote and destination branch through Cuppet’s credential broker. Full Access skips approval; other modes require operation-specific approval. Force pushes, hooks and repository credential helpers are disabled.', {
+const GIT_PUSH_TOOL = tool('git_push', 'Push the exact current HEAD to a configured remote and destination branch through Cuppet’s credential broker, then verify the remote commit. For a nested repository, set repository_path to its directory or a subdirectory inside the workspace. Full Access skips approval; other modes require operation-specific approval. Force pushes, hooks and repository credential helpers are disabled.', {
+  repository_path: { type: 'string', description: 'Repository directory or a directory inside it, relative to the workspace. Defaults to "."; Git resolves the repository root.' },
   remote: { type: 'string' }, branch: { type: 'string' }, commit: { type: 'string' },
 }, ['remote', 'branch', 'commit']);
 const PACKAGE_DMG_TOOL = tool('package_dmg', 'Create a verified DMG from a project .app using Cuppet’s constrained macOS packaging helper. Source and output must be inside the project; the helper handles only its own image.', {

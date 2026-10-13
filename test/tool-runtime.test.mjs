@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
@@ -38,6 +38,34 @@ function scriptedAdapter(steps) {
     },
   };
 }
+
+test('git_push exposes and forwards a nested repository path to repository-bound approval', { skip: !['darwin', 'linux'].includes(process.platform) }, async () => {
+  const { dir, root, db, broker } = await fixture();
+  try {
+    await mkdir(join(root, 'packages', 'app', 'src'), { recursive: true });
+    const repositoryRoot = await realpath(join(root, 'packages', 'app'));
+    const commit = 'a'.repeat(40);
+    let request;
+    const toolRuntime = new ToolRuntime({
+      tst: { configured: false }, planStore: { async toolResult() { return null; } }, db, dataDir: dir,
+      permissions: { async authorize(value) { request = value; throw new Error('Test approval blocked'); } },
+      sandboxManager: { async execute(command) {
+        assert.doesNotMatch(command, /'bundle'/);
+        return { code: 0, stdout: command.includes("'--show-toplevel'") ? repositoryRoot : command.includes("'rev-parse'") ? commit : 'https://github.com/example/project.git' };
+      } },
+    });
+    const definition = toolRuntime.definitions({ projectRoot: root }).find((tool) => tool.function.name === 'git_push');
+    assert.equal(definition.function.parameters.properties.repository_path.type, 'string');
+    assert.equal(definition.function.parameters.required.includes('repository_path'), false);
+    const adapter = scriptedAdapter([
+      { toolCalls: [{ id: 'call_push', name: 'git_push', arguments: JSON.stringify({ repository_path: 'packages/app/src', remote: 'origin', branch: 'main', commit }) }] },
+      { assertMessages(messages) { assert.match(messages.at(-1).content, /Test approval blocked/); } },
+    ]);
+    await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'push the nested repository' }], sessionId: 's1', projectId: 'p1', projectRoot: root, mode: 'build', signal: new AbortController().signal, onDelta: async () => {} });
+    assert.equal(request.projectRoot, root);
+    assert.deepEqual(request.resources, [repositoryRoot, 'origin', 'https://github.com/example/project.git', 'main', commit]);
+  } finally { broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
 
 test('workspace write executes under guarded auto, persists audit, and reports PE3 mutation paths', async () => {
   const { dir, root, db, broker, toolRuntime } = await fixture();

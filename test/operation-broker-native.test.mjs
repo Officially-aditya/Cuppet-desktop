@@ -22,8 +22,11 @@ async function fixture(t) {
   return { dir, root, dataDir, sandbox };
 }
 
-test('native sandbox stages and commits with hooks confined; broker exports/imports/pushes exact commit without source hooks', unix, async (t) => {
-  const { dir, root, dataDir, sandbox } = await fixture(t);
+for (const repositoryPath of ['.', 'packages/app/src']) {
+test(`native sandbox stages and commits with hooks confined; broker pushes and verifies exact commit without source hooks (${repositoryPath})`, unix, async (t) => {
+  const { dir, root: workspaceRoot, dataDir, sandbox } = await fixture(t);
+  const root = repositoryPath === '.' ? workspaceRoot : join(workspaceRoot, 'packages', 'app');
+  await mkdir(join(root, 'src'), { recursive: true });
   await exec('/usr/bin/git', ['init', root]);
   await exec('/usr/bin/git', ['-C', root, 'config', 'user.name', 'Cuppet Test']);
   await exec('/usr/bin/git', ['-C', root, 'config', 'user.email', 'test@example.com']);
@@ -47,18 +50,20 @@ test('native sandbox stages and commits with hooks confined; broker exports/impo
   await chmod(join(root, '.git', 'hooks', 'pre-push'), 0o755);
   const broker = new OperationBroker({ sandbox, dataDir, hostRunner: async (command, args, cwd, hostEnv, signal) => {
     if (args.includes('config')) { const error = new Error('No test credentials'); error.code = 1; throw error; }
-    if (args.includes('push')) {
+    if (args.includes('push') || args.includes('ls-remote')) {
       assert.equal(args.at(-2), 'https://github.com/example/broker-test.git');
       args = [...args.slice(0, -2), target, args.at(-1)]; // Local fixture avoids any network/authentication.
     }
     return exec(command, args, { cwd, env: hostEnv, signal });
   } });
-  await broker.gitPush({ projectRoot: root, remote: 'origin', branch: 'main', commit, authorize: async () => {} });
+  const result = await broker.gitPush({ projectRoot: workspaceRoot, repositoryPath, remote: 'origin', branch: 'main', commit, authorize: async () => {} });
+  assert.match(result.output, /verified the remote commit/);
   const pushed = await exec('/usr/bin/git', ['--git-dir', target, 'rev-parse', 'refs/heads/main']);
   assert.equal(pushed.stdout.trim(), commit);
   assert.equal((await exec('/usr/bin/git', ['-C', root, 'rev-parse', 'refs/remotes/origin/main'])).stdout.trim(), commit);
   await assert.rejects(readFile(outside));
 });
+}
 
 test('native DMG helper creates and verifies its private image, then writes it into the project', mac, async (t) => {
   const { root, dataDir, sandbox } = await fixture(t);

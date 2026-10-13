@@ -21,13 +21,16 @@ export class OperationBroker {
     this.#host = hostRunner;
   }
 
-  async gitPush({ projectRoot, remote = 'origin', branch, commit, authorize, signal }) {
+  async gitPush({ projectRoot, repositoryPath = '.', remote = 'origin', branch, commit, authorize, signal }) {
     this.#requireUnix();
-    const root = await realpath(projectRoot);
-    await this.#requirePrivateStorage(root);
+    const workspaceRoot = await realpath(projectRoot);
+    await this.#requirePrivateStorage(workspaceRoot);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(remote)) throw new Error('A configured remote name is required.');
     if (!validBranch(branch)) throw new Error('A valid destination branch is required.');
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit ?? '')) throw new Error('Supply the full commit hash to push.');
+    const directory = await workspacePath(workspaceRoot, repositoryPath, true);
+    const root = await realpath(await this.#git(directory, ['rev-parse', '--show-toplevel'], signal));
+    if (!inside(workspaceRoot, root)) throw new Error('Git repository root must stay inside the active project.');
     const head = await this.#git(root, ['rev-parse', '--verify', 'HEAD'], signal);
     if (head !== commit) throw new Error('git_push only pushes the exact current HEAD commit.');
     const urls = (await this.#git(root, ['remote', 'get-url', '--push', '--all', remote], signal)).split('\n');
@@ -55,20 +58,22 @@ export class OperationBroker {
 
       // Read only trusted user credential configuration, outside the source repo.
       // Global URL rewrites and repository-configured helpers cannot redirect push.
-      const helpers = await credentialHelpers(url, job, signal, this.#host, root);
+      const helpers = await credentialHelpers(url, job, signal, this.#host, workspaceRoot);
       const auth = hostEnvironment(true);
       const args = [...GIT_OPTIONS, '-C', repo, '-c', 'http.followRedirects=false', '-c', 'credential.helper=',
-        ...helpers.flatMap((helper) => ['-c', `credential.helper=${helper}`]),
-        'push', '--porcelain', '--no-verify',
-        '--no-follow-tags', '--recurse-submodules=no', url, `${commit}:refs/heads/${branch}`];
-      const result = await this.#host(GIT, args, job, auth, signal);
+        ...helpers.flatMap((helper) => ['-c', `credential.helper=${helper}`])];
+      const ref = `refs/heads/${branch}`;
+      const result = await this.#host(GIT, [...args, 'push', '--porcelain', '--no-verify',
+        '--no-follow-tags', '--recurse-submodules=no', url, `${commit}:${ref}`], job, auth, signal);
+      const verified = await this.#host(GIT, [...args, 'ls-remote', '--exit-code', '--refs', url, ref], job, auth, signal);
+      if (verified.stdout.trim() !== `${commit}\t${ref}`) throw new Error(`Remote commit verification failed after push: ${remote}/${branch} does not point to ${commit}.`);
       let trackingWarning = '';
       try {
         await this.#git(root, ['update-ref', `refs/remotes/${remote}/${branch}`, commit], signal);
       } catch {
         trackingWarning = '\nPush succeeded, but the local tracking ref could not be updated; refresh the repository from its remote.';
       }
-      return { output: `Pushed ${commit} to ${remote}/${branch}.\n${result.stdout.trim()}${trackingWarning}`, paths: [], mutation: false };
+      return { output: `Pushed ${commit} to ${remote}/${branch} and verified the remote commit.\n${result.stdout.trim()}${trackingWarning}`, paths: [], mutation: false };
     });
   }
 

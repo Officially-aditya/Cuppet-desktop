@@ -6,7 +6,9 @@ Git staging and commits use the same sandbox, including hooks and subprocesses. 
 
 ## Authenticated push
 
-Use `git_push` with a configured remote name, destination branch and full current HEAD hash. Approval is bound to the canonical project, resolved remote URL, branch and commit. Auto and Full Access still require this approval. An exact approval can be remembered for that operation; another commit, branch or URL requires another approval. Plan mode blocks push.
+Use `git_push` with a configured remote name, destination branch and full current HEAD hash. Approval is bound to the canonical repository root, resolved remote URL, branch and commit. Auto and Full Access still require this approval. An exact approval can be remembered for that operation; another commit, branch or URL requires another approval. Plan mode blocks push.
+
+For repositories nested inside the workspace, set the optional `repository_path` to the repository directory or a directory inside it (for example, `packages/app/src`). It defaults to `.`. The broker resolves the actual root with `git rev-parse --show-toplevel` and requires it to remain inside the workspace, including through symlinks. After pushing, it checks the destination branch with `git ls-remote` using the same remote URL and credentials. It reports success and updates the local tracking ref only when the remote commit matches the approved commit.
 
 The sandbox exports a Git bundle. The broker verifies its advertised HEAD, imports it into a private bare repository outside the project, and pushes only the approved commit/ref. Repository hooks, repository credential helpers, global URL rewrites, redirects, force pushes and recursive submodule pushes are disabled. Credentials remain in the broker's host process. HTTPS uses a standard user-configured Git credential helper: osxkeychain, libsecret, manager, manager-core, cache or store. Custom shell helpers are rejected. SSH uses the agent or default keys in batch mode, with SSH configuration overrides disabled; use a real hostname rather than an SSH alias.
 
