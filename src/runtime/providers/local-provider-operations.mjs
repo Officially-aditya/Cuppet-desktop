@@ -230,7 +230,7 @@ export function localProviderOperations(providerID, {
     let authentication = null;
     try {
       if (descriptor.id === 'opencode') {
-        authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl });
+        authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl, version: detected.version });
         providerReady = authentication.connected === true;
       } else {
         providerReady = await probeConnection(descriptor, detected.installation.executable, runImpl);
@@ -373,6 +373,8 @@ function statusProjection(descriptor, state, platform) {
           : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
+        : descriptor.id === 'opencode' && state.probeError
+          ? `OpenCode is installed, but its authentication check failed: ${state.probeError} Refresh or reconnect to retry.`
         : descriptor.id === 'opencode' && state.authentication?.connected === false
           ? 'OpenCode is installed, but no authenticated provider credentials were found. Run `opencode auth login` in Terminal, then refresh or reconnect.'
           : `${descriptor.label} is installed. Connect once and Cuppet will open the provider's official sign-in flow.`,

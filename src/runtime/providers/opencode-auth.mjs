@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { localCliLaunch } from '../local-cli-launch.mjs';
+import { parseSemanticVersion } from './version-policy.mjs';
 
 const STATUS_TIMEOUT_MS = 8_000;
 
@@ -50,8 +51,26 @@ export function parseOpenCodeAuthList(value) {
   };
 }
 
-export async function probeOpenCodeAuthentication(command = 'opencode', { runImpl = runCommand } = {}) {
-  const result = await runImpl(command, ['auth', 'list'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+export function parseOpenCodeV2AuthList(value) {
+  let integrations;
+  try { integrations = JSON.parse(String(value ?? '')); } catch {}
+  if (!Array.isArray(integrations) || integrations.some((integration) => !integration || !Array.isArray(integration.connections))) {
+    throw new Error('OpenCode returned an invalid authentication response.');
+  }
+  const credentialCount = integrations.reduce((count, integration) =>
+    count + integration.connections.filter((connection) => connection?.type === 'credential').length, 0);
+  return credentialCount > 0
+    ? { connected: true, source: 'credentials', credentialCount }
+    : { connected: false, source: 'none', credentialCount: 0, environmentCount: 0 };
+}
+
+export async function probeOpenCodeAuthentication(command = 'opencode', { runImpl = runCommand, version } = {}) {
+  const v2 = (parseSemanticVersion(version)?.parts[0] ?? 0) >= 2;
+  // V2's shared background service can fail independently of the installed CLI
+  // and ACP runtime. Read its structured connections through a private server.
+  const args = v2 ? ['auth', 'list', '--standalone', '--format', 'json'] : ['auth', 'list'];
+  const result = await runImpl(command, args, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+  if (v2) return parseOpenCodeV2AuthList(result?.stdout);
   return parseOpenCodeAuthList(`${result?.stdout ?? ''}\n${result?.stderr ?? ''}`);
 }
 
