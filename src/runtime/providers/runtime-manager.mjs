@@ -9,8 +9,8 @@ import { SupervisedAcpSessionRuntime } from './transports/acp/supervised-acp-run
 import { CuppetMcpToolSession } from './transports/acp/cuppet-mcp-tool-session.mjs';
 import { AcpTextStreamAssembler } from './transports/acp/acp-text-stream.mjs';
 
-const DEFAULT_IDLE_MS = 5 * 60_000;
-const DEFAULT_MAX_WARM_RUNTIMES = 3;
+const DEFAULT_IDLE_MS = 30 * 60_000;
+const DEFAULT_MAX_WARM_RUNTIMES = 6;
 
 export class ProviderRuntimeManager {
   #acpRuntimeFactory;
@@ -22,6 +22,7 @@ export class ProviderRuntimeManager {
   #maxWarmRuntimes;
   #useCounter = 0;
   #entries = new Map();
+  #standbyRoutes = new Map();
   #closed = false;
 
   constructor({ acpRuntimeFactory, openCodeRuntimeFactory, codexRuntimeFactory, toolSessionFactory, usageRecorder = recordProviderUsage, conversationBridge = new ConversationBridge(), idleMs = DEFAULT_IDLE_MS, maxWarmRuntimes = DEFAULT_MAX_WARM_RUNTIMES } = {}) {
@@ -103,17 +104,121 @@ export class ProviderRuntimeManager {
     return true;
   }
 
+  adoptWarmRuntime({ runtime, providerID, descriptor, configuration, projectRoot, selection, sessionId }) {
+    if (this.#closed || !runtime) return false;
+    const backendId = text(providerID || descriptor?.id).toLowerCase();
+    const resolvedDesc = localCliDescriptor(backendId) ?? descriptor;
+    if (!resolvedDesc || resolvedDesc.transport !== 'acp') return false;
+    const fingerprint = acpRuntimeFingerprint({ backendId, descriptor: resolvedDesc, configuration, projectRoot });
+    const projectAuthority = resolvedProjectRoot(projectRoot);
+
+    let currentRuntime = runtime;
+    const supervised = new SupervisedAcpSessionRuntime({
+      descriptor: resolvedDesc,
+      configuration,
+      projectRoot,
+    }, {
+      runtimeFactory: () => {
+        if (currentRuntime) {
+          const r = currentRuntime;
+          currentRuntime = null;
+          return r;
+        }
+        return this.#acpRuntimeFactory({ backendId, descriptor: resolvedDesc, configuration, projectRoot });
+      },
+      versionPreflight: () => null,
+    });
+
+    const entry = createManagedEntry({
+      runtime: supervised,
+      backendId,
+      fingerprint,
+      lastUsed: ++this.#useCounter,
+    });
+    entry.started = true;
+    entry.selection = selection ?? null;
+
+    const sessionKey = text(sessionId);
+    if (sessionKey) {
+      let group = this.#entries.get(sessionKey);
+      if (!group) {
+        group = { projectAuthority, routes: new Map(), busy: false, activeFingerprint: null };
+        this.#entries.set(sessionKey, group);
+      }
+      if (group.routes.has(fingerprint)) {
+        return false;
+      }
+      if (group.routes.size >= this.#maxWarmRuntimes) {
+        try {
+          this.#evictOneWarmRoute(sessionKey, group);
+        } catch {
+          return false;
+        }
+      }
+      group.routes.set(fingerprint, entry);
+      this.#armIdle(sessionKey, fingerprint, group, entry);
+      return true;
+    }
+
+    if (this.#standbyRoutes.has(fingerprint)) {
+      return false;
+    }
+    this.#standbyRoutes.set(fingerprint, entry);
+    this.#armStandbyIdle(fingerprint, entry);
+    return true;
+  }
+
+  async applyModelSwitch({ sessionId, configuration }) {
+    const id = text(sessionId);
+    if (!id) return false;
+    const group = this.#entries.get(id);
+    if (!group || group.busy) return false;
+    const providerConfig = record(configuration);
+    const backendId = text(providerConfig.providerID || record(providerConfig.primary).providerID).toLowerCase();
+    const descriptor = localCliDescriptor(backendId);
+    let entry = null;
+    if (descriptor) {
+      const fingerprint = acpRuntimeFingerprint({ backendId, descriptor, configuration: providerConfig, projectRoot: group.projectAuthority });
+      entry = group.routes.get(fingerprint);
+    }
+    if (!entry) {
+      for (const e of group.routes.values()) {
+        if (e.backendId === backendId) {
+          entry = e;
+          break;
+        }
+      }
+    }
+    if (!entry || !entry.started || entry.busy) return false;
+    const selection = acpSessionSelection(providerConfig);
+    try {
+      if (typeof entry.runtime.applyModelSwitch === 'function') {
+        await entry.runtime.applyModelSwitch(selection);
+        entry.selection = selection;
+        return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
   async close() {
     if (this.#closed) return;
     this.#closed = true;
     const groups = [...this.#entries.values()];
     this.#entries.clear();
+    const standbys = [...this.#standbyRoutes.values()];
+    this.#standbyRoutes.clear();
     this.#conversationBridge.clear?.();
-    await Promise.all(groups.map((group) => closeManagedGroup(group)));
+    await Promise.all([
+      ...groups.map((group) => closeManagedGroup(group)),
+      ...standbys.map((entry) => closeManagedEntry(entry)),
+    ]);
   }
 
   get size() {
-    let count = 0;
+    let count = this.#standbyRoutes.size;
     for (const group of this.#entries.values()) count += group.routes.size;
     return count;
   }
@@ -129,14 +234,20 @@ export class ProviderRuntimeManager {
     let toolSession = null;
     let abortToolSession = null;
     try {
-      if (staleGroup) await closeManagedGroup(staleGroup);
+      if (staleGroup) void closeManagedGroup(staleGroup).catch(() => undefined);
 
       entry = group.routes.get(fingerprint) ?? null;
+      if (!entry && this.#standbyRoutes.has(fingerprint)) {
+        entry = this.#standbyRoutes.get(fingerprint);
+        this.#standbyRoutes.delete(fingerprint);
+        clearTimeout(entry.idleTimer);
+        group.routes.set(fingerprint, entry);
+      }
       if (entry && selectionRequiresFreshProcess(entry.selection, selection)) {
         group.routes.delete(fingerprint);
         this.#conversationBridge.forgetRuntime?.(sessionId, fingerprint);
         clearTimeout(entry.idleTimer);
-        await closeManagedEntry(entry);
+        void closeManagedEntry(entry).catch(() => undefined);
         entry = null;
       }
       if (!entry) {
@@ -192,9 +303,12 @@ export class ProviderRuntimeManager {
       }
       const sessionOptions = { mcpServers: toolSession ? [toolSession.descriptor()] : [], selection };
       if (bridgePlan.providerSessionAction === 'start') {
-        if (entry.started) throw new Error('Conversation Bridge requested a provider start for an already-started runtime.');
-        await entry.runtime.start(sessionOptions);
-        entry.started = true;
+        if (!entry.started) {
+          await entry.runtime.start(sessionOptions);
+          entry.started = true;
+        } else {
+          await entry.runtime.newSession(sessionOptions);
+        }
       } else {
         if (!entry.started) throw new Error('Conversation Bridge requested a new logical session before the provider runtime started.');
         await entry.runtime.newSession(sessionOptions);
@@ -328,7 +442,7 @@ export class ProviderRuntimeManager {
     if (entry && group.routes.get(fingerprint) === entry) {
       group.routes.delete(fingerprint);
       clearTimeout(entry.idleTimer);
-      await closeManagedEntry(entry);
+      void closeManagedEntry(entry).catch(() => undefined);
     }
     if (!group.routes.size && this.#entries.get(sessionId) === group) {
       this.#entries.delete(sessionId);
@@ -353,8 +467,7 @@ export class ProviderRuntimeManager {
     }).catch?.(() => undefined);
   }
 
-  async #makeRoomForRuntime(sessionId, group) {
-    if (group.routes.size < this.#maxWarmRuntimes) return;
+  #evictOneWarmRoute(sessionId, group) {
     let candidate = null;
     for (const [fingerprint, entry] of group.routes) {
       if (entry.busy || group.activeFingerprint === fingerprint) continue;
@@ -364,7 +477,22 @@ export class ProviderRuntimeManager {
     group.routes.delete(candidate.fingerprint);
     this.#conversationBridge.forgetRuntime?.(sessionId, candidate.fingerprint);
     clearTimeout(candidate.entry.idleTimer);
-    await closeManagedEntry(candidate.entry);
+    void closeManagedEntry(candidate.entry).catch(() => undefined);
+  }
+
+  async #makeRoomForRuntime(sessionId, group) {
+    if (group.routes.size < this.#maxWarmRuntimes) return;
+    this.#evictOneWarmRoute(sessionId, group);
+  }
+
+  #armStandbyIdle(fingerprint, entry) {
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = setTimeout(() => {
+      if (this.#standbyRoutes.get(fingerprint) !== entry) return;
+      this.#standbyRoutes.delete(fingerprint);
+      void closeManagedEntry(entry).catch(() => undefined);
+    }, this.#idleMs);
+    entry.idleTimer.unref?.();
   }
 
   #armIdle(sessionId, fingerprint, group, entry) {
@@ -378,7 +506,7 @@ export class ProviderRuntimeManager {
         this.#entries.delete(sessionId);
         this.#conversationBridge.forget?.(sessionId);
       }
-      void closeManagedEntry(entry);
+      void closeManagedEntry(entry).catch(() => undefined);
     }, this.#idleMs);
     entry.idleTimer.unref?.();
   }

@@ -17,6 +17,7 @@ import { RunWaitProjection } from './run-wait-projection.mjs';
 import { SessionCommandSerializer } from './session-command-serializer.mjs';
 import { persistDurableRuntimeEvent } from './runtime-event-durability.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
+import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
 import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
 import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
@@ -38,7 +39,8 @@ const runWaits = new RunWaitProjection(repository);
 const sendCommands = new SessionCommandSerializer();
 const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
-const providerControl = new ProviderControlPlane({ dataDir });
+const providerRuntimeManager = new ProviderRuntimeManager();
+const providerControl = new ProviderControlPlane({ dataDir, providerRuntimeManager });
 const emit = (event) => {
   try {
     persistDurableRuntimeEvent(event, turnStore);
@@ -90,7 +92,7 @@ const tst = new RuntimeTstManager({
   },
 });
 const browserControl = new BrowserControlManager({ emit });
-const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, runState });
+const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, runState, providerRuntimeManager });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);

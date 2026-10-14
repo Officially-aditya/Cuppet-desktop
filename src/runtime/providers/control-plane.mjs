@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { localProviderOperations } from './local-provider-operations.mjs';
-import { discoverProviderCapabilitySnapshot } from './default-registry.mjs';
+import { discoverProviderCapabilitySnapshot, providerCapabilitySnapshots } from './default-registry.mjs';
 import { modelCatalogFromCapabilitySnapshot } from './capability-snapshot.mjs';
 import { clearProviderRuntimeFailure, providerRuntimeHealth } from './runtime-health-registry.mjs';
 import {
@@ -9,6 +9,7 @@ import {
   localProviderVersionPolicy,
   providerVersionUpgradeMessage,
 } from './version-policy.mjs';
+import { clearLocalProviderVersionCache } from './local-provider-version-check.mjs';
 
 /**
  * Runtime-owned provider lifecycle authority.
@@ -23,6 +24,7 @@ export class ProviderControlPlane {
   #operationsFactory;
   #capabilityDiscovery;
   #runtimeHealth;
+  #providerRuntimeManager;
   #capabilityState = new Map();
   #statusCache = new Map();
   #now;
@@ -34,6 +36,7 @@ export class ProviderControlPlane {
     operationsFactory = localProviderOperations,
     capabilityDiscovery = discoverProviderCapabilitySnapshot,
     runtimeHealth = providerRuntimeHealth,
+    providerRuntimeManager = null,
     now = () => Date.now(),
   } = {}) {
     this.#userData = userData;
@@ -41,7 +44,13 @@ export class ProviderControlPlane {
     this.#operationsFactory = operationsFactory;
     this.#capabilityDiscovery = capabilityDiscovery;
     this.#runtimeHealth = runtimeHealth;
+    this.#providerRuntimeManager = providerRuntimeManager;
     this.#now = now;
+    if (this.#userData && typeof providerCapabilitySnapshots?.setCacheFile === 'function') {
+      try {
+        providerCapabilitySnapshots.setCacheFile(join(this.#userData, 'capability-snapshots.json'));
+      } catch {}
+    }
   }
 
   async localStatus(providerID) {
@@ -117,15 +126,28 @@ export class ProviderControlPlane {
   async localUpdate(providerID) {
     const id = requiredProviderID(providerID);
     this.#statusCache.delete(id);
+    clearLocalProviderVersionCache(id);
     const state = withVersionCompatibility(id, await this.#operations(id).update());
     return withControlState(state, this.#runtimeHealth(id), this.#capabilityState.get(id));
   }
 
-  async models(configuration = {}, { model = '' } = {}) {
+  async models(configuration = {}, { model = '', sessionId = '', projectRoot = '', force = false, refresh = false } = {}) {
     const providerID = text(configuration.providerID || configuration.primary?.providerID).toLowerCase();
     const requestedModel = text(model);
     const configuredModel = requestedModel || text(configuration.primary?.modelID || configuration.model);
     if (!providerID) return unavailable('', 'none', 'No active provider is configured.');
+
+    const discoveryConfiguration = requestedModel
+      ? configurationForCandidateModel(configuration, requestedModel)
+      : configuration;
+
+    if (!force && !refresh && typeof providerCapabilitySnapshots?.get === 'function') {
+      const cached = providerCapabilitySnapshots.get(discoveryConfiguration);
+      if (cached && !cached.stale && cached.available && (this.#now() - (cached.fetchedAt || 0) < 15 * 60_000)) {
+        this.#capabilityState.set(providerID, capabilityControlState(cached));
+        return modelCatalogFromCapabilitySnapshot(cached, configuredModel);
+      }
+    }
 
     if (localProviderVersionPolicy(providerID)) {
       const detected = withVersionCompatibility(providerID, await this.#operations(providerID).detect());
@@ -142,14 +164,16 @@ export class ProviderControlPlane {
       }
     }
 
-    const discoveryConfiguration = requestedModel
-      ? configurationForCandidateModel(configuration, requestedModel)
-      : configuration;
     const previous = this.#capabilityState.get(providerID);
     this.#capabilityState.set(providerID, { state: 'loading', ...(previous?.fetchedAt ? { fetchedAt: previous.fetchedAt } : {}) });
     try {
       const snapshot = await this.#capabilityDiscovery(discoveryConfiguration, {
         ...(this.#resourcesPath ? { resourcesPath: this.#resourcesPath } : {}),
+        ...(this.#providerRuntimeManager ? { runtimeManager: this.#providerRuntimeManager } : {}),
+        sessionId,
+        projectRoot,
+        force,
+        refresh,
       });
       this.#capabilityState.set(providerID, capabilityControlState(snapshot));
       return modelCatalogFromCapabilitySnapshot(snapshot, configuredModel);

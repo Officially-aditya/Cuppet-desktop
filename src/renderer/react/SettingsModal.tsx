@@ -207,6 +207,18 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     setApiKey('');
     setNote('');
     if (!nextProviderID) return;
+    if (current) {
+      const optimistic: ProviderSettings = {
+        ...current,
+        providerID: nextProviderID,
+        primary: {
+          ...current.primary,
+          providerID: nextProviderID,
+        },
+      };
+      setCurrent(optimistic);
+      onSaved(optimistic);
+    }
     setBusy(true);
     try {
       const saved = await window.cuppet.settings.save({ providerID: nextProviderID, apiKey: '' });

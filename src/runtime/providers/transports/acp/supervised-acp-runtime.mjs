@@ -62,6 +62,11 @@ export class SupervisedAcpSessionRuntime {
     return this.#beforeTurn('newSession', options);
   }
 
+  async applyModelSwitch(selection) {
+    if (this.#closed) throw new Error('ACP runtime supervisor is closed.');
+    return this.#runtime.applyModelSwitch?.(selection);
+  }
+
   async capabilities() {
     return this.#runtime.capabilities();
   }

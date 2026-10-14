@@ -164,6 +164,11 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       setStage('models');
       return;
     }
+    setOpen(false);
+    setStage('models');
+    if (settings) {
+      acceptSettings({ ...settings, secondaryAuto: true } as any);
+    }
     setBusy(true);
     setError('');
     try {
@@ -181,8 +186,6 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         secondaryAuto: true,
       });
       acceptSettings(next);
-      setOpen(false);
-      setStage('models');
     } catch (value) {
       setError(message(value));
     } finally {
@@ -216,6 +219,32 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         const nextEffort = effortForModel(slot, currentProvider, id, current, candidateAdvertised);
         const primaryModel = slot === 'primary' ? id : current.primary?.modelID || id;
         const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
+        const optimistic: ProviderSettings = {
+          ...current,
+          primary: {
+            ...current.primary,
+            modelID: primaryModel,
+            providerID: currentProvider,
+            variant: slot === 'primary' ? nextEffort : current.primary?.variant,
+          },
+          secondary: {
+            ...current.secondary,
+            modelID: secondaryModel,
+            providerID: currentProvider,
+            variant: slot === 'secondary' ? nextEffort : current.secondary?.variant,
+          },
+          ...(slot === 'secondary' ? { secondaryAuto: false } : {}),
+        };
+        acceptSettings(optimistic);
+
+        if (slot === 'primary' && nextEffortState.options.length > 0) {
+          setStage('efforts');
+          setOpen(true);
+        } else {
+          setOpen(false);
+          setStage('models');
+        }
+
         const next = await window.cuppet.settings.save({
           providerID: currentProvider,
           baseUrl: current.baseUrl || '',
@@ -226,14 +255,14 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
           ...(slot === 'secondary' ? { secondaryAuto: false } : {}),
         });
         acceptSettings(next);
-      }
-
-      if (slot === 'primary' && nextEffortState.options.length > 0) {
-        setStage('efforts');
-        setOpen(true);
       } else {
-        setOpen(false);
-        setStage('models');
+        if (slot === 'primary' && nextEffortState.options.length > 0) {
+          setStage('efforts');
+          setOpen(true);
+        } else {
+          setOpen(false);
+          setStage('models');
+        }
       }
     } catch (value) {
       setError(message(value));
@@ -250,6 +279,18 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       setStage('models');
       return;
     }
+    setOpen(false);
+    setStage('models');
+    if (settings) {
+      const optimistic: ProviderSettings = {
+        ...settings,
+        primary: {
+          ...settings.primary,
+          variant: value,
+        },
+      };
+      acceptSettings(optimistic);
+    }
     setBusy(true);
     setError('');
     try {
@@ -265,8 +306,6 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         secondaryEffort: selectedEffort('secondary', currentProvider, current),
       });
       acceptSettings(saved);
-      setOpen(false);
-      setStage('models');
     } catch (value) {
       setError(message(value));
     } finally {

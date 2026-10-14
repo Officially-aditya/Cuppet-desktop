@@ -31,6 +31,7 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
   const cwd = text(options.cwd) || tmpdir();
   const baselineConfiguration = withoutRuntimeSelections(configuration);
   const runtime = new AcpSessionRuntime({ descriptor, configuration: baselineConfiguration, projectRoot: cwd });
+  let retained = false;
   try {
     await runtime.start();
     clearProviderRuntimeFailure(id);
@@ -42,6 +43,18 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
     if (exactAdvertisedModel(configuredModel, baseline.models)) {
       await runtime.newSession({ selection: { model: configuredModel } });
       selected = catalogFromAcpCapabilities(id, await runtime.capabilities());
+    }
+
+    if (options.runtimeManager && typeof options.runtimeManager.adoptWarmRuntime === 'function') {
+      retained = Boolean(options.runtimeManager.adoptWarmRuntime({
+        runtime,
+        providerID: id,
+        descriptor,
+        configuration,
+        projectRoot: cwd,
+        selection: { model: configuredModel || defaultModel },
+        sessionId: options.sessionId,
+      }));
     }
 
     return {
@@ -59,7 +72,9 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
     });
     throw error;
   } finally {
-    await runtime.close().catch(() => undefined);
+    if (!retained) {
+      await runtime.close().catch(() => undefined);
+    }
   }
 }
 

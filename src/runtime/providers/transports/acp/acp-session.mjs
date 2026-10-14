@@ -171,6 +171,18 @@ export class AcpSessionRuntime {
     }
   }
 
+  async applyModelSwitch(selection) {
+    if (this.#state !== 'ready' || !this.#session) {
+      throw new Error(`${this.#descriptor.label} runtime must be ready with an active session to switch models in-session.`);
+    }
+    try {
+      await this.#applyConfiguredSettings(selection);
+      return this.snapshot();
+    } catch (error) {
+      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
+    }
+  }
+
   setHostHandlers(handlers = {}) {
     this.#hostBridge.setHandlers(handlers);
   }

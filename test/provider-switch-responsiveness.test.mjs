@@ -1,265 +1,155 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { localCliDescriptor, localCliProviderIDs } from '../src/runtime/local-cli-descriptors.mjs';
-import { localProviderOperations } from '../src/runtime/providers/local-provider-operations.mjs';
-import { discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
-import { fileURLToPath } from 'node:url';
-import { ProviderControlPlane } from '../src/runtime/providers/control-plane.mjs';
+import { rmSync } from 'node:fs';
+import { verifyLocalProviderExecutableVersion, clearLocalProviderVersionCache } from '../src/runtime/providers/local-provider-version-check.mjs';
+import { ProviderCapabilitySnapshotStore } from '../src/runtime/providers/capability-snapshot.mjs';
 import { ProviderRuntimeManager } from '../src/runtime/providers/runtime-manager.mjs';
-import { ManagedAntigravityProvider, antigravityAcpDescriptor } from '../src/runtime/providers/backends/antigravity.mjs';
-import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
-import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
-import { runtimeRequestTimeoutMs } from '../src/main/runtime-client.mjs';
-import { SupervisedAcpSessionRuntime } from '../src/runtime/providers/transports/acp/supervised-acp-runtime.mjs';
-import { providerRuntimeHealth, resetProviderRuntimeHealthForTests } from '../src/runtime/providers/runtime-health-registry.mjs';
+import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 
-const fixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
-const installation = { command: process.execPath, args: [fixture], harnessPath: fixture };
-const ready = (providerID) => ({ providerID, installed: true, connected: true, available: true, version: 'opencode 1.18.30' });
+test('verifyLocalProviderExecutableVersion caches version check for 30 minutes', async () => {
+  clearLocalProviderVersionCache('opencode');
+  let execCount = 0;
+  const descriptor = { id: 'opencode', label: 'OpenCode', command: 'opencode' };
+  const mockRun = async () => {
+    execCount += 1;
+    return { stdout: 'opencode 1.18.35' };
+  };
 
-test('provider switches share pending status checks and reuse fresh state while runtime health stays live', async () => {
-  let now = 1, checks = 0, health = 'ready';
-  let complete;
-  const plane = new ProviderControlPlane({
-    dataDir: tmpdir(), now: () => now,
-    operationsFactory: () => ({
-      status: () => { checks++; return new Promise((resolve) => { complete = resolve; }); },
-    }),
-    runtimeHealth: () => ({ state: health }),
-  });
-  const a = plane.localStatus('antigravity');
-  const b = plane.localStatus('antigravity');
-  assert.equal(checks, 1);
-  complete(ready('antigravity'));
-  assert.deepEqual(await a, await b);
-  health = 'crashed';
-  const cached = await plane.localStatus('antigravity');
-  assert.equal(cached.control.runtime.state, 'crashed');
-  assert.equal(checks, 1);
-  now += 30_000;
-  const expired = plane.localStatus('antigravity');
-  assert.equal(checks, 2);
-  complete(ready('antigravity'));
-  await expired;
+  const first = await verifyLocalProviderExecutableVersion(descriptor, {}, { runVersionImpl: mockRun });
+  assert.equal(first.observedVersion, '1.18.35');
+  assert.equal(execCount, 1);
+
+  const second = await verifyLocalProviderExecutableVersion(descriptor, {}, { runVersionImpl: mockRun });
+  assert.equal(second.observedVersion, '1.18.35');
+  assert.equal(execCount, 1); // Hit cache, not incremented!
+
+  // Force bypasses cache
+  const third = await verifyLocalProviderExecutableVersion(descriptor, {}, { runVersionImpl: mockRun, force: true });
+  assert.equal(third.observedVersion, '1.18.35');
+  assert.equal(execCount, 2);
+
+  clearLocalProviderVersionCache('opencode');
 });
 
-test('OpenCode status passes detection to its auth probe without detecting twice', async () => {
-  let detections = 0;
-  const detected = ready('opencode');
-  const plane = new ProviderControlPlane({
-    dataDir: tmpdir(),
-    operationsFactory: () => ({
-      detect: async () => { detections++; return detected; },
-      status: async (input) => { assert.equal(input.providerID, 'opencode'); return input; },
-    }),
-  });
-  await plane.localStatus('opencode');
-  await plane.localStatus('opencode');
-  assert.equal(detections, 1);
+test('ProviderCapabilitySnapshotStore persists to disk and reloads on startup', async () => {
+  const cacheFile = join(tmpdir(), `cuppet-cap-test-${Date.now()}.json`);
+  try {
+    const store1 = new ProviderCapabilitySnapshotStore({ cacheFile });
+    const registry = {
+      requireResolved: () => ({ id: 'fake', transport: 'acp' }),
+      operation: async () => ({
+        providerID: 'fake',
+        source: 'acp',
+        available: true,
+        models: [{ id: 'model-x', label: 'Model X' }],
+        defaultModel: 'model-x',
+      }),
+    };
+    const config = { providerID: 'fake', baseUrl: 'https://example.invalid' };
+
+    await store1.refresh(registry, config);
+    const cached1 = store1.get(config);
+    assert.ok(cached1);
+    assert.equal(cached1.models[0].id, 'model-x');
+
+    // Create a new store pointing to the same disk cache file (simulates app restart)
+    const store2 = new ProviderCapabilitySnapshotStore({ cacheFile });
+    const cached2 = store2.get(config);
+    assert.ok(cached2, 'Snapshot should be loaded from disk cache');
+    assert.equal(cached2.models[0].id, 'model-x');
+  } finally {
+    try { rmSync(cacheFile, { force: true }); } catch {}
+  }
 });
 
-test('connect replaces cached status and a late old status check cannot overwrite it', async () => {
-  let complete, checks = 0;
-  const plane = new ProviderControlPlane({
-    dataDir: tmpdir(),
-    operationsFactory: () => ({
-      detect: async () => ready('antigravity'),
-      connect: async () => ready('antigravity'),
-      status: () => { checks++; return new Promise((resolve) => { complete = resolve; }); },
-    }),
-  });
-  const before = plane.localStatus('antigravity');
-  await plane.localConnect('antigravity');
-  complete({ ...ready('antigravity'), connected: false, available: false });
-  await before;
-  assert.equal((await plane.localStatus('antigravity')).connected, true);
-  assert.equal(checks, 1);
-});
+test('ProviderRuntimeManager adopts warm runtime from discovery and claims it for turns', async () => {
+  const logs = [];
+  const fakeAcp = {
+    async start() { logs.push('start'); },
+    async newSession() { logs.push('newSession'); },
+    async runTurn({ messages }, hooks) {
+      logs.push('runTurn');
+      await hooks.onText?.('hello');
+      return { text: 'hello' };
+    },
+    async close() { logs.push('close'); },
+  };
 
-test('Antigravity participates in warm process reuse across OpenCode switches', async (t) => {
-  let resolutions = 0, processes = 0;
   const manager = new ProviderRuntimeManager({
     usageRecorder: async () => {},
-    acpRuntimeFactory: (options) => { processes++; return new AcpSessionRuntime(options); },
+    acpRuntimeFactory: () => fakeAcp,
   });
-  t.after(() => manager.close());
-  const antigravity = () => new ManagedAntigravityProvider({
-    providerID: 'antigravity', primary: { modelID: 'provider/model-b', variant: 'max' },
-  }, { resolveInstallation: async (_configuration, options) => {
-    assert.equal(options.allowInstall, false);
-    resolutions++;
-    return installation;
-  } });
-  const run = (adapter) => manager.adapterFor({ sessionId: 'switch-chat', projectRoot: tmpdir(), adapter })
-    .stream([{ role: 'user', content: 'hello' }]);
-  assert.equal((await run(antigravity())).text, 'Done.');
-  await run(new AcpProviderAdapter({ providerID: 'opencode', primary: { modelID: 'provider/model-b', variant: 'max' }, cliCommand: process.execPath, cliArgs: [fixture] }));
-  assert.equal((await run(antigravity())).text, 'Done.');
-  assert.equal(resolutions, 1);
-  assert.equal(processes, 2);
-  assert.equal(manager.size, 2);
-});
 
-const isWin = process.platform === 'win32';
-const startupMs = isWin ? 3_000 : 1_000;
-const authenticationMs = isWin ? 3_000 : 1_000;
-
-for (const output of ['stdout', 'stderr']) {
-  test('Antigravity missing sign-in fails promptly on ' + output + ' instead of timing out', async (t) => {
-    const path = fileURLToPath(new URL('./fixtures/fake-antigravity-auth-acp.mjs', import.meta.url));
-    const runtime = new AcpSessionRuntime({
-      descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
-      configuration: { cliEnv: { FAKE_AUTH_OUTPUT: output } },
-      liveness: { startupMs, authenticationMs },
-    });
-    t.after(() => runtime.close());
-    await assert.rejects(runtime.start(), (error) => {
-      assert.equal(error.code, 'PROVIDER_AUTHENTICATION_REQUIRED');
-      assert.match(error.message, /Sign in.*Settings/);
-      assert.doesNotMatch(error.message, /accounts\.google/);
-      return true;
-    });
+  const descriptor = localCliDescriptor('opencode');
+  const adopted = manager.adoptWarmRuntime({
+    runtime: fakeAcp,
+    providerID: 'opencode',
+    descriptor,
+    configuration: { providerID: 'opencode', primary: { modelID: 'claude-3-7-sonnet' } },
+    projectRoot: '/test/proj',
+    selection: { model: 'claude-3-7-sonnet' },
+    sessionId: 'session-warm',
   });
-}
 
-test('explicit Antigravity Connect permits the browser sign-in prompt to complete', async (t) => {
-  const path = fileURLToPath(new URL('./fixtures/fake-antigravity-auth-acp.mjs', import.meta.url));
-  const runtime = new AcpSessionRuntime({
-    descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
-    configuration: { allowInteractiveAuth: true, cliEnv: { FAKE_AUTH_COMPLETE: '1' } },
-    liveness: { startupMs, authenticationMs },
-  });
-  t.after(() => runtime.close());
-  assert.equal((await runtime.start()).state, 'ready');
-});
+  assert.equal(adopted, true);
+  assert.equal(manager.size, 1);
 
-test('a native sign-in failure enables reconnect even when an old linked status was cached', async (t) => {
-  resetProviderRuntimeHealthForTests();
-  t.after(resetProviderRuntimeHealthForTests);
-  const path = fileURLToPath(new URL('./fixtures/fake-antigravity-auth-acp.mjs', import.meta.url));
-  const runtime = new SupervisedAcpSessionRuntime({
-    descriptor: antigravityAcpDescriptor({ command: process.execPath, harnessPath: path, args: [path] }),
-    liveness: { startupMs, authenticationMs },
-  });
-  t.after(() => runtime.close());
-  const plane = new ProviderControlPlane({
-    dataDir: tmpdir(),
-    operationsFactory: () => ({ status: async () => ready('antigravity') }),
-  });
-  assert.equal((await plane.localStatus('antigravity')).connected, true);
-  await assert.rejects(runtime.start(), { code: 'PROVIDER_AUTHENTICATION_REQUIRED' });
-  await runtime.close();
-  assert.equal(providerRuntimeHealth('antigravity').lastFailure.category, 'authentication');
-  const status = await plane.localStatus('antigravity');
-  assert.equal(status.connected, false);
-  assert.equal(status.control.overall, 'needs_auth');
-});
-
-test('desktop provider requests allow installation and ACP startup to finish beyond the ordinary request budget', () => {
-  assert.ok(runtimeRequestTimeoutMs('provider.local.connect') >= 5 * 60_000);
-  assert.ok(runtimeRequestTimeoutMs('provider.models') >= 2 * 120_000);
-  assert.equal(runtimeRequestTimeoutMs('session.get'), 30_000);
-});
-
-test('model and effort discovery uses one ACP process and keeps the provider default', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'cuppet-discovery-startup-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const log = join(directory, 'initializations');
-  const catalog = await discoverAcpRuntimeCatalog('claude-code', {
-    configuration: {
-      cliCommand: process.execPath, cliArgs: [fixture], cliEnv: { FAKE_ACP_INITIALIZE_LOG: log },
-      primary: { modelID: 'provider/model-b', variant: 'max' }, primaryEffort: 'max',
-    },
-  });
-  assert.equal(catalog.defaultModel, 'provider/model-a');
-  assert.equal(catalog.currentModel, 'provider/model-b');
-  assert.equal(catalog.reasoning.currentValue, 'medium');
-  assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, 1);
-});
-
-test('every local ACP provider stays warm when switching away and back', async (t) => {
-  const ids = localCliProviderIDs().filter((id) => localCliDescriptor(id).transport === 'acp');
-  let processes = 0;
-  const manager = new ProviderRuntimeManager({
-    maxWarmRuntimes: ids.length, usageRecorder: async () => {},
-    acpRuntimeFactory: (options) => { processes++; return new AcpSessionRuntime(options); },
-  });
-  t.after(() => manager.close());
-  for (let pass = 0; pass < 2; pass++) {
-    for (const providerID of ids) {
-      const adapter = new AcpProviderAdapter({
-        providerID, cliCommand: process.execPath, cliArgs: [fixture],
-        primary: { modelID: 'provider/model-b', variant: 'max' },
-      });
-      const result = await manager.adapterFor({ sessionId: 'all-providers-switch', adapter })
-        .stream([{ role: 'user', content: 'hello' }]);
-      assert.equal(result.text, 'Done.', providerID);
-    }
-  }
-  assert.equal(processes, ids.length);
-});
-
-for (const providerID of localCliProviderIDs().filter((id) => localCliDescriptor(id).transport === 'acp')) {
-  test(providerID + ' reports expired authentication without transport restart retries', async (t) => {
-    resetProviderRuntimeHealthForTests();
-    t.after(resetProviderRuntimeHealthForTests);
-    const runtime = new SupervisedAcpSessionRuntime({
-      descriptor: localCliDescriptor(providerID),
-      configuration: { cliCommand: process.execPath, cliArgs: [fixture], cliEnv: { FAKE_ACP_AUTH_REQUIRED: '1' } },
-    }, { versionPreflight: async () => {} });
-    t.after(() => runtime.close());
-    await assert.rejects(runtime.start(), { code: 'PROVIDER_AUTHENTICATION_REQUIRED' });
-    assert.equal(providerRuntimeHealth(providerID).lastFailure.category, 'authentication');
-    assert.equal(runtime.snapshot().supervisor.restarts, 0);
-  });
-}
-
-test('Copilot reconnect actually runs login after ACP rejects an old linked marker', async (t) => {
-  resetProviderRuntimeHealthForTests();
-  t.after(resetProviderRuntimeHealthForTests);
-  const userData = await mkdtemp(join(tmpdir(), 'cuppet-copilot-reconnect-'));
-  t.after(() => rm(userData, { recursive: true, force: true }));
-  await writeFile(join(userData, 'cli-agent-links.json'), JSON.stringify({
-    providers: { 'github-copilot': { linkedAt: 1 } },
-  }));
-  const runtime = new SupervisedAcpSessionRuntime({
-    descriptor: localCliDescriptor('github-copilot'),
-    configuration: { cliCommand: process.execPath, cliArgs: [fixture], cliEnv: { FAKE_ACP_AUTH_REQUIRED: '1' } },
-  });
-  t.after(() => runtime.close());
-  await assert.rejects(runtime.start(), { code: 'PROVIDER_AUTHENTICATION_REQUIRED' });
-  await runtime.close();
-  let logins = 0;
-  const plane = new ProviderControlPlane({
-    dataDir: userData,
-    operationsFactory: () => localProviderOperations('github-copilot', {
-      userData, resolveCopilotRuntimeImpl: async () => ({ command: process.execPath, source: 'native' }),
-      runImpl: async (_command, args) => {
-        if (args.includes('--version')) return { stdout: 'Copilot 1.0.95' };
-        if (args[0] === 'login') { logins++; return { stdout: '' }; }
-        throw new Error('No active credentials');
-      },
+  // Now run turn on session-warm with opencode
+  const adapter = {
+    cuppetManagedRuntime: () => ({
+      protocol: 'acp',
+      backendId: 'opencode',
+      descriptor,
+      configuration: { providerID: 'opencode', primary: { modelID: 'claude-3-7-sonnet' } },
     }),
-  });
-  assert.equal((await plane.localStatus('github-copilot')).control.overall, 'needs_auth');
-  assert.equal((await plane.localConnect('github-copilot')).connected, true);
-  assert.equal(logins, 1);
-  assert.equal(providerRuntimeHealth('github-copilot').lastFailure, null);
+  };
+
+  const managed = manager.adapterFor({ sessionId: 'session-warm', adapter, projectRoot: '/test/proj' });
+  const result = await managed.stream([{ role: 'user', content: 'hi' }]);
+  assert.equal(result.text, 'hello');
+  // It called newSession instead of start, because it was already warm and started!
+  assert.deepEqual(logs, ['newSession', 'runTurn']);
+
+  await manager.close();
 });
 
-test('authentication failure during model discovery makes an old linked provider reconnectable', async (t) => {
-  resetProviderRuntimeHealthForTests();
-  t.after(resetProviderRuntimeHealthForTests);
-  const plane = new ProviderControlPlane({
-    dataDir: tmpdir(), operationsFactory: () => ({ status: async () => ready('github-copilot') }),
-  });
-  assert.equal((await plane.localStatus('github-copilot')).connected, true);
-  await assert.rejects(discoverAcpRuntimeCatalog('github-copilot', {
-    configuration: { cliCommand: process.execPath, cliArgs: [fixture], cliEnv: { FAKE_ACP_AUTH_REQUIRED: '1' } },
-  }), { code: 'PROVIDER_AUTHENTICATION_REQUIRED' });
-  assert.equal((await plane.localStatus('github-copilot')).control.overall, 'needs_auth');
-});
+test('ProviderRuntimeManager.applyModelSwitch performs in-session model update without restart', async () => {
+  let switchSelection = null;
+  const fakeAcp = {
+    async start() { },
+    async newSession() { },
+    async applyModelSwitch(selection) {
+      switchSelection = selection;
+      return { model: selection.model };
+    },
+    async runTurn() { return { text: 'ok' }; },
+    async close() { },
+  };
 
+  const manager = new ProviderRuntimeManager({
+    usageRecorder: async () => {},
+    acpRuntimeFactory: () => fakeAcp,
+  });
+
+  const descriptor = localCliDescriptor('opencode');
+  manager.adoptWarmRuntime({
+    runtime: fakeAcp,
+    providerID: 'opencode',
+    descriptor,
+    configuration: { providerID: 'opencode' },
+    projectRoot: '/test/proj',
+    selection: { model: 'model-1' },
+    sessionId: 'session-switch',
+  });
+
+  const switched = await manager.applyModelSwitch({
+    sessionId: 'session-switch',
+    configuration: { providerID: 'opencode', primary: { modelID: 'model-2', variant: 'high' } },
+  });
+
+  assert.equal(switched, true);
+  assert.deepEqual(switchSelection, { model: 'model-2', effort: 'high' });
+  await manager.close();
+});

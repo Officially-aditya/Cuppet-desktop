@@ -1,5 +1,45 @@
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 export class ProviderCapabilitySnapshotStore {
   #snapshots = new Map();
+  #cacheFile = null;
+  #freshMs;
+
+  constructor({ cacheFile = null, freshMs = 15 * 60_000 } = {}) {
+    this.#cacheFile = cacheFile;
+    this.#freshMs = freshMs;
+    this.#loadDiskCache();
+  }
+
+  setCacheFile(cacheFile) {
+    if (this.#cacheFile === cacheFile) return;
+    this.#cacheFile = cacheFile;
+    this.#loadDiskCache();
+  }
+
+  #loadDiskCache() {
+    if (!this.#cacheFile) return;
+    try {
+      const data = JSON.parse(readFileSync(this.#cacheFile, 'utf8'));
+      if (Array.isArray(data)) {
+        for (const [key, snapshot] of data) {
+          if (key && snapshot && typeof snapshot === 'object' && !this.#snapshots.has(key)) {
+            this.#snapshots.set(key, Object.freeze(snapshot));
+          }
+        }
+      }
+    } catch {}
+  }
+
+  #saveDiskCache() {
+    if (!this.#cacheFile) return;
+    try {
+      mkdirSync(dirname(this.#cacheFile), { recursive: true });
+      const entries = [...this.#snapshots.entries()].filter(([_, s]) => s && !s.error && s.available);
+      writeFileSync(this.#cacheFile, JSON.stringify(entries, null, 2), 'utf8');
+    } catch {}
+  }
 
   get(configuration) {
     return this.#snapshots.get(snapshotKey(configuration)) ?? null;
@@ -7,6 +47,7 @@ export class ProviderCapabilitySnapshotStore {
 
   clear(configuration) {
     this.#snapshots.delete(snapshotKey(configuration));
+    this.#saveDiskCache();
   }
 
   async refresh(registry, configuration = {}, options = {}) {
@@ -20,6 +61,7 @@ export class ProviderCapabilitySnapshotStore {
       // A successful discovery is authoritative even when it advertises zero models.
       // This is what distinguishes a real empty/logout state from a transient probe failure.
       this.#snapshots.set(key, snapshot);
+      this.#saveDiskCache();
       return snapshot;
     } catch (error) {
       const message = cleanError(error);

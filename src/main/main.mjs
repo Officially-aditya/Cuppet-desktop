@@ -167,6 +167,14 @@ function registerIpc() {
     model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
       ? value.model.trim().slice(0, 1000)
       : '',
+    sessionId: value && typeof value === 'object' && !Array.isArray(value) && typeof value.sessionId === 'string'
+      ? value.sessionId.trim().slice(0, 256)
+      : '',
+    projectRoot: value && typeof value === 'object' && !Array.isArray(value) && typeof value.projectRoot === 'string'
+      ? value.projectRoot.trim().slice(0, 1000)
+      : '',
+    force: Boolean(value?.force),
+    refresh: Boolean(value?.refresh),
   }));
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -181,7 +189,10 @@ function registerIpc() {
       ? { ...source, model: defaultModel, backgroundModel: defaultModel, secondaryAuto: true }
       : source;
     const result = await settings.save(saveSource);
-    await request('provider.config.sync', { provider: settings.runtimeValue() }).catch(() => undefined);
+    await request('provider.config.sync', {
+      provider: settings.runtimeValue(),
+      sessionId: typeof source.sessionId === 'string' ? source.sessionId.trim().slice(0, 256) : '',
+    }).catch(() => undefined);
     return result;
   });
 }

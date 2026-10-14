@@ -31,7 +31,7 @@ export function buildProviderBackendRegistry() {
             return { providerID: descriptor.id, source: descriptor.transport, available: false, models: [], settings: [], defaultModel: null, currentModel: null };
           }
           const discover = typeof options.acpDiscover === 'function' ? options.acpDiscover : discoverAcpRuntimeCatalog;
-          const catalog = await discover(descriptor.id, { configuration });
+          const catalog = await discover(descriptor.id, { ...options, configuration });
           return {
             providerID: descriptor.id,
             source: 'acp',

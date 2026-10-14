@@ -12,8 +12,21 @@ import { providerFailureError } from './provider-failure.mjs';
 const execFileAsync = promisify(execFile);
 const VERSION_TIMEOUT_MS = 8_000;
 const MAX_VERSION_OUTPUT_BYTES = 64 * 1024;
+const VERSION_CACHE_TTL_MS = 30 * 60_000;
+const versionCache = new Map();
 
-export async function verifyLocalProviderExecutableVersion(descriptor, configuration = {}, { runVersionImpl = readExecutableVersion } = {}) {
+export function clearLocalProviderVersionCache(providerID) {
+  if (providerID) {
+    const prefix = `${String(providerID).toLowerCase()}:`;
+    for (const key of versionCache.keys()) {
+      if (key.startsWith(prefix)) versionCache.delete(key);
+    }
+  } else {
+    versionCache.clear();
+  }
+}
+
+export async function verifyLocalProviderExecutableVersion(descriptor, configuration = {}, { runVersionImpl = readExecutableVersion, force = false } = {}) {
   const providerID = text(descriptor?.id).toLowerCase();
   const policy = localProviderVersionPolicy(providerID);
   if (!policy) return null;
@@ -29,6 +42,14 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
   const args = Array.isArray(descriptor?.versionArgs) && descriptor.versionArgs.length
     ? descriptor.versionArgs.map((value) => String(value))
     : ['--version'];
+
+  const cacheKey = `${providerID}:${command}:${args.join(' ')}`;
+  if (!force) {
+    const cached = versionCache.get(cacheKey);
+    if (cached && (Date.now() - cached.at) < VERSION_CACHE_TTL_MS) {
+      return assertLocalProviderVersionSupported(providerID, cached.label, text(descriptor?.label) || providerID);
+    }
+  }
 
   let result;
   try {
@@ -57,7 +78,9 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
   }
 
   const label = localProviderVersionLabel(providerID, result);
-  return assertLocalProviderVersionSupported(providerID, label, text(descriptor?.label) || providerID);
+  const verified = assertLocalProviderVersionSupported(providerID, label, text(descriptor?.label) || providerID);
+  versionCache.set(cacheKey, { label, at: Date.now() });
+  return verified;
 }
 
 export async function readExecutableVersion(command, args = ['--version'], { timeoutMs = VERSION_TIMEOUT_MS, env = process.env } = {}) {
