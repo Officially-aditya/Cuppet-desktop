@@ -6,10 +6,54 @@ import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
+import { classifyProviderError } from '../src/runtime/provider-error.mjs';
+import { AcpActivityNormalizer } from '../src/runtime/providers/transports/acp/acp-activity.mjs';
 
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', import.meta.url));
 const lateContinuationFixture = fileURLToPath(new URL('./fixtures/fake-acp-late-continuation-agent.mjs', import.meta.url));
+const retryFixture = fileURLToPath(new URL('./fixtures/fake-acp-retry-agent.mjs', import.meta.url));
+
+test('OpenCode retry updates reach the transcript and recover without replaying a prompt', async () => {
+  const runtime = new AcpSessionRuntime({
+    descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: 3 },
+    configuration: { cliCommand: process.execPath, cliArgs: [retryFixture] }, projectRoot: tmpdir(),
+  });
+  const seen = [];
+  try {
+    await runtime.start();
+    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'RECOVER' }] }, { onActivity: activity => seen.push(activity) });
+    assert.equal(result.text, 'Recovered.');
+    assert.equal(seen.filter(activity => activity.code === 'provider_retry').length, 1);
+    assert.match(seen[0].message, /attempt 1.*Endpoint is unavailable/);
+  } finally { await runtime.close(); }
+});
+
+test('repeated provider retries stop with an actionable error instead of keeping the chat alive indefinitely', async () => {
+  const runtime = new AcpSessionRuntime({
+    descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: 3 },
+    configuration: { cliCommand: process.execPath, cliArgs: [retryFixture] }, projectRoot: tmpdir(),
+  });
+  const attempts = [];
+  try {
+    await runtime.start();
+    await assert.rejects(runtime.runTurn({ messages: [] }, { onActivity: activity => attempts.push(activity.attempt) }), error => {
+      assert.equal(error.code, 'PROVIDER_RETRY_LIMIT');
+      assert.equal(classifyProviderError(error, { providerID: 'opencode' }).action, 'retry_later');
+      return true;
+    });
+    assert.deepEqual(attempts, [1, 2, 3, 4]);
+    assert.equal(runtime.snapshot().state, 'error');
+  } finally { await runtime.close(); }
+});
+
+test('retry status exposes only redacted messages, excluding upstream response bodies and headers', () => {
+  const activity = new AcpActivityNormalizer().normalize({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': {
+    attempt: 1, error: { message: 'Bearer private-value api_key=private-key', response: { body: 'private response body' } },
+  } } });
+  assert.doesNotMatch(JSON.stringify(activity), /private-value|private-key|private response body/);
+  assert.equal(new AcpActivityNormalizer().normalize({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': null } }), null);
+});
 test('ACP browser authentication has a separate timeout from startup requests', async () => {
   const isWin = process.platform === 'win32';
   const descriptor = { ...localCliDescriptor('grok-build'), authentication: { methods: [{ id: 'cached_token' }] } };

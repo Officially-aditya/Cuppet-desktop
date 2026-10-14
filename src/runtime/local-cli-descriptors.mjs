@@ -1,16 +1,19 @@
 import { resolveCopilotAcpRuntime } from './copilot-acp-runtime.mjs';
+import { assertOpenCodeProjectAccess, prepareOpenCodeAcpEnvironment } from './providers/opencode-mcp.mjs';
 
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
     mcpToolBridge: true,
-    // OpenCode ACP is documented to use the credentials/configuration already
-    // available to the normal CLI process. Preserve that authority verbatim.
-    // Cuppet constrains native execution through the ACP host bridge and supplies
-    // its own tools through the session-scoped MCP bridge; it must not inject
-    // OPENCODE_PERMISSION or rewrite OPENCODE_CONFIG_CONTENT which causes OpenCode's
-    // Console backend to reject free tier models.
+    maxPromptRetries: 3,
+    prepareEnvironment: prepareOpenCodeAcpEnvironment,
+    assertProjectAccess: assertOpenCodeProjectAccess,
+    // Preserve CLI-owned provider settings and authentication. Cuppet supplies
+    // its own browser tools through the session-scoped MCP bridge, so prepareEnvironment
+    // disables only the duplicate browserControl server for this child process.
+    // Do not inject OPENCODE_PERMISSION: Console rejects free models when artificial
+    // native execution permissions are added.
     environment: openCodeAcpEnvironment,
   }),
   'claude-code': descriptor({

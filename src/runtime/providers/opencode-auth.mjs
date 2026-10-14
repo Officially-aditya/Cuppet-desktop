@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { localCliLaunch } from '../local-cli-launch.mjs';
 import { parseSemanticVersion } from './version-policy.mjs';
+import { openCodeMcpEnvironment } from './opencode-mcp.mjs';
 
 const STATUS_TIMEOUT_MS = 8_000;
 
@@ -69,7 +70,7 @@ export async function probeOpenCodeAuthentication(command = 'opencode', { runImp
   // V2's shared background service can fail independently of the installed CLI
   // and ACP runtime. Read its structured connections through a private server.
   const args = v2 ? ['auth', 'list', '--standalone', '--format', 'json'] : ['auth', 'list'];
-  const result = await runImpl(command, args, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+  const result = await runImpl(command, args, STATUS_TIMEOUT_MS, { stdin: 'ignore', env: openCodeMcpEnvironment(process.env, version) });
   if (v2) return parseOpenCodeV2AuthList(result?.stdout);
   return parseOpenCodeAuthList(`${result?.stdout ?? ''}\n${result?.stderr ?? ''}`);
 }
@@ -92,7 +93,7 @@ function runCommand(command, args, timeoutMs, options = {}) {
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
         shell: launch.shell,
-        env: process.env,
+        env: options.env ?? process.env,
       });
     } catch (error) {
       rejectRun(error);

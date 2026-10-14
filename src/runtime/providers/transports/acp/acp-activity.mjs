@@ -10,6 +10,20 @@ export class AcpActivityNormalizer {
   normalize(update) {
     const source = record(update);
     const kind = normalizeName(source.sessionUpdate ?? source.type ?? source.kind);
+    if (kind === 'session_info_update' && Object.prototype.hasOwnProperty.call(record(source._meta), 'opencode/retry')) {
+      const retry = record(source._meta['opencode/retry']);
+      const attempt = Number(retry.attempt);
+      if (!Number.isInteger(attempt) || attempt < 1) return null;
+      const error = record(retry.error);
+      const detail = text(error.message)
+        .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+        .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
+        .slice(0, 300);
+      return providerActivity('activity.warning', {
+        code: 'provider_retry', attempt,
+        message: `OpenCode is retrying the request (attempt ${attempt}).${detail ? ` ${detail}` : ''}`,
+      });
+    }
     if (kind === 'agent_message_chunk') {
       const value = contentText(source.content);
       return value ? providerActivity('activity.text.delta', { text: value }) : null;

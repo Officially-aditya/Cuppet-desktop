@@ -28,6 +28,7 @@ export type ActivityEntry = {
 };
 
 type TraceReasoning = { id: string; type: 'reasoning'; text: string; sequence: number };
+type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
 type TraceTool = {
   id: string;
   type: 'tool';
@@ -38,7 +39,7 @@ type TraceTool = {
   details?: string;
   sequence: number;
 };
-type TraceItem = TraceReasoning | TraceTool;
+type TraceItem = TraceReasoning | TraceTool | TraceStatus;
 type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 const BROWSERCONTROL_MENTION = '@browserControl';
 const MAX_VISIBLE_USER_LINES = 10;
@@ -1040,6 +1041,8 @@ function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
         <MarkdownContent key={item.id} className="message-trace-reasoning markdown-rendered" content={item.text} />
+      ) : item.type === 'status' ? (
+        <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
         <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
       ))}
@@ -1217,6 +1220,8 @@ function traceForMessage(state: TranscriptState, messageId: string): TraceItem[]
   const items = orderedTranscriptItems(state[messageId]?.items ?? []);
   return items.map((item) => item.type === 'reasoning'
     ? { id: item.id, type: 'reasoning', text: item.text, sequence: item.sequence }
+    : item.type === 'status'
+    ? { id: item.id, type: 'status', text: item.text, sequence: item.sequence }
     : {
         id: item.id,
         type: 'tool',

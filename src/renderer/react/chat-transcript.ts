@@ -20,7 +20,8 @@ export type TranscriptTool = {
   sequence: number;
 };
 
-export type TranscriptItem = TranscriptReasoning | TranscriptTool;
+export type TranscriptStatus = { id: string; type: 'status'; text: string; sequence: number };
+export type TranscriptItem = TranscriptReasoning | TranscriptTool | TranscriptStatus;
 export type ContextUsage = { usedTokens: number; windowTokens: number; sequence: number; estimated?: boolean };
 export type TranscriptMessageState = { items: TranscriptItem[]; preview: string; contextUsage?: ContextUsage };
 export type TranscriptState = Record<string, TranscriptMessageState>;
@@ -97,6 +98,17 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   const activityType = text(activity.type);
   if (!activityType) return state;
   const sequence = finiteSequence(event.sequence);
+
+  if (event.source === 'provider' && activityType === 'activity.warning' && activity.code === 'provider_retry') {
+    const message = text(activity.message);
+    if (!message) return state;
+    return updateMessageState(state, messageId, (current) => {
+      const resolvedSequence = sequence ?? nextSequence(current.items);
+      const id = `status-${resolvedSequence}`;
+      if (current.items.some((item) => item.id === id)) return current;
+      return { ...current, items: boundItems([...current.items, { id, type: 'status', text: message, sequence: resolvedSequence }]) };
+    });
+  }
 
   if (event.source === 'provider' && activityType === 'activity.usage') {
     const usage = record(activity.contextUsage);

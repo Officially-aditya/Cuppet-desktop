@@ -111,6 +111,8 @@ export function classifyProviderError(error, context = {}) {
 function structuredProviderFailure(metadata, raw, providerID, provider) {
   const diagnostic = metadata.diagnostic || raw;
   switch (metadata.category) {
+    case 'provider_unavailable':
+      return failure('provider_unavailable', 'Provider retries exhausted', `${provider} stopped after repeated unsuccessful requests. ${displayDiagnostic(diagnostic)} Retry later or choose another model.`, 'retry_later', diagnostic, providerID, provider);
     case 'filesystem_access':
       return failure('filesystem_access', 'Documents access required', 'macOS is blocking Cuppet from accessing your project in Documents. Open System Settings → Privacy & Security → Files & Folders → Cuppet and enable Documents Folder, then retry.', 'grant_project_access', diagnostic, providerID, provider);
     case 'executable_missing':

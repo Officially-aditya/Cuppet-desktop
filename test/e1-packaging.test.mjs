@@ -58,7 +58,7 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
     'package.json',
   ]) assert.ok(packagedFiles.has(required), `missing packaged surface: ${required}`);
   assert.equal(packagedFiles.has('src/**/*'), false, 'packaging should stay explicit instead of bundling every source file');
-  assert.deepEqual(pkg.dependencies, { 'node-pty': '^1.1.0' });
+  assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0' });
   assert.equal(pkg.devDependencies['node-pty'], undefined, 'the interactive terminal must ship in production builds');
   assert.deepEqual(
     pkg.build.asarUnpack,

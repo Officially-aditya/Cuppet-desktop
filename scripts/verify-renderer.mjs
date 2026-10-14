@@ -38,7 +38,7 @@ const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets,
 ]);
 const pkg = JSON.parse(pkgText);
 
-assert.deepEqual(pkg.dependencies, { 'node-pty': '^1.1.0' }, 'renderer libraries must stay build-time only; the native terminal is the only production npm dependency');
+assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0' }, 'renderer libraries must stay build-time only; production dependencies are the provider JSONC parser and native terminal');
 for (const dependency of ['react','react-dom','vite','typescript','@vitejs/plugin-react','qrcode']) assert.ok(pkg.devDependencies?.[dependency], `renderer build dependency missing: ${dependency}`);
 assert.equal(pkg.scripts?.['renderer:verify'], 'tsc --noEmit && vite build && node scripts/verify-renderer.mjs');
 assert.ok(pkg.build.files.includes('dist-renderer/**/*'), 'compiled Vite renderer is not packaged');

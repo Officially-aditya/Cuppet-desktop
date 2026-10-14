@@ -6,6 +6,19 @@ import {
   formatWorkedDuration,
 } from '../src/renderer/react/chat-transcript.ts';
 
+test('provider retries render as status entries without contaminating reasoning or duplicating hydrated events', () => {
+  const event = { type: 'runtime.activity', source: 'provider', messageId: 'retry-message', sequence: 1,
+    activity: { type: 'activity.warning', code: 'provider_retry', message: 'OpenCode is retrying the request (attempt 1). Endpoint is unavailable' } };
+  let state = reduceTranscriptEvent({}, event);
+  state = reduceTranscriptEvent(state, event);
+  const items = state['retry-message'].items;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].type, 'status');
+  assert.match(items[0].text, /attempt 1/);
+  state = reduceTranscriptEvent(state, { ...event, sequence: 2, activity: { type: 'activity.reasoning.delta', text: 'Continuing.' } });
+  assert.deepEqual(state['retry-message'].items.map(item => item.type), ['status', 'reasoning']);
+});
+
 test('chat-transcript accepts and merges provider tool activities', () => {
   let state = {};
 

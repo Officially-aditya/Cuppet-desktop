@@ -55,6 +55,7 @@
     "browsercontrol:package-smoke": "node scripts/smoke-packaged-browsercontrol.mjs"
   },
   "dependencies": {
+    "json5": "2.2.3",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {

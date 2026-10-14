@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { writeFile, rm } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-cli-environment.mjs';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
@@ -58,27 +57,13 @@ export class AcpSessionRuntime {
     this.#startupTimeoutMs = positiveMs(liveness.startupMs, STARTUP_TIMEOUT_MS);
     this.#authenticationTimeoutMs = positiveMs(liveness.authenticationMs, AUTHENTICATION_TIMEOUT_MS);
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
-    if (process.platform === 'darwin' && descriptor.id === 'opencode') {
-      const documents = join(homedir(), 'Documents');
-      if (this.#projectRoot === documents || this.#projectRoot.startsWith(`${documents}/`)) {
-        // OpenCode discovers configuration through parent directories, even when
-        // an Open panel granted Cuppet access to only the selected project.
-        try { realpathSync(documents); } catch (error) {
-          if (!['EPERM', 'EACCES'].includes(error?.code)) throw error;
-          throw providerFailureError('Cuppet cannot access the Documents folder.', {
-            code: 'PROVIDER_PROJECT_ACCESS_DENIED', category: 'filesystem_access',
-            action: 'grant_project_access', providerID: descriptor.id, cause: error,
-            diagnostic: `${error.code}: ${documents}`,
-          });
-        }
-      }
-    }
+    descriptor.assertProjectAccess?.(this.#projectRoot);
     this.#environment = providerEnvironment(descriptor, configuration);
     this.#resolveRuntime = resolveRuntimeImpl;
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
     const deferStartForMcp = Boolean(descriptor?.mcpConfigArg);
-    if (!deferStartForMcp && (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]))) {
+    if (!deferStartForMcp && !descriptor.prepareEnvironment && (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]))) {
       this.#startProcess(resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment }));
     }
   }
@@ -156,6 +141,9 @@ export class AcpSessionRuntime {
           command = resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment });
         }
         await this.#applyMcpConfigFile(mcpServers);
+        if (this.#descriptor.prepareEnvironment) {
+          this.#environment = await this.#descriptor.prepareEnvironment(this.#environment, this.#configuration, command);
+        }
         this.#startProcess(command);
       }
       await this.#rpc.ready();
@@ -246,6 +234,9 @@ export class AcpSessionRuntime {
     this.#activeTurn = turn;
     this.#state = 'running';
     let output = '';
+    let retryFailure = null;
+    let rejectRetry;
+    const retryLimit = new Promise((_, reject) => { rejectRetry = reject; });
     const emit = async (activity) => {
       if (!activity) return;
       this.#touchActiveTurn();
@@ -262,7 +253,17 @@ export class AcpSessionRuntime {
       const update = params.update ?? params;
       turn.completion.observeUpdate(update);
       this.#touchActiveTurn();
-      await emit(this.#normalizer.normalize(update));
+      const activity = this.#normalizer.normalize(update);
+      await emit(activity);
+      const maxRetries = Number(this.#descriptor.maxPromptRetries);
+      if (!retryFailure && maxRetries > 0 && activity?.code === 'provider_retry' && activity.attempt > maxRetries) {
+        retryFailure = providerFailureError(`${this.#descriptor.label} stopped after ${maxRetries} unsuccessful provider retries.`, {
+          code: 'PROVIDER_RETRY_LIMIT', category: 'provider_unavailable', action: 'retry_later',
+          diagnostic: activity.message,
+        });
+        this.#rpc.notify('session/cancel', { sessionId });
+        rejectRetry(retryFailure);
+      }
     });
     const onAbort = () => {
       turn.cancelled = true;
@@ -273,11 +274,11 @@ export class AcpSessionRuntime {
     signal?.addEventListener?.('abort', onAbort, { once: true });
     this.#armActivityWatchdog(turn);
     try {
-      const prompt = await this.#rpc.request(
+      const prompt = await Promise.race([this.#rpc.request(
         'session/prompt',
         sessionPromptParams(this.#descriptor, sessionId, serializeConversation(input.messages ?? [])),
         PROMPT_TIMEOUT_MS,
-      );
+      ), retryLimit]);
       if (turn.stalled) throw stalledError(this.#descriptor);
       if (signal?.aborted || turn.cancelled) throw abortError();
       await turn.completion.afterPrompt(prompt);
@@ -285,6 +286,11 @@ export class AcpSessionRuntime {
       if (signal?.aborted || turn.cancelled) throw abortError();
       return { text: output, toolCalls: [], usage: normalizeUsage(prompt?.usage ?? prompt?._meta?.usage), stopReason: text(prompt?.stopReason) || null };
     } catch (error) {
+      if (retryFailure) {
+        this.#state = 'error';
+        await this.#rpc.close();
+        throw retryFailure;
+      }
       if (turn.stalled) throw stalledError(this.#descriptor);
       if (signal?.aborted || turn.cancelled || error?.name === 'AbortError') throw abortError();
       throw enrichProviderError(this.#descriptor, error, this.#rpc.stderr());
@@ -296,7 +302,7 @@ export class AcpSessionRuntime {
       this.#rpc.setNotificationHandler();
       this.setHostHandlers();
       this.#activeTurn = null;
-      if (this.#state !== 'closed') this.#state = 'ready';
+      if (this.#state === 'running') this.#state = 'ready';
     }
   }
 
