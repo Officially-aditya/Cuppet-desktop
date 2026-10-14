@@ -95,6 +95,7 @@ export function localProviderOperations(providerID, {
   antigravityInstallOptions = {},
   resolveCopilotRuntimeImpl = resolveCopilotAcpRuntime,
   copilotRuntimeOptions = {},
+  onAuthenticationUrl,
 } = {}) {
   const descriptor = localCliDescriptor(providerID);
   if (!descriptor) throw new Error('Unsupported local CLI provider.');
@@ -232,20 +233,28 @@ export function localProviderOperations(providerID, {
       if (descriptor.id === 'opencode') {
         authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl, version: detected.version });
         providerReady = authentication.connected === true;
+      } else if (descriptor.id === 'antigravity') {
+        const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
+        if (installation) {
+          const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), liveness: { startupMs: STATUS_TIMEOUT_MS } });
+          try { await runtime.start(); providerReady = true; }
+          finally { await runtime.close(); }
+        }
       } else {
         providerReady = await probeConnection(descriptor, detected.installation.executable, runImpl);
       }
     } catch (error) { probeError = cleanError(error); }
-    // OpenCode exposes an authoritative read-only credential listing. Never let
-    // a historical Cuppet link marker override a current zero-credential result.
-    const connected = descriptor.id === 'opencode'
+    // OpenCode credentials and an Antigravity ACP session provide authoritative
+    // read-only auth probes; a historical link must not override their result.
+    const authoritativeProbe = descriptor.id === 'opencode' || descriptor.id === 'antigravity';
+    const connected = authoritativeProbe
       ? Boolean(providerReady)
       : Boolean(providerReady || marker.linkedAt);
     return {
       ...detected,
       connected,
       available: connected,
-      probe: providerReady ? 'provider' : marker.linkedAt && descriptor.id !== 'opencode' ? 'linked-marker' : 'not-authenticated',
+      probe: providerReady ? 'provider' : marker.linkedAt && !authoritativeProbe ? 'linked-marker' : 'not-authenticated',
       ...(authentication ? { authentication } : {}),
       ...(probeError ? { probeError } : {}),
     };
@@ -304,9 +313,10 @@ export function localProviderOperations(providerID, {
     if (!detected.installed) throw new Error(`${descriptor.label} must be installed before authentication.`);
     const current = await probe(detected);
     if (descriptor.id === 'antigravity') {
+      if (current.connected && !forceAuthentication) return current;
       const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
       if (!installation) throw new Error('Antigravity ACP must be installed before authentication.');
-      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), configuration: { allowInteractiveAuth: true } });
+      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), configuration: { allowInteractiveAuth: true, forceAuthentication, onAuthenticationUrl } });
       try { await runtime.start(); }
       finally { await runtime.close(); }
       await markLinked(userData, descriptor.id, now());

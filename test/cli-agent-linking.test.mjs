@@ -29,7 +29,7 @@ test('Antigravity detection is read-only and Connect verifies the same ACP runti
   });
   try {
     assert.equal((await operations.detect()).installed, true);
-    assert.equal((await operations.probe()).connected, false);
+    assert.equal((await operations.probe()).connected, true);
     assert.ok(calls.every((options) => options.allowInstall === false));
     const status = await operations.connect();
     assert.equal(status.connected, true);

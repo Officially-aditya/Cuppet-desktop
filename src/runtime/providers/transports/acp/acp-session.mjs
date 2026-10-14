@@ -148,8 +148,17 @@ export class AcpSessionRuntime {
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, this.#startupTimeoutMs);
-      await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
-      await this.#openSession(mcpServers, selection);
+      const authenticateOnSessionRequired = this.#descriptor.authentication?.onSessionRequired === true;
+      if (!authenticateOnSessionRequired || this.#configuration.forceAuthentication === true) {
+        await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
+      }
+      try {
+        await this.#openSession(mcpServers, selection);
+      } catch (error) {
+        if (!authenticateOnSessionRequired || !/authentication required|not authenticated|unauthenticated|(?:log|sign)[ -]?in required/i.test(error?.message ?? '')) throw error;
+        await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
+        await this.#openSession(mcpServers, selection);
+      }
       this.#state = 'ready';
       return this.snapshot();
     } catch (error) {

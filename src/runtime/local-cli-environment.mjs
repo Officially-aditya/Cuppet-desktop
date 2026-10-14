@@ -247,6 +247,12 @@ export function detectLocalProviderApp(providerID, inherited = process.env, opti
       ? win32Path.join(path, copilot ? 'Code.exe' : 'Antigravity.exe')
       : platform === 'darwin' ? posixPath.join(path, 'Contents', 'MacOS', 'Electron') : posixPath.join(path, copilot ? 'code' : 'antigravity');
     try { check(executable, fsConstants.F_OK); return { label, path }; } catch {}
+    if (platform === 'darwin' && !copilot) {
+      try {
+        check(posixPath.join(path, 'Contents', 'MacOS', 'Antigravity'), fsConstants.F_OK);
+        return { label, path };
+      } catch {}
+    }
   }
   return null;
 }

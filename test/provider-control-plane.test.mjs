@@ -107,7 +107,7 @@ test('Electron main is a provider-control proxy, not a second lifecycle authorit
   assert.match(main, /request\('provider\.models'/);
   assert.match(main, /CUPPET_USER_DATA_DIR: userData/);
 
-  assert.match(runtime, /new ProviderControlPlane\(\{ dataDir, providerRuntimeManager \}\)/);
+  assert.match(runtime, /new ProviderControlPlane\(\{\s*dataDir,\s*providerRuntimeManager,/);
   assert.match(runtime, /case 'provider\.local\.status'/);
   assert.match(runtime, /case 'provider\.models'/);
   assert.doesNotMatch(controlPlane, /\.\.\/\.\.\/main\//);

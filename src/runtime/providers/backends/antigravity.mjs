@@ -60,6 +60,7 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
   const command = installation ? requiredText(installation.command, 'Antigravity ACP command') : 'agy_acp_server';
   const harnessPath = installation ? requiredText(installation.harnessPath, 'Antigravity harness path') : '';
   const args = Array.isArray(installation?.args) ? installation.args.map(String) : [];
+  const authenticationUrls = new Set();
   return {
     id: 'antigravity',
     label: 'Google Antigravity',
@@ -69,12 +70,22 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
     versionArgs: [],
     envOverride: installation ? 'CUPPET_ANTIGRAVITY_ACP_BIN' : '',
     loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
-    authentication: { methods: [{ id: 'oauth-personal' }] },
+    authentication: { methods: [{ id: 'oauth-personal' }], onSessionRequired: true },
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
     diagnosticError: (line, configuration) => {
-      if (configuration?.allowInteractiveAuth === true) return null;
       const text = String(line || '').trim();
       if (!text.includes('Open the following link to authenticate the ACP server:') && !text.includes('accounts.google.com')) return null;
+      if (configuration?.allowInteractiveAuth === true) {
+        const candidate = text.match(/https:\/\/accounts\.google\.com\/[^\s]+/)?.[0];
+        if (candidate && !authenticationUrls.has(candidate) && typeof configuration.onAuthenticationUrl === 'function') {
+          const url = new URL(candidate);
+          if (url.protocol === 'https:' && url.hostname === 'accounts.google.com') {
+            authenticationUrls.add(candidate);
+            configuration.onAuthenticationUrl(url.toString());
+          }
+        }
+        return null;
+      }
       return providerFailureError('Sign in to Google Antigravity in Settings before continuing.', {
         code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: 'antigravity',
       });

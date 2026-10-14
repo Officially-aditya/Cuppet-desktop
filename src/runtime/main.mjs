@@ -18,6 +18,7 @@ import { SessionCommandSerializer } from './session-command-serializer.mjs';
 import { persistDurableRuntimeEvent } from './runtime-event-durability.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
+import { localProviderOperations } from './providers/local-provider-operations.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
 import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
 import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
@@ -40,7 +41,14 @@ const sendCommands = new SessionCommandSerializer();
 const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerRuntimeManager = new ProviderRuntimeManager();
-const providerControl = new ProviderControlPlane({ dataDir, providerRuntimeManager });
+const providerControl = new ProviderControlPlane({
+  dataDir,
+  providerRuntimeManager,
+  operationsFactory: (providerID, options) => localProviderOperations(providerID, {
+    ...options,
+    onAuthenticationUrl: (url) => write({ kind: 'event', event: { type: 'provider.authentication.url', providerID, url } }),
+  }),
+});
 const emit = (event) => {
   try {
     persistDurableRuntimeEvent(event, turnStore);

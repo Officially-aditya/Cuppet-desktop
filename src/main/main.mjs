@@ -33,7 +33,14 @@ async function bootstrap() {
     environment: { CUPPET_USER_DATA_DIR: userData },
   });
   const syncProviderConfig = () => runtime.request('provider.config.sync', { provider: settings.runtimeValue() });
-  runtime.on('event', (event) => mainWindow?.webContents.send('cuppet:event', event));
+  runtime.on('event', (event) => {
+    if (event?.type === 'provider.authentication.url' && event.providerID === 'antigravity') {
+      const url = new URL(event.url);
+      if (url.protocol === 'https:' && url.hostname === 'accounts.google.com') void openExternal(url.toString()).catch(console.error);
+      return;
+    }
+    mainWindow?.webContents.send('cuppet:event', event);
+  });
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
   runtime.on('recovered', () => { void syncProviderConfig().then(() => runtime.request('remote.resume')).catch(() => undefined); });
   await runtime.start();

@@ -6,6 +6,18 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { detectLocalProviderApp, localCliEnvironment, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../src/runtime/local-cli-environment.mjs';
 
+test('Antigravity app discovery supports both macOS executable names', () => {
+  for (const executable of ['Antigravity', 'Electron']) {
+    const app = detectLocalProviderApp('antigravity', {}, {
+      platform: 'darwin', home: '/Users/cuppet-test',
+      accessSyncImpl: (path) => {
+        if (path !== `/Applications/Antigravity.app/Contents/MacOS/${executable}`) throw new Error('missing');
+      },
+    });
+    assert.deepEqual(app, { label: 'Google Antigravity', path: '/Applications/Antigravity.app' });
+  }
+});
+
 test('official apps are detected separately from their provider runtime', () => {
   for (const [providerID, product, label] of [
     ['github-copilot', 'Microsoft VS Code', 'Visual Studio Code'],
