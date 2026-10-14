@@ -255,6 +255,9 @@ function record(value: unknown): Record<string, any> {
 
 export function formatWorkedDuration(ms: number): string {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
   const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) {
     return `${totalMinutes}m ${totalSeconds % 60}s`;
