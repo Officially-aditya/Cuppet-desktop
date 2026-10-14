@@ -8,46 +8,46 @@ import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../../local-cli-environment.mjs';
 
-const VERSION = 'agy_acp_server_1.1.1';
+const VERSION = '1.4.0';
 const MAX_ARCHIVE_BYTES = 800 * 1024 * 1024;
 const MAX_SEARCH_ENTRIES = 256;
 const MAX_SEARCH_DEPTH = 5;
 
 const ASSETS = Object.freeze({
   'darwin-arm64': asset(
-    'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip',
-    'fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189',
-    316_014_828,
-    'agy_acp_server.par', 802_163_856,
-    'localharness_external', 116_766_704,
+    'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-arm64.zip',
+    '21a32eeab85b394a515510c84539bda4b2504bf2917e0a201f5c4130b13581a5',
+    112_734_313,
+    'agy_acp_server.par', 280_980_064,
+    'localharness_external', 120_246_928,
   ),
   'linux-x64': asset(
-    'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip',
-    '38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df',
-    681_969_407,
-    'agy_acp_server.par', 1_880_360_328,
-    'localharness_external', 128_966_920,
+    'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.0-linux-x86_64.zip',
+    'fbb2d54dd94fb897845308d3b6b46187c627f1c60078ded81adeeaf8b90c5d7a',
+    336_175_910,
+    'agy_acp_server.par', 930_814_465,
+    'localharness_external', 131_187_512,
   ),
   'linux-arm64': asset(
-    'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip',
-    'ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398',
-    656_572_786,
-    'agy_acp_server.par', 1_862_073_131,
-    'localharness_external', 122_158_704,
+    'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.0-linux-arm64.zip',
+    '3dc43a21f5402b23a4dba7b320a6745e9dbf4b6ead912ce9fc76011ea3a08a7e',
+    321_912_925,
+    'agy_acp_server.par', 933_404_508,
+    'localharness_external', 124_895_000,
   ),
   'win32-x64': asset(
-    'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip',
-    '47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8',
-    468_238_392,
-    'agy_acp_server.exe', 430_801_616,
-    'localharness_external.exe', 130_971_800,
+    'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.0-windows-x86_64.zip',
+    'd737aad2d6388e071bc907db415c129a256915d275f436e68f10dcdf6af896da',
+    125_646_049,
+    'agy_acp_server.exe', 82_245_832,
+    'localharness_external.exe', 146_036_888,
   ),
   'win32-arm64': asset(
-    'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip',
-    '35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc',
-    468_521_191,
-    'agy_acp_server.exe', 435_075_816,
-    'localharness_external.exe', 122_455_704,
+    'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.0-windows-arm64.zip',
+    '37fac14835f06caf05b4b93fed59a0e16e7c716e3ec95f03d4779a61abe3c2e6',
+    126_083_066,
+    'agy_acp_server.exe', 86_867_784,
+    'localharness_external.exe', 136_970_904,
   ),
 });
 

@@ -138,6 +138,13 @@ export class AcpProcess {
     this.#closed = true;
     if (!['stopped', 'crashed'].includes(this.#state)) this.#state = 'stopping';
     try { this.#child.stdin?.end(); } catch {}
+    // Let EOF trigger provider-owned MCP cleanup before falling back to SIGTERM.
+    if (this.#child && this.#child.exitCode === null) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 1000);
+        this.#child.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
     try { this.#child?.kill(); } catch {}
     if (this.#child && this.#child.exitCode === null) {
       await new Promise((resolve) => {

@@ -236,8 +236,8 @@ export function localProviderOperations(providerID, {
       } else if (descriptor.id === 'antigravity') {
         const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
         if (installation) {
-          const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), liveness: { startupMs: STATUS_TIMEOUT_MS } });
-          try { await runtime.start(); providerReady = true; }
+          const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), liveness: { startupMs: STATUS_TIMEOUT_MS, authenticationMs: 45_000 } });
+          try { await runtime.start({ authenticateOnly: true }); providerReady = true; }
           finally { await runtime.close(); }
         }
       } else {

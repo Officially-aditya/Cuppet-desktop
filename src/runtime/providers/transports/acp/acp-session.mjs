@@ -118,7 +118,7 @@ export class AcpSessionRuntime {
     };
   }
 
-  async start({ mcpServers = [], selection } = {}) {
+  async start({ mcpServers = [], selection, authenticateOnly = false } = {}) {
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
     if (this.#state === 'starting') throw new Error(`${this.#descriptor.label} runtime is already starting.`);
@@ -149,8 +149,12 @@ export class AcpSessionRuntime {
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, this.#startupTimeoutMs);
       const authenticateOnSessionRequired = this.#descriptor.authentication?.onSessionRequired === true;
-      if (!authenticateOnSessionRequired || this.#configuration.forceAuthentication === true) {
+      if (authenticateOnly || !authenticateOnSessionRequired || this.#configuration.forceAuthentication === true) {
         await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
+      }
+      if (authenticateOnly) {
+        this.#state = 'authenticated';
+        return this.snapshot();
       }
       try {
         await this.#openSession(mcpServers, selection);
@@ -493,7 +497,7 @@ async function authenticateIfNeeded(rpc, descriptor, initialized, environment, t
   const methodId = text(selectedRecord.id);
   if (!methodId) throw new Error(descriptor.loginHint);
   const isInteractive = selectedRecord.interactive === true || methodId === 'oauth-personal' || methodId.includes('oauth');
-  if (isInteractive && configuration.allowInteractiveAuth !== true) {
+  if (isInteractive && configuration.allowInteractiveAuth !== true && policy.allowCached !== true) {
     throw providerFailureError(`Sign in to ${descriptor.label} in Settings before continuing.`, {
       code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: descriptor.id,
     });

@@ -70,13 +70,15 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
     versionArgs: [],
     envOverride: installation ? 'CUPPET_ANTIGRAVITY_ACP_BIN' : '',
     loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
-    authentication: { methods: [{ id: 'oauth-personal' }], onSessionRequired: true },
+    authentication: { methods: [{ id: 'oauth-personal' }], onSessionRequired: true, allowCached: true },
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
     diagnosticError: (line, configuration) => {
       const text = String(line || '').trim();
-      if (!text.includes('Open the following link to authenticate the ACP server:') && !text.includes('accounts.google.com')) return null;
+      // Credential/tier diagnostics contain Google URLs too; only the native
+      // browser-login prompt is evidence that interactive authentication is needed.
+      if (!text.includes('Open the following link to authenticate the ACP server:')) return null;
       if (configuration?.allowInteractiveAuth === true) {
-        const candidate = text.match(/https:\/\/accounts\.google\.com\/[^\s]+/)?.[0];
+        const candidate = text.match(/https:\/\/accounts\.google\.com\/[^\s"'<>]+/)?.[0];
         if (candidate && !authenticationUrls.has(candidate) && typeof configuration.onAuthenticationUrl === 'function') {
           const url = new URL(candidate);
           if (url.protocol === 'https:' && url.hostname === 'accounts.google.com') {

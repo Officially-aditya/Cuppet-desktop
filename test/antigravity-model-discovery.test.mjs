@@ -46,12 +46,14 @@ test('Antigravity model discovery comes from the provider ACP session catalog', 
   assert.ok(catalog.settings.some((setting) => setting.id === 'model'));
 });
 
-test('managed Antigravity macOS release is pinned to Google ACP 1.1.1 with verified metadata', () => {
+test('managed Antigravity macOS release is pinned to Google ACP 1.4.0 with verified metadata', () => {
   const release = antigravityReleaseAsset('darwin', 'arm64');
   assert.ok(release);
   assert.match(release.url, /^https:\/\/dl\.google\.com\/agy-extensions\/releases\/macos\//);
-  assert.equal(release.sha256, 'fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189');
-  assert.equal(release.archiveBytes, 316_014_828);
+  assert.equal(release.version, '1.4.0');
+  assert.match(release.url, /agy-acp-server-1\.4\.0-darwin-arm64\.zip$/);
+  assert.equal(release.sha256, '21a32eeab85b394a515510c84539bda4b2504bf2917e0a201f5c4130b13581a5');
+  assert.equal(release.archiveBytes, 112_734_313);
   assert.equal(release.executable.name, 'agy_acp_server.par');
   assert.equal(release.harness.name, 'localharness_external');
 });

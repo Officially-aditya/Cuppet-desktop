@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ManagedAntigravityProvider, antigravityAcpDescriptor } from '../src/runtime/providers/backends/antigravity.mjs';
@@ -61,13 +63,25 @@ test('Antigravity read-only discovery reports required auth without opening sign
   } finally { await runtime.close(); }
 });
 
-test('Antigravity forced reconnect authenticates even when an existing session is usable', async () => {
+test('Antigravity forced reconnect rechecks cached authentication without forcing browser login', async () => {
   const urls = [];
   const runtime = authRuntime({ allowInteractiveAuth: true, forceAuthentication: true, onAuthenticationUrl: (url) => urls.push(url) }, { FAKE_AUTHENTICATED: '1' });
   try {
     assert.equal((await runtime.start()).state, 'ready');
-    assert.deepEqual(urls, ['https://accounts.google.com/test']);
+    assert.deepEqual(urls, []);
   } finally { await runtime.close(); }
+});
+
+test('Antigravity read-only authentication probe restores cached auth without creating an MCP session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cuppet-agy-auth-probe-'));
+  const trace = join(directory, 'methods');
+  const urls = [];
+  const runtime = authRuntime({ onAuthenticationUrl: url => urls.push(url) }, { FAKE_AUTHENTICATED: '1', FAKE_ACP_TRACE_PATH: trace });
+  try {
+    assert.equal((await runtime.start({ authenticateOnly: true })).state, 'authenticated');
+    assert.deepEqual((await readFile(trace, 'utf8')).trim().split('\n'), ['initialize', 'authenticate']);
+    assert.deepEqual(urls, []);
+  } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 for (const output of ['stdout', 'stderr']) {
@@ -90,4 +104,26 @@ test('Antigravity only forwards Google sign-in URLs during explicit authenticati
   descriptor.diagnosticError('Open the following link to authenticate the ACP server: https://example.com/login', configuration);
   descriptor.diagnosticError('Open the following link to authenticate the ACP server: https://accounts.google.com.example.com/login', configuration);
   assert.deepEqual(urls, []);
+});
+
+test('Antigravity credential and tier diagnostics do not become authentication failures or browser requests', () => {
+  const descriptor = antigravityAcpDescriptor(installation);
+  const urls = [];
+  for (const line of [
+    "Loaded OAuth credentials with auth_uri='https://accounts.google.com/o/oauth2/auth'",
+    "Account tier: {'upgradeUrl': 'https://one.google.com/ai', 'authUrl': 'https://accounts.google.com/o/oauth2/auth'}",
+  ]) {
+    assert.equal(descriptor.diagnosticError(line, {}), null);
+    assert.equal(descriptor.diagnosticError(line, { allowInteractiveAuth: true, onAuthenticationUrl: url => urls.push(url) }), null);
+  }
+  assert.deepEqual(urls, []);
+});
+
+test('Antigravity sign-in URL extraction excludes surrounding diagnostic quotes', () => {
+  const descriptor = antigravityAcpDescriptor(installation);
+  const urls = [];
+  descriptor.diagnosticError("Open the following link to authenticate the ACP server: 'https://accounts.google.com/test',", {
+    allowInteractiveAuth: true, onAuthenticationUrl: url => urls.push(url),
+  });
+  assert.deepEqual(urls, ['https://accounts.google.com/test']);
 });
