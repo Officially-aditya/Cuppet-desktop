@@ -130,7 +130,10 @@ async function handle(method, params = {}, context = {}) {
     case 'provider.local.detect': return providerControl.localDetect(boundedProviderID(params.providerID));
     case 'provider.local.probe': return providerControl.localProbe(boundedProviderID(params.providerID));
     case 'provider.local.update': return providerControl.localUpdate(boundedProviderID(params.providerID));
-    case 'provider.models': return providerControl.models(boundedProvider(params.provider), { model: typeof params.model === 'string' ? params.model.slice(0, 1000) : '' });
+    case 'provider.models': return providerControl.models(boundedProvider(params.provider), {
+      model: typeof params.model === 'string' ? params.model.slice(0, 1000) : '',
+      refresh: params.refresh === true,
+    });
     case 'integration.browser.status': return browserControl.status();
     case 'integration.browser.connect': return browserControl.connect();
     case 'integration.browser.disconnect': return browserControl.disconnect();

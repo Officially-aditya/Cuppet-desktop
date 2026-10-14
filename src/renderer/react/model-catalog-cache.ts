@@ -49,7 +49,7 @@ export async function loadModelCatalog(settings: ProviderSettings, { model, refr
   const existing = pending.get(key);
   if (existing) return existing;
   const revision = cacheRevision;
-  const request = (model ? window.cuppet.settings.models({ model }) : window.cuppet.settings.models())
+  const request = (model || refresh ? window.cuppet.settings.models({ ...(model ? { model } : {}), ...(refresh ? { refresh: true } : {}) }) : window.cuppet.settings.models())
     .then((catalog) => {
       if (revision !== cacheRevision) return catalog;
       if (validCatalog(catalog, providerID(settings)) && !(catalog as ProviderModelCatalog & { stale?: boolean }).stale) {

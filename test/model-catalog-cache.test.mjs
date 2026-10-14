@@ -148,3 +148,14 @@ test('account invalidation prevents an earlier discovery from restoring the old 
   await Promise.all([afterLogin, sharedRefresh]);
   assert.deepEqual(cache.cachedModelCatalog(settings()).reasoning.options.map(option => option.id), ['new']);
 });
+
+test('account refresh bypasses the runtime cache so newly connected provider models appear', async (t) => {
+  const original = { ...catalog(), models: [{ id: 'opencode/big-pickle' }] };
+  const connected = { ...original, models: [...original.models, { id: 'opencode/paid-model' }] };
+  const { cache } = await fixture(t, async (options) => options?.refresh ? connected : original);
+  assert.deepEqual((await cache.loadModelCatalog(settings())).models, original.models);
+  cache.invalidateModelCatalogCache();
+  const refreshed = await cache.loadModelCatalog(settings(), { refresh: true });
+  assert.deepEqual(refreshed.models, connected.models);
+  assert.deepEqual(cache.cachedModelCatalog(settings()).models, connected.models);
+});

@@ -141,6 +141,9 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
       add(model.modelID, model.name);
     }
     add(configuredModel, configuredModel);
+    if (providerID === 'opencode') {
+      output.sort((a, b) => Number(/^opencode(?:-go)?\//.test(b.id)) - Number(/^opencode(?:-go)?\//.test(a.id)));
+    }
     return orderPinnedModels(output, pinnedModels);
   }, [advertised, configuredModel, providerID, providerLabel, providerPreset?.model, providerPreset?.models, settings?.customModels, settings?.models, pinnedModels]);
 

@@ -403,7 +403,7 @@ export type CuppetApi = {
   };
   settings: {
     get: () => Promise<ProviderSettings>;
-    models: (options?: { model?: string }) => Promise<ProviderModelCatalog>;
+    models: (options?: { model?: string; refresh?: boolean }) => Promise<ProviderModelCatalog>;
     save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
   };
   sandbox: {
