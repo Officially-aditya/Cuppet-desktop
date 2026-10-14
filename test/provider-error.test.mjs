@@ -34,6 +34,16 @@ test('structured missing executable failures still require provider repair',()=>
   assert.equal(value.action,'reconnect_provider');
 });
 
+test('local Documents permission denial points to macOS folder access instead of provider outage',()=>{
+  const denied=providerFailureError('Cuppet cannot access the Documents folder.',{code:'PROVIDER_PROJECT_ACCESS_DENIED',category:'filesystem_access',action:'grant_project_access',diagnostic:'EPERM: /Users/test/Documents'});
+  const value=classifyProviderError(denied,{provider:{providerID:'opencode'}});
+  assert.equal(value.category,'filesystem_access');
+  assert.equal(value.title,'Documents access required');
+  assert.equal(value.action,'grant_project_access');
+  assert.match(value.message,/Files & Folders → Cuppet/);
+  assert.doesNotMatch(value.message,/sign-in|retry in a moment/i);
+});
+
 test('OpenCode ACP errors remain actionable instead of becoming unknown',()=>{
   const auth=classify('OpenCode: provider authentication required ({"providerId":"anthropic"})','opencode');
   assert.equal(auth.category,'authentication');

@@ -111,6 +111,8 @@ export function classifyProviderError(error, context = {}) {
 function structuredProviderFailure(metadata, raw, providerID, provider) {
   const diagnostic = metadata.diagnostic || raw;
   switch (metadata.category) {
+    case 'filesystem_access':
+      return failure('filesystem_access', 'Documents access required', 'macOS is blocking Cuppet from accessing your project in Documents. Open System Settings → Privacy & Security → Files & Folders → Cuppet and enable Documents Folder, then retry.', 'grant_project_access', diagnostic, providerID, provider);
     case 'executable_missing':
       return failure('local_agent_unavailable', 'Provider connection needs repair', `${provider}'s local agent cannot be found. Reconnect ${provider} in Settings → Platform so Cuppet can repair the local setup.`, 'reconnect_provider', diagnostic, providerID, provider);
     case 'process_exited':

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { realpathSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-cli-environment.mjs';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
@@ -57,6 +58,21 @@ export class AcpSessionRuntime {
     this.#startupTimeoutMs = positiveMs(liveness.startupMs, STARTUP_TIMEOUT_MS);
     this.#authenticationTimeoutMs = positiveMs(liveness.authenticationMs, AUTHENTICATION_TIMEOUT_MS);
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
+    if (process.platform === 'darwin' && descriptor.id === 'opencode') {
+      const documents = join(homedir(), 'Documents');
+      if (this.#projectRoot === documents || this.#projectRoot.startsWith(`${documents}/`)) {
+        // OpenCode discovers configuration through parent directories, even when
+        // an Open panel granted Cuppet access to only the selected project.
+        try { realpathSync(documents); } catch (error) {
+          if (!['EPERM', 'EACCES'].includes(error?.code)) throw error;
+          throw providerFailureError('Cuppet cannot access the Documents folder.', {
+            code: 'PROVIDER_PROJECT_ACCESS_DENIED', category: 'filesystem_access',
+            action: 'grant_project_access', providerID: descriptor.id, cause: error,
+            diagnostic: `${error.code}: ${documents}`,
+          });
+        }
+      }
+    }
     this.#environment = providerEnvironment(descriptor, configuration);
     this.#resolveRuntime = resolveRuntimeImpl;
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });

@@ -43,6 +43,9 @@
   "mac": {
     "icon": "build/icon-macos.png",
     "category": "public.app-category.developer-tools",
+    "extendInfo": {
+      "NSDocumentsFolderUsageDescription": "Cuppet and your local coding provider need access to projects and their configuration in your Documents folder."
+    },
     "identity": null,
     "hardenedRuntime": false,
     "notarize": false,
