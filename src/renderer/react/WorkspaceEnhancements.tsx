@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ChatLinkPreview } from './ChatLinkPreview';
 
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
-const CODE_FILE = /(?:^|\/)(?:Dockerfile|Makefile|Procfile|Gemfile|Rakefile|Cargo\.toml|go\.mod|go\.sum|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.(?:[cm]?[jt]sx?|json|mdx?|py|rs|go|java|kt|kts|swift|css|scss|sass|less|html?|vue|svelte|ya?ml|toml|sql|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|cs|rb|php|xml|gradle|properties|ini|conf|env|graphql|proto))(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?$/i;
+const CODE_FILE = /(?:^|\/)(?:Dockerfile|Makefile|Procfile|Gemfile|Rakefile|Cargo\.toml|go\.mod|go\.sum|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.(?:[cm]?[jt]sx?|json|mdx?|py|rs|go|java|kt|kts|swift|css|scss|sass|less|html?|vue|svelte|ya?ml|toml|sql|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|cs|rb|php|xml|gradle|properties|ini|conf|env|graphql|proto|txt|csv|tsv|pdf|docx?|xlsx?|pptx?|odt|rtf|png|jpe?g|webp|gif|svg|mp3|mp4|wav|mov|zip))(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?$/i;
 
 type EditedFileEvent = { path: string; tool?: string; updatedAt?: number };
 type EditedFilesResult = { sessionId: string; projectId?: string | null; files?: EditedFileEvent[] };
@@ -108,7 +109,7 @@ export function WorkspaceEnhancements() {
     return () => { document.removeEventListener('click', handleClick); document.removeEventListener('keydown', handleKey); };
   }, [projectId]);
 
-  return null;
+  return <ChatLinkPreview projectId={projectId} />;
 }
 
 function syncTurnFileSummaries(_messages: RuntimeMessage[], _events: EditedFileEvent[], _projectId: string | null) {
@@ -153,14 +154,15 @@ function markInlineProjectFiles() {
     node.setAttribute('data-cuppet-project-file', path);
     node.setAttribute('role', 'link');
     node.tabIndex = 0;
-    node.title = `Open ${stripLineSuffix(path)}`;
+    node.removeAttribute('title');
   }
 }
 
 function inlineProjectPath(value: string | null) {
   const raw = String(value ?? '').trim();
-  if (!raw || raw.length > 1024 || /\s|:\/\/|[|;&<>`$]/.test(raw)) return '';
-  const path = raw.replace(/^[/\\]+/, '').replace(/^\.\//, '').replaceAll('\\', '/');
+  if (!raw || raw.length > 1024 || /:\/\/|[|;&<>`$]/.test(raw)) return '';
+  if (/\s/.test(raw) && !/^(?:[/\\]|[A-Za-z]:[/\\])/.test(raw)) return '';
+  const path = raw.replace(/^\.\//, '').replaceAll('\\', '/');
   if (!path || path === '..' || path.startsWith('../') || path.includes('/../') || !CODE_FILE.test(path)) return '';
   return path;
 }

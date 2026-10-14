@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('cuppet', {
     chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
     openProjectFile: (projectId, path) => ipcRenderer.invoke('cuppet:native:open-project-file', projectId, path),
     projectFileEditor: (projectId, path) => ipcRenderer.invoke('cuppet:native:project-file-editor', projectId, path),
+    linkPreview: (url) => ipcRenderer.invoke('cuppet:native:link-preview', url),
     openExternal: (url) => ipcRenderer.invoke('cuppet:native:open-external', url),
     copyText: (text) => ipcRenderer.invoke('cuppet:native:copy-text', text),
     minimizeWindow: () => ipcRenderer.invoke('cuppet:native:minimize'),

@@ -39,7 +39,7 @@ test('edited file events preserve repeated edits across turns while excluding un
 });
 
 test('workspace links, edited files, working state, and reasoning stay on canonical ownership paths', async () => {
-  const [host, runtime, preload, markdown, enhancements, chatPane, clientTranscript, chatTranscript, styles] = await Promise.all([
+  const [host, runtime, preload, markdown, enhancements, chatPane, clientTranscript, chatTranscript, styles, filePaths] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
@@ -49,10 +49,12 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
     readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/workspace-enhancements.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/main/project-file-path.mjs', import.meta.url), 'utf8'),
   ]);
 
   assert.match(host, /realpath\(project\.canonicalPath\)/);
-  assert.match(host, /File path escapes the project workspace/);
+  assert.match(host, /resolveProjectFilePath\(root, path\)/);
+  assert.match(filePaths, /File path escapes the project workspace/);
   assert.match(host, /shell\.openPath\(actual\)/);
   assert.match(host, /shell\.openExternal\(url\.toString\(\)\)/);
   assert.match(host, /setWindowOpenHandler/);

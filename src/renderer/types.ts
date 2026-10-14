@@ -391,7 +391,10 @@ export type CuppetApi = {
     platform: string;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
     copyText: (text: string) => Promise<{ copied: boolean }>;
-    projectFileEditor?: (projectId: string, path: string) => Promise<{ name: string; icon: string | null }>;
+    openProjectFile: (projectId: string, path: string) => Promise<{ opened: boolean; path: string }>;
+    openExternal: (url: string) => Promise<{ opened: boolean }>;
+    projectFileEditor?: (projectId: string, path: string) => Promise<{ path: string; name: string; icon: string | null }>;
+    linkPreview?: (url: string) => Promise<{ url: string; hostname: string; title: string; description: string; siteName: string; image: string | null; icon: string | null }>;
     minimizeWindow?: () => Promise<void>;
     toggleMaximizeWindow?: () => Promise<boolean>;
     closeWindow?: () => Promise<void>;

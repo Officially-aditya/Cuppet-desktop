@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
-import { realpath, stat } from 'node:fs/promises';
-import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
@@ -9,6 +9,8 @@ import { ProjectTerminalManager } from './project-terminal-manager.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
 import { isLocalCliProvider } from '../runtime/local-cli-descriptors.mjs';
 import { SandboxManager } from '../runtime/sandbox/sandbox-manager.mjs';
+import { createLinkPreviewLoader } from './link-preview.mjs';
+import { resolveProjectFilePath } from './project-file-path.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -18,6 +20,7 @@ let settings;
 let mainWindow;
 let runtimeDataDir;
 let terminals;
+const loadLinkPreview = createLinkPreviewLoader();
 
 async function bootstrap() {
   const userData = app.getPath('userData');
@@ -124,6 +127,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
   ipcMain.handle('cuppet:native:project-file-editor', (_event, projectId, path) => projectFileEditor(request, projectId, path));
+  ipcMain.handle('cuppet:native:link-preview', (_event, url) => loadLinkPreview(url));
   ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
   ipcMain.handle('cuppet:native:copy-text', (_event, value) => {
     const text = typeof value === 'string' ? value.slice(0, 2_000_000) : '';
@@ -338,19 +342,13 @@ async function resolveProjectFile(request, projectId, value) {
   const project = await request('project.get', { projectId: id });
   if (!project?.canonicalPath || project.missing) throw new Error('The project folder is unavailable.');
   const root = await realpath(project.canonicalPath);
-  const requested = resolve(root, path.replace(/^[/\\]+/, ''));
-  const actual = await realpath(requested);
-  const child = relative(root, actual);
-  if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('File path escapes the project workspace.');
-  const metadata = await stat(actual);
-  if (!metadata.isFile()) throw new Error('Only project files can be opened from chat.');
-  return { actual, child };
+  return resolveProjectFilePath(root, path);
 }
 
 async function projectFileEditor(request, projectId, value) {
   const { actual } = await resolveProjectFile(request, projectId, value);
-  const info = await app.getApplicationInfoForProtocol(pathToFileURL(actual).href);
-  return { name: info.name, icon: info.icon.isEmpty() ? null : info.icon.toDataURL() };
+  const info = await app.getApplicationInfoForProtocol(pathToFileURL(actual).href).catch(() => null);
+  return { path: actual, name: info?.name || '', icon: info && !info.icon.isEmpty() ? info.icon.toDataURL() : null };
 }
 
 async function openProjectFile(request, projectId, value) {

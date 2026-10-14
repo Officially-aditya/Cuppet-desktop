@@ -97,7 +97,8 @@ export function renderInline(value: unknown) {
     if (!target) return escapeHtml(alt || '');
     return reserve(`<span class="md-image-wrap"><img src="${escapeAttribute(target)}" alt="${escapeAttribute(alt || '')}" class="markdown-image" loading="lazy" /></span>`);
   });
-  source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_match, label, href) => {
+  source = source.replace(/\[([^\]\n]+)\]\(\s*(<[^>\n]+>|[^)\s]+)\s*\)/g, (_match, label, href) => {
+    if (href.startsWith('<')) href = href.slice(1, -1);
     const target = safeLink(href);
     if (!target) return escapeHtml(label);
     if (target.kind === 'external') {
@@ -107,6 +108,12 @@ export function renderInline(value: unknown) {
       return reserve(`<a href="#" data-cuppet-project-file="${escapeAttribute(target.path)}">${escapeHtml(label)}</a>`);
     }
     return reserve(`<a href="${escapeAttribute(target.href)}">${escapeHtml(label)}</a>`);
+  });
+
+  source = source.replace(/https?:\/\/[^\s<>"\u0000]+/gi, (value) => {
+    let href = value.replace(/[.,;!]+$/, '');
+    while (href.endsWith(')') && (href.match(/\)/g)?.length || 0) > (href.match(/\(/g)?.length || 0)) href = href.slice(0, -1);
+    return reserve(`<a href="${escapeAttribute(href)}" data-cuppet-external="true" target="_blank" rel="noreferrer noopener">${escapeHtml(href)}</a>`) + value.slice(href.length);
   });
 
   source = escapeHtml(source)
@@ -149,9 +156,10 @@ function safeLink(value: unknown): { kind: 'external' | 'anchor'; href: string }
   if (!href || href.includes('\0')) return null;
   if (EXTERNAL_LINK.test(href)) return { kind: 'external', href };
   if (href.startsWith('#')) return { kind: 'anchor', href };
-  if (href.startsWith('//') || URL_SCHEME.test(href)) return null;
+  if (/^file:\/\//i.test(href)) return { kind: 'project', path: href };
+  if (href.startsWith('//') || (URL_SCHEME.test(href) && !/^[A-Za-z]:[\\/]/.test(href))) return null;
 
-  const path = href.replace(/^[/\\]+/, '').replace(/^\.\//, '').replaceAll('\\', '/');
+  const path = href.replace(/^\.\//, '').replaceAll('\\', '/');
   if (!path || path === '..' || path.startsWith('../') || path.includes('/../')) return null;
   if (!path.includes('/') && !/^[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+$/.test(path)) return null;
   return { kind: 'project', path: path.slice(0, 1024) };

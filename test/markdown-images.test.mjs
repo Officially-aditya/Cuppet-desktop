@@ -36,3 +36,24 @@ test('full renderMarkdown parses blocks containing images', () => {
   assert.match(html, /class="markdown-image"/);
   assert.match(html, /<p>Done\.<\/p>/);
 });
+
+test('file links preserve absolute paths, spaces, file URLs and line numbers', () => {
+  for (const [input, path] of [
+    ['[Source](/workspace/src/main.ts:42)', '/workspace/src/main.ts:42'],
+    ['[Report](</workspace/My Report.pdf>)', '/workspace/My Report.pdf'],
+    ['[Report](file:///workspace/My%20Report.pdf)', 'file:///workspace/My%20Report.pdf'],
+    ['[Source](C:\\workspace\\src\\main.ts:12)', 'C:/workspace/src/main.ts:12'],
+    ['[Source](src/main.ts)', 'src/main.ts'],
+  ]) {
+    assert.ok(renderInline(input).includes(`data-cuppet-project-file="${path}"`), input);
+  }
+  assert.doesNotMatch(renderInline('[Unsafe](../outside.txt)'), /data-cuppet-project-file/);
+});
+
+test('bare web links are previewable without consuming trailing punctuation or code', () => {
+  const html = renderInline('Visit https://example.com/page. (https://example.org/) and `https://code.example.com`.');
+  assert.match(html, /href="https:\/\/example\.com\/page" data-cuppet-external/);
+  assert.match(html, /href="https:\/\/example\.org\/" data-cuppet-external/);
+  assert.match(html, /<code>https:\/\/code\.example\.com<\/code>/);
+  assert.equal((html.match(/data-cuppet-external/g) || []).length, 2);
+});

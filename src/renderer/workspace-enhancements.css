@@ -18,6 +18,22 @@
 .markdown-rendered code[data-cuppet-project-file]{cursor:pointer;text-decoration:underline;text-decoration-color:#536073;text-underline-offset:2px}
 .markdown-rendered code[data-cuppet-project-file]:hover{background:#242b34!important;color:#f0f3f7}
 
+.chat-link-preview{position:fixed;z-index:1100;width:min(340px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;border:1px solid rgba(140,150,166,.24);border-radius:12px;background:#171c23;color:#e6eaf0;box-shadow:0 12px 36px rgba(0,0,0,.35);animation:cuppet-tooltip-in .12s ease}
+.chat-link-preview.file{width:max-content;max-width:min(480px,calc(100vw - 24px));border-radius:8px}
+.chat-social-preview{display:block;color:inherit!important;text-decoration:none!important}
+.chat-link-preview-image{display:block;width:100%;aspect-ratio:1.91;object-fit:cover;background:#10151b}
+.chat-link-preview-content{display:flex;flex-direction:column;gap:7px;padding:13px 15px}
+.chat-link-preview-site{display:flex;align-items:center;gap:7px;color:#98a5b5;font-size:11px;line-height:1.4}
+.chat-link-preview-site img{width:16px;height:16px;object-fit:contain;flex:none}
+.chat-social-preview strong{font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.chat-social-preview p{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:0;color:#a6b1c0;font-size:12px;line-height:1.5}
+.chat-link-preview-url{color:#778698;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-file-preview{display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;padding:11px 13px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.chat-file-preview-path{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.chat-social-preview:focus-visible,.chat-file-preview:focus-visible{outline:2px solid #93a7c4;outline-offset:-3px}
+:root[data-theme="light"] .chat-link-preview{background:#fff;color:#1c2532;border-color:#ccd3de;box-shadow:0 12px 36px rgba(23,35,52,.14)}
+:root[data-theme="light"] .chat-link-preview-site,:root[data-theme="light"] .chat-social-preview p{color:#596779}
+
 .react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
 .react-main-pane:has(.composer-pause-button) .message-preview::after{
   content:'Working…';
