@@ -32,7 +32,9 @@ test('push resolves a nested repository root, binds approval and isolates authen
   const sandbox = { async execute(command, cwd, policy) {
     calls.push({ command, cwd, policy });
     if (command.includes("'--show-toplevel'")) {
-      assert.equal(cwd, directory);
+      assert.equal(cwd, root);
+      assert.equal(policy.projectRoot, root);
+      assert.ok(command.includes(`'-C' '${directory}'`));
       return { code: 0, stdout: repositoryRoot, stderr: '' };
     }
     assert.equal(cwd, repositoryRoot);

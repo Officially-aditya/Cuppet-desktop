@@ -29,7 +29,7 @@ export class OperationBroker {
     if (!validBranch(branch)) throw new Error('A valid destination branch is required.');
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit ?? '')) throw new Error('Supply the full commit hash to push.');
     const directory = await workspacePath(workspaceRoot, repositoryPath, true);
-    const root = await realpath(await this.#git(directory, ['rev-parse', '--show-toplevel'], signal));
+    const root = await realpath(await this.#git(workspaceRoot, ['-C', directory, 'rev-parse', '--show-toplevel'], signal));
     if (!inside(workspaceRoot, root)) throw new Error('Git repository root must stay inside the active project.');
     const head = await this.#git(root, ['rev-parse', '--verify', 'HEAD'], signal);
     if (head !== commit) throw new Error('git_push only pushes the exact current HEAD commit.');

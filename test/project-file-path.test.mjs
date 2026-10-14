@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { resolveProjectFilePath } from '../src/main/project-file-path.mjs';
 
 test('chat file paths resolve relative, absolute and encoded file links inside the project', async t => {
-  const dir = await realpath(await mkdtemp('/private/tmp/cuppet-file-path-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'cuppet-file-path-')));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const root = join(dir, 'project');
   await mkdir(root);
