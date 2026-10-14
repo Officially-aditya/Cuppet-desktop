@@ -255,14 +255,11 @@ function record(value: unknown): Record<string, any> {
 
 export function formatWorkedDuration(ms: number): string {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-  const totalMinutes = Math.round(totalSeconds / 60);
+  const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) {
-    return `${totalMinutes}m`;
+    return `${totalMinutes}m ${totalSeconds % 60}s`;
   }
-  const totalHours = Math.round(totalMinutes / 60);
-  return `${totalHours}h`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  return `${totalHours}h ${totalMinutes % 60}m`;
 }
 

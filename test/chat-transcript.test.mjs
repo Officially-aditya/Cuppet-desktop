@@ -155,25 +155,31 @@ test('reasoning deltas preserve whitespace and concatenate naturally', () => {
   assert.equal(items[0].text, "The user asks what's inside hello.txt. Let me check.");
 });
 
-test('formatWorkedDuration correctly formats seconds, minutes, and hours', () => {
+test('formatWorkedDuration preserves two time units and carries rounded seconds correctly', () => {
   // Seconds
-  assert.equal(formatWorkedDuration(400), '1s');
-  assert.equal(formatWorkedDuration(1000), '1s');
-  assert.equal(formatWorkedDuration(12000), '12s');
-  assert.equal(formatWorkedDuration(28785), '29s');
-  assert.equal(formatWorkedDuration(59000), '59s');
+  assert.equal(formatWorkedDuration(400), '0m 1s');
+  assert.equal(formatWorkedDuration(1000), '0m 1s');
+  assert.equal(formatWorkedDuration(12000), '0m 12s');
+  assert.equal(formatWorkedDuration(28785), '0m 29s');
+  assert.equal(formatWorkedDuration(59000), '0m 59s');
+  assert.equal(formatWorkedDuration(59999), '1m 0s');
 
   // Minutes
-  assert.equal(formatWorkedDuration(60000), '1m');
-  assert.equal(formatWorkedDuration(85000), '1m');
-  assert.equal(formatWorkedDuration(103591), '2m');
-  assert.equal(formatWorkedDuration(136555), '2m');
-  assert.equal(formatWorkedDuration(154409), '3m');
-  assert.equal(formatWorkedDuration(3540000), '59m');
+  assert.equal(formatWorkedDuration(60000), '1m 0s');
+  assert.equal(formatWorkedDuration(85000), '1m 25s');
+  assert.equal(formatWorkedDuration(103591), '1m 44s');
+  assert.equal(formatWorkedDuration(136555), '2m 17s');
+  assert.equal(formatWorkedDuration(154409), '2m 34s');
+  assert.equal(formatWorkedDuration(261000), '4m 21s');
+  assert.equal(formatWorkedDuration(270000), '4m 30s');
+  assert.equal(formatWorkedDuration(3540000), '59m 0s');
+  assert.equal(formatWorkedDuration(3599000), '59m 59s');
+  assert.equal(formatWorkedDuration(3599999), '1h 0m');
 
   // Hours
-  assert.equal(formatWorkedDuration(3600000), '1h');
-  assert.equal(formatWorkedDuration(7200000), '2h');
-  assert.equal(formatWorkedDuration(86400000), '24h');
+  assert.equal(formatWorkedDuration(3600000), '1h 0m');
+  assert.equal(formatWorkedDuration(7200000), '2h 0m');
+  assert.equal(formatWorkedDuration(19200000), '5h 20m');
+  assert.equal(formatWorkedDuration(86400000), '24h 0m');
 });
 
