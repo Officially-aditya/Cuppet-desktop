@@ -75,6 +75,66 @@ test('reliable Context Memory always bounds foreground history to the last two u
   assert.equal(trimmed.messages.some((message) => message.id === 'u3' || message.id === 'a3'), false);
 });
 
+test('previous user messages become session memory references without expanding automatic context', async () => {
+  const messages = Array.from({ length: 4 }, (_, i) => ({ id: `u${i}`, sequence: i + 1, role: 'user', content: `Original request ${i} ${'x'.repeat(5000)}` }));
+  const before = structuredClone(messages);
+  const references = [];
+  const tst = fakeTst({});
+  tst.observeMemory = async (sessionId, record) => { references.push({ sessionId, ...record }); return record; };
+  tst.prepareContext = async () => ({ observation_complete: true, stm: [...references, { key: 'goal', value: 'Retain session continuity' }] });
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  const first = await compiler.compile({ sessionId: 'history', messages, userMessageId: 'u3' });
+  await compiler.compile({ sessionId: 'history', messages, userMessageId: 'u3' });
+  assert.equal(references.length, 3, 'backfill previous prompts only once per compiler');
+  assert.deepEqual(references.map((record) => record.key), ['user_message:u0', 'user_message:u1', 'user_message:u2']);
+  for (const record of references) {
+    assert.equal(record.sessionId, 'history');
+    assert.equal(record.scope, 'session');
+    assert.equal(record.kind, 'concept_anchor');
+    assert.equal(record.provenance, 'tool');
+    const value = JSON.parse(record.value);
+    assert.equal(value.message_id, record.key.slice('user_message:'.length));
+    assert.equal(value.preview.length, 600);
+    assert.equal(value.characters, messages[0].content.length);
+  }
+  assert.equal(first.trimmed, true);
+  assert.deepEqual(first.messages.filter((message) => message.role === 'user').map((message) => message.id), ['u2', 'u3']);
+  assert.doesNotMatch(first.messages.find((message) => message.role === 'system').content, /user_message|Original request/);
+  assert.deepEqual(messages, before, 'indexing must not alter durable messages');
+
+  await compiler.compile({ sessionId: 'history', messages: [...messages, { id: 'u4', role: 'user', content: 'Next request' }], userMessageId: 'u4' });
+  assert.equal(references.length, 4);
+  assert.equal(references.at(-1).key, 'user_message:u3');
+  compiler.clearSession('history');
+  await compiler.compile({ sessionId: 'history', messages, userMessageId: 'u3' });
+  assert.equal(references.length, 7, 'clearing the compiler rebuilds references from durable history');
+});
+
+test('message references alone cannot authorize history trimming or STM compaction', async () => {
+  const references = [{ key: 'user_message:u0', value: 'A searchable reference, not retained task state' }];
+  const tst = fakeTst({ observation_complete: true, stm: references, graph: [{ path: 'src/index.mjs' }] });
+  tst.refreshStm = async () => ({ records: references });
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  const messages = Array.from({ length: 4 }, (_, i) => ({ id: `u${i}`, role: 'user', content: `Request ${i}` }));
+  const compiled = await compiler.compile({ sessionId: 'refs-only', messages, userMessageId: 'u3' });
+  assert.equal(compiled.trimmed, false);
+  assert.equal(compiled.messages.filter((message) => message.role === 'user').length, 4);
+  const compacted = await compiler.stmCompactionDirective({ sessionId: 'refs-only', prompt: 'compact' });
+  assert.equal(compacted.abort, true);
+});
+
+test('message indexing failures preserve generation and retry on the next user epoch', async () => {
+  const tst = fakeTst({ observation_complete: false });
+  let attempts = 0;
+  tst.observeMemory = async () => { if (++attempts === 1) throw new Error('TST offline'); };
+  const compiler = new ContextCompiler({ tst, cognitiveState: state() });
+  const messages = [{ id: 'u0', role: 'user', content: 'Keep the exact original' }, { id: 'u1', role: 'user', content: 'Continue' }];
+  const compiled = await compiler.compile({ sessionId: 'retry', messages, userMessageId: 'u1' });
+  assert.deepEqual(compiled.messages, messages);
+  await compiler.compile({ sessionId: 'retry', messages: [...messages, { id: 'u2', role: 'user', content: 'Retry' }], userMessageId: 'u2' });
+  assert.equal(attempts, 3);
+});
+
 test('plan mode uses 12 percent budget and orchestrator bypasses automatic TST context', async () => {
   const tst = fakeTst({ observation_complete: true, stm: [{ key: 'goal', value: 'x' }], plan_projection: { complete: true, coverage: { indexing_complete: true, indexed_files: 10, included_files: 10 }, files: ['src/a.mjs'] } });
   const planCompiler = new ContextCompiler({ tst, cognitiveState: state({ mode: 'plan' }) });

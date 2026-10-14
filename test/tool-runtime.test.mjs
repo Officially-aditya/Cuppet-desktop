@@ -398,6 +398,66 @@ test('tst_explore and cuppet_memory_search return clean messages when session ha
   }
 });
 
+test('memory tool searches durable user history and pages exact text without TST', async () => {
+  const { dir, db, broker, toolRuntime } = await fixture();
+  try {
+    db.createSession({ id: 'history-chat' });
+    const content = `${'first-page '.repeat(1500)}tail-marker: preserve the original requirement`;
+    db.appendMessage({ id: 'old-user', sessionId: 'history-chat', role: 'user', content });
+    db.appendMessage({ id: 'old-assistant', sessionId: 'history-chat', role: 'assistant', content: 'assistant-only-result' });
+    db.appendMessage({ id: 'recent-user', sessionId: 'history-chat', role: 'user', content: 'Continue the task' });
+    const parse = (messages) => JSON.parse(messages.at(-1).content.split('\n').slice(1).join('\n')).messages;
+    const adapter = scriptedAdapter([
+      { assertMessages(messages) { assert.doesNotMatch(JSON.stringify(messages), /tail-marker/); }, toolCalls: [{ id: 'search', name: 'cuppet_memory_search', arguments: '{"source":"messages","query":"tail-marker"}' }] },
+      { assertMessages(messages) {
+        const [record] = parse(messages);
+        assert.equal(record.message_id, 'old-user');
+        assert.match(record.content, /tail-marker/);
+        assert.equal(record.characters, content.length);
+        assert.ok(record.offset > 12000, 'search snippets must include matches beyond the stored TST preview');
+      }, toolCalls: [{ id: 'read', name: 'cuppet_memory_search', arguments: '{"message_id":"old-user","max_chars":12000}' }] },
+      { assertMessages(messages) {
+        const [record] = parse(messages);
+        assert.equal(record.content, content.slice(0, 12000));
+        assert.equal(record.next_offset, 12000);
+      }, toolCalls: [{ id: 'continue', name: 'cuppet_memory_search', arguments: '{"source":"messages","message_id":"old-user","offset":12000,"max_chars":12000}' }] },
+      { assertMessages(messages) {
+        const [record] = parse(messages);
+        assert.equal(record.content, content.slice(12000));
+        assert.equal(record.next_offset, null);
+      }, toolCalls: [{ id: 'list', name: 'cuppet_memory_search', arguments: '{"source":"messages","limit":1}' }] },
+      { delta: 'Retrieved the original request.', assertMessages(messages) { assert.deepEqual(parse(messages).map((message) => message.message_id), ['recent-user']); } },
+    ]);
+    await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'Check my earlier requirement' }], sessionId: 'history-chat', mode: 'build', signal: new AbortController().signal, onDelta: async () => {} });
+    assert.equal(db.listToolExecutions('history-chat').every((execution) => execution.status === 'complete'), true);
+  } finally { await toolRuntime.close(); broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('message retrieval cannot read another chat or assistant messages', async () => {
+  const { dir, root, db, broker, toolRuntime } = await fixture();
+  try {
+    db.createSession({ id: 'other-chat', projectId: 'p1' });
+    db.appendMessage({ id: 'private-user', sessionId: 'other-chat', role: 'user', content: 'private-cross-session-content' });
+    db.appendMessage({ id: 'assistant-id', sessionId: 's1', role: 'assistant', content: 'assistant-only-result' });
+    const adapter = scriptedAdapter([
+      { toolCalls: [
+        { id: 'cross-session', name: 'cuppet_memory_search', arguments: '{"message_id":"private-user"}' },
+        { id: 'wrong-role', name: 'cuppet_memory_search', arguments: '{"message_id":"assistant-id"}' },
+        { id: 'search-private', name: 'cuppet_memory_search', arguments: '{"source":"messages","query":"private-cross-session-content"}' },
+      ] },
+      { assertMessages(messages) {
+        const outputs = messages.filter((message) => message.role === 'tool').map((message) => message.content);
+        assert.match(outputs[0], /User message not found in this chat/);
+        assert.match(outputs[1], /User message not found in this chat/);
+        assert.doesNotMatch(outputs.join('\n'), /private-cross-session-content|assistant-only-result/);
+        assert.deepEqual(JSON.parse(outputs[2].split('\n').slice(1).join('\n')).messages, []);
+      } },
+    ]);
+    await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'Search history' }], sessionId: 's1', projectRoot: root, mode: 'plan', signal: new AbortController().signal, onDelta: async () => {} });
+    assert.deepEqual(Object.fromEntries(db.listToolExecutions('s1').map((execution) => [execution.callId, execution.status])), { 'cross-session': 'error', 'wrong-role': 'error', 'search-private': 'complete' });
+  } finally { await toolRuntime.close(); broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('workspace_edit accepts lenient aliases for oldText and newText', async () => {
   const { dir, root, db, broker, toolRuntime } = await fixture();
   try {

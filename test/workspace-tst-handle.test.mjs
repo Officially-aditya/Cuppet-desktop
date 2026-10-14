@@ -8,6 +8,23 @@ import { ManagedTstManager } from '../src/runtime/tst-supervisor.mjs';
 import { RuntimeTstManager } from '../src/runtime/runtime-tst-manager.mjs';
 import { TstBatchEditManager } from '../src/runtime/tst-edit-batches.mjs';
 import { MutationJournal } from '../src/runtime/mutation-journal.mjs';
+import { ContextCompiler } from '../src/runtime/context-compiler.mjs';
+
+test('workspace fallback indexes user message references and isolates them by session', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-history-fallback-'));
+  const tst = new WorkspaceTstHandle({ projectRoot: root });
+  try {
+    const compiler = new ContextCompiler({ tst, cognitiveState: { mode: () => 'build', snapshot: () => ({}) } });
+    const messages = [{ id: 'u0', role: 'user', content: 'Original fallback requirement' }, { id: 'u1', role: 'user', content: 'Continue' }];
+    await compiler.compile({ sessionId: 'history', messages, userMessageId: 'u1' });
+    const records = await tst.queryMemory('history', 'fallback', 10);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].key, 'user_message:u0');
+    assert.equal(records[0].scope, 'session');
+    assert.equal(JSON.parse(records[0].value).message_id, 'u0');
+    assert.deepEqual(await tst.queryMemory('another-chat', 'fallback', 10), []);
+  } finally { await tst.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test('WorkspaceTstHandle provides workspace graph exploration, search, and memory persistence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cuppet-workspace-tst-'));

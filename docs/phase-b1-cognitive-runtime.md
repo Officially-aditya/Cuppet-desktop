@@ -38,12 +38,17 @@ SQLite remains authoritative for visible user/assistant history. Cuppet context 
 History trimming is fail-closed. It can happen only when:
 
 1. there are more than two user turns;
-2. estimated history exceeds half of usable context;
-3. TST returned a non-empty context block;
-4. TST reports `observation_complete=true`;
-5. retained STM is non-empty.
+2. TST returned a non-empty context block;
+3. TST reports `observation_complete=true`;
+4. retained STM is non-empty.
 
-Otherwise the complete durable history is sent. Trimming only changes the provider request; SQLite is untouched.
+Ordinary foreground trimming retains the latest two user turns, including the current request, and their following messages. Otherwise the complete durable history is sent. Trimming only changes the provider request; SQLite is untouched.
+
+### On-demand user message retrieval
+
+Before context preparation, previous user messages are indexed in TST session memory as `user_message:<message_id>` references with sequence, original character count, and a preview capped at 600 characters. These are `concept_anchor` observations with tool provenance, not trusted preferences. Existing chats are backfilled from SQLite; successful writes are cached for the compiler lifetime. References are excluded from automatic memory rendering and cannot by themselves authorize history trimming or compaction.
+
+The model uses `cuppet_memory_search` with `source="messages"` and a query to search this chat's durable user messages. An empty query lists recent messages. Search results include message IDs and bounded matching excerpts. Supplying `message_id` reads exact original text; `offset` and `max_chars` support paging up to 12,000 characters per read. `next_offset` indicates whether more text remains. Reads are restricted to user messages in the active chat and remain available without TST, including after runtime restart. Original message text is supplied only when the model requests it; the two-turn configuration and existing fail-closed behavior remain unchanged.
 
 ### STM experiments
 

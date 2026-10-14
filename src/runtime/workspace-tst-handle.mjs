@@ -364,6 +364,9 @@ export class WorkspaceTstHandle {
   }
 
   async observeMemory(sessionId, observation) {
+    if (observation?.scope === 'session' && typeof observation.key === 'string' && observation.key.startsWith('user_message:')) {
+      return this.rememberMemory(sessionId, observation);
+    }
     return { observed: true };
   }
 
