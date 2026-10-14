@@ -6,6 +6,8 @@ on:
     branches:
       - feat/provider-architecture-v2
       - 'release/v*'
+    tags:
+      - 'v*'
     paths:
       - .github/provider-v2-test-trigger
       - .github/release-trigger
