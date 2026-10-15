@@ -4,6 +4,8 @@ import {
   reduceTranscriptEvent,
   orderedTranscriptItems,
   formatWorkedDuration,
+  hydrateTranscript,
+  mergeTranscriptState,
 } from '../src/renderer/react/chat-transcript.ts';
 
 test('provider retries render as status entries without contaminating reasoning or duplicating hydrated events', () => {
@@ -196,5 +198,43 @@ test('formatWorkedDuration uses seconds below a minute and two units for longer 
   assert.equal(formatWorkedDuration(7200000), '2h 0m');
   assert.equal(formatWorkedDuration(19200000), '5h 20m');
   assert.equal(formatWorkedDuration(86400000), '24h 0m');
+});
+
+test('thought timing ends at the next tool or answer and survives history hydration', () => {
+  const rows = [
+    { messageId: 'timed', source: 'provider', sequence: 1, createdAt: 1000, activity: { type: 'activity.reasoning.delta', text: 'First thought.' } },
+    { messageId: 'timed', source: 'provider', sequence: 2, createdAt: 3000, activity: { type: 'activity.tool.opened', callId: 'read', tool: 'read' } },
+    { messageId: 'timed', source: 'provider', sequence: 3, createdAt: 5000, activity: { type: 'activity.reasoning.delta', text: 'Second thought.' } },
+    { messageId: 'timed', source: 'provider', sequence: 4, createdAt: 9000, activity: { type: 'activity.text.delta', text: 'Final answer.' } },
+  ];
+  const state = hydrateTranscript(rows);
+  const thoughts = state.timed.items.filter((item) => item.type === 'reasoning');
+  assert.deepEqual(thoughts.map(({ startedAt, completedAt }) => [startedAt, completedAt]), [[1000, 3000], [5000, 9000]]);
+  assert.deepEqual(state.timed.items.map((item) => item.type), ['reasoning', 'tool', 'reasoning']);
+  assert.equal(state.timed.preview, '');
+});
+
+test('a live answer closes thought timing without losing it when older history is merged', () => {
+  const durable = hydrateTranscript([{ messageId: 'live-timing', source: 'provider', sequence: 1, createdAt: 1000,
+    activity: { type: 'activity.reasoning.delta', text: 'Inspecting.' } }]);
+  const live = reduceTranscriptEvent(durable, { type: 'message.preview', messageId: 'live-timing', content: 'Answer', createdAt: 6000 });
+  assert.equal(live['live-timing'].items[0].completedAt, 6000);
+  assert.equal(mergeTranscriptState(live, durable)['live-timing'].items[0].completedAt, 6000);
+  const stopped = reduceTranscriptEvent(durable, { type: 'message.completed', messageId: 'live-timing', createdAt: 8000 });
+  assert.equal(stopped['live-timing'].items[0].completedAt, 8000);
+});
+
+test('progress narration stays separate from provider reasoning and retains its measured interval', () => {
+  const state = hydrateTranscript([
+    { messageId: 'progress', source: 'provider', sequence: 1, createdAt: 1000, activity: { type: 'activity.reasoning.delta', text: 'Thinking.' } },
+    { messageId: 'progress', source: 'provider', sequence: 2, createdAt: 5000,
+      activity: { type: 'activity.reasoning.delta', kind: 'commentary', text: 'Checking a file.', startedAt: 2000, completedAt: 5000 } },
+  ]);
+  const items = state.progress.items;
+  assert.equal(items.length, 2);
+  assert.equal(items[0].text, 'Thinking.');
+  assert.equal(items[1].kind, 'commentary');
+  assert.equal(items[1].startedAt, 2000);
+  assert.equal(items[1].completedAt, 5000);
 });
 

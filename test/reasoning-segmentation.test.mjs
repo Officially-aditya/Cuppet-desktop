@@ -163,3 +163,65 @@ test('canonical provider reasoning and tool telemetry remain distinct from execu
     false,
   );
 });
+
+test('provider-managed tool rounds move progress out of the final answer', async () => {
+  const h = harness({
+    async stream(_messages, options) {
+      options.onDelta('Let me check the maintainers.');
+      await options.onActivity(providerActivity('activity.tool.opened', { callId: 'native-1', tool: 'search' }));
+      await options.onActivity(providerActivity('activity.tool.closed', { callId: 'native-1', tool: 'search', status: 'success' }));
+      await options.onActivity(providerActivity('activity.reasoning.delta', { text: 'The results need a closer look.' }));
+      options.onDelta('Checking one more detail.');
+      await options.onActivity(providerActivity('activity.tool.opened', { callId: 'native-2', tool: 'read' }));
+      await options.onActivity(providerActivity('activity.tool.closed', { callId: 'native-2', tool: 'read', status: 'success' }));
+      options.onDelta('Here are the three buckets.');
+      return { text: 'Let me check the maintainers.Checking one more detail.Here are the three buckets.', toolCalls: [] };
+    },
+  });
+  await h.run();
+  assert.deepEqual(h.final, ['Here are the three buckets.']);
+  const reasoning = h.events.filter((event) => isProviderActivity(event, 'activity.reasoning.delta'));
+  assert.deepEqual(reasoning.map(({ activity }) => [activity.text, activity.kind]), [
+    ['Let me check the maintainers.', 'commentary'],
+    ['The results need a closer look.', undefined],
+    ['Checking one more detail.', 'commentary'],
+  ]);
+  for (const { activity, createdAt } of reasoning.filter(({ activity }) => activity.kind === 'commentary')) {
+    assert.ok(activity.completedAt >= activity.startedAt);
+    assert.ok(createdAt >= activity.completedAt);
+  }
+  const activityTypes = h.events.filter((event) => event.type === 'runtime.activity').map((event) => event.activity.type);
+  assert.equal(activityTypes[0], 'activity.reasoning.delta');
+  assert.equal(activityTypes[1], 'activity.tool.opened');
+});
+
+test('a turn ending after provider tools does not restore the accumulated progress as an answer', async () => {
+  const h = harness({
+    async stream(_messages, options) {
+      options.onDelta('Inspecting the workspace.');
+      await options.onActivity(providerActivity('activity.tool.opened', { callId: 'native-only', tool: 'read' }));
+      await options.onActivity(providerActivity('activity.tool.closed', { callId: 'native-only', tool: 'read', status: 'success' }));
+      return { text: 'Inspecting the workspace.', toolCalls: [] };
+    },
+  });
+  await h.run();
+  assert.deepEqual(h.final, []);
+  assert.equal(h.events.filter((event) => isProviderActivity(event, 'activity.reasoning.delta')).length, 1);
+});
+
+test('providers without reasoning preserve the complete answer without creating thoughts', async () => {
+  for (const streaming of [true, false]) {
+    const h = harness({
+      async stream(_messages, options) {
+        if (streaming) {
+          options.onDelta('Plain ');
+          options.onDelta('answer.');
+        }
+        return { text: 'Plain answer.', toolCalls: [] };
+      },
+    });
+    await h.run();
+    assert.deepEqual(h.final, ['Plain answer.']);
+    assert.equal(h.events.some((event) => isProviderActivity(event, 'activity.reasoning.delta')), false);
+  }
+});

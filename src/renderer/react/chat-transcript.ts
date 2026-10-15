@@ -8,6 +8,9 @@ export type TranscriptReasoning = {
   text: string;
   sequence: number;
   endSequence?: number;
+  kind?: 'commentary';
+  startedAt?: number;
+  completedAt?: number;
 };
 
 export type TranscriptTool = {
@@ -60,7 +63,8 @@ export function mergeTranscriptState(live: TranscriptState, durable: TranscriptS
       if (item.type === 'reasoning' && durableItem.type === 'reasoning') {
         const liveEnd = item.endSequence ?? item.sequence;
         const durableEnd = durableItem.endSequence ?? durableItem.sequence;
-        if (liveEnd > durableEnd || item.text.length > durableItem.text.length) byId.set(item.id, item);
+        const latest = liveEnd > durableEnd || item.text.length > durableItem.text.length ? item : durableItem;
+        byId.set(item.id, { ...latest, completedAt: latest.completedAt ?? item.completedAt ?? durableItem.completedAt });
       } else if (item.type === 'tool' && durableItem.type === 'tool') {
         if (item.status !== 'running' && durableItem.status === 'running') byId.set(item.id, item);
       }
@@ -80,17 +84,22 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   if (!event || typeof event !== 'object') return state;
   const messageId = text(event.messageId);
   if (!messageId) return state;
+  const createdAt = Number(event.createdAt) || Date.now();
 
   if (event.type === 'message.preview') {
     const content = typeof event.content === 'string' ? event.content : '';
     return updateMessageState(state, messageId, (current) => {
-      if (current.preview === content) return current;
-      return { ...current, preview: content };
+      const items = content ? completeReasoning(current.items, createdAt) : current.items;
+      if (current.preview === content && items === current.items) return current;
+      return { ...current, items, preview: content };
     });
   }
 
   if (event.type === 'message.delta' || event.type === 'message.completed') {
-    return updateMessageState(state, messageId, (current) => current.preview ? { ...current, preview: '' } : current);
+    return updateMessageState(state, messageId, (current) => {
+      const items = completeReasoning(current.items, createdAt);
+      return current.preview || items !== current.items ? { ...current, items, preview: '' } : current;
+    });
   }
 
   if (event.type !== 'runtime.activity') return state;
@@ -98,6 +107,13 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   const activityType = text(activity.type);
   if (!activityType) return state;
   const sequence = finiteSequence(event.sequence);
+
+  if (event.source === 'provider' && activityType === 'activity.text.delta') {
+    return updateMessageState(state, messageId, (current) => {
+      const items = completeReasoning(current.items, createdAt);
+      return items === current.items ? current : { ...current, items };
+    });
+  }
 
   if (event.source === 'provider' && activityType === 'activity.warning' && activity.code === 'provider_retry') {
     const message = text(activity.message);
@@ -126,7 +142,11 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
     const segment = typeof activity.text === 'string' ? activity.text : '';
     if (!segment) return state;
     return updateMessageState(state, messageId, (current) => {
-      const items = appendReasoning(current.items, segment, sequence);
+      const items = appendReasoning(current.items, segment, sequence, {
+        startedAt: Number(activity.startedAt) || createdAt,
+        ...(Number(activity.completedAt) > 0 ? { completedAt: Number(activity.completedAt) } : {}),
+        ...(activity.kind === 'commentary' ? { kind: 'commentary' as const } : {}),
+      });
       return items === current.items ? current : { ...current, items };
     });
   }
@@ -134,7 +154,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   if ((event.source === 'execution' && activityType.startsWith('activity.tool.')) || (event.source === 'provider' && activityType.startsWith('activity.tool.'))) {
     return updateMessageState(state, messageId, (current) => ({
       ...current,
-      items: updateTool(current.items, activity, sequence),
+      items: updateTool(completeReasoning(current.items, createdAt), activity, sequence),
     }));
   }
 
@@ -148,29 +168,38 @@ export function orderedTranscriptItems(items: TranscriptItem[] = []) {
     .map(({ item }) => item);
 }
 
-function appendReasoning(items: TranscriptItem[], segment: string, sequence: number | null): TranscriptItem[] {
+function appendReasoning(items: TranscriptItem[], segment: string, sequence: number | null, timing: Pick<TranscriptReasoning, 'kind' | 'startedAt' | 'completedAt'>): TranscriptItem[] {
   const ordered = orderedTranscriptItems(items);
   const last = ordered.at(-1);
-  if (last?.type === 'reasoning' && reasoningCanMerge(last, sequence)) {
+  if (last?.type === 'reasoning' && last.kind === timing.kind && !last.completedAt && reasoningCanMerge(last, sequence)) {
     const textValue = mergeReasoningText(last.text, segment);
     if (textValue === last.text) return items;
     return boundItems(items.map((item) => item.id === last.id && item.type === 'reasoning' ? {
       ...item,
       text: textValue,
       endSequence: sequence ?? item.endSequence ?? item.sequence,
+      ...(timing.completedAt ? { completedAt: timing.completedAt } : {}),
     } : item));
   }
   const resolvedSequence = sequence ?? nextSequence(items);
   return boundItems([
-    ...items,
+    ...completeReasoning(items, timing.startedAt ?? Date.now()),
     {
       id: `reason-${resolvedSequence}-${items.length}`,
       type: 'reasoning',
       text: segment,
       sequence: resolvedSequence,
       endSequence: resolvedSequence,
+      ...timing,
     },
   ]);
+}
+
+function completeReasoning(items: TranscriptItem[], completedAt: number): TranscriptItem[] {
+  if (!items.some((item) => item.type === 'reasoning' && !item.completedAt)) return items;
+  return items.map((item) => item.type === 'reasoning' && !item.completedAt
+    ? { ...item, completedAt: Math.max(item.startedAt ?? completedAt, completedAt) }
+    : item);
 }
 
 function reasoningCanMerge(last: TranscriptReasoning, sequence: number | null) {

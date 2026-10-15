@@ -14,7 +14,7 @@ import {
   readPermissionMode,
   readSendBehavior,
 } from './behavior-preferences';
-import { formatWorkedDuration, orderedTranscriptItems, type ContextUsage, type TranscriptState } from './chat-transcript';
+import { formatWorkedDuration, orderedTranscriptItems, type ContextUsage, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
 import { useClientTranscript } from './client-transcript';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -27,7 +27,7 @@ export type ActivityEntry = {
   details?: string;
 };
 
-type TraceReasoning = { id: string; type: 'reasoning'; text: string; sequence: number };
+type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
 type TraceTool = {
   id: string;
@@ -785,6 +785,7 @@ function MessageView({
   const canExpand = userLines.length > MAX_VISIBLE_USER_LINES;
   const visibleContent = canExpand && !messageExpanded ? userLines.slice(0, MAX_VISIBLE_USER_LINES).join('\n') : content;
   const hasTrace = assistant && trace.length > 0;
+  const hasActivity = assistant && trace.some((item) => item.type !== 'reasoning');
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
@@ -908,7 +909,7 @@ function MessageView({
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
       <div className="message-role">
-        {hasTrace ? (
+        {hasActivity ? (
           <button
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
@@ -925,7 +926,7 @@ function MessageView({
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} onInspectDiff={onInspectDiff} />}
+      {hasTrace && <TraceView trace={trace} messageId={message.id} showActivity={traceOpen} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} />}
       {assistant ? (
         content ? (
           <MarkdownContent
@@ -1037,17 +1038,43 @@ function MarkdownContent({ content, ...props }: React.ComponentProps<'div'> & { 
   return <div {...props} dangerouslySetInnerHTML={html} />;
 }
 
-function TraceView({ trace, onInspectDiff }: { trace: TraceItem[]; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+function TraceView({ trace, messageId, showActivity = true, live = false, completedAt, onInspectDiff }: { trace: TraceItem[]; messageId: string; showActivity?: boolean; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
-        <MarkdownContent key={item.id} className="message-trace-reasoning markdown-rendered" content={item.text} />
-      ) : item.type === 'status' ? (
+        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={completedAt} />
+      ) : !showActivity ? null : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
         <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
       ))}
+    </div>
+  );
+}
+
+function ReasoningTraceRow({ item, contentId, live, completedAt }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null }) {
+  const [open, setOpen] = useState(false);
+  const active = live && !item.completedAt;
+  const end = item.completedAt ?? (!live ? completedAt : null);
+  const duration = item.startedAt && end && end >= item.startedAt ? formatWorkedDuration(end - item.startedAt) : null;
+  const commentary = item.kind === 'commentary';
+  const label = active
+    ? (commentary ? 'Working…' : 'Thinking…')
+    : duration ? `${commentary ? 'Worked' : 'Thought'} for ${duration}` : (commentary ? 'Progress' : 'Thoughts');
+  return (
+    <div className={`message-reasoning${open ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="message-reasoning-toggle"
+        aria-expanded={open}
+        aria-controls={open ? contentId : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{label}</span>
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} />}
     </div>
   );
 }
@@ -1221,7 +1248,7 @@ function ToolIcon({ tool }: { tool: string }) {
 function traceForMessage(state: TranscriptState, messageId: string): TraceItem[] {
   const items = orderedTranscriptItems(state[messageId]?.items ?? []);
   return items.map((item) => item.type === 'reasoning'
-    ? { id: item.id, type: 'reasoning', text: item.text, sequence: item.sequence }
+    ? item
     : item.type === 'status'
     ? { id: item.id, type: 'status', text: item.text, sequence: item.sequence }
     : {

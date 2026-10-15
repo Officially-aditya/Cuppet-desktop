@@ -74,9 +74,9 @@ export class JournaledToolRuntime {
       previewPolicy,
       contextWindow: options.contextWindow,
       executionKernel: this.#executionKernel,
-      onReasoning: (segment) => {
+      onReasoning: (segment, timing) => {
         if (!messageId || !segment) return;
-        emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment }));
+        emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment, kind: 'commentary', ...timing }));
       },
       onPreview: (content) => {
         if (!messageId) return;
@@ -153,8 +153,8 @@ export class JournaledToolRuntime {
       sessionId,
       messageId,
       activity,
+      createdAt: persisted?.createdAt ?? Date.now(),
       ...(persisted?.sequence !== undefined ? { sequence: persisted.sequence } : {}),
-      ...(persisted?.createdAt !== undefined ? { createdAt: persisted.createdAt } : {}),
     });
   }
 
@@ -173,18 +173,23 @@ class ToolMutationCapture {
     if (this.#failure) throw this.#failure;
     const finalDelta = typeof options?.onDelta === 'function' ? options.onDelta : async () => {};
     let pendingText = '';
+    let pendingStartedAt = null;
+    let receivedText = false;
 
     const previewDelta = (delta) => {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
       if (!text) return;
+      receivedText = true;
+      pendingStartedAt ??= Date.now();
       pendingText += text;
       if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
     };
 
     const flushReasoning = async () => {
       const segment = pendingText.trim();
-      if (segment) await this.#onReasoning(segment);
+      if (segment) await this.#onReasoning(segment, { startedAt: pendingStartedAt ?? Date.now(), completedAt: Date.now() });
       pendingText = '';
+      pendingStartedAt = null;
       this.#onPreview('');
     };
 
@@ -217,7 +222,10 @@ class ToolMutationCapture {
         ...options,
         tools: providerTools,
         onDelta: previewDelta,
-        onActivity: async (activity) => this.#onActivity(activity),
+        onActivity: async (activity) => {
+          if (activity?.type?.startsWith('activity.tool.') && pendingText) await flushReasoning();
+          await this.#onActivity(activity);
+        },
         ...(executeTool ? { executeTool } : {}),
       });
     } catch (error) {
@@ -229,6 +237,7 @@ class ToolMutationCapture {
       this.#onPreview('');
       throw error;
     }
+    if (!receivedText && typeof response?.text === 'string') pendingText = response.text;
     const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
     if (toolCalls.length) {
       await flushReasoning();
@@ -259,7 +268,6 @@ class ToolMutationCapture {
       }
       return this.stream(conversation, options);
     }
-    if (!pendingText && typeof response?.text === 'string') pendingText = response.text;
     if (pendingText) await finalDelta(pendingText);
     pendingText = '';
     this.#onPreview('');
