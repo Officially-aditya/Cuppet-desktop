@@ -28,13 +28,14 @@ await Promise.all([
 ]);
 
 await writeFile(fakeShell, `#!/bin/sh\nprintf '%s\\n' '__CUPPET_LOGIN_SHELL_PATH__=${fakeBin}:/usr/bin:/bin'\n`, { mode: 0o700 });
-await writeFile(fakeOpenCode, `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'opencode 99.0.0-cuppet-gui-smoke'; exit 0 ;;\n  auth)\n    if [ "$2" = 'list' ]; then\n      printf '%s\\n' 'Credentials' '● cuppet-gui-smoke'; exit 0\n    fi\n    ;;\nesac\nprintf '%s\\n' "unexpected fake opencode invocation: $*" >&2\nexit 64\n`, { mode: 0o700 });
+await writeFile(fakeOpenCode, `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'opencode 2.0.27-cuppet-gui-smoke'; exit 0 ;;\n  auth)\n    if [ "$2" = 'list' ] && [ "$3" = '--standalone' ] && [ "$4" = '--format' ] && [ "$5" = 'json' ]; then\n      printf '%s\\n' '[{"id":"cuppet-gui-smoke","connections":[{"type":"credential","method":"key"}]}]'; exit 0\n    fi\n    ;;\nesac\nprintf '%s\\n' "unexpected fake opencode invocation: $*" >&2\nexit 64\n`, { mode: 0o700 });
 await chmod(fakeShell, 0o700);
 await chmod(fakeOpenCode, 0o700);
 
 try {
-  const args = ['-W', '-n', appPath];
-  if (!requestedApp) args.push('--args', root);
+  const args = ['-W', '-n', appPath, '--args'];
+  if (!requestedApp) args.push(root);
+  args.push(`--user-data-dir=${join(tempRoot, 'electron-profile')}`);
   const launchEnvironment = {
     PATH: launchdPath,
     SHELL: fakeShell,

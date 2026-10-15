@@ -23,7 +23,11 @@ test('LaunchServices acceptance uses a deterministic launchd-style environment',
   assert.match(source, /env: launchEnvironment/);
   assert.match(source, /SHELL: fakeShell/);
   assert.match(source, /CUPPET_INTERNAL_GUI_CLI_SMOKE/);
+  assert.match(source, /--user-data-dir=/);
   assert.match(source, /__CUPPET_LOGIN_SHELL_PATH__/);
   assert.match(source, /provider control plane resolved authenticated OpenCode/);
+  assert.match(source, /opencode 2\.0\.27-cuppet-gui-smoke/);
+  assert.match(source, /--standalone/);
+  assert.match(source, /"connections":\[\{"type":"credential"/);
   assert.doesNotMatch(source, /Contents\/MacOS\/cuppet/);
 });
