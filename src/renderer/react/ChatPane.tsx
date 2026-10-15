@@ -598,12 +598,6 @@ function imageMimeFromName(name: string): string | null {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {!online && (
-        <div className="chat-offline-banner" role="status">
-          <strong>No internet</strong>
-          <span>Check your connection. Messages may be interrupted while offline.</span>
-        </div>
-      )}
       {selectionMenu && (
         <div className="chat-selection-menu" role="group" aria-label="Selected text actions"
           style={{ left: selectionMenu.x, top: selectionMenu.y }}
@@ -697,6 +691,14 @@ function imageMimeFromName(name: string): string | null {
               </svg>
             </button>
             <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
+            {!online && (
+              <span className="composer-connection-status" role="status" title="Check your connection. Messages may be interrupted while offline.">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="m3 3 14 14M7 5.3a12 12 0 0 1 9.8 3.1M3.2 8.4a12 12 0 0 1 1.9-1.5M10.2 9a8 8 0 0 1 3.7 1.7M6.1 10.7a8 8 0 0 1 1.6-1M8.4 13.2a4 4 0 0 1 3.2 0M10 16h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <span>No connection</span>
+              </span>
+            )}
             {attachments.length > 0 && (
               <div className="composer-attachments" aria-label="Attached files">
                 {attachments.map((attachment, index) => (

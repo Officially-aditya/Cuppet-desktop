@@ -129,19 +129,23 @@ function fixture(messages = [], initiallyOnline = true) {
   };
 }
 
-test('offline banner tracks connection loss, recovery, and cleans up listeners', () => {
+test('composer connection status tracks connection loss, recovery, and cleans up listeners', () => {
   const chat = fixture();
-  const banner = () => chat.nodes().find((node) => node.props?.className === 'chat-offline-banner');
+  const status = () => {
+    const composer = chat.nodes().find(node => node.type === 'form');
+    return chat.nodes(composer).find(node => node.props?.className === 'composer-connection-status');
+  };
   const cleanup = chat.watchConnection();
-  assert.equal(banner(), undefined);
+  assert.equal(status(), undefined);
   chat.setOnline(false);
-  assert.equal(banner().props.role, 'status');
-  assert.equal(banner().props.children[0].props.children, 'No internet');
+  assert.equal(status().props.role, 'status');
+  assert.equal(status().props.children[1].props.children, 'No connection');
+  assert.equal(chat.nodes().some(node => node.props?.className === 'chat-offline-banner'), false);
   chat.setOnline(true);
-  assert.equal(banner(), undefined);
+  assert.equal(status(), undefined);
   cleanup();
   assert.equal(chat.connectionListeners.size, 0);
-  assert.ok(fixture([], false).nodes().some((node) => node.props?.className === 'chat-offline-banner'));
+  assert.ok(fixture([], false).nodes().some((node) => node.props?.className === 'composer-connection-status'));
 });
 
 const sent = [
