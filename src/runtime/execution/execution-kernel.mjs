@@ -275,7 +275,7 @@ function providerFacingDefinition(definition) {
     function: {
       ...fn,
       name: 'cuppet_execute',
-      description: 'Run a project command through Cuppet for builds, tests, package/tooling operations, generators, or other command execution. Do not use it to inspect source files or directly edit source while tst_explore/tst_read/tst_edit_batch are available.',
+      description: 'Run finite project commands for setup, packages, builds, Git and other tooling. Use tst_explore for source search/file listing, tst_read for file contents, and tst_edit_batch for edits or new files. Use tst_validate for post-edit checks so results are tied to the changed files. Use background_process for servers and watchers.',
     },
   };
 }
