@@ -28,6 +28,7 @@ test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge wi
   assert.equal(descriptor.transport, 'acp');
   assert.deepEqual(descriptor.args, ['acp']);
   assert.equal(descriptor.mcpToolBridge, true);
+  assert.equal(descriptor.maxPromptRetries, 5);
   assert.equal(descriptor.requiredSessionSettings, undefined);
 });
 

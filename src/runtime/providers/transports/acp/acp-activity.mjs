@@ -20,7 +20,7 @@ export class AcpActivityNormalizer {
         .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
         .slice(0, 300);
       return providerActivity('activity.warning', {
-        code: 'provider_retry', attempt,
+        code: 'provider_retry', attempt, detail,
         message: `OpenCode is retrying the request (attempt ${attempt}).${detail ? ` ${detail}` : ''}`,
       });
     }

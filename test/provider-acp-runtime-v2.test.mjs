@@ -14,24 +14,26 @@ const authFixture = fileURLToPath(new URL('./fixtures/fake-acp-auth-agent.mjs', 
 const lateContinuationFixture = fileURLToPath(new URL('./fixtures/fake-acp-late-continuation-agent.mjs', import.meta.url));
 const retryFixture = fileURLToPath(new URL('./fixtures/fake-acp-retry-agent.mjs', import.meta.url));
 
-test('OpenCode retry updates reach the transcript and recover without replaying a prompt', async () => {
-  const runtime = new AcpSessionRuntime({
-    descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: 3 },
-    configuration: { cliCommand: process.execPath, cliArgs: [retryFixture] }, projectRoot: tmpdir(),
+test('OpenCode retry updates reach the transcript and recover without replaying a prompt', async t => {
+  for (const retry of [1, 5]) await t.test(`recovers on retry ${retry}`, async () => {
+    const runtime = new AcpSessionRuntime({
+      descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: localCliDescriptor('opencode').maxPromptRetries },
+      configuration: { cliCommand: process.execPath, cliArgs: [retryFixture], cliEnv: { FAKE_ACP_RECOVER_AFTER: String(retry) } }, projectRoot: tmpdir(),
+    });
+    const seen = [];
+    try {
+      await runtime.start();
+      const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'RECOVER' }] }, { onActivity: activity => seen.push(activity) });
+      assert.equal(result.text, 'Recovered.');
+      assert.equal(seen.filter(activity => activity.code === 'provider_retry').length, retry);
+      assert.match(seen[0].message, /attempt 1.*Endpoint is unavailable/);
+    } finally { await runtime.close(); }
   });
-  const seen = [];
-  try {
-    await runtime.start();
-    const result = await runtime.runTurn({ messages: [{ role: 'user', content: 'RECOVER' }] }, { onActivity: activity => seen.push(activity) });
-    assert.equal(result.text, 'Recovered.');
-    assert.equal(seen.filter(activity => activity.code === 'provider_retry').length, 1);
-    assert.match(seen[0].message, /attempt 1.*Endpoint is unavailable/);
-  } finally { await runtime.close(); }
 });
 
 test('repeated provider retries stop with an actionable error instead of keeping the chat alive indefinitely', async () => {
   const runtime = new AcpSessionRuntime({
-    descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: 3 },
+    descriptor: { ...localCliDescriptor('claude-code'), maxPromptRetries: localCliDescriptor('opencode').maxPromptRetries },
     configuration: { cliCommand: process.execPath, cliArgs: [retryFixture] }, projectRoot: tmpdir(),
   });
   const attempts = [];
@@ -39,10 +41,12 @@ test('repeated provider retries stop with an actionable error instead of keeping
     await runtime.start();
     await assert.rejects(runtime.runTurn({ messages: [] }, { onActivity: activity => attempts.push(activity.attempt) }), error => {
       assert.equal(error.code, 'PROVIDER_RETRY_LIMIT');
+      assert.match(error.message, /after 5 unsuccessful provider retries/);
+      assert.equal(error.providerFailure.diagnostic, 'Endpoint is unavailable');
       assert.equal(classifyProviderError(error, { providerID: 'opencode' }).action, 'retry_later');
       return true;
     });
-    assert.deepEqual(attempts, [1, 2, 3, 4]);
+    assert.deepEqual(attempts, [1, 2, 3, 4, 5]);
     assert.equal(runtime.snapshot().state, 'error');
   } finally { await runtime.close(); }
 });

@@ -282,16 +282,18 @@ export class AcpSessionRuntime {
       turn.completion.observeUpdate(update);
       this.#touchActiveTurn();
       const activity = this.#normalizer.normalize(update);
-      await emit(activity);
       const maxRetries = Number(this.#descriptor.maxPromptRetries);
-      if (!retryFailure && maxRetries > 0 && activity?.code === 'provider_retry' && activity.attempt > maxRetries) {
+      if (maxRetries > 0 && activity?.code === 'provider_retry' && activity.attempt > maxRetries) {
+        if (retryFailure) return;
         retryFailure = providerFailureError(`${this.#descriptor.label} stopped after ${maxRetries} unsuccessful provider retries.`, {
           code: 'PROVIDER_RETRY_LIMIT', category: 'provider_unavailable', action: 'retry_later',
-          diagnostic: activity.message,
+          diagnostic: activity.detail || activity.message,
         });
         this.#rpc.notify('session/cancel', { sessionId });
         rejectRetry(retryFailure);
+        return;
       }
+      await emit(activity);
     });
     const onAbort = () => {
       turn.cancelled = true;

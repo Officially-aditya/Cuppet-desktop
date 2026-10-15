@@ -15,7 +15,7 @@ rl.on('line', line => {
     timer = setInterval(() => {
       attempt++;
       update({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': { attempt, error: { type: 'provider.internal', status: 502, message: 'Endpoint is unavailable' } } } });
-      if (recover) {
+      if (recover && attempt >= Number(process.env.FAKE_ACP_RECOVER_AFTER || 1)) {
         clearInterval(timer);
         update({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': null } });
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Recovered.' } });

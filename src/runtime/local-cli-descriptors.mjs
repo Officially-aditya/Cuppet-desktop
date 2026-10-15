@@ -7,7 +7,7 @@ const DESCRIPTORS = Object.freeze({
     id: 'opencode', label: 'OpenCode', transport: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_OPENCODE_BIN',
     loginHint: 'Run `opencode auth login` in Terminal and configure the provider you want OpenCode to use, then retry.',
     mcpToolBridge: true,
-    maxPromptRetries: 3,
+    maxPromptRetries: 5,
     prepareEnvironment: prepareOpenCodeAcpEnvironment,
     assertProjectAccess: assertOpenCodeProjectAccess,
     // Preserve CLI-owned provider settings and authentication. Cuppet supplies
