@@ -785,7 +785,6 @@ function MessageView({
   const canExpand = userLines.length > MAX_VISIBLE_USER_LINES;
   const visibleContent = canExpand && !messageExpanded ? userLines.slice(0, MAX_VISIBLE_USER_LINES).join('\n') : content;
   const hasTrace = assistant && trace.length > 0;
-  const hasActivity = assistant && trace.some((item) => item.type !== 'reasoning');
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
@@ -909,7 +908,7 @@ function MessageView({
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
       <div className="message-role">
-        {hasActivity ? (
+        {hasTrace ? (
           <button
             type="button"
             className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
@@ -926,7 +925,7 @@ function MessageView({
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && <TraceView trace={trace} messageId={message.id} showActivity={traceOpen} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} />}
       {assistant ? (
         content ? (
           <MarkdownContent
@@ -1038,13 +1037,13 @@ function MarkdownContent({ content, ...props }: React.ComponentProps<'div'> & { 
   return <div {...props} dangerouslySetInnerHTML={html} />;
 }
 
-function TraceView({ trace, messageId, showActivity = true, live = false, completedAt, onInspectDiff }: { trace: TraceItem[]; messageId: string; showActivity?: boolean; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
         <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={completedAt} />
-      ) : !showActivity ? null : item.type === 'status' ? (
+      ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
         <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />

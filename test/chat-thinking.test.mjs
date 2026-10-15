@@ -93,27 +93,72 @@ test('pre-tool narration is labelled as progress rather than provider thinking',
   assert.equal(find(tree, (node) => node.type === 'button').props.children[0].props.children, 'Worked for 3s');
 });
 
-test('thought controls remain available when tool activity is collapsed', () => {
+test('expanded activity includes thoughts and tools with unique thought controls per message', () => {
   const render = fixture('TraceView');
-  const props = { trace: [thought, tool], messageId: 'message-1', showActivity: false, live: false };
+  const props = { trace: [thought, tool], messageId: 'message-1', live: false };
   let tree = render(props);
   assert.ok(find(tree, (node) => node.type?.name === 'ReasoningTraceRow'));
-  assert.equal(find(tree, (node) => node.type?.name === 'ToolTraceRow'), undefined);
-  tree = render({ ...props, showActivity: true });
   assert.ok(find(tree, (node) => node.type?.name === 'ToolTraceRow'));
   const firstId = find(tree, (node) => node.type?.name === 'ReasoningTraceRow').props.contentId;
   tree = render({ ...props, messageId: 'message-2' });
   assert.notEqual(find(tree, (node) => node.type?.name === 'ReasoningTraceRow').props.contentId, firstId);
 });
 
+test('collapsing a completed turn hides every thought and tool while keeping its summary visible', () => {
+  const render = fixture('MessageView');
+  const props = {
+    message: { id: 'completed-turn', role: 'assistant', status: 'complete', content: 'The final summary.', createdAt: 1000, updatedAt: 13000 },
+    trace: [thought, tool, { ...thought, id: 'reason-2', sequence: 3 }, { ...thought, id: 'reason-3', sequence: 4 }],
+  };
+  let tree = render(props);
+  const summary = (node) => node.props.className === 'message-content markdown-rendered';
+  const toggle = (node) => node.props.className?.startsWith('message-cuppet-toggle');
+  assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
+  assert.equal(find(tree, summary).props.content, 'The final summary.');
+  assert.equal(find(tree, toggle).props['aria-expanded'], false);
+
+  find(tree, toggle).props.onClick();
+  tree = render(props);
+  const traceProps = find(tree, (node) => node.type?.name === 'TraceView').props;
+  assert.equal(traceProps.trace.length, 4);
+  assert.equal(find(tree, summary).props.content, 'The final summary.');
+  assert.equal(find(tree, toggle).props['aria-expanded'], true);
+
+  find(tree, toggle).props.onClick();
+  tree = render(props);
+  assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
+  assert.equal(find(tree, summary).props.content, 'The final summary.');
+});
+
+test('reasoning-only turns can collapse their whole trace', () => {
+  const render = fixture('MessageView');
+  const props = {
+    message: { id: 'thought-only', role: 'assistant', status: 'complete', content: 'Summary.' },
+    trace: [thought],
+  };
+  let tree = render(props);
+  const toggle = (node) => node.props.className?.startsWith('message-cuppet-toggle');
+  assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
+  find(tree, toggle).props.onClick();
+  tree = render(props);
+  assert.ok(find(tree, (node) => node.type?.name === 'TraceView'));
+  find(tree, toggle).props.onClick();
+  assert.equal(find(render(props), (node) => node.type?.name === 'TraceView'), undefined);
+});
+
 test('providers without thoughts retain their answer and tool activity without an empty thinking control', () => {
-  const tree = fixture('MessageView')({
+  const render = fixture('MessageView');
+  const props = {
     message: { id: 'codex-style', role: 'assistant', status: 'complete', content: 'The final answer.', createdAt: 1000, updatedAt: 13000 },
     trace: [tool],
-  });
+  };
+  let tree = render(props);
   assert.equal(find(tree, (node) => node.props.className === 'message-content markdown-rendered').props.content, 'The final answer.');
+  assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
+  find(tree, (node) => node.props.className?.startsWith('message-cuppet-toggle')).props.onClick();
+  tree = render(props);
   const traceProps = find(tree, (node) => node.type?.name === 'TraceView').props;
-  const traceTree = fixture('TraceView')({ ...traceProps, showActivity: true });
+  const traceTree = fixture('TraceView')(traceProps);
   assert.equal(find(traceTree, (node) => node.type?.name === 'ReasoningTraceRow'), undefined);
   assert.ok(find(traceTree, (node) => node.type?.name === 'ToolTraceRow'));
   const plain = fixture('MessageView')({ message: { id: 'plain', role: 'assistant', status: 'complete', content: 'Answer.' } });
