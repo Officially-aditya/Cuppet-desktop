@@ -64,7 +64,7 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
       defaultModel,
       configId: selected.configId || baseline.configId || null,
       configOptions: selected.configOptions,
-      ...(selected.reasoning ? { reasoning: selected.reasoning } : {}),
+      reasoning: selected.reasoning,
     };
   } catch (error) {
     const failure = providerFailureMetadata(error);

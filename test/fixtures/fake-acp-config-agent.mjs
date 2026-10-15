@@ -17,7 +17,9 @@ function options() {
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model, options: [
       { value: 'provider/model-a', name: 'Model A' }, { value: 'provider/model-b', name: 'Model B' },
     ] },
-    { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: effort, options: values.map((value) => ({ value, name: value })) },
+    ...(model === 'provider/model-b' && process.env.FAKE_ACP_MODEL_B_NO_EFFORT === '1' ? [] : [
+      { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: effort, options: values.map((value) => ({ value, name: value })) },
+    ]),
   ];
 }
 

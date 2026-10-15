@@ -3,7 +3,8 @@ import type { ProviderModelCatalog, ProviderSettings } from '../types';
 type ModelEfforts = { reasoning?: ProviderModelCatalog['reasoning']; fetchedAt?: number };
 type ProviderCache = { catalog: ProviderModelCatalog; efforts: Record<string, ModelEfforts>; fetchedAt?: number };
 type LoadOptions = { model?: string; refresh?: boolean; maxAgeMs?: number };
-const CACHE_KEY = 'cuppet.desktop.model-catalog-cache';
+// Older entries can contain effort options inherited from a different model.
+const CACHE_KEY = 'cuppet.desktop.model-catalog-cache.v2';
 export const CATALOG_FRESH_MS = 5 * 60 * 1000;
 let cache: Record<string, ProviderCache> = readCache();
 const pending = new Map<string, Promise<ProviderModelCatalog>>();
@@ -43,7 +44,10 @@ export async function loadModelCatalog(settings: ProviderSettings, { model, refr
   const selectedModel = model || settings.primary?.modelID || '';
   if (!refresh) {
     const cached = cachedModelCatalog(settings, selectedModel);
-    if (cached && !isProviderCatalogStale(settings, maxAgeMs)) return cached;
+    const effort = settings.primaryEffort || settings.primary?.variant;
+    const unsupportedEffort = effort && selectedModel === settings.primary?.modelID && cached?.modelDependentSettings === true
+      && !cached.reasoning?.options.some(option => option.id === effort);
+    if (cached && !unsupportedEffort && !isProviderCatalogStale(settings, maxAgeMs)) return cached;
   }
   const key = JSON.stringify([providerKey(settings), selectedModel]);
   const existing = pending.get(key);

@@ -107,6 +107,8 @@ export function modelCatalogFromCapabilitySnapshot(snapshot = {}, configuredMode
   const source = record(snapshot);
   const models = Array.isArray(source.models) ? source.models.map(cloneRecord) : [];
   const configured = text(configuredModel);
+  const reasoningMatchesModel = source.modelDependentSettings !== true || !configured
+    || configured === 'cli-default' || configured === source.currentModel;
   return {
     providerID: text(source.providerID),
     available: source.available === true,
@@ -116,7 +118,7 @@ export function modelCatalogFromCapabilitySnapshot(snapshot = {}, configuredMode
     defaultModel: exactModel(source.defaultModel, models),
     configuredModel: configured || null,
     fetchedAt: Number.isFinite(Number(source.fetchedAt)) ? Number(source.fetchedAt) : Date.now(),
-    ...(source.reasoning ? { reasoning: cloneRecord(source.reasoning) } : {}),
+    ...(reasoningMatchesModel && source.reasoning ? { reasoning: cloneRecord(source.reasoning) } : {}),
     ...(source.stale === true ? { stale: true } : {}),
     ...(text(source.discoveryError) ? { discoveryError: text(source.discoveryError) } : {}),
     ...(text(source.error) ? { error: text(source.error) } : {}),
@@ -148,7 +150,7 @@ function snapshotKey(configuration) {
   const command = text(source.cliCommand);
   // Auth material is intentionally excluded. The host owns secrets and a successful
   // logged-out/empty discovery will replace a prior snapshot authoritatively.
-  return `${providerID}\u0000${endpoint}\u0000${command}\u0000${text(primary.providerID)}`;
+  return `${providerID}\u0000${endpoint}\u0000${command}\u0000${text(primary.providerID)}\u0000${text(primary.modelID || source.model || source.modelID)}`;
 }
 function configuredProviderId(configuration) {
   const source = record(configuration);

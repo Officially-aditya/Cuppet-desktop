@@ -44,6 +44,8 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     setError('');
     const catalog = await loadModelCatalog(next, { refresh });
     if (request !== catalogRequest.current) return catalog;
+    // Discovery can clear an unsupported saved effort in the host settings store.
+    await refreshClientProviderSettings();
     setAdvertised(catalog.providerID === providerID ? (catalog.error && !catalog.models.length ? cachedModelCatalog(next) ?? catalog : catalog) : EMPTY_ADVERTISED);
     if (catalog.error && !catalog.models.length) setError(catalog.error);
     return catalog;
@@ -224,6 +226,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         const secondaryModel = slot === 'secondary' ? id : current.secondary?.modelID || id;
         const optimistic: ProviderSettings = {
           ...current,
+          ...(slot === 'primary' ? { primaryEffort: nextEffort } : {}),
           primary: {
             ...current.primary,
             modelID: primaryModel,
@@ -287,6 +290,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     if (settings) {
       const optimistic: ProviderSettings = {
         ...settings,
+        primaryEffort: value,
         primary: {
           ...settings.primary,
           variant: value,
@@ -456,7 +460,7 @@ function modelEffortState(providerID: string, modelID: string, settings: Provide
   if (settings && (advertised.providerID !== providerID || advertised.configuredModel !== modelID)) {
     advertised = cachedModelCatalog(settings, modelID) ?? advertised;
   }
-  const exactLiveSnapshot = advertised.providerID === providerID
+  const exactLiveSnapshot = advertised.available === true && !advertised.error && advertised.providerID === providerID
     && advertised.modelDependentSettings === true
     && advertised.configuredModel === modelID;
   if (exactLiveSnapshot) {
@@ -466,6 +470,9 @@ function modelEffortState(providerID: string, modelID: string, settings: Provide
       options: rawOptions.filter((id) => id.toLowerCase() !== 'default'),
       defaultEffort: currentValue.toLowerCase() !== 'default' ? currentValue : '',
     };
+  }
+  if (advertised.providerID === providerID && advertised.modelDependentSettings === true) {
+    return { options: [], defaultEffort: '' };
   }
   const model = settings?.models?.find((item) => item.providerID === providerID && item.modelID === modelID);
   const rawVariants = model?.variants ?? [];

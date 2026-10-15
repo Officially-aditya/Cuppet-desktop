@@ -66,6 +66,16 @@ test('concurrent catalog requests share a single provider discovery', async (t) 
   assert.deepEqual(await first, await second);
 });
 
+test('an unsupported saved effort forces revalidation even while the catalog is fresh', async t => {
+  let calls = 0;
+  const { cache } = await fixture(t, async () => { calls++; return catalog('a', ['high', 'xhigh']); });
+  await cache.loadModelCatalog(settings());
+  await cache.loadModelCatalog({ ...settings(), primaryEffort: 'max' });
+  assert.equal(calls, 2);
+  await cache.loadModelCatalog({ ...settings(), primaryEffort: 'xhigh' });
+  assert.equal(calls, 2);
+});
+
 test('provider and endpoint identities isolate cached model efforts', async (t) => {
   let calls = 0;
   const { cache } = await fixture(t, async () => { calls++; return catalog(); });

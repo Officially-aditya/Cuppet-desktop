@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { localCliDescriptor, localCliProviderIDs } from '../src/runtime/local-cli-descriptors.mjs';
-import { ProviderCapabilitySnapshotStore } from '../src/runtime/providers/capability-snapshot.mjs';
+import { ProviderCapabilitySnapshotStore, modelCatalogFromCapabilitySnapshot } from '../src/runtime/providers/capability-snapshot.mjs';
 import { buildProviderBackendRegistry } from '../src/runtime/providers/default-registry.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -66,6 +66,26 @@ test('capability snapshot retains last known good models on transient discovery 
   assert.deepEqual(authoritativeEmpty.models, []);
   assert.equal(authoritativeEmpty.stale, false);
   assert.equal(authoritativeEmpty.available, false);
+});
+
+test('capability cache keeps effort metadata separate for each selected model', async () => {
+  const store = new ProviderCapabilitySnapshotStore();
+  const a = { providerID: 'fake', primary: { providerID: 'fake', modelID: 'a' } };
+  const b = { ...a, primary: { ...a.primary, modelID: 'b' } };
+  const registry = {
+    requireResolved: () => ({ id: 'fake', transport: 'acp' }),
+    operation: async (_id, _method, { configuration }) => ({
+      providerID: 'fake', available: true, modelDependentSettings: true,
+      models: [{ id: 'a' }, { id: 'b' }], currentModel: configuration.primary.modelID,
+      ...(configuration.primary.modelID === 'a' ? { reasoning: { configId: 'effort', options: [{ id: 'max' }] } } : {}),
+    }),
+  };
+  await store.refresh(registry, a);
+  assert.equal(store.get(b), null);
+  assert.equal(modelCatalogFromCapabilitySnapshot(store.get(a), 'b').reasoning, undefined);
+  await store.refresh(registry, b);
+  assert.equal(store.get(a).reasoning.options[0].id, 'max');
+  assert.equal(store.get(b).reasoning, undefined);
 });
 
 test('main model catalog and provider factory contain no provider transport dispatch', async () => {

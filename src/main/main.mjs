@@ -169,20 +169,26 @@ function registerIpc() {
   const sandbox = new SandboxManager();
   ipcMain.handle('cuppet:sandbox:status', () => sandbox.getCapabilities());
   ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
-  ipcMain.handle('cuppet:settings:models', (_event, value) => request('provider.models', {
-    provider: settings.runtimeValue(),
-    model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
-      ? value.model.trim().slice(0, 1000)
-      : '',
-    sessionId: value && typeof value === 'object' && !Array.isArray(value) && typeof value.sessionId === 'string'
-      ? value.sessionId.trim().slice(0, 256)
-      : '',
-    projectRoot: value && typeof value === 'object' && !Array.isArray(value) && typeof value.projectRoot === 'string'
-      ? value.projectRoot.trim().slice(0, 1000)
-      : '',
-    force: Boolean(value?.force),
-    refresh: Boolean(value?.refresh),
-  }));
+  ipcMain.handle('cuppet:settings:models', async (_event, value) => {
+    const catalog = await request('provider.models', {
+      provider: settings.runtimeValue(),
+      model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
+        ? value.model.trim().slice(0, 1000)
+        : '',
+      sessionId: value && typeof value === 'object' && !Array.isArray(value) && typeof value.sessionId === 'string'
+        ? value.sessionId.trim().slice(0, 256)
+        : '',
+      projectRoot: value && typeof value === 'object' && !Array.isArray(value) && typeof value.projectRoot === 'string'
+        ? value.projectRoot.trim().slice(0, 1000)
+        : '',
+      force: Boolean(value?.force),
+      refresh: Boolean(value?.refresh),
+    });
+    if (await settings.reconcileModelCapabilities(catalog)) {
+      await request('provider.config.sync', { provider: settings.runtimeValue() }).catch(() => undefined);
+    }
+    return catalog;
+  });
   ipcMain.handle('cuppet:settings:save', async (_event, value) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim()

@@ -120,6 +120,18 @@ export class ProviderSettingsStore {
     return this.#primaryEffort ? { ...normalized, primaryEffort: this.#primaryEffort } : normalized;
   }
 
+  async reconcileModelCapabilities(catalog) {
+    const model = this.#value.primary?.modelID;
+    if (!this.#primaryEffort || catalog?.available !== true || catalog.error || catalog.stale
+      || catalog.modelDependentSettings !== true || catalog.providerID !== this.#value.providerID
+      || catalog.configuredModel !== model || !Array.isArray(catalog.models)
+      || !catalog.models.some(item => item.id === model || (model === 'cli-default' && item.id === catalog.defaultModel))) return false;
+    if (catalog.reasoning && !Array.isArray(catalog.reasoning.options)) return false;
+    if (catalog.reasoning?.options.some(option => option.id === this.#primaryEffort)) return false;
+    await this.save({ primaryEffort: '' });
+    return true;
+  }
+
   async save(input) {
     const source = input && typeof input === 'object' ? input : {};
     if (Object.prototype.hasOwnProperty.call(source, 'customModel')) return this.#saveCustomModel(source);
@@ -153,7 +165,7 @@ export class ProviderSettingsStore {
     const persistentEffortProvider = providerID === 'codex' || localCliProvider;
     const primaryEffortProvided = Object.prototype.hasOwnProperty.call(source, 'primaryEffort');
     const persistedPrimaryEffort = persistentEffortProvider
-      ? (primaryEffortProvided ? effortID(source.primaryEffort) : savedState?.primaryEffort || '')
+      ? (primaryEffortProvided ? effortID(source.primaryEffort) : model === currentPrimaryModel ? savedState?.primaryEffort || '' : '')
       : '';
     const primaryEffort = preset ? '' : primaryEffortProvided
       ? effortID(source.primaryEffort) : model === currentPrimaryModel ? current.primary?.variant || '' : '';

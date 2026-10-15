@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogFromCodexModels, fetchProviderModelCatalog, parseApiCatalog } from '../src/main/provider-model-catalog.mjs';
 import { capabilitiesFromAcpSession } from '../src/runtime/providers/transports/acp/acp-capabilities.mjs';
-import { catalogFromAcpCapabilities } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
+import { catalogFromAcpCapabilities, discoverAcpRuntimeCatalog } from '../src/runtime/providers/transports/acp/acp-discovery.mjs';
+import { fileURLToPath } from 'node:url';
 
 test('OpenAI-compatible catalog preserves provider ids including exact auto ids', async () => {
   const requests = [];
@@ -141,6 +142,21 @@ test('candidate model refresh is read-only and drops old explicit effort before 
   assert.equal(catalog.defaultModel, 'provider/model-a');
   assert.equal(catalog.modelDependentSettings, true);
   assert.equal(catalog.reasoning.currentValue, 'medium');
+});
+
+test('a model without effort never inherits the default model reasoning options', async () => {
+  const catalog = await discoverAcpRuntimeCatalog('claude-code', {
+    configuration: {
+      cliCommand: process.execPath,
+      cliArgs: [fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url))],
+      cliEnv: { FAKE_ACP_MODEL_B_NO_EFFORT: '1' },
+      primary: { modelID: 'provider/model-b' },
+    },
+  });
+  assert.equal(catalog.defaultModel, 'provider/model-a');
+  assert.equal(catalog.currentModel, 'provider/model-b');
+  assert.equal(catalog.reasoning, undefined);
+  assert.equal(catalog.configOptions.some(option => option.category === 'thought_level'), false);
 });
 
 test('provider model catalog preserves injected ACP reasoning metadata', async () => {

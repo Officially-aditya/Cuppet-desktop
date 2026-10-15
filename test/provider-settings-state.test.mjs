@@ -121,3 +121,35 @@ test('custom provider endpoint and both advertised efforts survive partial saves
   assert.equal(cleared.primary.variant, undefined);
   assert.equal(cleared.secondary.variant, undefined);
 });
+
+test('live capabilities clear an obsolete effort only for the active selected model', async t => {
+  const { store, load } = await fixture(t);
+  await store.save({ providerID: 'codex', model: 'codex-model', primaryEffort: 'max' });
+  await store.save({ providerID: 'opencode', model: 'opencode/muse', primaryEffort: 'max' });
+  const catalog = { providerID: 'opencode', available: true, modelDependentSettings: true, configuredModel: 'opencode/muse', models: [{ id: 'opencode/muse' }], reasoning: { options: [{ id: 'high' }, { id: 'xhigh' }, { id: 'default' }] } };
+  for (const other of [{ ...catalog, configuredModel: 'opencode/other' }, { ...catalog, providerID: 'codex' }, { ...catalog, error: 'offline' }, { ...catalog, stale: true }, { ...catalog, available: false }]) {
+    assert.equal(await store.reconcileModelCapabilities(other), false);
+    assert.equal(store.runtimeValue().primaryEffort, 'max');
+  }
+  assert.equal(await store.reconcileModelCapabilities(catalog), true);
+  assert.equal(store.rendererValue().primaryEffort, null);
+  assert.equal(store.runtimeValue().primaryEffort, undefined);
+  assert.equal(store.runtimeValue().primary.modelID, 'opencode/muse');
+  const restarted = await load();
+  assert.equal(restarted.rendererValue().primaryEffort, null);
+  assert.equal((await restarted.save({ providerID: 'codex' })).primaryEffort, 'max');
+});
+
+test('valid saved efforts survive discovery and an unqualified model change resets effort', async t => {
+  const { store } = await fixture(t);
+  await store.save({ providerID: 'opencode', model: 'opencode/muse', primaryEffort: 'xhigh' });
+  const catalog = { providerID: 'opencode', available: true, modelDependentSettings: true, configuredModel: 'opencode/muse', models: [{ id: 'opencode/muse' }], reasoning: { options: [{ id: 'xhigh' }] } };
+  assert.equal(await store.reconcileModelCapabilities(catalog), false);
+  assert.equal(store.runtimeValue().primaryEffort, 'xhigh');
+  await store.save({ model: 'opencode/other' });
+  assert.equal(store.rendererValue().primaryEffort, null);
+  await store.save({ model: 'opencode/muse', primaryEffort: 'high' });
+  assert.equal(store.runtimeValue().primaryEffort, 'high');
+  assert.equal(await store.reconcileModelCapabilities({ ...catalog, reasoning: undefined }), true);
+  assert.equal(store.rendererValue().primaryEffort, null);
+});
