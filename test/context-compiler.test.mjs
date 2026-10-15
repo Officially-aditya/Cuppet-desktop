@@ -48,7 +48,7 @@ test('compiler injects detached cache-stable context without mutating durable me
   assert.equal(first.messages.find((m) => m.role === 'system')?.content, second.messages.find((m) => m.role === 'system')?.content);
   assert.equal(tst.calls.length, 1, 'same user epoch must not rebuild context');
   assert.equal(tst.completions, 0, 'context compilation must never own terminal turn completion');
-  assert.match(first.messages.find((m) => m.role === 'system').content, /trust="untrusted"/);
+  assert.match(first.messages.find((m) => m.role === 'system').content, /source="workspace-and-session" usage="reference"/);
 });
 
 test('a later user epoch does not complete the previous TST turn', async () => {
