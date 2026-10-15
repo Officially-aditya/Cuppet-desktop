@@ -7,6 +7,7 @@ import {
   GeminiInteractionsProvider,
   OpenAIResponsesProvider,
   VertexGeminiProvider,
+  consumeGeminiInteractionSse,
 } from '../src/runtime/native-provider.mjs';
 
 const TOOL = {
@@ -128,13 +129,15 @@ test('Anthropic native adapter translates system, tool use, tool result, and str
   assert.deepEqual(result.usage, { input_tokens: 9, output_tokens: 5 });
 });
 
-test('Gemini Interactions keeps tool continuation state and lowers function_result using current REST shape', async () => {
+test('Gemini Interactions keeps stateless tool history and signatures with storage disabled', async () => {
   const requests = [];
   const responses = [
     sse([
       { event_type: 'interaction.created', interaction: { id: 'interaction_1' } },
-      { event_type: 'step.start', index: 0, step: { type: 'function_call', id: 'call_1', name: 'lookup' } },
-      { event_type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '{"value":"gamma"}' } },
+      { event_type: 'step.start', index: 0, step: { type: 'thought', summary: [] } },
+      { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'opaque-signature' } },
+      { event_type: 'step.start', index: 1, step: { type: 'function_call', id: 'call_1', name: 'lookup' } },
+      { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: '{"value":"gamma"}' } },
       { event_type: 'interaction.requires_action', interaction: { id: 'interaction_1', usage: { total_tokens: 20 } } },
       '[DONE]',
     ]),
@@ -168,13 +171,60 @@ test('Gemini Interactions keeps tool continuation state and lowers function_resu
   assert.equal(requests[0].init.headers['x-goog-api-key'], 'host-secret');
   assert.equal(requests[0].body.system_instruction, 'System policy');
   assert.equal(requests[0].body.tools[0].name, 'lookup');
-  assert.equal(requests[1].body.previous_interaction_id, 'interaction_1');
+  assert.equal(requests[0].body.store, false);
+  assert.equal(requests[1].body.store, false);
+  assert.equal(requests[1].body.previous_interaction_id, undefined);
   assert.equal(requests[1].body.tools[0].name, 'lookup');
-  assert.equal(requests[1].body.input[0].type, 'function_result');
-  assert.equal(requests[1].body.input[0].call_id, 'call_1');
-  assert.deepEqual(requests[1].body.input[0].result, { content: [{ type: 'text', text: 'gamma-result' }] });
+  assert.equal(requests[1].body.input[0].type, 'user_input');
+  assert.equal(requests[1].body.input.find(step => step.type === 'thought').signature, 'opaque-signature');
+  assert.deepEqual(requests[1].body.input.find(step => step.type === 'function_call').arguments, { value: 'gamma' });
+  const toolResult = requests[1].body.input.find(step => step.type === 'function_result');
+  assert.equal(toolResult.call_id, 'call_1');
+  assert.deepEqual(toolResult.result, { content: [{ type: 'text', text: 'gamma-result' }] });
   assert.deepEqual(deltas, ['Resolved gamma.']);
   assert.equal(second.text, 'Resolved gamma.');
+});
+
+test('Gemini reconstructs ordered opaque steps and prefers the completed snapshot', async () => {
+  const events = [
+    { event_type: 'step.start', index: 1, step: { type: 'function_call', id: 'call', name: 'lookup' } },
+    { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: '{"value":"keep' } },
+    { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: ' ' } },
+    { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: 'space"}' } },
+    { event_type: 'step.start', index: 0, step: { type: 'thought', summary: [] } },
+    { event_type: 'step.delta', index: 0, delta: { type: 'thought_summary', content: { type: 'text', text: 'Checking' } } },
+    { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'opaque' } },
+    { event_type: 'interaction.requires_action', interaction: { id: 'interaction' } },
+  ];
+  const streamed = await consumeGeminiInteractionSse(sse(events).body);
+  assert.deepEqual(streamed.modelSteps.map(step => step.type), ['thought', 'function_call']);
+  assert.equal(streamed.modelSteps[0].signature, 'opaque');
+  assert.deepEqual(streamed.modelSteps[0].summary, [{ type: 'text', text: 'Checking' }]);
+  assert.deepEqual(streamed.modelSteps[1].arguments, { value: 'keep space' });
+  const authoritative = [{ type: 'function_call', id: 'call', name: 'lookup', arguments: { value: 'complete' }, signature: 'full-signature' }];
+  const complete = await consumeGeminiInteractionSse(sse([...events, { event_type: 'interaction.completed', interaction: { steps: authoritative } }]).body);
+  assert.deepEqual(complete.modelSteps, authoritative);
+  assert.equal(complete.toolCalls.length, 1);
+});
+
+test('a failed Gemini continuation leaves stateless tool history retryable', async () => {
+  const requests = [];
+  const responses = [
+    { steps: [{ type: 'function_call', id: 'call', name: 'lookup', arguments: { value: 'test' }, signature: 'opaque' }] },
+    { steps: [] },
+    { steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Done' }] }] },
+  ];
+  const provider = createChatProvider(lowered('google', async (_, init) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify(responses.shift()), { headers: { 'content-type': 'application/json' } });
+  }));
+  const messages = [{ role: 'user', content: 'Lookup test' }];
+  await provider.stream(messages);
+  const continued = [...messages, { role: 'tool', tool_call_id: 'call', name: 'lookup', content: 'tool result' }];
+  await assert.rejects(provider.stream(continued), /empty interaction/);
+  assert.equal((await provider.stream(continued)).text, 'Done');
+  assert.deepEqual(requests[1], requests[2]);
+  assert.equal(requests[2].input.filter(step => step.type === 'function_result').length, 1);
 });
 
 test('Vertex native adapter keeps model function-call history, returns functionResponse, and never puts API key in URL', async () => {

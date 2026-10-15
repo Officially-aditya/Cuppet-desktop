@@ -19,6 +19,7 @@ import {
 } from './acp-capabilities.mjs';
 import { AcpActivityNormalizer } from './acp-activity.mjs';
 import { AcpTurnCompletionGate } from './acp-turn-completion.mjs';
+import { providerSessionScope, providerSessionStore } from '../../session-store.mjs';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 120_000;
@@ -36,6 +37,7 @@ export class AcpSessionRuntime {
   #rpc;
   #hostBridge;
   #environment;
+  #scopeEnvironment;
   #resolveRuntime;
   #initialized = null;
   #session = null;
@@ -48,10 +50,16 @@ export class AcpSessionRuntime {
   #startupTimeoutMs;
   #authenticationTimeoutMs;
   #mcpConfigFile = null;
+  #sessionStore;
+  #scope;
+  #command;
+  #ownedSessions = new Map();
+  #cleanupRecovery = null;
 
-  constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {}, resolveRuntimeImpl = descriptor?.resolveRuntime }) {
+  constructor({ descriptor, configuration = {}, projectRoot = null, executeTool, requestAgentPermission, liveness = {}, resolveRuntimeImpl = descriptor?.resolveRuntime, sessionStore = providerSessionStore() }) {
     this.#descriptor = descriptor;
     this.#configuration = configuration;
+    this.#sessionStore = sessionStore;
     this.#inactivityTimeoutMs = positiveMs(liveness.inactivityMs, DEFAULT_INACTIVITY_TIMEOUT_MS);
     this.#cancelGraceMs = positiveMs(liveness.cancelGraceMs, DEFAULT_CANCEL_GRACE_MS);
     this.#startupTimeoutMs = positiveMs(liveness.startupMs, STARTUP_TIMEOUT_MS);
@@ -59,6 +67,7 @@ export class AcpSessionRuntime {
     this.#projectRoot = projectRoot ? resolve(projectRoot) : tmpdir();
     descriptor.assertProjectAccess?.(this.#projectRoot);
     this.#environment = providerEnvironment(descriptor, configuration);
+    this.#scopeEnvironment = { ...this.#environment };
     this.#resolveRuntime = resolveRuntimeImpl;
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
@@ -71,6 +80,8 @@ export class AcpSessionRuntime {
   #startProcess(command) {
     const descriptor = this.#descriptor;
     const configuration = this.#configuration;
+    this.#command = command;
+    this.#scope = providerSessionScope(descriptor.id, command, this.#scopeEnvironment);
     const args = Array.isArray(configuration.cliArgs) && configuration.cliArgs.length
       ? configuration.cliArgs.map((value) => String(value))
       : [...descriptor.args];
@@ -93,6 +104,15 @@ export class AcpSessionRuntime {
 
   async #applyMcpConfigFile(mcpServers) {
     if (!this.#descriptor?.mcpConfigArg || !Array.isArray(mcpServers) || !mcpServers.length) return;
+    if (this.#mcpConfigFile) {
+      const oldFile = this.#mcpConfigFile;
+      const args = this.#configuration.cliArgs ?? [];
+      if (args.at(-2) === this.#descriptor.mcpConfigArg && args.at(-1) === `@${oldFile}`) {
+        this.#configuration = { ...this.#configuration, cliArgs: args.slice(0, -2) };
+      }
+      this.#mcpConfigFile = null;
+      await rm(oldFile, { force: true });
+    }
     const servers = normalizeMcpServers(mcpServers);
     if (!servers.length) return;
     const mcpConfig = {
@@ -119,7 +139,7 @@ export class AcpSessionRuntime {
     };
   }
 
-  async start({ mcpServers = [], selection, authenticateOnly = false } = {}) {
+  async start({ mcpServers = [], selection, authenticateOnly = false, initializeOnly = false } = {}) {
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
     if (this.#state === 'starting') throw new Error(`${this.#descriptor.label} runtime is already starting.`);
@@ -152,6 +172,10 @@ export class AcpSessionRuntime {
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, this.#startupTimeoutMs);
+      if (initializeOnly) {
+        this.#state = 'initialized';
+        return this.snapshot();
+      }
       const authenticateOnSessionRequired = this.#descriptor.authentication?.onSessionRequired === true;
       if (authenticateOnly || !authenticateOnSessionRequired || this.#configuration.forceAuthentication === true) {
         await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
@@ -160,6 +184,7 @@ export class AcpSessionRuntime {
         this.#state = 'authenticated';
         return this.snapshot();
       }
+      this.#scheduleCleanupRecovery();
       try {
         await this.#openSession(mcpServers, selection);
       } catch (error) {
@@ -180,6 +205,8 @@ export class AcpSessionRuntime {
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime must be ready before opening another ACP session.`);
     try {
       await this.#closeRetiredSession();
+      if (this.#state === 'idle') return this.start({ mcpServers, selection });
+      this.#scheduleCleanupRecovery();
       await this.#openSession(mcpServers, selection);
       return this.snapshot();
     } catch (error) {
@@ -215,6 +242,7 @@ export class AcpSessionRuntime {
 
   async runTurn(input = {}, hooks = {}) {
     if (this.#state === 'idle') await this.start();
+    if (this.#state === 'ready' && !this.#session) await this.newSession();
     if (this.#state !== 'ready') throw new Error(`${this.#descriptor.label} runtime is not ready.`);
     if (this.#activeTurn) throw new Error(`${this.#descriptor.label} runtime already has an active turn.`);
     this.setHostHandlers({ executeTool: hooks.executeTool, requestAgentPermission: hooks.requestAgentPermission });
@@ -318,10 +346,16 @@ export class AcpSessionRuntime {
 
   async close() {
     if (this.#state === 'closed') return;
-    this.#state = 'closed';
     if (this.#activeTurn) await this.cancel().catch(() => undefined);
+    if (!this.#activeTurn) await this.retireSession().catch(() => undefined);
+    this.#state = 'closed';
     this.setHostHandlers();
     await this.#rpc?.close?.();
+    for (const record of this.#ownedSessions.values()) {
+      try { this.#sessionStore.release(record); } catch {}
+    }
+    if (this.#descriptor.cleanupSessions) await this.#cleanupRecords([...this.#ownedSessions.values()]);
+    await this.#cleanupRecovery;
     if (this.#mcpConfigFile) {
       const file = this.#mcpConfigFile;
       this.#mcpConfigFile = null;
@@ -360,11 +394,73 @@ export class AcpSessionRuntime {
   }
 
   async #closeRetiredSession() {
+    return this.retireSession();
+  }
+
+  async retireSession() {
+    if (this.#activeTurn) throw new Error('Cannot retire an active provider session.');
     const sessionId = text(this.#session?.sessionId);
-    if (!sessionId || !supportsSessionClose(this.#initialized)) return;
-    await this.#rpc.request('session/close', { sessionId }, REQUEST_TIMEOUT_MS);
+    if (!sessionId) return;
+    const record = this.#ownedSessions.get(sessionId);
+    const canDelete = supportsSessionDelete(this.#initialized) && this.#rpc?.healthy();
+    const canClose = supportsSessionClose(this.#initialized) && this.#rpc?.healthy();
     this.#session = null;
-    this.#capabilities = null;
+    if (record) { try { this.#sessionStore.release(record); } catch {} }
+    if (canDelete && record) {
+      await this.#cleanupRecords([record]);
+      return;
+    }
+    if (canClose) await this.#rpc.request('session/close', { sessionId }, 5_000).catch(() => undefined);
+    if (record && this.#descriptor.cleanupSessions) {
+      if (this.#descriptor.cleanupRequiresProcessExit || !canClose) {
+        await this.#rpc?.close();
+        this.#rpc = null;
+        this.#process = null;
+        this.#initialized = null;
+        if (this.#state !== 'closed') this.#state = 'idle';
+      }
+      await this.#cleanupRecords([record]);
+    }
+  }
+
+  async #cleanupRecords(records) {
+    if (!records.length) return;
+    for (const record of records) {
+      try {
+        if (supportsSessionDelete(this.#initialized) && this.#rpc?.healthy()) {
+          await this.#rpc.request('session/delete', { sessionId: record.sessionId }, 5_000);
+        } else if (this.#descriptor.cleanupSessions) {
+          if (this.#descriptor.cleanupRequiresProcessExit && this.#rpc?.processSnapshot()?.state === 'stopping') throw new Error('Provider is still writing session files; cleanup deferred.');
+          await this.#descriptor.cleanupSessions({ command: this.#command, environment: this.#environment, records: [record] });
+        } else continue;
+        this.#sessionStore.complete(record);
+        this.#ownedSessions.delete(record.sessionId);
+      } catch (error) {
+        if (/session.*(?:not found|does not exist)/i.test(error?.message ?? '')) {
+          try { this.#sessionStore.complete(record); this.#ownedSessions.delete(record.sessionId); } catch {}
+          continue;
+        }
+        try { this.#sessionStore.defer(record, error); } catch {}
+      }
+    }
+  }
+
+  async cleanupPendingSessions() {
+    await this.start({ initializeOnly: true });
+    const records = this.#sessionStore.pending(this.#scope);
+    if (this.#descriptor.cleanupRequiresProcessExit) {
+      await this.#rpc.close();
+      this.#rpc = null;
+      this.#initialized = null;
+    }
+    await this.#cleanupRecords(records);
+  }
+
+  #scheduleCleanupRecovery() {
+    if (this.#cleanupRecovery) return;
+    const records = this.#sessionStore.pending(this.#scope);
+    if (!records.length) return;
+    this.#cleanupRecovery = this.#cleanupRecords(records).catch(() => undefined).finally(() => { this.#cleanupRecovery = null; });
   }
 
   async #openSession(mcpServers = [], selection) {
@@ -376,6 +472,15 @@ export class AcpSessionRuntime {
     };
     this.#session = await this.#rpc.request('session/new', params, this.#startupTimeoutMs);
     if (!text(this.#session?.sessionId)) throw new Error(`${this.#descriptor.label} ACP did not return a session id.`);
+    if (this.#descriptor.sessionPersistence !== false) {
+      try {
+        const record = this.#sessionStore.track({ providerID: this.#descriptor.id, scope: this.#scope, sessionId: this.#session.sessionId, cwd: this.#projectRoot });
+        this.#ownedSessions.set(record.sessionId, record);
+      } catch (error) {
+        if (error.ownedProviderSession) this.#ownedSessions.set(this.#session.sessionId, error.ownedProviderSession);
+        throw error;
+      }
+    }
     this.#refreshCapabilities();
     await this.#refreshCommandSettings();
     this.#refreshCapabilities();
@@ -637,6 +742,7 @@ function sessionPromptParams(descriptor, sessionId, textValue) {
 function serializeConversation(messages) { const value=(Array.isArray(messages)?messages:[]).map((m)=>`[${String(m?.role??'user').toUpperCase()}]\n${typeof m?.content==='string'?m.content:JSON.stringify(m?.content??'')}`).join('\n\n'); const bytes=Buffer.from(value,'utf8'); return bytes.length<=MAX_PROMPT_BYTES?value:`${bytes.subarray(bytes.length-MAX_PROMPT_BYTES).toString('utf8')}\n\n[Earlier compiled context truncated by Cuppet before ACP transport.]`; }
 function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)return null; const n=(v)=>Number.isFinite(Number(v))?Number(v):0; return {inputTokens:n(s.inputTokens??s.input_tokens),outputTokens:n(s.outputTokens??s.output_tokens),totalTokens:n(s.totalTokens??s.total_tokens),cachedInputTokens:n(s.cachedInputTokens??s.cached_input_tokens??s.cachedReadTokens),reasoningTokens:n(s.reasoningTokens??s.reasoning_tokens)};}
 function supportsSessionClose(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.close !== undefined && sessions.close !== false;}
+function supportsSessionDelete(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.delete !== undefined && sessions.delete !== false;}
 async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
 function enrichProviderError(descriptor, error, stderr) {
   if (providerFailureMetadata(error)) return error;

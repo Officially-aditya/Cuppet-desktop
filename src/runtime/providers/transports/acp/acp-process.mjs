@@ -139,18 +139,26 @@ export class AcpProcess {
     if (!['stopped', 'crashed'].includes(this.#state)) this.#state = 'stopping';
     try { this.#child.stdin?.end(); } catch {}
     // Let EOF trigger provider-owned MCP cleanup before falling back to SIGTERM.
-    if (this.#child && this.#child.exitCode === null) {
+    if (this.#child?.pid && !this.#exit) {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, 1000);
         this.#child.once('exit', () => { clearTimeout(timer); resolve(); });
       });
     }
     try { this.#child?.kill(); } catch {}
-    if (this.#child && this.#child.exitCode === null) {
+    if (this.#child?.pid && !this.#exit) {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, 500);
         this.#child.once('exit', () => { clearTimeout(timer); resolve(); });
       });
+    }
+    if (this.#child?.pid && !this.#exit) {
+      try { this.#child.kill('SIGKILL'); } catch {}
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        this.#child.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+      if (!this.#exit) throw new Error(`${this.label} process has not exited; session cleanup deferred.`);
     }
     if (this.#state === 'crashed') this.#state = 'stopped';
   }

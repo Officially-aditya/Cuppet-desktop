@@ -24,6 +24,11 @@ test('OpenCode production policy matches the authenticated ACP acceptance floor'
   assert.equal(localProviderVersionCompatibility('kiro', 'anything').state, 'not_required');
 });
 
+test('Vibe requires environment overrides and native ACP session deletion', () => {
+  assert.equal(localProviderVersionCompatibility('mistral-vibe', '2.13.0').supported, false);
+  assert.equal(localProviderVersionCompatibility('mistral-vibe', 'Mistral Vibe 2.14.0').supported, true);
+});
+
 test('incompatible external OpenCode is installed but blocked before auth probing', async () => {
   const calls = [];
   const operations = fakeOperations({

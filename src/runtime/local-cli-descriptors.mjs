@@ -1,5 +1,6 @@
 import { resolveCopilotAcpRuntime } from './copilot-acp-runtime.mjs';
 import { assertOpenCodeProjectAccess, prepareOpenCodeAcpEnvironment } from './providers/opencode-mcp.mjs';
+import { deleteCopilotSessions, deleteGrokSessions, deleteKiroSessions } from './providers/session-cleanup.mjs';
 
 const DESCRIPTORS = Object.freeze({
   opencode: descriptor({
@@ -25,12 +26,15 @@ const DESCRIPTORS = Object.freeze({
     // Authentication remains Claude-owned and is resolved independently by the Agent SDK.
     sessionMeta: {
       disableBuiltInTools: true,
-      claudeCode: { options: { settingSources: [] } },
+      claudeCode: { options: { settingSources: [], persistSession: false } },
     },
+    sessionPersistence: false,
   }),
   'grok-build': descriptor({
     id: 'grok-build', label: 'Grok Build', transport: 'acp', command: 'grok', args: ['--no-auto-update', 'agent', 'stdio'], versionArgs: ['version'], envOverride: 'CUPPET_GROK_BIN',
     loginHint: 'Run `grok login` in Terminal once, then retry.',
+    cleanupSessions: deleteGrokSessions,
+    cleanupRequiresProcessExit: true,
     authentication: {
       methods: [
         { id: 'xai.api_key', requiresEnv: 'XAI_API_KEY' },
@@ -40,11 +44,12 @@ const DESCRIPTORS = Object.freeze({
     },
   }),
   'github-copilot': descriptor({
-    id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--disable-builtin-mcps', '--allow-all-tools'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
+    id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--no-remote-export', '--disable-builtin-mcps', '--allow-all-tools'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
     loginHint: 'Run `copilot` in Terminal once and complete GitHub sign-in, then retry.',
     mcpToolBridge: true,
     mcpConfigArg: '--additional-mcp-config',
     resolveRuntime: resolveCopilotAcpRuntime,
+    cleanupSessions: deleteCopilotSessions,
     // Copilot ACP can frame ordinary assistant text as extremely small chunks with
     // transport whitespace around each fragment. It can also emit pre-tool planning
     // through agent_message_chunk rather than agent_thought_chunk. Reassemble framing
@@ -68,10 +73,13 @@ const DESCRIPTORS = Object.freeze({
   'mistral-vibe': descriptor({
     id: 'mistral-vibe', label: 'Mistral Vibe', transport: 'acp', command: 'vibe-acp', args: [], versionArgs: ['--version'], envOverride: 'CUPPET_VIBE_BIN',
     loginHint: 'Run `vibe --setup` in Terminal once and complete Mistral sign-in/setup, then retry.',
+    environment: inherited => ({ ...inherited, VIBE_SESSION_LOGGING: '{"enabled":false}', VIBE_SESSION_LOGGING__ENABLED: 'false', VIBE_SESSION_LOGGING__GENERATE_TITLES: 'false' }),
   }),
   kiro: descriptor({
     id: 'kiro', label: 'Kiro', transport: 'acp', command: 'kiro-cli', args: ['acp'], versionArgs: ['--version'], envOverride: 'CUPPET_KIRO_BIN',
     loginHint: 'Run `kiro-cli` in Terminal once and complete sign-in, then retry.',
+    cleanupSessions: deleteKiroSessions,
+    cleanupRequiresProcessExit: true,
     // Kiro currently exposes model selection through the legacy ACP session/set_model
     // surface and model-dependent reasoning through its command extension. Keep those
     // extension method names descriptor-owned so shared ACP transport stays identity-free.

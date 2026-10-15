@@ -1,5 +1,7 @@
 const LOCAL_PROVIDER_VERSION_POLICIES = Object.freeze({
   opencode: Object.freeze({ minimumVersion: '1.18.30' }),
+  // Vibe 2.14 added managed environment overrides and ACP session/delete.
+  'mistral-vibe': Object.freeze({ minimumVersion: '2.14.0' }),
 });
 
 export function localProviderVersionPolicy(providerID) {

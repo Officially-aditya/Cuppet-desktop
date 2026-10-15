@@ -350,6 +350,7 @@ export class ProviderRuntimeManager {
       bridgePlan = null;
       throw error;
     } finally {
+      await Promise.resolve(entry?.runtime?.retireSession?.()).catch(() => undefined);
       if (abortToolSession) options.signal?.removeEventListener?.('abort', abortToolSession);
       if (descriptor?.mcpConfigArg) {
         toolSession?.setTurn({ tools: [], executeTool: null, signal: null });

@@ -4,6 +4,7 @@ import { discoverAcpRuntimeCatalog } from '../transports/acp/acp-discovery.mjs';
 import { AcpProviderAdapter } from './acp.mjs';
 import { providerFailureError } from '../provider-failure.mjs';
 import { resolveAntigravityAcpInstallation } from './antigravity-install.mjs';
+import { deleteAntigravitySessions } from '../session-cleanup.mjs';
 
 export function antigravityBackendDefinition() {
   const provider = localCliDescriptor('antigravity');
@@ -71,6 +72,8 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
     envOverride: installation ? 'CUPPET_ANTIGRAVITY_ACP_BIN' : '',
     loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
     authentication: { methods: [{ id: 'oauth-personal' }], onSessionRequired: true, allowCached: true },
+    cleanupSessions: deleteAntigravitySessions,
+    cleanupRequiresProcessExit: true,
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),
     diagnosticError: (line, configuration) => {
       const text = String(line || '').trim();

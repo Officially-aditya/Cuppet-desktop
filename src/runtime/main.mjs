@@ -9,6 +9,7 @@ import { buildRuntimeDoctor, buildRuntimeStatus } from './diagnostics.mjs';
 import { RuntimeTstManager } from './runtime-tst-manager.mjs';
 import { closeProviderUsageLedger, providerUsageSummary } from './usage-ledger.mjs';
 import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSessionArtifacts } from './session-retention.mjs';
+import { cleanupOwnedProviderSessions } from './providers/session-cleanup.mjs';
 import { listSessionEditedFiles } from './session-edited-files.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
@@ -24,6 +25,7 @@ import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
 import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
 
 const dataDir = process.env.CUPPET_DATA_DIR || join(homedir(), '.cuppet-desktop');
+process.env.CUPPET_DATA_DIR ??= dataDir;
 const databasePath = join(dataDir, 'conversations.sqlite3');
 const MAX_QUEUED_TURNS = 16;
 
@@ -116,7 +118,10 @@ const service = {
   async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close()]); },
 };
 remote = new RemoteManager({ dataDir, call: (method, params, context) => handle(method, params, context), emit });
-const purgeTimer = setInterval(() => { void purgeExpiredDeleted(); }, DELETED_CHAT_PURGE_INTERVAL_MS);
+const purgeTimer = setInterval(() => {
+  void purgeExpiredDeleted();
+  void cleanupOwnedProviderSessions(currentProviderConfig ?? {}).catch(() => undefined);
+}, DELETED_CHAT_PURGE_INTERVAL_MS);
 purgeTimer.unref?.();
 
 async function handle(method, params = {}, context = {}) {
@@ -192,6 +197,7 @@ async function handle(method, params = {}, context = {}) {
 
 async function syncProviderConfig(value) {
   currentProviderConfig = boundedProvider(value);
+  void cleanupOwnedProviderSessions(currentProviderConfig).catch(() => undefined);
   const result = await remote.setProviderConfig(currentProviderConfig);
   for (const sessionId of turnStore.queuedSessions()) queueMicrotask(() => void drainQueued(sessionId));
   return result;

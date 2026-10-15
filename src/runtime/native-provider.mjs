@@ -91,27 +91,28 @@ export class AnthropicMessagesProvider {
 }
 
 export class GeminiInteractionsProvider {
-  #config; #fetch; #previousInteractionId = null; #sentToolResults = new Set(); #systemInstruction = '';
+  #config; #fetch; #history = null; #sentToolResults = new Set(); #systemInstruction = '';
   constructor(configuration = {}) {
     this.#config = resolved(configuration);
     this.#fetch = fetcher(configuration);
   }
 
   async stream(messages, { signal, onDelta = async () => {}, tools = [] } = {}) {
-    const initial = !this.#previousInteractionId;
+    const initial = !this.#history;
     if (initial) this.#systemInstruction = systemText(messages);
-    const input = initial ? geminiInitialInput(messages) : geminiToolResults(messages, this.#sentToolResults);
-    if (!input.length) throw new Error('Gemini continuation requires at least one new tool result.');
-    const submittedToolResultIds = input.flatMap((item) => item?.type === 'function_result' && item.call_id ? [String(item.call_id)] : []);
+    const toolResults = initial ? [] : geminiToolResults(messages, this.#sentToolResults);
+    if (!initial && !toolResults.length) throw new Error('Gemini continuation requires at least one new tool result.');
+    const input = [...(initial ? geminiInitialInput(messages) : this.#history), ...toolResults];
+    const submittedToolResultIds = toolResults.map(item => String(item.call_id));
 
     const request = {
       ...geminiGenerationConfig(this.#config.requestBody),
       model: stripModelPrefix(this.#config.model),
       input,
       stream: true,
+      store: false,
     };
     if (this.#systemInstruction) request.system_instruction = this.#systemInstruction;
-    if (this.#previousInteractionId) request.previous_interaction_id = this.#previousInteractionId;
     const translatedTools = interactionTools(tools);
     if (translatedTools.length) request.tools = translatedTools;
 
@@ -134,9 +135,9 @@ export class GeminiInteractionsProvider {
       result = geminiInteractionResult(payload);
       if (result.text) await onDelta(result.text);
     }
-    if (result.interactionId) this.#previousInteractionId = result.interactionId;
-    for (const id of submittedToolResultIds) this.#sentToolResults.add(id);
     if (!result.text && !result.toolCalls.length) throw new Error('Gemini returned an empty interaction.');
+    this.#history = [...input, ...result.modelSteps];
+    for (const id of submittedToolResultIds) this.#sentToolResults.add(id);
     return { text: result.text, toolCalls: result.toolCalls, usage: result.usage ?? null };
   }
 }
@@ -298,42 +299,56 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
   let text = '';
   let usage = null;
   let interactionId = null;
-  const calls = new Map();
+  const steps = new Map();
+  const argumentsByIndex = new Map();
+  let completeSteps = null;
   const consumedToolResultIds = [];
   for await (const payload of ssePayloads(body, signal)) {
     const type = payload?.event_type ?? payload?.type;
     if (type === 'interaction.created') interactionId = payload.interaction?.id ?? payload.interaction_id ?? interactionId;
     else if (type === 'step.start') {
       const step = payload.step ?? {};
-      if (step.type === 'function_call') calls.set(payload.index, {
-        id: string(step.id) || `function_${payload.index}`,
-        name: string(step.name),
-        arguments: objectJson(step.arguments, ''),
-      });
+      steps.set(payload.index, structuredClone(step));
       if (step.type === 'function_result' && step.call_id) consumedToolResultIds.push(String(step.call_id));
     } else if (type === 'step.delta') {
       const delta = payload.delta ?? {};
+      const step = steps.get(payload.index) ?? { type: 'model_output', content: [] };
       if (delta.type === 'text' && typeof delta.text === 'string') {
         text += delta.text;
         await onDelta(delta.text);
+        step.content ??= [];
+        const previous = step.content.at(-1);
+        if (previous?.type === 'text') previous.text += delta.text;
+        else step.content.push({ type: 'text', text: delta.text });
       }
       if (delta.type === 'arguments_delta' || typeof delta.arguments_delta === 'string' || typeof delta.arguments === 'string') {
-        const call = calls.get(payload.index) ?? { id: `function_${payload.index}`, name: '', arguments: '' };
-        call.arguments += string(delta.arguments_delta) || string(delta.arguments);
-        calls.set(payload.index, call);
+        const fragment = typeof delta.arguments_delta === 'string' ? delta.arguments_delta : typeof delta.arguments === 'string' ? delta.arguments : '';
+        argumentsByIndex.set(payload.index, (argumentsByIndex.get(payload.index) || '') + fragment);
       }
+      if (delta.type === 'thought_signature') step.signature = (step.signature || '') + (delta.signature || '');
+      if (delta.type === 'thought_summary') {
+        step.summary ??= [];
+        if (delta.content) step.summary.push(structuredClone(delta.content));
+      }
+      steps.set(payload.index, step);
     } else if (type === 'interaction.completed' || type === 'interaction.requires_action') {
       const interaction = payload.interaction ?? {};
       interactionId = interaction.id ?? payload.interaction_id ?? interactionId;
       usage = interaction.usage ?? usage;
-      mergeGeminiSteps(calls, interaction.steps);
+      if (Array.isArray(interaction.steps) && interaction.steps.length) completeSteps = structuredClone(interaction.steps);
     } else if (type === 'interaction.failed') {
       throw new Error(providerFailure(payload.interaction?.errors?.[0] ?? payload.error, 'Gemini interaction failed'));
     } else if (type === 'error') {
       throw new Error(providerFailure(payload.error ?? payload, 'Gemini stream failed'));
     }
   }
-  return { text, toolCalls: callsToArray(calls), usage, interactionId, consumedToolResultIds };
+  const modelSteps = completeSteps ?? [...steps.entries()].sort(([a], [b]) => a - b).map(([index, step]) => {
+    if (step.type === 'function_call' && argumentsByIndex.has(index)) step.arguments = JSON.parse(argumentsByIndex.get(index) || '{}');
+    return step;
+  });
+  const result = geminiInteractionResult({ steps: modelSteps });
+  if (!text && result.text) await onDelta(result.text);
+  return { ...result, text: text || result.text, usage, interactionId, consumedToolResultIds };
 }
 
 export async function consumeVertexSse(body, onDelta = async () => {}, signal) {
@@ -600,15 +615,11 @@ function geminiInteractionResult(payload) {
       arguments: JSON.stringify(record(step.arguments)),
     });
   }
-  return { text, toolCalls: [...calls.values()], usage: payload?.usage ?? null, interactionId: payload?.id ?? null, consumedToolResultIds: [] };
-}
-
-function mergeGeminiSteps(calls, steps) {
-  for (const step of array(steps)) {
-    if (step?.type !== 'function_call' || !step.name) continue;
-    const key = step.id || `function_${calls.size}`;
-    calls.set(key, { id: step.id || key, name: step.name, arguments: JSON.stringify(record(step.arguments)) });
-  }
+  return {
+    text, toolCalls: [...calls.values()], usage: payload?.usage ?? null,
+    interactionId: payload?.id ?? null, consumedToolResultIds: [],
+    modelSteps: structuredClone(array(payload?.steps).filter(step => !['user_input', 'function_result'].includes(step?.type))),
+  };
 }
 
 function vertexInitialContents(messages) {

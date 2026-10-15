@@ -14,7 +14,7 @@ const hostBridgeFixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs',
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
 const CLAUDE_SESSION_META = {
   disableBuiltInTools: true,
-  claudeCode: { options: { settingSources: [] } },
+    claudeCode: { options: { settingSources: [], persistSession: false } },
 };
 
 test('Claude Code is a managed ACP backend with isolated Cuppet execution policy', () => {

@@ -13,7 +13,7 @@ import { clearProviderRuntimeFailure, recordProviderRuntimeFailure } from '../..
  * Discovery deliberately uses two authority phases:
  * 1. a clean provider session with no Cuppet model/effort override determines
  *    the provider default and baseline model list;
- * 2. when the user has an explicit model, a separate model-only session
+ * 2. when the user has an explicit model, switching that same empty session
  *    refreshes settings that depend on that model. The explicit user effort is
  *    not applied, so reasoning.currentValue remains the provider's default for
  *    that model rather than echoing the saved Cuppet override.
@@ -41,10 +41,11 @@ export async function discoverAcpRuntimeCatalog(providerID, options = {}) {
 
     let selected = baseline;
     if (exactAdvertisedModel(configuredModel, baseline.models)) {
-      await runtime.newSession({ selection: { model: configuredModel } });
+      await runtime.applyModelSwitch({ model: configuredModel });
       selected = catalogFromAcpCapabilities(id, await runtime.capabilities());
     }
 
+    await runtime.retireSession();
     if (options.runtimeManager && typeof options.runtimeManager.adoptWarmRuntime === 'function') {
       retained = Boolean(options.runtimeManager.adoptWarmRuntime({
         runtime,

@@ -71,6 +71,8 @@ export class SupervisedAcpSessionRuntime {
     return this.#runtime.capabilities();
   }
 
+  async retireSession() { return this.#runtime.retireSession?.(); }
+
   setHostHandlers(handlers = {}) {
     return this.#runtime.setHostHandlers?.(handlers);
   }
