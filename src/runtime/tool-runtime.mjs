@@ -3,7 +3,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { isSafeAutoBashCommand } from './permissions.mjs';
+import { MAX_PERMISSION_RESOURCE_CHARS, isSafeAutoBashCommand } from './permissions.mjs';
 import { BackgroundProcessManager } from './background-process-manager.mjs';
 import { SandboxManager } from './sandbox/sandbox-manager.mjs';
 import { sanitizeEnvironment } from './sandbox/env-sanitizer.mjs';
@@ -198,7 +198,7 @@ export class ToolRuntime {
     if (action === 'start') {
       const command = String(args.command ?? '').trim();
       if (!command) throw new Error('command is required for action=start');
-      if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
+      if (command.length > MAX_PERMISSION_RESOURCE_CHARS) throw new Error(`command exceeds ${MAX_PERMISSION_RESOURCE_CHARS} character limit`);
       const permission = await authorize({ action: 'bash', resources: [command], description: `Start background process in project: ${command.slice(0, 300)}` });
       if (signal?.aborted) throw abortError();
       const isFullAccess = Boolean(permission?.fullAccess || permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
@@ -473,7 +473,7 @@ export class ToolRuntime {
     if (!projectRoot) throw new Error('bash requires a project-bound session');
     const command = String(args.command ?? '').trim();
     if (!command) throw new Error('command is required');
-    if (command.length > 8000) throw new Error('command exceeds 8000 character limit');
+    if (command.length > MAX_PERMISSION_RESOURCE_CHARS) throw new Error(`command exceeds ${MAX_PERMISSION_RESOURCE_CHARS} character limit`);
     const permission = await authorize({ action: 'bash', resources: [command], description: `Run shell command in project: ${command.slice(0, 300)}` });
     const isFullAccess = Boolean(permission?.fullAccess || permission?.source === 'session-full-access' || (sessionId ? this.#permissions?.autoStatus?.(sessionId)?.fullAccess : false));
     const timeoutMs = clamp(Number(args.timeout_ms) || 30000, 1000, 120000);
@@ -593,12 +593,12 @@ export function agentPermissionResources(request) {
   const kind = String(request?.kind ?? '').toLowerCase();
   if (['execute', 'terminal'].includes(kind)) {
     const command = agentPermissionCommand(request?.rawInput);
-    if (command) return [command.slice(0, 1024)];
+    if (command) return [command];
   }
   const locations = Array.isArray(request?.locations) ? request.locations : [];
-  const paths = locations.flatMap((item) => typeof item?.path === 'string' && item.path.trim() ? [item.path.trim().slice(0, 1024)] : []);
-  if (paths.length) return paths.slice(0, 16);
-  return kind === 'delete' ? [] : [String(request?.title || request?.kind || 'agent-tool').slice(0, 1024)];
+  const paths = locations.flatMap((item) => typeof item?.path === 'string' && item.path.trim() ? [item.path.trim()] : []);
+  if (paths.length) return paths;
+  return kind === 'delete' ? [] : [String(request?.title || request?.kind || 'agent-tool')];
 }
 function agentPermissionCommand(rawInput, depth = 0) {
   if (depth > 3 || rawInput == null) return '';
