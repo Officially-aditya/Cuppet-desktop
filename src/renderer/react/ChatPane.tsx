@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, PermissionRequest, Project, QueuedTurn, QuestionRequest, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
@@ -8,6 +8,8 @@ import { ImageLightboxModal } from './ImageLightboxModal';
 import { QuestionInline } from './QuestionModal';
 import { PermissionModal } from './PermissionModal';
 import { renderMarkdown } from './markdown';
+import { ChatLinkPreview } from './ChatLinkPreview';
+import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import {
   GENERAL_SETTINGS_EVENT,
@@ -591,6 +593,7 @@ function imageMimeFromName(name: string): string | null {
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
   return (
+    <ProjectIdContext.Provider value={project?.id ?? session?.projectId ?? null}>
     <main
       ref={paneRef}
       className={`main-pane react-main-pane${isDraggingOver ? ' dropzone-active' : ''}`}
@@ -754,7 +757,9 @@ function imageMimeFromName(name: string): string | null {
           onClose={() => setLightboxImage(null)}
         />
       )}
+      <ChatLinkPreview projectId={project?.id ?? session?.projectId ?? null} />
     </main>
+    </ProjectIdContext.Provider>
   );
 }
 
@@ -1031,10 +1036,28 @@ function MessageView({
   );
 }
 
-function MarkdownContent({ content, ...props }: React.ComponentProps<'div'> & { content: string }) {
+// The project a rendered link or file path opens against. Provided by ChatPane so MarkdownContent needs no prop drilling.
+const ProjectIdContext = createContext<string | null>(null);
+
+function MarkdownContent({ content, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string }) {
+  const projectId = useContext(ProjectIdContext);
   // Replacing unchanged HTML destroys the browser's active text selection.
   const html = useMemo(() => ({ __html: renderMarkdown(content) }), [content]);
-  return <div {...props} dangerouslySetInnerHTML={html} />;
+  return (
+    <div
+      {...props}
+      dangerouslySetInnerHTML={html}
+      onClick={(event) => {
+        // Links and file paths are marked by renderMarkdown; opening them is handled here, declaratively.
+        if (openChatLink(projectId, event.target)) { event.preventDefault(); return; }
+        onClick?.(event);
+      }}
+      onKeyDown={(event) => {
+        if ((event.key === 'Enter' || event.key === ' ') && isProjectFileTarget(event.target) && openChatLink(projectId, event.target)) { event.preventDefault(); return; }
+        onKeyDown?.(event);
+      }}
+    />
+  );
 }
 
 function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
@@ -1315,10 +1338,12 @@ function CommandPalette({ items, selected, sessionAvailable, contextUsage, onCho
 }
 
 function CommandResultView({ result, contextUsage, onDismiss }: { result: CommandResult; contextUsage?: ContextUsage; onDismiss: () => void }) {
-  const text = result.presentation || summarize(result.result);
+  const label = result.slash || result.id || 'Command';
+  const summary = result.presentation || summarize(result.result);
+  const text = summary.trim() === 'Command completed.' ? `${label} finished with no additional output.` : summary;
   return (
     <div className="command-result react-command-result" role="status">
-      <strong>{result.slash || result.id || 'Command'}</strong>
+      <strong>{label}</strong>
       <div className="command-result-copy">
         <span>{text}</span>
         {result.id === 'compact' && <ContextUsageBar usage={contextUsage} />}
