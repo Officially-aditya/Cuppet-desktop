@@ -24,6 +24,11 @@ export function stripLineSuffix(value: string) {
   return String(value).trim().replace(/:(?:\d+)(?::\d+)?(?:-\d+(?::\d+)?)?$/, '');
 }
 
+/** Runs a native-bridge call, swallowing both synchronous throws and rejected promises. */
+function attempt(call: () => unknown) {
+  try { void Promise.resolve(call()).catch(() => undefined); } catch { /* the bridge is best effort */ }
+}
+
 function closestLink(target: unknown, selector: string): LinkLike | null {
   const node = target as LinkLike | null | undefined;
   return node && typeof node.closest === 'function' ? node.closest(selector) : null;
@@ -45,11 +50,11 @@ export function openChatLink(projectId: string | null | undefined, target: unkno
 
   if (element.hasAttribute('data-cuppet-external')) {
     const href = element.href || element.getAttribute('href') || '';
-    if (href) void Promise.resolve(native.openExternal?.(href)).catch(() => undefined);
+    if (href) attempt(() => native.openExternal?.(href));
     return true;
   }
 
   const path = element.getAttribute('data-cuppet-project-file');
-  if (path && projectId) void Promise.resolve(native.openProjectFile?.(projectId, stripLineSuffix(path))).catch(() => undefined);
+  if (path && projectId) attempt(() => native.openProjectFile?.(projectId, stripLineSuffix(path)));
   return true;
 }
