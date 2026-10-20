@@ -1,0 +1,158 @@
+/*
+ * Code blocks rendered by the chat markdown renderer: the header (language + copy button) and syntax tokens.
+ *
+ * The block surface is the same dark panel in the light and dark themes (the transcript has never had a light
+ * override for pre), so a single token palette serves both. Colours are custom properties so they can be
+ * themed in one place. Rules are prefixed to match the specificity of the existing pre rules in react.css and
+ * rely on loading after it.
+ */
+.markdown-rendered .md-code-block {
+  --md-code-surface: #0b0e12;
+  --md-code-header: #10141a;
+  --md-code-line: #282e37;
+  --md-code-muted: #8f98a6;
+  --md-hl-plain: #e6edf3;
+  --md-hl-comment: #8b949e;
+  --md-hl-keyword: #ff7b72;
+  --md-hl-string: #a5d6ff;
+  --md-hl-number: #79c0ff;
+  --md-hl-title: #d2a8ff;
+  --md-hl-type: #ffa657;
+  --md-hl-tag: #7ee787;
+  --md-hl-add: #7ee787;
+  --md-hl-add-bg: rgba(46, 160, 67, 0.15);
+  --md-hl-del: #ffa198;
+  --md-hl-del-bg: rgba(248, 81, 73, 0.15);
+  margin: 10px 0;
+  border: 1px solid var(--md-code-line);
+  border-radius: 9px;
+  background: var(--md-code-surface);
+  overflow: hidden;
+}
+
+.message.assistant .markdown-rendered .md-code-block pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-hl-plain);
+}
+
+.md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 3px 5px 3px 13px;
+  border-bottom: 1px solid var(--md-code-line);
+  background: var(--md-code-header);
+  color: var(--md-code-muted);
+  font: 11px/1.2 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* The header is chrome: selecting a message must not pick up the language name or the button label. */
+  user-select: none;
+}
+
+.md-code-lang {
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.md-code-copy {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.md-code-copy:hover {
+  background: #1b2027;
+  color: #f4f6f8;
+}
+
+.md-code-copy:focus-visible {
+  outline: 2px solid #78aaf1;
+  outline-offset: 1px;
+}
+
+/* Syntax tokens (highlight.js class names). */
+.md-code-block .hljs-comment,
+.md-code-block .hljs-quote,
+.md-code-block .hljs-meta {
+  color: var(--md-hl-comment);
+}
+
+.md-code-block .hljs-keyword,
+.md-code-block .hljs-selector-tag,
+.md-code-block .hljs-literal,
+.md-code-block .hljs-doctag,
+.md-code-block .hljs-template-tag,
+.md-code-block .hljs-template-variable {
+  color: var(--md-hl-keyword);
+}
+
+.md-code-block .hljs-string,
+.md-code-block .hljs-regexp,
+.md-code-block .hljs-meta .hljs-string {
+  color: var(--md-hl-string);
+}
+
+.md-code-block .hljs-number,
+.md-code-block .hljs-symbol,
+.md-code-block .hljs-bullet,
+.md-code-block .hljs-attr,
+.md-code-block .hljs-attribute,
+.md-code-block .hljs-selector-attr,
+.md-code-block .hljs-selector-pseudo {
+  color: var(--md-hl-number);
+}
+
+.md-code-block .hljs-title,
+.md-code-block .hljs-section,
+.md-code-block .hljs-selector-id,
+.md-code-block .hljs-selector-class {
+  color: var(--md-hl-title);
+}
+
+.md-code-block .hljs-built_in,
+.md-code-block .hljs-type,
+.md-code-block .hljs-variable,
+.md-code-block .hljs-params {
+  color: var(--md-hl-type);
+}
+
+.md-code-block .hljs-tag,
+.md-code-block .hljs-name {
+  color: var(--md-hl-tag);
+}
+
+.md-code-block .hljs-addition {
+  background: var(--md-hl-add-bg);
+  color: var(--md-hl-add);
+}
+
+.md-code-block .hljs-deletion {
+  background: var(--md-hl-del-bg);
+  color: var(--md-hl-del);
+}
+
+.md-code-block .hljs-emphasis {
+  font-style: italic;
+}
+
+.md-code-block .hljs-strong {
+  font-weight: 700;
+}
+
+.md-code-block .hljs-link {
+  text-decoration: underline;
+}
+
+/* A remote image is shown as a link (the CSP does not load remote images); the dashes mark it as an image. */
+.markdown-rendered a.md-remote-image {
+  text-decoration-style: dashed;
+}
