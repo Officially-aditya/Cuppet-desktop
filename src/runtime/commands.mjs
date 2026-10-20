@@ -14,7 +14,7 @@ const DEFINITIONS = Object.freeze([
   palette('cuppet.memory.clear', 'Clear memory scope', 'Clear a bounded memory scope.', 'session.write', 'runtime'),
   palette('cuppet.background.pause', 'Pause background memory', 'Pause background enrichment.', 'session.write', 'runtime'),
   palette('cuppet.background.resume', 'Resume background memory', 'Resume background enrichment.', 'session.write', 'runtime'),
-  palette('cuppet.steer.interrupt', 'Interrupt and steer', 'Stop active work and immediately steer the session.', 'session.write', 'runtime'),
+  palette('cuppet.steer.interrupt', 'Steer current turn', 'Add guidance to the active turn without stopping it.', 'session.write', 'runtime'),
   palette('cuppet.plan.agent', 'Plan / Build mode', 'Reviewed replacement for the legacy plan-agent picker.', 'session.write', 'runtime'),
 ]);
 
@@ -104,12 +104,11 @@ export async function executeCommand(parsedOrId, context = {}, input = {}) {
     case 'cuppet.background.resume': result = await call('background.resume', {}); break;
     case 'cuppet.steer.interrupt': {
       const text = String(input.text ?? '').trim();
-      if (!text) throw new Error('interrupt-and-steer requires text');
+      if (!text) throw new Error('steer requires text');
       result = await call('session.steer', {
         sessionId,
         text,
         provider: await resolveProviderRequest(context.providerRequest),
-        interrupt: true,
         attachments: Array.isArray(input.attachments) ? input.attachments : [],
       });
       break;

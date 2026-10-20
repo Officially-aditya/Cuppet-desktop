@@ -79,7 +79,7 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(chatTranscript, /event\.type !== 'runtime\.activity'/);
   assert.match(chatTranscript, /activityType === 'activity\.reasoning\.delta'/);
   assert.match(chatPane, /const transcript = useClientTranscript\(session\)/);
-  assert.match(chatPane, /message-trace-reasoning markdown-rendered/);
+  assert.match(chatPane, /message-reasoning-content markdown-rendered/);
   assert.match(chatPane, /traceForMessage\(transcript, message\.id\)/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
   assert.match(styles, /content:'Working…'/);

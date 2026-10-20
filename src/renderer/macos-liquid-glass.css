@@ -725,14 +725,13 @@ html, body {
 .queued-turn-button.steer {
   border-color: rgba(88, 166, 255, 0.4) !important;
   color: #58a6ff !important;
-  background: rgba(88, 166, 255, 0.1) !important;
+  background: transparent !important;
   font-weight: 600;
   transition: all 0.12s ease;
 }
 
 .queued-turn-button.steer:hover {
-  background: rgba(88, 166, 255, 0.22) !important;
+  background: transparent !important;
   border-color: rgba(88, 166, 255, 0.7) !important;
   color: #79c0ff !important;
-  box-shadow: 0 1px 6px rgba(88, 166, 255, 0.25);
 }

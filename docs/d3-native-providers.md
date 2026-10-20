@@ -50,7 +50,7 @@ Unknown or future providers remain supported through the existing OpenAI-compati
 
 ## Safety boundaries preserved
 
-D3 does not move provider credentials into the renderer or transcript. Abort signals are forwarded through every native HTTP request, so existing Stop/Steer cancellation remains the authority. Tool execution still passes through the existing permission, audit, mutation-journal, TST, and validation layers; providers only propose normalized tool calls.
+D3 does not move provider credentials into the renderer or transcript. Abort signals are forwarded through every native HTTP request, so Stop remains the cancellation authority; steering is delivered into the running turn without aborting it. Tool execution still passes through the existing permission, audit, mutation-journal, TST, and validation layers; providers only propose normalized tool calls.
 
 Reasoning/thinking payloads are not projected into visible chat by these adapters. Only normal assistant text, normalized tool calls, and usage metadata enter the existing runtime contract.
 

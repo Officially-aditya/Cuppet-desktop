@@ -1688,12 +1688,14 @@ function QueuedTurnBar({
         <button
           type="button"
           className="queued-turn-button steer"
-          aria-label="Steer with queued message"
-          title="Interrupt Cuppet and steer with this message immediately"
+          aria-label="Add queued message to the current turn"
+          title="Add this message to the current turn without stopping Cuppet"
           onClick={onSteer}
         >
           <svg viewBox="0 0 16 16" fill="none" width="14" height="14" aria-hidden="true">
-            <path d="M3 12V9a3 3 0 0 1 3-3h7M9 2l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.4" />
+            <circle cx="8" cy="8" r="1.7" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M6.3 8H2M9.7 8H14M8 9.7V14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         </button>
         <button

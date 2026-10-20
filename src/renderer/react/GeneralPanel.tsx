@@ -81,7 +81,7 @@ export function GeneralPanel() {
         </div>
       </div>
       <div className="settings-row general-settings-row">
-        <div><strong>Send message behaviour</strong><span>Choose what happens when you send another message while Cuppet is already working.</span></div>
+        <div><strong>Send message behaviour</strong><span>Queue waits for the current turn to finish. Steer adds the message to the running turn without stopping it.</span></div>
         <div className="general-settings-control">
           <SelectControl
             ariaLabel="Send message behaviour"

@@ -435,10 +435,24 @@ export class RuntimeService {
     }
 
     const controller = new AbortController();
-    const execution = { controller, assistantId: delivery.assistant.id, userId: delivery.user.id, userText: text, projectId:existing.projectId??null, projectRoot:project?.canonicalPath??null, sourceSessionId, route };
+    const execution = {
+      controller,
+      sessionId: targetSessionId,
+      assistantId: delivery.assistant.id,
+      activeAssistantId: delivery.assistant.id,
+      userId: delivery.user.id,
+      activeUserId: delivery.user.id,
+      userText: text,
+      steering: [],
+      completedTexts: [],
+      projectId:existing.projectId??null,
+      projectRoot:project?.canonicalPath??null,
+      sourceSessionId,
+      route,
+    };
     this.#liveExecutions.set(targetSessionId, execution);
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
-    const runGeneration = () => this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
+    const runGeneration = () => this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, execution, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
     if (this.#tst && typeof this.#tst.runWithProject === 'function') {
       void this.#tst.runWithProject({ sessionId: targetSessionId, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null }, runGeneration);
     } else {
@@ -497,92 +511,148 @@ export class RuntimeService {
     if (!sessionId) throw new Error('sessionId is required');
     if (!text) throw new Error('steer text is required');
     this.requireSession(sessionId);
+    const live = this.#liveExecutions.get(sessionId);
+    if (live && !live.controller.signal.aborted) {
+      const attachments = Array.isArray(params.attachments) ? params.attachments : [];
+      live.steering.push({ text, attachments, queuedAt: Date.now() });
+      this.#emit({ type: 'steer.pending', sessionId, messageId: live.activeAssistantId });
+      return { accepted: true, steered: true, sessionId, messageId: live.activeAssistantId };
+    }
     for (let attempt = 0; attempt < 250; attempt++) {
-      const live = this.#liveExecutions.get(sessionId);
-      if (live && !live.controller.signal.aborted) live.controller.abort();
-      if (!this.#isSessionActive(sessionId)) return this.send({
-        sessionId,
-        text,
-        provider: params.provider ?? {},
-        attachments: Array.isArray(params.attachments) ? params.attachments : [],
-      });
+      if (!this.#isSessionActive(sessionId)) {
+        const result = await this.send({
+          sessionId,
+          text,
+          provider: params.provider ?? {},
+          attachments: Array.isArray(params.attachments) ? params.attachments : [],
+        });
+        return { ...result, steered: true };
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    throw new Error('session did not stop before steer');
+    throw new Error('session did not become idle before steer');
   }
 
-  async #generate({ sessionId, assistantId, userId, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [], integrations = [] }) {
+  async #generate({ sessionId, assistantId, userId, execution = null, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [], integrations = [] }) {
+    const currentAssistantId = () => execution?.activeAssistantId ?? assistantId;
+    const takeSteering = () => execution ? execution.steering.splice(0, execution.steering.length) : [];
+    const applySteering = (items) => this.#applySteering(execution, items);
     let completedMessage;
     try {
-      const durable = this.#db.getSession(sessionId).messages
-        .filter((message) => message.id !== assistantId && message.status !== 'streaming')
-        .map((message) => {
-          const imageAttachments = Array.isArray(message.attachments)
-            ? message.attachments.filter((a) => typeof a.dataUrl === 'string' && a.dataUrl && (!a.mime || a.mime.startsWith('image/')))
-            : [];
-          return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
+      for (;;) {
+        const durable = this.#db.getSession(sessionId).messages
+          .filter((message) => message.status !== 'streaming')
+          .map((message) => {
+            const imageAttachments = Array.isArray(message.attachments)
+              ? message.attachments.filter((a) => typeof a.dataUrl === 'string' && a.dataUrl && (!a.mime || a.mime.startsWith('image/')))
+              : [];
+            return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
+          });
+        const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot });
+        const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
+        this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
+        const adapter = this.#providerFactory(provider ?? {});
+        await this.#tools.run({
+          adapter,
+          messages: providerMessages.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+            ...(Array.isArray(msg.imageAttachments) && msg.imageAttachments.length ? { imageAttachments: msg.imageAttachments } : {}),
+            ...(Array.isArray(msg.attachments) && msg.attachments.length ? { attachments: msg.attachments } : {}),
+          })),
+          sessionId,
+          projectId,
+          projectRoot,
+          integrations,
+          mode: this.#cognitive.mode(sessionId),
+          contextWindow: contextWindow(provider),
+          signal,
+          getAssistantMessageId: currentAssistantId,
+          takeSteering,
+          applySteering,
+          onDelta: async (delta, meta = {}) => {
+            if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;
+            const messageId = currentAssistantId();
+            const message = this.#db.appendMessageContent(messageId, delta);
+            this.#emit({ type: 'message.delta', sessionId, messageId, delta, content: message.content });
+          },
+          onPaths: async (paths, mutation, details = null) => {
+            if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(projectRoot, paths);
+            if (!projectId || process.env.CUPPET_PE3 === '0') return;
+            await this.#pe3Observe(sessionId, paths, mutation);
+          },
+          onValidation: async (validation) => {
+            await this.#recordValidation(sessionId, validation).catch(() => undefined);
+            this.#emit({ type: 'validation.completed', sessionId, validation });
+          },
         });
-      const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: userId, projectRoot });
-      const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
-      this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
-      const adapter = this.#providerFactory(provider ?? {});
-      await this.#tools.run({
-        adapter,
-        messages: providerMessages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-          ...(Array.isArray(msg.imageAttachments) && msg.imageAttachments.length ? { imageAttachments: msg.imageAttachments } : {}),
-          ...(Array.isArray(msg.attachments) && msg.attachments.length ? { attachments: msg.attachments } : {}),
-        })),
-        sessionId,
-        projectId,
-        projectRoot,
-        integrations,
-        mode: this.#cognitive.mode(sessionId),
-        contextWindow: contextWindow(provider),
-        signal,
-        onDelta: async (delta, meta = {}) => {
-          if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;
-          const message = this.#db.appendMessageContent(assistantId, delta);
-          this.#emit({ type: 'message.delta', sessionId, messageId: assistantId, delta, content: message.content });
-        },
-        onPaths: async (paths, mutation, details = null) => {
-          if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(projectRoot, paths);
-          if (!projectId || process.env.CUPPET_PE3 === '0') return;
-          await this.#pe3Observe(sessionId, paths, mutation);
-        },
-        onValidation: async (validation) => {
-          await this.#recordValidation(sessionId, validation).catch(() => undefined);
-          this.#emit({ type: 'validation.completed', sessionId, validation });
-        },
-      });
-      if (signal.aborted || this.#closed) throw abortError();
-      completedMessage = this.#db.updateMessage(assistantId, { status: 'complete' });
+        if (signal.aborted || this.#closed) throw abortError();
+        const pending = takeSteering();
+        if (!pending.length || !applySteering(pending).length) break;
+      }
+      completedMessage = this.#db.updateMessage(currentAssistantId(), { status: 'complete' });
       this.#emit({ type: 'message.completed', message: completedMessage });
     } catch (error) {
       if (this.#closed) return;
       const stopped = signal.aborted || error?.name === 'AbortError';
-      const current = this.#db.getMessage(assistantId);
+      const assistantMessageId = currentAssistantId();
+      const current = this.#db.getMessage(assistantMessageId);
       const failure = stopped ? null : classifyProviderError(error, { provider });
       const errorContent = failure ? (current?.content ? `${current.content}\n\n${failure.chatMessage}` : failure.chatMessage) : current?.content ?? '';
-      completedMessage = this.#db.updateMessage(assistantId, { status: stopped ? 'stopped' : 'error', content: stopped ? current?.content ?? '' : errorContent });
+      completedMessage = this.#db.updateMessage(assistantMessageId, { status: stopped ? 'stopped' : 'error', content: stopped ? current?.content ?? '' : errorContent });
       this.#emit({ type: 'message.completed', message: completedMessage });
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
       if (this.#closed) return;
       if (this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
       const currentExecution = this.#liveExecutions.get(sessionId);
-      const execution = currentExecution?.assistantId === assistantId ? currentExecution : null;
-      if (execution) this.#liveExecutions.delete(sessionId);
+      const ownsExecution = currentExecution === execution || currentExecution?.assistantId === assistantId;
+      if (ownsExecution) this.#liveExecutions.delete(sessionId);
       const session = this.#db.getSessionSummary(sessionId); if (session) this.#emit({ type: 'session.updated', session });
-      this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: execution?.projectId ?? session?.projectId ?? null });
-      if (execution && completedMessage?.status === 'complete') {
-        const worker = this.#backgroundFor(execution.projectId);
+      this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: currentExecution?.projectId ?? session?.projectId ?? null });
+      if (ownsExecution && completedMessage?.status === 'complete') {
+        const worker = this.#backgroundFor(currentExecution.projectId);
         worker.setProviderConfig(provider ?? {});
-        await worker.recordTurn({ sessionID: sessionId, projectID: execution.projectId ?? 'general', userText: execution.userText, assistantText: completedMessage.content }).catch(() => undefined);
+        const assistantText = [...(currentExecution.completedTexts ?? []), completedMessage.content].filter(Boolean).join('\n\n');
+        await worker.recordTurn({ sessionID: sessionId, projectID: currentExecution.projectId ?? 'general', userText: currentExecution.userText, assistantText }).catch(() => undefined);
         worker.foregroundIdle(sessionId);
       }
     }
+  }
+
+  #applySteering(execution, items) {
+    if (!execution || !Array.isArray(items) || !items.length) return [];
+    const texts = items
+      .map((item) => ({ text: String(item?.text ?? '').trim(), attachments: Array.isArray(item?.attachments) ? item.attachments : [] }))
+      .filter((item) => item.text);
+    if (!texts.length) return [];
+    const currentId = execution.activeAssistantId;
+    const current = this.#db.getMessage(currentId);
+    if (current && current.status === 'streaming') {
+      const completed = this.#db.updateMessage(currentId, { status: 'complete' });
+      execution.completedTexts.push(completed.content);
+      this.#emit({ type: 'message.completed', message: completed });
+    }
+    const users = [];
+    for (const item of texts) {
+      const user = this.#db.appendMessage({
+        id: `msg_${randomUUID()}`,
+        sessionId: execution.sessionId,
+        role: 'user',
+        content: item.text,
+        attachments: item.attachments,
+        status: 'complete',
+      });
+      users.push(user);
+      execution.activeUserId = user.id;
+      execution.userText = [execution.userText, item.text].filter(Boolean).join('\n\n');
+      this.#emit({ type: 'message.created', message: user });
+    }
+    const assistant = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId: execution.sessionId, role: 'assistant', content: '', status: 'streaming' });
+    execution.activeAssistantId = assistant.id;
+    this.#emit({ type: 'message.created', message: assistant });
+    this.#emit({ type: 'steer.applied', sessionId: execution.sessionId, messageIds: users.map((message) => message.id), assistantId: assistant.id });
+    return users;
   }
 
   async #pe3For(projectId, project) {

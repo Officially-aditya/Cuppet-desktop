@@ -69,7 +69,7 @@ The current source deliberately does **not** shadow `/models` with `/model`. The
 
 ### Palette-only behavior
 
-Memory remember/forget/clear, background pause/resume, immediate interrupt-and-steer, and the plan-agent picker are inventoried. The plan-agent picker is an OpenCode UI mechanism and is explicitly replaced by the desktop plan/build control rather than silently retained.
+Memory remember/forget/clear, background pause/resume, steering into the active turn (including while a tool call is running), and the plan-agent picker are inventoried. The plan-agent picker is an OpenCode UI mechanism and is explicitly replaced by the desktop plan/build control rather than silently retained.
 
 ### CLI entry points
 

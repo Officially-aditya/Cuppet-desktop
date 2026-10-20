@@ -31,7 +31,7 @@ The reviewed slash surface is exactly:
 | `/orchestrator` | Orchestrator status/toggle | runtime cognitive state |
 | `/platform` | Provider/platform discovery or selection | provider authority |
 | `/effort` | Model effort status/selection | provider authority |
-| `/steer` | Interrupt when needed and steer | `RuntimeService.session.steer` |
+| `/steer` | Add guidance to the active turn without stopping it | `RuntimeService.session.steer` |
 | `/abort` | Stop active generation | runtime |
 | `/plan` | Plan/Build status or selection | runtime cognitive state |
 | `/compact` | Prepare compaction directive | runtime context compiler |
@@ -51,10 +51,10 @@ The Desktop command palette also exposes actions that benefit from structured in
 - `cuppet.memory.clear`
 - `cuppet.background.pause`
 - `cuppet.background.resume`
-- `cuppet.steer.interrupt`
+- `cuppet.steer.interrupt` (retained for command-ID compatibility; steers the current turn)
 - `cuppet.plan.agent`
 
-Memory remember/forget/clear, interrupt-and-steer, and Plan/Build use bounded dialogs. Memory clear requires an explicit confirmation. Structured values are bounded again in Electron main before reaching the registry.
+Memory remember/forget/clear, mid-turn steering, and Plan/Build use bounded dialogs. Memory clear requires an explicit confirmation. Structured values are bounded again in Electron main before reaching the registry.
 
 ## Desktop flow
 

@@ -50,7 +50,8 @@ export class JournaledToolRuntime {
   async close() { await Promise.all([Promise.resolve(this.#inner.close?.()), Promise.resolve(this.#providerRuntimes.close?.())]); }
 
   async run(options) {
-    const messageId = latestAssistantMessageID(this.#db, options.sessionId);
+    const initialMessageId = latestAssistantMessageID(this.#db, options.sessionId);
+    const currentMessageId = () => latestAssistantMessageID(this.#db, options.sessionId) || initialMessageId;
     const benchmarkBefore = this.#benchmark ? this.executionSnapshot(options.sessionId) ?? {} : null;
     const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
     let benchmarkResult = null;
@@ -62,23 +63,27 @@ export class JournaledToolRuntime {
       adapter: options.adapter,
     });
     const emitProviderActivity = (activity) => {
+      const messageId = currentMessageId();
       if (!messageId || !isProviderActivity(activity)) return;
       this.#emitActivity({ source: 'provider', sessionId: options.sessionId, messageId, activity });
     };
     const capture = new ToolMutationCapture({
       journal: this.#journal,
       sessionId: options.sessionId,
-      messageId,
+      getMessageId: currentMessageId,
       projectRoot: options.projectRoot,
       adapter,
       previewPolicy,
       contextWindow: options.contextWindow,
       executionKernel: this.#executionKernel,
+      takeSteering: options.takeSteering,
+      applySteering: options.applySteering,
       onReasoning: (segment, timing) => {
-        if (!messageId || !segment) return;
+        if (!currentMessageId() || !segment) return;
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment, kind: 'commentary', ...timing }));
       },
       onPreview: (content) => {
+        const messageId = currentMessageId();
         if (!messageId) return;
         this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
       },
@@ -105,7 +110,7 @@ export class JournaledToolRuntime {
         this.#safeEmit({
           type: 'runtime.benchmark.sample',
           sessionId: options.sessionId,
-          messageId: messageId || null,
+          messageId: currentMessageId() || null,
           policy: this.#benchmark.policy,
           sample: {
             schemaVersion: 1,
@@ -164,9 +169,9 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #messageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
-  constructor({ journal, sessionId, messageId = '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
-    this.#journal = journal; this.#sessionId = sessionId; this.#messageId = messageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#contextWindow = contextWindow; this.#executionKernel = executionKernel; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
+  #journal; #sessionId; #getMessageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #takeSteering; #applySteering; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
+  constructor({ journal, sessionId, getMessageId = () => '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, takeSteering = () => [], applySteering = () => [], onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
+    this.#journal = journal; this.#sessionId = sessionId; this.#getMessageId = getMessageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#contextWindow = contextWindow; this.#executionKernel = executionKernel; this.#takeSteering = takeSteering; this.#applySteering = applySteering; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
   }
 
   async stream(messages, options) {
@@ -175,11 +180,13 @@ class ToolMutationCapture {
     let pendingText = '';
     let pendingStartedAt = null;
     let receivedText = false;
+    let streamedText = '';
 
     const previewDelta = (delta) => {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
       if (!text) return;
       receivedText = true;
+      streamedText += text;
       pendingStartedAt ??= Date.now();
       pendingText += text;
       if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
@@ -257,21 +264,49 @@ class ToolMutationCapture {
           })),
         },
       ];
+      const appliedSteering = [];
       for (const call of toolCalls) {
         const result = await executeTool(call);
-        conversation.push({
+        const toolMessage = {
           role: 'tool',
           tool_call_id: call.id,
           name: call.name,
           content: result?.output ?? '',
-        });
+        };
+        conversation.push(toolMessage);
+        const steering = this.#drainSteering();
+        if (!steering.length) continue;
+        const applied = await this.#applySteering(steering);
+        toolMessage.content = `${toolMessage.content ?? ''}${toolMessage.content ? '\n\n' : ''}${steeringNote(steering)}`;
+        appliedSteering.push(...applied);
       }
+      for (const user of appliedSteering) conversation.push(userConversationMessage(user));
       return this.stream(conversation, options);
     }
     if (pendingText) await finalDelta(pendingText);
     pendingText = '';
     this.#onPreview('');
+    const steering = this.#drainSteering();
+    if (steering.length) {
+      const applied = await this.#applySteering(steering);
+      if (applied.length) {
+        const conversation = [...messages];
+        const assistantText = typeof response?.text === 'string' && response.text ? response.text : streamedText;
+        if (String(assistantText ?? '').trim()) conversation.push({ role: 'assistant', content: assistantText });
+        for (const user of applied) conversation.push(userConversationMessage(user));
+        return this.stream(conversation, options);
+      }
+    }
     return response;
+  }
+
+  #drainSteering() {
+    try {
+      const items = this.#takeSteering?.();
+      return Array.isArray(items) ? items.filter((item) => String(item?.text ?? '').trim()) : [];
+    } catch {
+      return [];
+    }
   }
 
   #rememberCall(call) {
@@ -285,9 +320,10 @@ class ToolMutationCapture {
 
   decorateToolEvent(event) {
     const call = this.#calls.get(String(event?.callId || ''));
+    const messageId = String(this.#getMessageId?.() || '');
     return {
       ...event,
-      ...(this.#messageId ? { messageId: this.#messageId } : {}),
+      ...(messageId ? { messageId } : {}),
       ...(call?.tool ? { tool: call.tool } : {}),
       ...(call?.argumentsJson ? { argumentsJson: call.argumentsJson } : {}),
     };
@@ -355,10 +391,33 @@ function providerPreviewPolicy(adapter) {
 }
 function latestAssistantMessageID(db, sessionId) {
   try {
+    if (typeof db?.getLatestStreamingAssistantMessageId === 'function') {
+      return String(db.getLatestStreamingAssistantMessageId(sessionId) ?? '');
+    }
     const messages = db?.getSession?.(sessionId)?.messages;
     if (!Array.isArray(messages)) return '';
     return String([...messages].reverse().find((message) => message?.role === 'assistant' && message?.status === 'streaming')?.id ?? '');
   } catch { return ''; }
+}
+
+function steeringNote(items) {
+  const body = items.map((item) => {
+    const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
+    const names = attachments.map((attachment) => [attachment?.name, attachment?.mime, Number.isFinite(attachment?.size) ? `${attachment.size} bytes` : ''].filter(Boolean).join(' · ')).filter(Boolean);
+    return `${String(item?.text ?? '').trim()}${names.length ? `\nAttachments: ${names.join(', ')}` : ''}`;
+  }).filter(Boolean).join('\n\n');
+  return `<CUPPET_USER_STEERING>\nThe user added this guidance while the current turn was running. Apply it now as a real user instruction. Do not restart completed work or repeat tool calls that already succeeded.\n\n${body}\n</CUPPET_USER_STEERING>`;
+}
+
+function userConversationMessage(user) {
+  const attachments = Array.isArray(user?.attachments) ? user.attachments : [];
+  const imageAttachments = attachments.filter((attachment) => typeof attachment?.dataUrl === 'string' && attachment.dataUrl && (!attachment.mime || attachment.mime.startsWith('image/')));
+  return {
+    role: 'user',
+    content: String(user?.content ?? ''),
+    ...(imageAttachments.length ? { imageAttachments } : {}),
+    ...(attachments.length ? { attachments } : {}),
+  };
 }
 
 function parseArguments(value) {

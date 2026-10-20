@@ -13,9 +13,9 @@ Cuppet now owns its command layer independently across Desktop, headless CLI, an
 - one canonical registry for the reviewed 16 slash commands, aliases, Remote scopes, bounded parsing, and dispatch contracts;
 - `/models` is canonical while `/model` remains intentionally excluded; `/remote-control` aliases `/remote` and `/login` aliases `/platform`;
 - recognized and unknown slash-prefixed input fails closed before provider inference and does not become synthetic transcript messages;
-- Desktop has visible `/` discovery plus structured palette actions for memory remember/forget/clear, background pause/resume, interrupt-and-steer, and Plan/Build mode;
+- Desktop has visible `/` discovery plus structured palette actions for memory remember/forget/clear, background pause/resume, steering into the active turn, and Plan/Build mode;
 - local control commands work without inference credentials, while provider/model/effort commands continue to use host-local provider authority;
-- `RuntimeService.session.steer` is the single steer authority used by Desktop, headless, and Remote;
+- `RuntimeService.session.steer` is the single steer authority used by Desktop, headless, and Remote; guidance is appended to the running turn, including the tool result that was executing, instead of stopping and resending;
 - Remote `session.submit` reauthorizes the inner slash command's declared scope before dispatch, preventing a lower-scope wrapper from escalating authority.
 
 Original C1 and Phases A through E remain intact: SQLite conversation/project state, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned permissions/questions/undo, host-authoritative Remote, provider/model/effort policy, and revision-bound structural editing.
