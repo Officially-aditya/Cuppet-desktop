@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, CommandDefinition, CommandResult, PermissionRequest, Project, QueuedTurn, QuestionRequest, Session } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
@@ -92,6 +92,7 @@ export function ChatPane({
   onResolvePermission,
 }: Props) {
   const composerKey = session?.id ? `session:${session.id}` : `draft:${draft?.projectId ?? 'general'}`;
+  const linkProjectId = project?.id ?? session?.projectId ?? null;
   const [composerDrafts, setComposerDrafts] = useState<Record<string, { text: string; attachments: Attachment[] }>>({});
   const value = composerDrafts[composerKey]?.text ?? '';
   const attachments = composerDrafts[composerKey]?.attachments ?? [];
@@ -593,7 +594,6 @@ function imageMimeFromName(name: string): string | null {
   const emptyDescription = project ? 'Cuppet can read and work with this project once you send a message.' : 'General chats are not attached to a filesystem project.';
 
   return (
-    <ProjectIdContext.Provider value={project?.id ?? session?.projectId ?? null}>
     <main
       ref={paneRef}
       className={`main-pane react-main-pane${isDraggingOver ? ' dropzone-active' : ''}`}
@@ -628,6 +628,7 @@ function imageMimeFromName(name: string): string | null {
             trace={traceForMessage(transcript, message.id)}
             onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
             onOpenLightbox={(img) => setLightboxImage(img)}
+            projectId={linkProjectId}
           />
         ))}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
@@ -638,6 +639,7 @@ function imageMimeFromName(name: string): string | null {
             live
             onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })}
             onOpenLightbox={(img) => setLightboxImage(img)}
+            projectId={linkProjectId}
           />
         )}
       </section>
@@ -757,9 +759,8 @@ function imageMimeFromName(name: string): string | null {
           onClose={() => setLightboxImage(null)}
         />
       )}
-      <ChatLinkPreview projectId={project?.id ?? session?.projectId ?? null} />
+      <ChatLinkPreview projectId={linkProjectId} />
     </main>
-    </ProjectIdContext.Provider>
   );
 }
 
@@ -769,12 +770,14 @@ function MessageView({
   live = false,
   onInspectDiff,
   onOpenLightbox,
+  projectId = null,
 }: {
   message: Session['messages'][number];
   trace?: TraceItem[];
   live?: boolean;
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
   onOpenLightbox?: (image: { src: string; name?: string }) => void;
+  projectId?: string | null;
 }) {
   const [traceOpen, setTraceOpen] = useState(live || message.status === 'stopped');
   const [completedAt, setCompletedAt] = useState<number | null>(null);
@@ -930,13 +933,14 @@ function MessageView({
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
       {assistant ? (
         content ? (
           <MarkdownContent
             ref={responseRef}
             className="message-content markdown-rendered"
             content={content}
+            projectId={projectId}
             onClick={(event) => {
               const target = event.target as HTMLElement;
               if (target.tagName === 'IMG') {
@@ -1036,11 +1040,8 @@ function MessageView({
   );
 }
 
-// The project a rendered link or file path opens against. Provided by ChatPane so MarkdownContent needs no prop drilling.
-const ProjectIdContext = createContext<string | null>(null);
-
-function MarkdownContent({ content, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string }) {
-  const projectId = useContext(ProjectIdContext);
+// projectId is the project a rendered file path or link opens against.
+function MarkdownContent({ content, projectId = null, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string; projectId?: string | null }) {
   // Replacing unchanged HTML destroys the browser's active text selection.
   const html = useMemo(() => ({ __html: renderMarkdown(content) }), [content]);
   return (
@@ -1060,12 +1061,12 @@ function MarkdownContent({ content, onClick, onKeyDown, ...props }: React.Compon
   );
 }
 
-function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const ordered = orderedTrace(trace);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
-        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={completedAt} />
+        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={completedAt} projectId={projectId} />
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
@@ -1075,7 +1076,7 @@ function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff 
   );
 }
 
-function ReasoningTraceRow({ item, contentId, live, completedAt }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null }) {
+function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
   const active = live && !item.completedAt;
   const end = item.completedAt ?? (!live ? completedAt : null);
@@ -1096,7 +1097,7 @@ function ReasoningTraceRow({ item, contentId, live, completedAt }: { item: Trace
         <span>{label}</span>
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      {open && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} />}
+      {open && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} projectId={projectId} />}
     </div>
   );
 }
