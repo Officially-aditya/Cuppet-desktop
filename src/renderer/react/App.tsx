@@ -361,19 +361,12 @@ export function App() {
     } catch (error) { showToast(error); }
   }, [activeProjectId, openSession, refreshLists, showToast, startDraft]);
 
-  const renameProject = useCallback(async (project: Project) => {
-    const value = window.prompt('Rename project', project.name)?.trim();
+  const renameProject = useCallback(async (project: Project, name: string) => {
+    const value = name.trim();
     if (!value || value === project.name) return;
     try { await window.cuppet.projects.rename(project.id, value); await refreshLists(); }
-    catch (error) { showToast(error); }
+    catch (error) { showToast(error); throw error; }
   }, [refreshLists, showToast]);
-
-  const renameSession = useCallback(async (session: Session) => {
-    const value = window.prompt('Rename chat', session.title || 'New chat')?.trim();
-    if (!value || value === session.title) return;
-    try { await window.cuppet.sessions.rename(session.id, value); await refreshClientSessions(); }
-    catch (error) { showToast(error); }
-  }, [showToast]);
 
   const archiveSession = useCallback(async (session: Session) => {
     if (!window.confirm(`Archive “${session.title || 'New chat'}”?`)) return;
@@ -460,7 +453,6 @@ export function App() {
         onSession={openSession}
         onRenameProject={renameProject}
         onRemoveProject={removeProject}
-        onRenameSession={renameSession}
         onArchiveSession={archiveSession}
         onDeleteSession={deleteSession}
         isGraphOpen={panels.memory}
