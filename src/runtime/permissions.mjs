@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -17,6 +17,15 @@ const WORKSPACE_ACTIONS = new Set(['read', 'edit', 'write']);
 const AUTO_PROJECT_ACTIONS = new Set(['delete', 'agent-tool']);
 const PLAN_MUTATING_ACTIONS = new Set(['edit', 'write', 'delete', 'bash', 'browser-control', 'agent-tool', 'git-push', 'package-dmg']);
 const UNSAFE_RESOURCE_CHARACTERS = /[\\*?\[\]{}]/;
+
+// Permission limits are REJECTION limits, never truncation limits. Every decision made here (the
+// classifiers, the hard denies, the "Always" fingerprint) and everything the user is shown must cover
+// exactly what will execute, so a limit may never be lower than the largest input a caller can run:
+//   MAX_PERMISSION_RESOURCE_CHARS - the bash tool's command cap (tool-runtime.mjs uses this constant).
+//   MAX_PERMISSION_RESOURCES      - the largest edit batch (MAX_FILES in tst-edit-batches.mjs).
+// Anything larger is rejected, so the request fails closed instead of being silently shortened.
+export const MAX_PERMISSION_RESOURCES = 32;
+export const MAX_PERMISSION_RESOURCE_CHARS = 8000;
 
 export class PermissionDeniedError extends Error {
   constructor(message, { code = 'permission_denied', requestId = null } = {}) {
@@ -102,14 +111,13 @@ export class PermissionBroker {
   }
 
   async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal, fingerprintKey = '' }) {
-    const normalized = resources.slice(0, 16).map((value) => String(value).slice(0, 1024));
-    const boundedFingerprintKey = String(fingerprintKey ?? '').slice(0, 512);
+    const normalized = normalizePermissionResources(resources);
     const isFull = Boolean(this.#fullSessions.has(sessionId));
     const immediate = await immediateDecision({ action, resources: normalized, projectRoot, planMode, auto: this.#autoSessions.has(sessionId), fullAccess: isFull });
     if (immediate.effect === 'allow') return { allowed: true, source: immediate.source };
     if (immediate.effect === 'deny') throw new PermissionDeniedError(immediate.reason, { code: immediate.code });
 
-    const fingerprint = permissionFingerprint(action, normalized, boundedFingerprintKey);
+    const fingerprint = permissionFingerprint(action, normalized, fingerprintKey);
     if (this.#always.get(sessionId)?.has(fingerprint)) return { allowed: true, source: 'session-exact' };
     if (!this.#interactive) throw new PermissionDeniedError('Permission requires interaction in a non-interactive runtime.', { code: 'interaction_required' });
     if (signal?.aborted) throw abortError();
@@ -460,5 +468,27 @@ async function nearestExistingAncestorIsInside(candidate, root) {
   }
 }
 function isAtOrInside(root, candidate) { const path = relative(root, candidate); return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path); }
-function permissionFingerprint(action, resources, fingerprintKey = '') { return `${action}\0${resources.join('\0')}\0${fingerprintKey}`; }
+function normalizePermissionResources(resources) {
+  if (resources.length > MAX_PERMISSION_RESOURCES) {
+    throw new PermissionDeniedError(
+      `Permission request names ${resources.length} resources; the limit is ${MAX_PERMISSION_RESOURCES}. Split it into smaller requests.`,
+      { code: 'permission_resource_limit' },
+    );
+  }
+  return resources.map((value) => {
+    const text = String(value);
+    if (text.length > MAX_PERMISSION_RESOURCE_CHARS) {
+      throw new PermissionDeniedError(
+        `A permission resource is ${text.length} characters; the limit is ${MAX_PERMISSION_RESOURCE_CHARS}. Shorten it or split it into smaller steps.`,
+        { code: 'permission_resource_limit' },
+      );
+    }
+    return text;
+  });
+}
+// SHA-256 over the whole request, as JSON so resource boundaries are unambiguous. Nothing is truncated:
+// two requests share a fingerprint only if every character matches.
+function permissionFingerprint(action, resources, fingerprintKey = '') {
+  return createHash('sha256').update(JSON.stringify([action, resources, String(fingerprintKey ?? '')])).digest('hex');
+}
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
