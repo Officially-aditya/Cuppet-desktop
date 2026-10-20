@@ -9,10 +9,12 @@ test('markdown parser renders image syntax with data URIs', () => {
   assert.match(html, /<span class="md-image-wrap">/);
 });
 
-test('markdown parser renders image syntax with https URLs', () => {
-  const input = 'Look at this logo: ![Cuppet Logo](https://example.com/logo.png)';
+test('remote images become links because the CSP only allows data: images', () => {
+  const input = 'Look at this logo: ![Cuppet Logo](https://example.com/logo.png) and ![](https://example.com/x.png)';
   const html = renderInline(input);
-  assert.match(html, /<img\s+src="https:\/\/example\.com\/logo\.png"\s+alt="Cuppet Logo"\s+class="markdown-image"\s+loading="lazy"\s*\/>/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /<a href="https:\/\/example\.com\/logo\.png" data-cuppet-external="true"[^>]*class="md-remote-image"[^>]*>Cuppet Logo<\/a>/);
+  assert.match(html, /class="md-remote-image"[^>]*>Image<\/a>/, 'an image with no alt text still gets a label');
 });
 
 test('markdown parser does not break standard markdown links', () => {
