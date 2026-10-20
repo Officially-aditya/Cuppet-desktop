@@ -17,6 +17,7 @@ import './provider-model-settings.css';
 import './general-settings.css';
 import './permission-inline.css';
 import './workspace-enhancements.css';
+import './markdown-code.css';
 import './tst-memory-sidebar.css';
 import './project-terminal.css';
 import './shell-panel-controls.css';
