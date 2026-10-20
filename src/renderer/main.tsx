@@ -25,8 +25,6 @@ import './macos-liquid-glass.css';
 import './appearance.css';
 import { installAppearance } from './react/appearance';
 import { App } from './react/App';
-import { WorkspaceEnhancements } from './react/WorkspaceEnhancements';
-import { CommandResultEnhancement } from './react/CommandResultEnhancement';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -39,7 +37,5 @@ if (!root) throw new Error('Renderer root is missing');
 createRoot(root).render(
   <React.StrictMode>
     <App />
-    <WorkspaceEnhancements />
-    <CommandResultEnhancement />
   </React.StrictMode>,
 );
