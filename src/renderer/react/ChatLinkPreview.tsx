@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { openChatLink } from './project-links';
 
 type SocialPreview = { url: string; hostname: string; title: string; description: string; siteName: string; image: string | null; icon: string | null };
 type Hover = { target: HTMLElement; value: string; kind: 'web' | 'file'; social?: SocialPreview; file?: { path: string; name: string; icon: string | null }; loading?: boolean };
@@ -95,13 +96,13 @@ export function ChatLinkPreview({ projectId }: { projectId: string | null }) {
   if (!hover) return null;
   return createPortal(
     <div ref={card} data-cuppet-link-preview className={`chat-link-preview ${hover.kind}`} role="tooltip">
-      {hover.kind === 'file' ? <button type="button" className="chat-file-preview" data-cuppet-project-file={hover.value}>
+      {hover.kind === 'file' ? <button type="button" className="chat-file-preview" data-cuppet-project-file={hover.value} onClick={(event) => { openChatLink(projectId, event.currentTarget); }}>
         <span className="chat-file-preview-path">{hover.file?.path || hover.value}</span>
         <span className="chat-link-preview-site">
           {hover.file?.icon && <img src={hover.file.icon} alt="" />}
           {hover.file?.name ? `Open in ${hover.file.name}` : 'Open in default app'}
         </span>
-      </button> : <a className="chat-social-preview" href={hover.value} data-cuppet-external="true" target="_blank" rel="noreferrer noopener">
+      </button> : <a className="chat-social-preview" href={hover.value} data-cuppet-external="true" target="_blank" rel="noreferrer noopener" onClick={(event) => { if (openChatLink(projectId, event.currentTarget)) event.preventDefault(); }}>
         {hover.social?.image && <img className="chat-link-preview-image" src={hover.social.image} alt="" />}
         <div className="chat-link-preview-content">
           <span className="chat-link-preview-site">
