@@ -9,6 +9,7 @@ import { QuestionInline } from './QuestionModal';
 import { PermissionModal } from './PermissionModal';
 import { renderMarkdown } from './markdown';
 import { ChatLinkPreview } from './ChatLinkPreview';
+import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -1049,7 +1050,8 @@ function MarkdownContent({ content, projectId = null, onClick, onKeyDown, ...pro
       {...props}
       dangerouslySetInnerHTML={html}
       onClick={(event) => {
-        // Links and file paths are marked by renderMarkdown; opening them is handled here, declaratively.
+        // Code block copy buttons, links and file paths are marked by renderMarkdown and handled here, declaratively.
+        if (copyCodeBlock(event.target)) return;
         if (openChatLink(projectId, event.target)) { event.preventDefault(); return; }
         onClick?.(event);
       }}
