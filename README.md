@@ -158,7 +158,7 @@ Project-bound chats expose a deliberately small tool surface:
 - `bash` — project-scoped shell execution;
 - `question` — bounded interactive user input through `QuestionBroker`;
 - `cuppet_plan` — lossless implementation-plan retrieval;
-- `cuppet_memory_search` — Cuppet memory retrieval.
+- `cuppet_memory_search` — Cuppet memory retrieval. `source=messages` searches stored user messages; `source=activity` inspects the latest assistant message's recorded tool executions (or pass `message_id`/`tool_execution_id`), returns arguments and bounded output with `offset`/`next_offset`, and `include_activities=true` adds the stored activity timeline.
 
 General chats do not receive filesystem or shell tools.
 

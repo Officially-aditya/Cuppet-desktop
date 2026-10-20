@@ -55,6 +55,7 @@ export class ConversationDatabase {
       CREATE TABLE IF NOT EXISTS tool_executions (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        message_id TEXT,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
         arguments_json TEXT NOT NULL,
@@ -75,6 +76,7 @@ export class ConversationDatabase {
     this.#ensureSessionArchiveColumn();
     this.#ensureSessionDeletedColumn();
     this.#ensureMessageAttachmentsColumn();
+    this.#ensureToolExecutionMessageColumn();
     this.#ensureSearchIndex();
     const now = Date.now();
     this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming'").run(now);
@@ -106,6 +108,13 @@ export class ConversationDatabase {
     if (!columns.some((column) => column.name === 'attachments_json')) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN attachments_json TEXT');
     }
+  }
+  #ensureToolExecutionMessageColumn() {
+    const columns = this.#db.prepare('PRAGMA table_info(tool_executions)').all();
+    if (!columns.some((column) => column.name === 'message_id')) {
+      this.#db.exec('ALTER TABLE tool_executions ADD COLUMN message_id TEXT');
+    }
+    this.#db.exec('CREATE INDEX IF NOT EXISTS idx_tool_executions_message_created ON tool_executions(session_id, message_id, created_at ASC)');
   }
   #ensureSearchIndex() {
     this.#db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(kind UNINDEXED,item_id UNINDEXED,session_id UNINDEXED,title,content,tokenize='unicode61 remove_diacritics 2')`);
@@ -194,6 +203,7 @@ export class ConversationDatabase {
   getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id).map(hydrateMessage); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',attachments=[],status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; const attachmentsJson = Array.isArray(attachments) && attachments.length ? JSON.stringify(attachments) : null; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,attachments_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,attachmentsJson,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
   getMessage(id){ const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
+  getLatestStreamingAssistantMessageId(sessionId){ return this.#db.prepare("SELECT id FROM messages WHERE session_id=? AND role='assistant' AND status='streaming' ORDER BY sequence DESC LIMIT 1").get(sessionId)?.id ?? ''; }
   updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
   appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
   appendMessageActivity({sessionId,messageId,source='provider',activity,now=Date.now()}){
@@ -248,8 +258,8 @@ export class ConversationDatabase {
     });
   }
 
-  createToolExecution({ id, sessionId, callId, toolName, argumentsJson='{}', now=Date.now() }) {
-    this.#db.prepare(`INSERT INTO tool_executions (id,session_id,call_id,tool_name,arguments_json,output,status,permission_source,created_at,updated_at) VALUES (?,?,?,?,?,'','running',NULL,?,?)`).run(id,sessionId,callId,toolName,argumentsJson,now,now);
+  createToolExecution({ id, sessionId, messageId=null, callId, toolName, argumentsJson='{}', now=Date.now() }) {
+    this.#db.prepare(`INSERT INTO tool_executions (id,session_id,message_id,call_id,tool_name,arguments_json,output,status,permission_source,created_at,updated_at) VALUES (?,?,?,?,?,?,'','running',NULL,?,?)`).run(id,sessionId,messageId,callId,toolName,argumentsJson,now,now);
     this.touchSession(sessionId,now);
     return this.getToolExecution(id);
   }
@@ -260,8 +270,22 @@ export class ConversationDatabase {
     this.touchSession(current.sessionId,now);
     return this.getToolExecution(id);
   }
-  getToolExecution(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE id=?`).get(id) ?? null; }
-  listToolExecutions(sessionId){ return this.#db.prepare(`SELECT id,session_id AS sessionId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=? ORDER BY created_at ASC,id ASC`).all(sessionId); }
+  getToolExecution(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE id=?`).get(id) ?? null; }
+  listToolExecutions(sessionId){ return this.#db.prepare(`SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=? ORDER BY created_at ASC,id ASC`).all(sessionId); }
+  listMessageToolExecutions(sessionId, messageId) {
+    const message = this.getMessage(messageId);
+    if (!message || message.sessionId !== sessionId) return [];
+    const select = 'SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions';
+    const exact = this.#db.prepare(`${select} WHERE session_id=? AND message_id=? ORDER BY created_at ASC,id ASC`).all(sessionId, messageId);
+    if (exact.length) return exact;
+    // Executions recorded before message association existed are attributed by
+    // the message's lifetime. New rows always carry an exact message_id.
+    const start = Number(message.createdAt) || 0;
+    const end = Number(message.updatedAt) || start;
+    if (end <= start) return [];
+    return this.#db.prepare(`${select} WHERE session_id=? AND message_id IS NULL AND created_at>=? AND created_at<? ORDER BY created_at ASC,id ASC`)
+      .all(sessionId, start, end);
+  }
 }
 
 function parseActivity(value){

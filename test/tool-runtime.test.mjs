@@ -438,7 +438,7 @@ test('message retrieval cannot read another chat or assistant messages', async (
   try {
     db.createSession({ id: 'other-chat', projectId: 'p1' });
     db.appendMessage({ id: 'private-user', sessionId: 'other-chat', role: 'user', content: 'private-cross-session-content' });
-    db.appendMessage({ id: 'assistant-id', sessionId: 's1', role: 'assistant', content: 'assistant-only-result' });
+    db.appendMessage({ id: 'assistant-id', sessionId: 's1', role: 'assistant', content: 'assistant-only-result', now: 50 });
     const adapter = scriptedAdapter([
       { toolCalls: [
         { id: 'cross-session', name: 'cuppet_memory_search', arguments: '{"message_id":"private-user"}' },
@@ -447,14 +447,16 @@ test('message retrieval cannot read another chat or assistant messages', async (
       ] },
       { assertMessages(messages) {
         const outputs = messages.filter((message) => message.role === 'tool').map((message) => message.content);
-        assert.match(outputs[0], /User message not found in this chat/);
-        assert.match(outputs[1], /User message not found in this chat/);
+        assert.match(outputs[0], /Message not found in this chat/);
+        const activity = JSON.parse(outputs[1].split('\n').slice(1).join('\n'));
+        assert.equal(activity.message.message_id, 'assistant-id');
+        assert.deepEqual(activity.tools, []);
         assert.doesNotMatch(outputs.join('\n'), /private-cross-session-content|assistant-only-result/);
         assert.deepEqual(JSON.parse(outputs[2].split('\n').slice(1).join('\n')).messages, []);
       } },
     ]);
     await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'Search history' }], sessionId: 's1', projectRoot: root, mode: 'plan', signal: new AbortController().signal, onDelta: async () => {} });
-    assert.deepEqual(Object.fromEntries(db.listToolExecutions('s1').map((execution) => [execution.callId, execution.status])), { 'cross-session': 'error', 'wrong-role': 'error', 'search-private': 'complete' });
+    assert.deepEqual(Object.fromEntries(db.listToolExecutions('s1').map((execution) => [execution.callId, execution.status])), { 'cross-session': 'error', 'wrong-role': 'complete', 'search-private': 'complete' });
   } finally { await toolRuntime.close(); broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
