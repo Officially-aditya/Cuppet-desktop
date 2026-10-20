@@ -1,5 +1,6 @@
 const EXTERNAL_LINK = /^(https?:|mailto:)/i;
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const CODE_FILE = /(?:^|\/)(?:Dockerfile|Makefile|Procfile|Gemfile|Rakefile|Cargo\.toml|go\.mod|go\.sum|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.(?:[cm]?[jt]sx?|json|mdx?|py|rs|go|java|kt|kts|swift|css|scss|sass|less|html?|vue|svelte|ya?ml|toml|sql|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|cs|rb|php|xml|gradle|properties|ini|conf|env|graphql|proto|txt|csv|tsv|pdf|docx?|xlsx?|pptx?|odt|rtf|png|jpe?g|webp|gif|svg|mp3|mp4|wav|mov|zip))(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?$/i;
 
 export function renderMarkdown(value: unknown) {
   const source = String(value ?? '').replace(/\r\n?/g, '\n');
@@ -91,7 +92,14 @@ export function renderInline(value: unknown) {
   const reserve = (html: string) => `\u0000${placeholders.push(html) - 1}\u0000`;
   let source = String(value ?? '');
 
-  source = source.replace(/`([^`\n]+)`/g, (_match, code) => reserve(`<code>${escapeHtml(code)}</code>`));
+  source = source.replace(/`([^`\n]+)`/g, (_match, code) => {
+    // Inline code that names a project file becomes a link at render time, so it is clickable in every chat,
+    // including history, and needs no after-the-fact DOM patching.
+    const path = inlineProjectPath(code);
+    return reserve(path
+      ? `<code data-cuppet-project-file="${escapeAttribute(path)}" role="link" tabindex="0">${escapeHtml(code)}</code>`
+      : `<code>${escapeHtml(code)}</code>`);
+  });
   source = source.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (_match, alt, href) => {
     const target = safeImageSrc(href);
     if (!target) return escapeHtml(alt || '');
@@ -124,6 +132,16 @@ export function renderInline(value: unknown) {
     .replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
 
   return source.replace(/\u0000(\d+)\u0000/g, (_match, raw) => placeholders[Number(raw)] ?? '');
+}
+
+/** The project-relative path an inline code span names, or '' when it is not a plain file reference. */
+export function inlineProjectPath(value: unknown) {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw.length > 1024 || /:\/\/|[|;&<>`$]/.test(raw)) return '';
+  if (/\s/.test(raw) && !/^(?:[/\\]|[A-Za-z]:[/\\])/.test(raw)) return '';
+  const path = raw.replace(/^\.\//, '').replaceAll('\\', '/');
+  if (!path || path === '..' || path.startsWith('../') || path.includes('/../') || !CODE_FILE.test(path)) return '';
+  return path;
 }
 
 function startsBlock(lines: string[], index: number) {
