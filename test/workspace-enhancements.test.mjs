@@ -39,12 +39,12 @@ test('edited file events preserve repeated edits across turns while excluding un
 });
 
 test('workspace links, edited files, working state, and reasoning stay on canonical ownership paths', async () => {
-  const [host, runtime, preload, markdown, enhancements, chatPane, clientTranscript, chatTranscript, styles, filePaths] = await Promise.all([
+  const [host, runtime, preload, markdown, projectLinks, chatPane, clientTranscript, chatTranscript, styles, filePaths] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/markdown.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/renderer/react/WorkspaceEnhancements.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/project-links.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
@@ -68,12 +68,16 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(preload, /editedFiles:.*cuppet:session:edited-files/s);
   assert.match(markdown, /data-cuppet-project-file/);
   assert.match(markdown, /data-cuppet-external/);
-  assert.match(enhancements, /groupEditedFilesByTurn/);
-  assert.match(enhancements, /owner\.status === 'streaming'/);
-  assert.match(enhancements, /data-cuppet-edited-files-summary/);
-  assert.match(enhancements, /CODE_FILE/);
-  assert.doesNotMatch(enhancements, /react-composer-wrap|workspace-edited-files-mount|createPortal/);
-  assert.doesNotMatch(enhancements, /message\.reasoning|data-cuppet-visible-reasoning|readStoredReasoning|TRACE_KEY_PREFIX|LEGACY_REASONING_KEY_PREFIX|liveReasoning|message-visible-reasoning/);
+  // Inline file paths are linked by the renderer at render time and opened by React handlers; nothing patches
+  // React-owned DOM after the fact (UI-07, UI-08).
+  assert.match(markdown, /CODE_FILE/);
+  assert.match(markdown, /export function inlineProjectPath/);
+  assert.match(projectLinks, /export function openChatLink/);
+  assert.doesNotMatch(projectLinks, /MutationObserver|querySelector|react-composer-wrap|workspace-edited-files-mount|createPortal/);
+  assert.doesNotMatch(projectLinks, /message\.reasoning|data-cuppet-visible-reasoning|readStoredReasoning|TRACE_KEY_PREFIX|LEGACY_REASONING_KEY_PREFIX|liveReasoning|message-visible-reasoning/);
+  assert.match(chatPane, /openChatLink\(projectId, event\.target\)/);
+  assert.match(chatPane, /<ChatLinkPreview projectId=\{linkProjectId\} \/>/);
+  assert.doesNotMatch(chatPane, /MutationObserver/);
   assert.match(clientTranscript, /SUPPORTED_EVENT_TYPES[\s\S]*runtime\.activity/);
   assert.match(clientTranscript, /reduceTranscriptEvent\(current, \{ \.\.\.event, messageId \}\)/);
   assert.match(chatTranscript, /event\.type !== 'runtime\.activity'/);
