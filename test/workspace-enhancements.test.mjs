@@ -78,6 +78,10 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(chatPane, /openChatLink\(projectId, event\.target\)/);
   assert.match(chatPane, /<ChatLinkPreview projectId=\{linkProjectId\} \/>/);
   assert.doesNotMatch(chatPane, /MutationObserver/);
+  await assert.rejects(readFile(new URL('../src/renderer/react/WorkspaceEnhancements.tsx', import.meta.url), 'utf8'), { code: 'ENOENT' });
+  await assert.rejects(readFile(new URL('../src/renderer/react/CommandResultEnhancement.tsx', import.meta.url), 'utf8'), { code: 'ENOENT' });
+  const entry = await readFile(new URL('../src/renderer/main.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(entry, /WorkspaceEnhancements|CommandResultEnhancement/);
   assert.match(clientTranscript, /SUPPORTED_EVENT_TYPES[\s\S]*runtime\.activity/);
   assert.match(clientTranscript, /reduceTranscriptEvent\(current, \{ \.\.\.event, messageId \}\)/);
   assert.match(chatTranscript, /event\.type !== 'runtime\.activity'/);
