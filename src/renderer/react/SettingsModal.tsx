@@ -603,6 +603,8 @@ function SecurityPanel({ sandboxStatus }: { sandboxStatus: SandboxStatus | null 
     : 'Checking…';
 
   const isEnforced = Boolean(sandboxStatus?.available);
+  // Without a sandbox, macOS and Linux refuse to run commands; any other platform runs them with the user's own permissions.
+  const unsandboxed = Boolean(sandboxStatus && !sandboxStatus.available && sandboxStatus.platform !== 'darwin' && sandboxStatus.platform !== 'linux');
 
   return (
     <div className="settings-card">
@@ -615,6 +617,13 @@ function SecurityPanel({ sandboxStatus }: { sandboxStatus: SandboxStatus | null 
           {isEnforced ? 'Enforced' : sandboxStatus ? 'Inactive' : 'Checking…'}
         </span>
       </div>
+
+      {unsandboxed && (
+        <div className="settings-callout" role="note">
+          <strong>No OS sandbox on this system</strong>
+          <span>Shell commands run with your full user permissions, so the approval prompt is the only control. Read each command before you allow it.</span>
+        </div>
+      )}
 
       <div className="settings-row">
         <div>

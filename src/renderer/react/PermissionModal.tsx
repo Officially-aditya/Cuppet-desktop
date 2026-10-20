@@ -1,10 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { PermissionRequest } from '../types';
+import { plainLanguageSummary } from './command-summary';
 
 export function PermissionModal({ request, onResolve }: { request: PermissionRequest; onResolve: (reply: 'once' | 'always' | 'reject', enableAuto?: boolean) => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const resources = request.resources ?? [];
   const resourceSummary = useMemo(() => summarizeResources(resources), [resources]);
+  // A short, deterministic description of what a command does. Informational only: the command above is what runs.
+  const isCommand = request.action === 'bash' && resources.length === 1;
+  const summary = useMemo(() => (isCommand ? plainLanguageSummary(String(resources[0])) : null), [isCommand, resources]);
+  const hasSummary = !!summary && !!(summary.what || summary.headsUp || summary.note);
+  const summaryId = useId();
 
   const run = async (reply: 'once' | 'always' | 'reject', enableAuto = false) => {
     setBusy(true);
@@ -13,10 +19,12 @@ export function PermissionModal({ request, onResolve }: { request: PermissionReq
   };
 
   return (
+    <>
     <section
       className="permission-inline"
       role="alert"
       aria-labelledby="permission-title"
+      aria-describedby={hasSummary ? summaryId : undefined}
     >
       <div className="permission-inline-copy">
         <strong id="permission-title">Permission required</strong>
@@ -45,6 +53,15 @@ export function PermissionModal({ request, onResolve }: { request: PermissionReq
         <button type="button" className="permission-inline-button primary" disabled={busy} onClick={() => void run('once')}>Allow</button>
       </div>
     </section>
+    {hasSummary && summary && (
+      <p className="permission-summary" id={summaryId}>
+        <span className="permission-summary-label">What it does</span>{' '}
+        {summary.what && <span>{summary.what}</span>}{' '}
+        {summary.headsUp && <span className="permission-summary-heads-up">{summary.headsUp}</span>}{' '}
+        {summary.note && <span>{summary.note}</span>}
+      </p>
+    )}
+    </>
   );
 }
 
