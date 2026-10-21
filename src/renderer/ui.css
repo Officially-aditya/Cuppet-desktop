@@ -1,3 +1,27 @@
+/* Keep scrollbar space stable while hiding idle thumbs. */
+:root *:not(.composer-attachments) {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+:root ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+:root ::-webkit-scrollbar-track,
+:root ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+:root ::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+:root .scrollbar-active::-webkit-scrollbar-thumb,
+:root ::-webkit-scrollbar-thumb:hover,
+:root ::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--text) 35%, transparent);
+}
+
 /* Shared layout details for onboarding and chat attention. */
 .empty-state-actions {
   display: flex;

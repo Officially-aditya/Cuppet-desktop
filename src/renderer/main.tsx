@@ -10,6 +10,18 @@ import './types';
 installAppearance();
 installSessionRetentionCleanup();
 
+const scrollbarIdleTimers = new WeakMap<Element, number>();
+document.addEventListener('scroll', (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  target.classList.add('scrollbar-active');
+  window.clearTimeout(scrollbarIdleTimers.get(target));
+  scrollbarIdleTimers.set(target, window.setTimeout(() => {
+    target.classList.remove('scrollbar-active');
+    scrollbarIdleTimers.delete(target);
+  }, 1000));
+}, { capture: true, passive: true });
+
 const root = document.getElementById('root');
 if (!root) throw new Error('Renderer root is missing');
 
