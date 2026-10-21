@@ -8,6 +8,7 @@ import { invalidateModelCatalogCache } from './model-catalog-cache';
 import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './provider-settings-events';
 import { providerStatusPresentation } from './provider-status-presentation';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
+import { isUnsandboxed } from './sandbox-status';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -604,7 +605,7 @@ function SecurityPanel({ sandboxStatus }: { sandboxStatus: SandboxStatus | null 
 
   const isEnforced = Boolean(sandboxStatus?.available);
   // Without a sandbox, macOS and Linux refuse to run commands; any other platform runs them with the user's own permissions.
-  const unsandboxed = Boolean(sandboxStatus && !sandboxStatus.available && sandboxStatus.platform !== 'darwin' && sandboxStatus.platform !== 'linux');
+  const unsandboxed = isUnsandboxed(sandboxStatus);
 
   return (
     <div className="settings-card">
