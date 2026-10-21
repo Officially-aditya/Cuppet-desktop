@@ -24,7 +24,8 @@ export function PermissionModal({ request, onResolve }: { request: PermissionReq
   const hiddenCount = shown.reduce((total, resource) => total + resource.hidden, 0);
 
   const isCommand = request.action === 'bash' && resources.length === 1;
-  const lead = requestLead(request.description, isCommand);
+  const isGitPush = request.action === 'git-push' && resources.length === 5;
+  const lead = isGitPush ? 'Push this commit to the remote repository.' : requestLead(request.description, isCommand);
   // A short, deterministic description of what a command does. Informational only: the command above is what runs.
   const summary = useMemo(() => (isCommand ? plainLanguageSummary(String(resources[0])) : null), [isCommand, resources]);
   const hasSummary = !!summary && !!(summary.what || summary.headsUp || summary.note);
@@ -85,8 +86,17 @@ export function PermissionModal({ request, onResolve }: { request: PermissionReq
 
       {shown.length > 0 && (
         // Focusable so keyboard users can scroll a long command.
-        <div className="permission-inline-resources" role="group" tabIndex={0} aria-label={isCommand ? 'Full command' : `Requested resources (${shown.length})`}>
-          {shown.map((resource, index) => <pre key={index} className="permission-inline-resource">{resource.text}</pre>)}
+        <div className={`permission-inline-resources${isGitPush ? ' is-git-push' : ''}`} role="group" tabIndex={0} aria-label={isCommand ? 'Full command' : isGitPush ? 'Git push details' : `Requested resources (${shown.length})`}>
+          {isGitPush ? (
+            <dl className="permission-inline-details">
+              {shown.map((resource, index) => (
+                <div className="permission-inline-detail" key={index}>
+                  <dt>{['Repository', 'Remote', 'Remote URL', 'Branch', 'Commit'][index]}</dt>
+                  <dd><pre className="permission-inline-value">{resource.text}</pre></dd>
+                </div>
+              ))}
+            </dl>
+          ) : shown.map((resource, index) => <pre key={index} className="permission-inline-resource">{resource.text}</pre>)}
         </div>
       )}
 
