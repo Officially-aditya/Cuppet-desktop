@@ -29,8 +29,8 @@
   --shadow-ink: #000000;
   --shadow-color: rgba(0, 0, 0, .38);
   --backdrop: rgba(4, 6, 9, .68);
-  --sidebar-glass-bg: rgba(24, 27, 32, .94);
-  --sidebar-glass-collapsed: rgba(24, 27, 32, .96);
+  --sidebar-glass-bg: rgba(24, 24, 24, .65);
+  --sidebar-glass-collapsed: rgba(24, 24, 24, .75);
   --header-glass-bg: rgba(30, 30, 30, .95);
   --syntax-keyword: #ffb4ab;
   --syntax-string: #a5d6ff;
@@ -112,8 +112,8 @@
   --overlay-ink: #162a45;
   --shadow-color: rgba(29, 43, 63, .12);
   --backdrop: rgba(29, 43, 63, .28);
-  --sidebar-glass-bg: rgba(244, 246, 250, .96);
-  --sidebar-glass-collapsed: rgba(244, 246, 250, .98);
+  --sidebar-glass-bg: rgba(246, 246, 246, .65);
+  --sidebar-glass-collapsed: rgba(246, 246, 246, .75);
   --header-glass-bg: rgba(244, 246, 250, .96);
   --syntax-keyword: #a12231;
   --syntax-string: #16558f;

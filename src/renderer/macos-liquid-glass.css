@@ -650,7 +650,7 @@ html, body {
 }
 
 .settings-hub-sidebar {
-  background: var(--bg-deep-obsidian);
+  background: var(--bg-main-surface);
   border-color: var(--line);
 }
 
