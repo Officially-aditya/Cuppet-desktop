@@ -1,0 +1,166 @@
+/*
+ * Native <dialog> prompts, choices and confirmations (see DialogHost). Only theme variables are used, and both
+ * themes define them, so no light-theme overrides are needed.
+ */
+.cuppet-dialog {
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  overflow: auto;
+}
+
+.cuppet-dialog::backdrop {
+  background: rgba(5, 7, 10, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+/* The form fills the dialog so a click on the dialog element itself can only be a click on the backdrop. */
+.cuppet-dialog-form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.cuppet-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.cuppet-dialog-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.cuppet-dialog-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cuppet-dialog-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cuppet-dialog-field input,
+.cuppet-dialog-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cuppet-dialog-field textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.cuppet-dialog-field input:focus-visible,
+.cuppet-dialog-field textarea:focus-visible,
+.cuppet-dialog-choice:has(input:focus-visible),
+.cuppet-dialog-button:focus-visible {
+  outline: 2px solid #78aaf1;
+  outline-offset: 1px;
+}
+
+.cuppet-dialog-choices {
+  display: grid;
+  gap: 8px;
+}
+
+.cuppet-dialog-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.cuppet-dialog-choice:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.cuppet-dialog-choice input {
+  margin-top: 3px;
+}
+
+.cuppet-dialog-choice strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cuppet-dialog-choice small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.cuppet-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cuppet-dialog-button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.cuppet-dialog-button:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.cuppet-dialog-button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 650;
+}
+
+.cuppet-dialog-button.primary.danger {
+  border-color: #c0443e;
+  background: #c0443e;
+  color: #ffffff;
+}
+
+.cuppet-dialog-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cuppet-dialog[open] {
+    animation: cuppet-dropdown-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
