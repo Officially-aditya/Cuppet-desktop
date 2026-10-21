@@ -203,11 +203,12 @@ export class TurnStore {
   }
 
   listQueued(sessionId) {
+    // Keep claimed prompts visible until session.send has saved their messages.
     const rows = this.#db.prepare(`
       SELECT queue_id AS id, session_id AS sessionId, params_json AS paramsJson,
              status, error, queued_at AS queuedAt, updated_at AS updatedAt
       FROM queued_turns
-      WHERE session_id=? AND status='queued'
+      WHERE session_id=? AND status IN ('queued','dispatching')
       ORDER BY queued_at ASC, queue_id ASC
     `).all(String(sessionId ?? ''));
     return rows.map(queueRow);

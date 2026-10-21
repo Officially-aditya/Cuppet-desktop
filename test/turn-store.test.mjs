@@ -29,6 +29,28 @@ test('queued turns survive runtime restart in FIFO order', async () => {
   }
 });
 
+test('queue refresh keeps a dispatching prompt visible until delivery completes', (t) => {
+  const store = new TurnStore(':memory:');
+  t.after(() => store.close());
+  const params = { text: 'next prompt', attachments: [{ name: 'notes.txt', size: 12 }] };
+  store.enqueue({ id: 'q1', sessionId: 's1', params, queuedAt: 10 });
+  store.enqueue({ id: 'q2', sessionId: 's1', params: { text: 'after that' }, queuedAt: 20 });
+  store.enqueue({ id: 'other', sessionId: 's2', params: { text: 'another chat' }, queuedAt: 5 });
+
+  store.claimNext('s1', 30);
+  const pending = store.listQueued('s1');
+  assert.deepEqual(pending.map(({ id, status }) => ({ id, status })), [
+    { id: 'q1', status: 'dispatching' },
+    { id: 'q2', status: 'queued' },
+  ]);
+  assert.deepEqual(pending[0].params, params, 'the prompt and attachments stay available during preparation');
+  assert.equal(store.countQueued('s1'), 1, 'a claimed prompt must not be counted as waiting to run');
+
+  store.completeQueue('q1', 40);
+  assert.deepEqual(store.listQueued('s1').map(({ id }) => id), ['q2']);
+  assert.deepEqual(store.listQueued('s2').map(({ id }) => id), ['other']);
+});
+
 test('run and queue projections are journaled as ordered durable runtime events', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-turn-events-'));
   const path = join(dir, 'turns.sqlite3');
