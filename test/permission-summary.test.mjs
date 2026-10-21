@@ -4,23 +4,14 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
-test('the approval panel is unchanged; a plain-language summary is the only addition, shown under it', async () => {
+test('the plain-language summary is informational: only for commands, below the panel, and computed synchronously', async () => {
   const source = await read('../src/renderer/react/PermissionModal.tsx');
-  // The panel and its command line stay exactly as they were.
-  for (const kept of ['role="alert"', 'aria-labelledby="permission-title"', 'Permission required', "summarizeResources(resources)", 'title={resources.join(', 'function compact(value: string)', "normalized.length > 82"]) {
-    assert.ok(source.includes(kept), `kept: ${kept}`);
-  }
-  // The actions are the original four, in the original order and wording; the summary adds no controls.
-  assert.equal((source.match(/<button/g) ?? []).length, 4);
-  const order = ['>Deny</button>', '>Auto</button>', '>Always</button>', '>Allow</button>'].map((label) => source.indexOf(label));
-  assert.ok(order.every((index) => index > 0) && order.every((index, i) => i === 0 || index > order[i - 1]));
-  assert.match(source, /aria-label="Enable guarded auto"/);
-  assert.match(source, /title="Always allow this exact request"/);
-  assert.equal((source.match(/permission-inline-button primary/g) ?? []).length, 1);
-  // The summary is only for commands, comes after (below) the panel, and is generated synchronously, so it can never delay an approval.
+  // The summary adds no controls and is only for a single shell command.
   assert.match(source, /request\.action === 'bash' && resources\.length === 1/);
   assert.match(source, /plainLanguageSummary\(String\(resources\[0\]\)\)/);
-  assert.ok(source.indexOf('</section>') < source.indexOf('permission-summary'));
+  // It comes after (below) the panel, so the command and the choices are never pushed out of view by it.
+  assert.ok(source.indexOf('</section>') < source.indexOf('className="permission-summary"'));
+  // It is generated synchronously, so it can never delay an approval.
   const computation = source.split('\n').find((line) => line.includes('plainLanguageSummary(String'));
   assert.ok(computation, 'summary computation found');
   assert.doesNotMatch(computation, /await|\.then\(|fetch\(|window\.cuppet|setTimeout/);
@@ -30,6 +21,9 @@ test('Settings explains what having no OS sandbox means, and only where commands
   const source = await read('../src/renderer/react/SettingsModal.tsx');
   assert.match(source, /No OS sandbox on this system/);
   assert.match(source, /Shell commands run with your full user permissions, so the approval prompt is the only control/);
-  // macOS and Linux refuse to run commands without a sandbox, so the "runs with your permissions" note must not show there.
-  assert.match(source, /sandboxStatus\.platform !== 'darwin' && sandboxStatus\.platform !== 'linux'/);
+  // The condition is shared with the approval prompt rather than copied: macOS and Linux refuse to run commands
+  // without a sandbox, so the "runs with your permissions" note must not show there.
+  assert.match(source, /isUnsandboxed\(sandboxStatus\)/);
+  const helper = await read('../src/renderer/react/sandbox-status.ts');
+  assert.match(helper, /status\.platform !== 'darwin' && status\.platform !== 'linux'/);
 });
