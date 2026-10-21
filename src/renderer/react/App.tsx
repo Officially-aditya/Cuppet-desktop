@@ -12,6 +12,7 @@ import type {
   Session,
 } from '../types';
 import { Sidebar } from './Sidebar';
+import { askConfirm } from './dialog-store';
 import { ShellPanelControls } from './ShellPanelControls';
 import { ChatPane, type ComposerMode, type DeliveryMode } from './ChatPane';
 import { TstMemorySidebar } from './TstMemorySidebar';
@@ -349,7 +350,13 @@ export function App() {
   }, [activeSessionId, running, showToast]);
 
   const removeProject = useCallback(async (project: Project) => {
-    if (!window.confirm(`Remove ${project.name} from Cuppet? Files stay on disk and chats remain local.`)) return;
+    const confirmed = await askConfirm({
+      title: `Remove ${project.name}?`,
+      message: 'It is removed from Cuppet only. The files stay on disk and its chats remain local.',
+      confirmLabel: 'Remove project',
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       await window.cuppet.projects.remove(project.id);
       const { nextSessions } = await refreshLists();
@@ -369,7 +376,8 @@ export function App() {
   }, [refreshLists, showToast]);
 
   const archiveSession = useCallback(async (session: Session) => {
-    if (!window.confirm(`Archive “${session.title || 'New chat'}”?`)) return;
+    const confirmed = await askConfirm({ title: `Archive “${session.title || 'New chat'}”?`, confirmLabel: 'Archive' });
+    if (!confirmed) return;
     try {
       await window.cuppet.sessions.archive(session.id);
       const nextSessions = await refreshClientSessions();
@@ -435,6 +443,7 @@ export function App() {
   return (
     <div className="app-shell react-app">
       <Sidebar
+        onError={showToast}
         projects={projects}
         sessions={sessions.filter((session) => !session.archivedAt)}
         generalSessions={generalSessions}
