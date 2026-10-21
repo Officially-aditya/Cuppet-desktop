@@ -296,7 +296,7 @@
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
