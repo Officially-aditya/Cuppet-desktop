@@ -52,7 +52,7 @@ test('runtime sends detached Cuppet context to provider but persists only visibl
   } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('runtime owns TST completion at each terminal run boundary before run.finished', async () => {
+test('runtime owns TST completion at each terminal run boundary after run.finished', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-b1-terminal-tst-'));
   const events = [];
   const order = [];
@@ -87,11 +87,12 @@ test('runtime owns TST completion at each terminal run boundary before run.finis
     await waitForCount(events, (event) => event.type === 'run.finished', 1);
     await runtime.handle('session.send', { sessionId: session.id, text: 'Second turn fails', provider: { apiKey: 'x', model: 'm' } });
     await waitForCount(events, (event) => event.type === 'run.finished', 2);
+    await waitForCount(order, (entry) => entry.startsWith('tst:'), 2);
 
     assert.equal(completions, 2, 'every terminal generation must complete TST exactly once');
     assert.deepEqual(order, [
-      `tst:${session.id}:1`, `finished:${session.id}`,
-      `tst:${session.id}:2`, `finished:${session.id}`,
+      `finished:${session.id}`, `tst:${session.id}:1`,
+      `finished:${session.id}`, `tst:${session.id}:2`,
     ]);
     const restored = await runtime.handle('session.get', { sessionId: session.id });
     assert.deepEqual(restored.messages.filter((message) => message.role === 'assistant').map((message) => message.status), ['complete', 'error']);
