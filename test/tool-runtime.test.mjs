@@ -433,6 +433,41 @@ test('memory tool searches durable user history and pages exact text without TST
   } finally { await toolRuntime.close(); broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('memory user-message search matches separated keywords and explains genuine misses', async () => {
+  const { dir, db, broker, toolRuntime } = await fixture();
+  try {
+    db.createSession({ id: 'keyword-chat' });
+    const content = `${'earlier context '.repeat(100)}Release the app only after\nrollback checks pass.`;
+    db.appendMessage({ id: 'keyword-user', sessionId: 'keyword-chat', role: 'user', content });
+    db.appendMessage({ id: 'keyword-assistant', sessionId: 'keyword-chat', role: 'assistant', content: 'release rollback missing-marker' });
+    db.appendMessage({ id: 'recent-user', sessionId: 'keyword-chat', role: 'user', content: 'Continue the task' });
+    const queries = ['rollback release', 'RELEASE   rollback', 'release,\n rollback', 'release checks pass'];
+    const adapter = {
+      async stream(_messages, { executeTool }) {
+        for (const [index, query] of [...queries, 'missing-marker', '  '].entries()) {
+          const result = await executeTool({ id: `keywords-${index}`, name: 'cuppet_memory_search', arguments: JSON.stringify({ source: 'messages', query, limit: 1 }) });
+          assert.equal(result.success, true);
+          const payload = JSON.parse(result.output.split('\n').slice(1).join('\n'));
+          if (index < queries.length) {
+            assert.deepEqual(payload.messages.map((message) => message.message_id), ['keyword-user'], query);
+            const [record] = payload.messages;
+            assert.match(record.content, /Release the app only after\nrollback checks pass/);
+            assert.ok(record.offset > 600, 'the snippet must start near the matching keywords');
+            assert.equal(record.content, content.slice(record.offset, record.offset + 600));
+          } else if (query === 'missing-marker') {
+            assert.deepEqual(payload.messages, []);
+            assert.match(payload.hint, /fewer keywords|omit query/i);
+          } else {
+            assert.deepEqual(payload.messages.map((message) => message.message_id), ['recent-user']);
+          }
+        }
+        return { text: '', toolCalls: [] };
+      },
+    };
+    await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'Find the earlier requirement' }], sessionId: 'keyword-chat', signal: new AbortController().signal, onDelta: async () => {} });
+  } finally { await toolRuntime.close(); broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('message retrieval cannot read another chat or assistant messages', async () => {
   const { dir, root, db, broker, toolRuntime } = await fixture();
   try {
