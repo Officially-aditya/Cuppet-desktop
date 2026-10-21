@@ -41,18 +41,20 @@
 
 .project-terminal-resizer {
   position: absolute;
-  top: -4px;
+  top: -3px;
   left: 0;
   right: 0;
-  height: 8px;
+  height: 6px;
   z-index: 12;
   cursor: row-resize;
   touch-action: none;
   user-select: none;
+  transition: background 0.14s ease, box-shadow 0.14s ease;
 }
 
 .project-terminal-resizer:is(:hover, :focus-visible) {
-  background: var(--focus-ring);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--overlay-ink) 10%, transparent);
 }
 
 .project-terminal.open .project-terminal-body {
