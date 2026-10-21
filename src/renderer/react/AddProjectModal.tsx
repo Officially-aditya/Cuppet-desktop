@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Project } from '../types';
 import { SelectControl } from './SelectControl';
+import { useModalBehavior } from './use-modal-behavior';
 
 export function AddProjectModal({ onClose, onAdded, onError }: { onClose: () => void; onAdded: (project: Project) => void | Promise<void>; onError: (error: unknown) => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const [name, setName] = useState('');
   const [source, setSource] = useState('local');
   const [localPath, setLocalPath] = useState('');
@@ -39,7 +42,7 @@ export function AddProjectModal({ onClose, onAdded, onError }: { onClose: () => 
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="add-project-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} tabIndex={-1} className="react-modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="add-project-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <h2 id="add-project-title">Add project</h2>
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button>
