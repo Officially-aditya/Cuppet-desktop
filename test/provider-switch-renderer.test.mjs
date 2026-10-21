@@ -116,6 +116,9 @@ test('provider selection preserves catalogs and does not repeat Codex or sandbox
     './model-catalog-cache': { invalidateModelCatalogCache: () => { invalidations++; } },
     './provider-settings-events': { notifyProviderSettingsChanged() {}, notifyProviderCatalogInvalid() {} },
     './SelectControl': {}, './ModelPicker': {}, './GeneralPanel': {},
+    // DOM-bound helpers the harness has no DOM for.
+    './use-modal-behavior': { useModalBehavior() {} },
+    './sandbox-status': { isUnsandboxed: () => false },
   }, { window, localStorage: { getItem: () => null, setItem() {} },
     document: { body: { classList: { toggle() {} } } } });
   t.after(() => modal.close());
