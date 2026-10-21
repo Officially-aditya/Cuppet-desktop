@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Project } from '../types';
 import { SelectControl } from './SelectControl';
+import { useModalBehavior } from './use-modal-behavior';
 
 export function NewChatModal({ projects, selectedProjectId, onClose, onStart }: { projects: Project[]; selectedProjectId: string | null; onClose: () => void; onStart: (projectId: string | null) => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const [projectId, setProjectId] = useState(selectedProjectId ?? '');
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="new-chat-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} tabIndex={-1} className="react-modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="new-chat-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <div><h2 id="new-chat-title">New chat</h2><p>Choose a project or start a general chat without filesystem access.</p></div>
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button>
