@@ -15,6 +15,6 @@ expect(text['src/main/main.mjs'].includes('cuppet:permission:reply') && text['sr
 const renderer=text['src/renderer/react/PermissionModal.tsx'];
 expect(renderer.includes('Permission required') && renderer.includes('Enable guarded auto'),'React permission prompt/auto surface missing');
 expect(renderer.includes("run('once')") && renderer.includes("run('always')") && renderer.includes("run('reject')"),'React once/always/reject permission replies missing');
-expect(renderer.includes('Always allow this exact request') && renderer.includes('>Always</button>') && renderer.includes('>Allow</button>') && renderer.includes('>Deny</button>'),'React permission labels/exact-request policy missing');
+expect(renderer.includes('Always this exact request') && renderer.includes('>Allow once</button>') && renderer.includes('>Reject</button>') && renderer.includes('never a wildcard'),'React permission labels/exact-request policy missing');
 const tests=['test/c1-permissions.test.mjs','test/provider-tools.test.mjs','test/tool-runtime.test.mjs','test/runtime-c1.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
 console.log('Phase C1 gate passed: runtime tools, streamed tool calls, durable audit, permission policy, guarded auto, and React approval flow verified.');
