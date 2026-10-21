@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { Project, Session } from '../types';
 import type { ActivityEntry } from './ChatPane';
@@ -7,7 +7,7 @@ import { renderMarkdown } from './markdown';
 import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
-import { formatWorkedDuration, orderedTranscriptItems, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
+import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
 
 type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -17,12 +17,14 @@ type TraceTool = {
   status: 'running' | 'complete' | 'error';
   tool: string;
   argumentsJson: string;
-  label: string;
+  label?: string;
   details?: string;
   sequence: number;
 };
 type TraceItem = TraceReasoning | TraceTool | TraceStatus;
 const MAX_VISIBLE_USER_LINES = 10;
+const IMMEDIATE_HISTORY_ITEMS = 5;
+const EMPTY_TRACE: TraceItem[] = [];
 export type ChatTranscriptHandle = { followLatest: () => void };
 type Props = {
   ref?: Ref<ChatTranscriptHandle>;
@@ -126,7 +128,7 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningState = runningAssistant ? transcript[runningAssistant.id] : undefined;
   const runningPreview = runningState?.preview ?? '';
-  const runningTrace = runningAssistant ? traceForMessage(transcript, runningAssistant.id) : [];
+  const runningTrace = runningState?.items ?? EMPTY_TRACE;
   const emptyTitle = project?.name ? `Start Working in ${project.name}` : project ? 'Start Working in this project' : 'Start a conversation';
   const emptyDescription = project ? 'Describe what you want to build or change in this project.' : 'Open a project to work with your files, or start chatting below.';
 
@@ -144,13 +146,14 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
               <button type="button" className="text-button" onClick={onConfigureProvider}>Set up a provider</button>
             </div>}
           </div>
-        ) : stableMessages.map((message) => (
-          <MessageView key={message.id} message={message} trace={traceForMessage(transcript, message.id)}
+        ) : stableMessages.map((message, index) => (
+          <TranscriptMessage key={message.id} message={message} items={transcript[message.id]?.items}
+            deferred={index < stableMessages.length - IMMEDIATE_HISTORY_ITEMS}
             onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         ))}
         {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
           <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
-            trace={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
+            items={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         )}
       </section>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{completion}</div>
@@ -158,9 +161,35 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
   );
 }
 
+function TranscriptMessage({ message, items, deferred, onInspectDiff, onOpenLightbox, projectId }: {
+  message: Session['messages'][number];
+  items?: TranscriptItem[];
+  deferred: boolean;
+  onInspectDiff: Props['onInspectDiff'];
+  onOpenLightbox: Props['onOpenLightbox'];
+  projectId: string | null;
+}) {
+  // Reuse the element so streaming another turn does not render unchanged history.
+  const view = useMemo(() => (
+    <MessageView message={message} items={items} onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={projectId} />
+  ), [message, items, onInspectDiff, onOpenLightbox, projectId]);
+  const deferredView = useDeferredValue(view, deferred ? null : view);
+  return (
+    <div className="transcript-message-slot">
+      {(deferred ? deferredView : view) ?? (
+        <article className={`message ${message.role}`} data-message-id={message.id} aria-busy="true">
+          <div className="message-role">{message.role === 'assistant' ? 'Cuppet' : 'You'}</div>
+          <div className="message-content">Loading earlier message…</div>
+        </article>
+      )}
+    </div>
+  );
+}
+
 function MessageView({
   message,
-  trace = [],
+  trace: providedTrace,
+  items,
   live = false,
   onInspectDiff,
   onOpenLightbox,
@@ -168,11 +197,14 @@ function MessageView({
 }: {
   message: Session['messages'][number];
   trace?: TraceItem[];
+  items?: TranscriptItem[];
   live?: boolean;
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
   onOpenLightbox?: (image: { src: string; name?: string }) => void;
   projectId?: string | null;
 }) {
+  const trace = useMemo(() => providedTrace ?? traceForItems(items ?? EMPTY_TRACE), [providedTrace, items]);
+  const diffTrace = useDeferredValue(trace, EMPTY_TRACE);
   const [traceOpen, setTraceOpen] = useState(live || message.status === 'stopped');
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
@@ -214,7 +246,7 @@ function MessageView({
     const filesMap = new Map<string, DiffFile>();
     let diffAccumulator = '';
 
-    for (const item of trace) {
+    for (const item of diffTrace) {
       if (item.type !== 'tool') continue;
       const normalized = item.tool.toLowerCase();
       const itemDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
@@ -291,7 +323,7 @@ function MessageView({
     }
 
     return { editedFiles: Array.from(filesMap.values()), rawDiff: diffAccumulator };
-  }, [assistant, trace]);
+  }, [assistant, diffTrace]);
 
   const copySummary = async () => {
     if (!canCopy) return;
@@ -470,6 +502,7 @@ function MarkdownContent({ content, projectId = null, onClick, onKeyDown, ...pro
 
 function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const ordered = orderedTrace(trace);
+  const immediateTools = new Set(ordered.filter((item) => item.type === 'tool').slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id));
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
@@ -477,7 +510,7 @@ function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff,
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
-        <ToolTraceRow key={item.id} item={item} onInspectDiff={onInspectDiff} />
+        <ToolTraceRow key={item.id} item={item} deferred={!immediateTools.has(item.id) && item.status !== 'running'} onInspectDiff={onInspectDiff} />
       ))}
     </div>
   );
@@ -509,8 +542,21 @@ function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = nul
   );
 }
 
-function ToolTraceRow({ item, onInspectDiff }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
-  const [open, setOpen] = useState(false);
+function ToolTraceRow({ item, onInspectDiff, deferred = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; deferred?: boolean }) {
+  const [requested, setRequested] = useState(false);
+  const view = useMemo(() => <ToolTraceDetails item={item} onInspectDiff={onInspectDiff} initialOpen={requested} />, [item, onInspectDiff, requested]);
+  const deferredView = useDeferredValue(view, deferred ? null : view);
+  return (!deferred || requested ? view : deferredView) ?? (
+    <div className={`thread-tool-row ${item.status}`} aria-busy="true">
+      <button type="button" className="thread-tool-summary" aria-expanded={false} onClick={() => setRequested(true)}>
+        <div className="thread-tool-label"><span>{humanToolLabel(item.tool)}</span></div>
+      </button>
+    </div>
+  );
+}
+
+function ToolTraceDetails({ item, onInspectDiff, initialOpen = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
   const [copied, setCopied] = useState(false);
   const isFailed = item.status === 'error';
   const args = parseToolArguments(item.argumentsJson);
@@ -675,22 +721,9 @@ function ToolIcon({ tool }: { tool: string }) {
   );
 }
 
-function traceForMessage(state: TranscriptState, messageId: string): TraceItem[] {
-  const items = orderedTranscriptItems(state[messageId]?.items ?? []);
-  return items.map((item) => item.type === 'reasoning'
-    ? item
-    : item.type === 'status'
-    ? { id: item.id, type: 'status', text: item.text, sequence: item.sequence }
-    : {
-        id: item.id,
-        type: 'tool',
-        status: item.status,
-        tool: item.tool,
-        argumentsJson: item.argumentsJson,
-        label: toolActivityLabel(item.tool, item.argumentsJson, item.status),
-        sequence: item.sequence,
-        ...(item.details ? { details: item.details } : {}),
-      });
+function traceForItems(items: TranscriptItem[]): TraceItem[] {
+  // Preserve item identity so unchanged tool rows keep their state and skip parsing.
+  return orderedTranscriptItems(items);
 }
 
 function orderedTrace(trace: TraceItem[]) {

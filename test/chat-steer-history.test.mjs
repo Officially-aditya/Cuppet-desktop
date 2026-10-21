@@ -27,6 +27,7 @@ function fixture() {
           return refs[slot] ??= { current: initial };
         },
         useMemo: (compute) => compute(),
+        useDeferredValue: (value) => value,
         useEffect: (effect) => effects.push(effect),
       };
       if (name === 'react/jsx-runtime') return {

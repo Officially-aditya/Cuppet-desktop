@@ -6,16 +6,18 @@ import ts from 'typescript';
 import { formatWorkedDuration, orderedTranscriptItems } from '../src/renderer/react/chat-transcript.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source + '\nexport { MessageView, TraceView, ReasoningTraceRow };', {
+const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, MessageView, TraceView, ReasoningTraceRow, ToolTraceRow, ToolTraceDetails };', {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
-function fixture(component) {
-  const states = [], refs = [];
-  let stateIndex = 0, refIndex = 0;
+function fixture(component, { deferred = false } = {}) {
+  const states = [], refs = [], memos = [], parsed = [];
+  let stateIndex = 0, refIndex = 0, memoIndex = 0;
+  let deferredReady = !deferred;
   const exports = {};
   vm.runInNewContext(compiled, {
     exports,
+    JSON: { parse(value) { parsed.push(value); return JSON.parse(value); }, stringify: JSON.stringify },
     require(name) {
       if (name === 'react') return {
         useState(initial) {
@@ -27,8 +29,15 @@ function fixture(component) {
           const slot = refIndex++;
           return refs[slot] ??= { current: initial };
         },
-        useMemo: (compute) => compute(),
+        useMemo(compute, deps) {
+          const slot = memoIndex++;
+          const prior = memos[slot];
+          if (!prior || deps.some((dep, index) => !Object.is(dep, prior.deps[index]))) memos[slot] = { deps, value: compute() };
+          return memos[slot].value;
+        },
+        useDeferredValue: (value, initial) => deferredReady ? value : initial,
         useEffect: () => {},
+        useImperativeHandle: () => {},
       };
       if (name === 'react/jsx-runtime') return {
         jsx: (type, props) => ({ type, props }),
@@ -37,10 +46,13 @@ function fixture(component) {
       return { formatWorkedDuration, orderedTranscriptItems };
     },
   });
-  return (props) => {
-    stateIndex = refIndex = 0;
+  const render = (props) => {
+    stateIndex = refIndex = memoIndex = 0;
     return exports[component](props);
   };
+  render.flushDeferred = () => { deferredReady = true; };
+  render.parsed = parsed;
+  return render;
 }
 
 function find(node, predicate) {
@@ -82,6 +94,74 @@ test('attachment-only user messages show files; text-only messages have no attac
   assert.ok(find(render({ message }), (node) => node.props?.className === 'message-attachment-name' && node.props.children === 'notes.txt'));
   assert.equal(find(render({ message: { ...message, content: 'Text only', attachments: [] } }), (node) => node.props?.className === 'message-attachments'), undefined);
   assert.equal(find(render({ message: { id: 'legacy', role: 'user', content: 'Legacy message' } }), (node) => node.props?.className === 'message-attachments'), undefined);
+});
+
+test('only the newest five historical messages render immediately', () => {
+  const messages = Array.from({ length: 8 }, (_, index) => ({
+    id: `message-${index}`, role: index % 2 ? 'assistant' : 'user', content: 'History',
+  }));
+  const tree = fixture('ChatTranscript')({ session: { id: 'chat', messages }, project: null, transcript: {}, running: false });
+  const section = find(tree, (node) => node.type === 'section');
+  const rows = Array.from(section.props.children).flat(Infinity).filter((node) => node?.type?.name === 'TranscriptMessage');
+  assert.deepEqual(rows.map((node) => node.props.deferred), [true, true, true, false, false, false, false, false]);
+  assert.deepEqual(rows.map((node) => node.props.message.id), messages.map((message) => message.id));
+});
+
+test('historical content is deferred without losing attachments, tool activity, or its scroll target', () => {
+  const render = fixture('TranscriptMessage', { deferred: true });
+  const message = { id: 'old-message', role: 'user', content: 'Review the attachment', attachments: [{ name: 'notes.txt' }] };
+  const items = [{ id: 'call', type: 'tool', tool: 'tst_read', argumentsJson: '{"path":"notes.txt"}', sequence: 1, status: 'complete' }];
+  const props = { message, items, deferred: true, projectId: 'project' };
+  let tree = render(props);
+  assert.equal(find(tree, (node) => node.props['data-message-id'] === message.id).props['aria-busy'], 'true');
+  assert.equal(find(tree, (node) => node.type?.name === 'MessageView'), undefined);
+  assert.equal(render.parsed.length, 0);
+  render.flushDeferred();
+  tree = render(props);
+  const view = find(tree, (node) => node.type?.name === 'MessageView');
+  assert.equal(view.props.message.attachments, message.attachments);
+  assert.equal(view.props.items, items);
+  assert.equal(find(render(props), (node) => node.type?.name === 'MessageView'), view, 'unchanged history reuses the rendered element');
+});
+
+test('expanded activity defers tools older than the newest five and keeps running tools immediate', () => {
+  const trace = Array.from({ length: 9 }, (_, index) => ({
+    id: `call-${index}`, type: 'tool', tool: 'tst_read', argumentsJson: '{}',
+    sequence: index + 1, status: index === 0 ? 'running' : 'complete',
+  }));
+  const tree = fixture('TraceView')({ trace, messageId: 'message', live: true });
+  const rows = tree.props.children;
+  assert.ok(rows.every((node) => node.type?.name === 'ToolTraceRow'), 'tool rows keep their component type as they age');
+  assert.deepEqual(rows.filter((node) => !node.props.deferred).map((node) => node.props.item.id), ['call-0', 'call-4', 'call-5', 'call-6', 'call-7', 'call-8']);
+  assert.deepEqual(rows.filter((node) => node.props.deferred).map((node) => node.props.item.id), ['call-1', 'call-2', 'call-3']);
+});
+
+test('earlier tool details load in the background or immediately when requested', () => {
+  const item = { id: 'earlier', type: 'tool', tool: 'tst_read', argumentsJson: '{"path":"notes.txt"}', details: 'Stored output', sequence: 1, status: 'complete' };
+  const render = fixture('ToolTraceRow', { deferred: true });
+  assert.equal(find(render({ item, deferred: true }), (node) => node.type?.name === 'ToolTraceDetails'), undefined);
+  render.flushDeferred();
+  assert.equal(find(render({ item, deferred: true }), (node) => node.type?.name === 'ToolTraceDetails').props.item, item);
+
+  const onDemand = fixture('ToolTraceRow', { deferred: true });
+  find(onDemand({ item, deferred: true }), (node) => node.type === 'button').props.onClick();
+  const props = find(onDemand({ item, deferred: true }), (node) => node.type?.name === 'ToolTraceDetails').props;
+  assert.equal(props.initialOpen, true);
+  assert.ok(find(fixture('ToolTraceDetails')(props), (node) => node.props.className === 'thread-tool-detail'));
+});
+
+test('diff extraction waits for background rendering and preserves modified files', () => {
+  const render = fixture('MessageView', { deferred: true });
+  const props = {
+    message: { id: 'edits', role: 'assistant', status: 'complete', content: 'Done' },
+    items: [{ id: 'edit', type: 'tool', tool: 'workspace_edit', argumentsJson: '{"path":"notes.txt","old_text":"old","new_text":"new"}', sequence: 1, status: 'complete' }],
+  };
+  assert.equal(find(render(props), (node) => node.props.className === 'turn-diff-card'), undefined);
+  assert.equal(render.parsed.length, 0, 'collapsed history must not parse old tool arguments on the urgent render');
+  render.flushDeferred();
+  const tree = render(props);
+  assert.ok(find(tree, (node) => node.props.className === 'turn-diff-card'));
+  assert.ok(render.parsed.length > 0);
 });
 
 const thought = { id: 'reason-1', type: 'reasoning', text: 'Inspecting the code.', sequence: 1, startedAt: 1000 };

@@ -4,11 +4,14 @@ import { DatabaseSync } from 'node:sqlite';
 
 const MESSAGE_STATUSES = new Set(['complete', 'streaming', 'stopped', 'interrupted', 'error']);
 const TOOL_STATUSES = new Set(['running', 'complete', 'error', 'rejected']);
+const SEARCH_INDEX_BATCH_SIZE = 25;
+const SEARCH_INDEX_BATCH_DELAY_MS = 25;
 
 export class ConversationDatabase {
   #db;
   #transactionDepth = 0;
   #savepointSequence = 0;
+  #searchIndexTimer = null;
   constructor(path) {
     mkdirSync(dirname(path), { recursive: true });
     this.#db = new DatabaseSync(path);
@@ -79,7 +82,14 @@ export class ConversationDatabase {
     this.#ensureToolExecutionMessageColumn();
     this.#ensureSearchIndex();
     const now = Date.now();
-    this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming'").run(now);
+    this.transaction(() => {
+      const interrupted = this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming' RETURNING rowid").all(now);
+      // A streaming row may already be behind the backfill cursor, without an index entry.
+      if (interrupted.length) {
+        const cursor = interrupted.reduce((min, row) => Math.min(min, row.rowid - 1), Infinity);
+        this.#db.prepare("UPDATE search_index_progress SET last_rowid = MIN(last_rowid, ?) WHERE kind = 'message'").run(cursor);
+      }
+    });
     this.#db.prepare("UPDATE tool_executions SET status = 'error', output = CASE WHEN output = '' THEN 'Interrupted by runtime restart.' ELSE output END, updated_at = ? WHERE status = 'running'").run(now);
   }
   #ensureSessionProjectColumn() {
@@ -118,13 +128,45 @@ export class ConversationDatabase {
   }
   #ensureSearchIndex() {
     this.#db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(kind UNINDEXED,item_id UNINDEXED,session_id UNINDEXED,title,content,tokenize='unicode61 remove_diacritics 2')`);
-    this.#rebuildSearchIndex();
+    this.#db.exec(`
+      CREATE TABLE IF NOT EXISTS search_index_progress (kind TEXT PRIMARY KEY, last_rowid INTEGER NOT NULL);
+      INSERT OR IGNORE INTO search_index_progress VALUES ('session', 0), ('message', 0);
+    `);
+    // Let startup finish before touching historical content. Existing results stay usable.
+    this.#scheduleSearchIndex(250);
   }
-  #rebuildSearchIndex() {
-    this.#db.exec('DELETE FROM search_index');
-    const insert = this.#db.prepare('INSERT INTO search_index(kind,item_id,session_id,title,content) VALUES (?,?,?,?,?)');
-    for (const session of this.#db.prepare('SELECT id,title FROM sessions').all()) insert.run('session', session.id, session.id, session.title, '');
-    for (const message of this.#db.prepare("SELECT m.id,m.session_id AS sessionId,s.title,m.content FROM messages m JOIN sessions s ON s.id=m.session_id WHERE m.role IN ('user','assistant') AND m.status <> 'streaming'").all()) insert.run('message', message.id, message.sessionId, message.title, message.content);
+  #scheduleSearchIndex(delay = SEARCH_INDEX_BATCH_DELAY_MS) {
+    this.#searchIndexTimer = setTimeout(() => {
+      this.#searchIndexTimer = null;
+      try {
+        if (this.#backfillSearchIndex()) this.#scheduleSearchIndex();
+      } catch (error) {
+        console.warn('Search index backfill will retry:', error.message);
+        this.#scheduleSearchIndex(1000);
+      }
+    }, delay);
+    this.#searchIndexTimer.unref?.();
+  }
+  #backfillSearchIndex() {
+    return this.transaction(() => {
+      const exists = this.#db.prepare('SELECT 1 FROM search_index WHERE kind=? AND item_id=? LIMIT 1');
+      const insert = this.#db.prepare('INSERT INTO search_index(kind,item_id,session_id,title,content) VALUES (?,?,?,?,?)');
+      const checkpoint = this.#db.prepare('UPDATE search_index_progress SET last_rowid=? WHERE kind=?');
+      let more = false;
+      for (const kind of ['session', 'message']) {
+        const cursor = this.#db.prepare('SELECT last_rowid FROM search_index_progress WHERE kind=?').get(kind).last_rowid;
+        const rows = kind === 'session'
+          ? this.#db.prepare('SELECT rowid,id,id AS sessionId,title FROM sessions WHERE rowid>? ORDER BY rowid LIMIT ?').all(cursor, SEARCH_INDEX_BATCH_SIZE)
+          : this.#db.prepare('SELECT m.rowid,m.id,m.session_id AS sessionId,m.role,m.status,m.content,s.title FROM messages m JOIN sessions s ON s.id=m.session_id WHERE m.rowid>? ORDER BY m.rowid LIMIT ?').all(cursor, SEARCH_INDEX_BATCH_SIZE);
+        for (const row of rows) {
+          if (kind === 'message' && (!['user', 'assistant'].includes(row.role) || row.status === 'streaming')) continue;
+          if (!exists.get(kind, row.id)) insert.run(kind, row.id, row.sessionId, row.title, row.content ?? '');
+        }
+        if (rows.length) checkpoint.run(rows.at(-1).rowid, kind);
+        more ||= rows.length === SEARCH_INDEX_BATCH_SIZE;
+      }
+      return more;
+    });
   }
   #upsertSearchSession(sessionId) {
     const session = this.#db.prepare('SELECT id,title FROM sessions WHERE id=?').get(sessionId);
@@ -139,7 +181,7 @@ export class ConversationDatabase {
       this.#db.prepare('INSERT INTO search_index(kind,item_id,session_id,title,content) VALUES (?,?,?,?,?)').run('message', message.id, message.sessionId, message.title, message.content);
     }
   }
-  close(){ this.#db.close(); }
+  close(){ clearTimeout(this.#searchIndexTimer); this.#searchIndexTimer = null; this.#db.close(); }
   sqlRepository() {
     const owner = this;
     return Object.freeze({

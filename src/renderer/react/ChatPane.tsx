@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ChatComposer, type ChatComposerHandle } from './ChatComposer';
 import { ChatTranscript, type ChatTranscriptHandle } from './ChatTranscript';
 import { ProjectTerminal } from './ProjectTerminal';
@@ -53,6 +53,7 @@ export function ChatPane(props: ChatPaneProps) {
   const transcriptRef = useRef<ChatTranscriptHandle>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [diffModal, setDiffModal] = useState<{ files: DiffFile[]; rawDiff?: string } | null>(null);
+  const onInspectDiff = useCallback((files: DiffFile[], rawDiff?: string) => setDiffModal({ files, rawDiff }), []);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name?: string } | null>(null);
   const transcript = useClientTranscript(session);
   const latestAssistant = [...(session?.messages ?? [])].reverse().find((message) => message.role === 'assistant' && transcript[message.id]?.contextUsage);
@@ -77,7 +78,7 @@ export function ChatPane(props: ChatPaneProps) {
       }}>
       {isDraggingOver && <div className="chat-dropzone-overlay" aria-hidden="true"><div className="chat-dropzone-indicator">Drop images or files to attach</div></div>}
       <ChatTranscript ref={transcriptRef} session={session} project={project} running={running} transcript={transcript}
-        onInspectDiff={(files, rawDiff) => setDiffModal({ files, rawDiff })} onOpenLightbox={setLightboxImage}
+        onInspectDiff={onInspectDiff} onOpenLightbox={setLightboxImage}
         onOpenFolder={props.onOpenFolder} onCloneRepository={props.onCloneRepository} onConfigureProvider={props.onConfigureProvider} />
       <ChatComposer {...props} ref={composerRef} paneRef={paneRef} contextUsage={contextUsage}
         onSubmitStart={() => transcriptRef.current?.followLatest()} onOpenLightbox={setLightboxImage} />
