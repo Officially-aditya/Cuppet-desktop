@@ -129,18 +129,20 @@ export function App() {
     setMode('build');
   }, []);
 
-  const ensureActiveSession = useCallback(async () => {
+  const ensureActiveSession = useCallback(async (activate = true) => {
     if (active) return active;
     const projectId = draft?.projectId ?? null;
     const created = await window.cuppet.sessions.create(projectId);
     if (draft?.mode === 'plan') await window.cuppet.cognitive.modeSet(created.id, 'plan');
     const session = { ...created, messages: created.messages ?? [] };
     upsertClientSession(session);
-    setActiveSessionId(session.id);
-    setDraft(null);
-    setMode(draft?.mode ?? 'build');
+    if (activate) {
+      setActiveSessionId(session.id);
+      setDraft(null);
+      setMode(draft?.mode ?? 'build');
+      localStorage.setItem(LAST_SESSION_KEY, session.id);
+    }
     hydrateClientRunSession(session);
-    localStorage.setItem(LAST_SESSION_KEY, session.id);
     return session;
   }, [active, draft]);
 
@@ -322,7 +324,8 @@ export function App() {
         return { clear: false };
       }
 
-      const session = await ensureActiveSession();
+      // Keep the draft visible until its first prompt has been saved and loaded.
+      const session = await ensureActiveSession(false);
       const project = projects.find((item) => item.id === session.projectId);
       if (project?.missing) throw new Error(`Relocate ${project.name} before continuing.`);
 
@@ -350,7 +353,7 @@ export function App() {
       const result = await window.cuppet.sessions.send(session.id, value, attachments);
       const target = String(result?.sessionId || session.id);
       markClientRunStarted(target);
-      if (target !== session.id) await openSession(target);
+      if (target !== activeSessionId) await openSession(target);
       return { clear: true };
     } catch (error) {
       if (String(error instanceof Error ? error.message : error).includes('Settings > General > Integrations')) {
@@ -360,7 +363,7 @@ export function App() {
       showToast(error);
       return { clear: false };
     }
-  }, [commands, ensureActiveSession, executeCommand, openSession, projects, provider, running, showToast]);
+  }, [activeSessionId, commands, ensureActiveSession, executeCommand, openSession, projects, provider, running, showToast]);
 
   const stop = useCallback(async () => {
     if (!activeSessionId || !running.has(activeSessionId)) return;
