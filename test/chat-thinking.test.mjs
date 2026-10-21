@@ -52,6 +52,38 @@ function find(node, predicate) {
   }
 }
 
+test('sent user messages show files alongside image previews and retain the prompt', () => {
+  const image = { name: 'screen.png', dataUrl: 'data:image/png;base64,AQID' };
+  let preview;
+  const tree = fixture('MessageView')({
+    message: { id: 'user-files', role: 'user', content: 'Review these files', attachments: [
+      { name: 'notes.txt', mime: 'text/plain', size: 42 },
+      { name: 'report.pdf', mime: 'application/pdf', size: 1024 },
+      { name: 'unreadable.png', mime: 'image/png' },
+      image,
+    ] },
+    onOpenLightbox: (value) => { preview = value; },
+  });
+  assert.equal(find(tree, (node) => node.props?.className === 'message-text').props.children, 'Review these files');
+  assert.equal(find(tree, (node) => node.props?.className === 'message-attachments').props['aria-label'], 'Attached files');
+  for (const name of ['notes.txt', 'report.pdf', 'unreadable.png']) {
+    assert.ok(find(tree, (node) => node.props?.className === 'message-attachment-name' && node.props.children === name), name);
+  }
+  assert.equal(find(tree, (node) => node.props?.className === 'message-attachment-name' && node.props.children === image.name), undefined);
+  assert.equal(find(tree, (node) => node.type === 'img').props.src, image.dataUrl);
+  find(tree, (node) => node.props?.className === 'message-image-thumb-btn').props.onClick();
+  assert.equal(preview.src, image.dataUrl);
+  assert.equal(preview.name, image.name);
+});
+
+test('attachment-only user messages show files; text-only messages have no attachment row', () => {
+  const render = fixture('MessageView');
+  const message = { id: 'files-only', role: 'user', content: '', attachments: [{ name: 'notes.txt' }] };
+  assert.ok(find(render({ message }), (node) => node.props?.className === 'message-attachment-name' && node.props.children === 'notes.txt'));
+  assert.equal(find(render({ message: { ...message, content: 'Text only', attachments: [] } }), (node) => node.props?.className === 'message-attachments'), undefined);
+  assert.equal(find(render({ message: { id: 'legacy', role: 'user', content: 'Legacy message' } }), (node) => node.props?.className === 'message-attachments'), undefined);
+});
+
 const thought = { id: 'reason-1', type: 'reasoning', text: 'Inspecting the code.', sequence: 1, startedAt: 1000 };
 const tool = { id: 'read-1', type: 'tool', tool: 'read', label: 'Read file', argumentsJson: '{}', sequence: 2, status: 'complete' };
 

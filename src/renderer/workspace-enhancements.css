@@ -12,6 +12,36 @@
   max-width: min(680px,86%);
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.message-attachment svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.message-attachment-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Reasoning is rendered from the canonical transcript trace; no local compatibility copy exists. */
 
 .message-trace-reasoning {

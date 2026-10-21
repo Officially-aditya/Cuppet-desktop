@@ -19,17 +19,22 @@
   font-size: 11px;
   font-weight: 600;
 }
-.react-composer .model-picker-trigger {
-  border: 1px solid var(--line-strong);
-  background: var(--accent-soft);
+.react-composer .model-picker-trigger,
+.react-composer .model-picker-trigger:is(:hover, :focus, :active),
+.react-composer .model-picker.open .model-picker-trigger {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
   font-size: 12px;
   font-weight: 600;
   padding: 6px 10px;
 }
-.react-composer .model-picker-trigger:hover:not(:disabled) {
-  background: var(--surface-active);
-  border-color: var(--accent);
+.model-picker-effort {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: 400;
 }
 .react-sidebar { width: var(--sidebar-width); min-width: var(--sidebar-width); }
 .message.assistant .message-content.markdown-rendered .md-code-block pre {

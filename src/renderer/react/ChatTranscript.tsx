@@ -360,6 +360,18 @@ function MessageView({
               {messageExpanded ? 'Show less' : 'Show more'}
             </button>
           )}
+          {Array.isArray(message.attachments) && message.attachments.some((attachment) => !attachment.dataUrl) && (
+            <div className="message-attachments" role="list" aria-label="Attached files">
+              {message.attachments.filter((attachment) => !attachment.dataUrl).map((attachment, index) => (
+                <div className="message-attachment" role="listitem" key={index} title={attachment.name}>
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M11.5 2.5H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7l-4.5-4.5Z M11.5 2.5V7H16 M7 11h6M7 14h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="message-attachment-name">{attachment.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {Array.isArray(message.attachments) && message.attachments.some((a) => a.dataUrl) && (
             <div className="message-image-gallery">
               {message.attachments

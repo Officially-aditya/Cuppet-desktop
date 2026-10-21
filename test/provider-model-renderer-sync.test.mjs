@@ -1,6 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { loadModule } from './helpers/load-tsx.mjs';
+
+for (const [name, explicit, variants, liveDefault, expected, props] of [
+  ['explicit effort', 'xhigh', ['low', 'xhigh'], '', 'Extra High', {}],
+  ['provider default', '', ['low', 'high'], 'high', 'High', {}],
+  ['automatic effort', 'default', ['low', 'high'], '', 'Default', {}],
+  ['no effort support', '', [], '', null, {}],
+  ['automatic secondary model', 'high', ['low', 'high'], '', null, { slot: 'secondary' }],
+]) {
+  test(`model trigger displays the current effort: ${name}`, () => {
+    const settings = {
+      providerID: 'test',
+      primary: { providerID: 'test', modelID: 'model', variant: explicit },
+      primaryEffort: explicit,
+      models: [{ providerID: 'test', modelID: 'model', variants }],
+    };
+    const catalog = {
+      providerID: 'test', available: true, configuredModel: 'model', models: [{ id: 'model', label: 'Test model' }],
+      ...(liveDefault ? { modelDependentSettings: true, reasoning: { options: variants.map(id => ({ id })), currentValue: liveDefault } } : {}),
+    };
+    const { ModelPicker } = loadModule(fileURLToPath(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url)), {
+      './client-provider-state': { useClientProviderSettings: () => settings },
+      './model-catalog-cache': { cachedModelCatalog: () => catalog, cachedProviderCatalog: () => catalog },
+      './model-pins': { usePinnedModels: () => [], orderPinnedModels: (options) => options },
+      './provider-settings-events': {},
+    });
+    const html = renderToStaticMarkup(createElement(ModelPicker, props));
+    if (expected) {
+      assert.match(html, new RegExp(`class="model-picker-effort">· ${expected}</span>`));
+      assert.ok(html.includes(`Effort: ${expected}`));
+    } else {
+      assert.doesNotMatch(html, /class="model-picker-effort"/);
+    }
+  });
+}
 
 test('composer model picker consumes shared provider settings and requests generic live catalog', async () => {
   const picker = await readFile(new URL('../src/renderer/react/ModelPicker.tsx', import.meta.url), 'utf8');

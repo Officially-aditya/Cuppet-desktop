@@ -162,6 +162,9 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     return options.find((item) => item.id === configuredModel)?.label || configuredModel || 'Select model';
   }, [advertised.defaultModel, advertised.models, configuredModel, options, providerPreset?.model]);
   const displayModel = secondaryAuto ? 'Auto' : resolvedModelLabel;
+  const displayEffort = !secondaryAuto && (effortOptions.length > 0 || explicitEffort || defaultEffort)
+    ? formatEffort(explicitEffort && explicitEffort.toLowerCase() !== 'default' ? explicitEffort : defaultEffort)
+    : '';
 
   const chooseAuto = async () => {
     if (slot !== 'secondary' || secondaryAuto) {
@@ -339,7 +342,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
   const triggerAriaLabel = surface === 'composer' && slot === 'primary' ? 'Select model' : `Select ${slotLabel} model`;
   const triggerTitle = secondaryAuto
     ? `Secondary model: Auto · currently ${resolvedModelLabel}`
-    : configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}` : triggerAriaLabel;
+    : configuredModel ? `${slot === 'secondary' ? 'Secondary model' : 'Model'}: ${displayModel}${displayEffort ? ` · Effort: ${displayEffort}` : ''}` : triggerAriaLabel;
 
   return (
     <div className={`model-picker${surface === 'settings' ? ' settings-model-picker' : ''}${open ? ' open' : ''}`} ref={root}>
@@ -354,6 +357,7 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
         onClick={() => void toggle()}
       >
         <span className="model-picker-name">{displayModel}</span>
+        {displayEffort && <span className="model-picker-effort">· {displayEffort}</span>}
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
 

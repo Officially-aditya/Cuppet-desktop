@@ -4,7 +4,7 @@
   outline-offset: 2px;
   box-shadow: none;
 }
-/* The composer surface changes on focus; avoid a second frame around its text field. */
+/* Keep the composer text field free of an additional focus frame. */
 :root .composer textarea:focus-visible {
   outline: 0;
 }
