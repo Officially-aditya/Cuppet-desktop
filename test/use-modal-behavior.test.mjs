@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { loadModule } from './helpers/load-tsx.mjs';
 import { attachModalBehavior, focusableWithin } from '../src/renderer/react/use-modal-behavior.ts';
 
 // A tiny fake document: focus() moves activeElement, and press() dispatches a keydown to every listener.
@@ -60,6 +62,30 @@ test('focus that is already inside the modal (an autofocused field) is left wher
   children[1].focus();
   attachModalBehavior(root, () => {}, doc);
   assert.equal(doc.activeElement, children[1]);
+});
+
+test('the hook returns focus to the opener even when a control autofocuses before effects run', (t) => {
+  const doc = makeDocument();
+  const opener = element(doc, 'opener'); opener.focus();
+  const { root, children } = modal(doc);
+  const previousDocument = globalThis.document;
+  globalThis.document = doc;
+  t.after(() => {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  });
+  const effects = [];
+  const { useModalBehavior } = loadModule(fileURLToPath(new URL('../src/renderer/react/use-modal-behavior.ts', import.meta.url)), {
+    react: { useRef: (current) => ({ current }), useEffect: (effect) => effects.push(effect) },
+  });
+  useModalBehavior({ current: root }, () => {});
+  children[1].focus(); // React autoFocus or a child's effect runs before the modal's effect.
+  const cleanups = effects.map((effect) => effect());
+  t.after(() => cleanups.forEach((cleanup) => cleanup?.()));
+  assert.equal(doc.activeElement, children[1], 'keep the autofocused control');
+  doc.activeElement = doc.body; // Removing the modal drops focus to the body.
+  cleanups.forEach((cleanup) => cleanup?.());
+  assert.equal(doc.activeElement, opener, 'restore the opener captured before mounting');
 });
 
 test('a modal with nothing focusable takes focus itself', () => {

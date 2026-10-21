@@ -53,10 +53,10 @@ export function focusableWithin(root: RootLike): FocusableLike[] {
  * - Escape calls onClose, but only for the newest open modal, only if nothing inside already handled the key (an open
  *   dropdown closes first), and never while a native <dialog> is open on top.
  */
-export function attachModalBehavior(root: RootLike, onClose: () => void, doc: DocumentLike): () => void {
+export function attachModalBehavior(root: RootLike, onClose: () => void, doc: DocumentLike, returnFocus: unknown = doc.activeElement): () => void {
   const token = {};
   stack.push(token);
-  const previous = doc.activeElement as (FocusableLike & { isConnected?: boolean }) | null;
+  const previous = returnFocus as (FocusableLike & { isConnected?: boolean }) | null;
 
   if (!root.contains(doc.activeElement)) (focusableWithin(root)[0] ?? root).focus({ preventScroll: true });
 
@@ -104,10 +104,12 @@ export function attachModalBehavior(root: RootLike, onClose: () => void, doc: Do
 /** Gives a modal's root element Escape handling, a focus trap, initial focus and focus return. */
 export function useModalBehavior(ref: RefObject<HTMLElement | null>, onClose: () => void) {
   const close = useRef(onClose);
+  // Capture the opener before the mounted dialog or a child's effect autofocuses a control.
+  const returnFocus = useRef(typeof document === 'undefined' ? null : document.activeElement);
   useEffect(() => { close.current = onClose; });
   useEffect(() => {
     const root = ref.current;
     if (!root) return undefined;
-    return attachModalBehavior(root as unknown as RootLike, () => close.current(), document as unknown as DocumentLike);
+    return attachModalBehavior(root as unknown as RootLike, () => close.current(), document as unknown as DocumentLike, returnFocus.current);
   }, [ref]);
 }
