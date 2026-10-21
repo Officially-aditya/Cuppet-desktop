@@ -107,6 +107,8 @@ export type CommandResult = {
   sessionId?: string | null;
   result?: Record<string, unknown> | string | boolean | null;
   presentation?: string;
+  /** Set when the command failed: presentation then holds the error message. */
+  error?: boolean;
 };
 
 export type ProviderPresetModel = {
