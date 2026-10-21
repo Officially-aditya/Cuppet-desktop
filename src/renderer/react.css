@@ -217,7 +217,7 @@
   font-size: 12px;
 }
 
-.provider-auth-card {
+.provider-auth-card:not(.custom-model-card) {
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -4,6 +4,10 @@
   outline-offset: 2px;
   box-shadow: none;
 }
+/* The composer surface changes on focus; avoid a second frame around its text field. */
+:root .composer textarea:focus-visible {
+  outline: 0;
+}
 [hidden], .hidden { display: none; }
 :disabled { cursor: not-allowed; }
 ::selection { background: var(--accent-soft); color: var(--text); }

@@ -506,13 +506,13 @@
   flex: 0 0 auto;
 }
 
-/* Keep this more specific than the later generic .provider-auth-card rule in react.css. */
+/* Keep custom model controls beside the description until the window narrows. */
 
 .platform-provider-card .provider-auth-card.custom-model-card {
   display: grid;
-  grid-template-columns: minmax(0,1fr);
-  gap: 10px;
-  align-items: stretch;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 16px;
+  align-items: center;
   width: 100%;
   max-width: none;
 }
