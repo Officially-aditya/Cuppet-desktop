@@ -34,6 +34,8 @@ type Props = {
   onDeleteSession: (session: Session) => void | Promise<void>;
   onOpenProjectGraph?: (projectId: string) => void;
   isGraphOpen?: boolean;
+  /** Called with the failure when an action started from a menu throws or rejects. */
+  onError?: (error: unknown) => void;
 };
 
 type RenameTarget =
@@ -640,7 +642,9 @@ function ContextMenu(props: Props & {
   const session = menu.kind === 'session' ? sessions.find((item) => item.id === menu.id) : null;
   const run = (action: () => void | Promise<void>) => {
     onClose();
-    void action();
+    // The menu closes immediately, so a failing action used to leave nothing at all. Report it instead.
+    try { Promise.resolve(action()).catch((error) => props.onError?.(error)); }
+    catch (error) { props.onError?.(error); }
   };
 
   return createPortal(
