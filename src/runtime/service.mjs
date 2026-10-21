@@ -604,12 +604,13 @@ export class RuntimeService {
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
       if (this.#closed) return;
-      if (this.#tst?.configured) await this.#tst.turnCompleted(sessionId).catch(() => undefined);
       const currentExecution = this.#liveExecutions.get(sessionId);
       const ownsExecution = currentExecution === execution || currentExecution?.assistantId === assistantId;
       if (ownsExecution) this.#liveExecutions.delete(sessionId);
       const session = this.#db.getSessionSummary(sessionId); if (session) this.#emit({ type: 'session.updated', session });
       this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: currentExecution?.projectId ?? session?.projectId ?? null });
+      // Best-effort TST bookkeeping must not hold the foreground run open.
+      if (this.#tst?.configured) void this.#tst.turnCompleted(sessionId).catch(() => undefined);
       if (ownsExecution && completedMessage?.status === 'complete') {
         const worker = this.#backgroundFor(currentExecution.projectId);
         worker.setProviderConfig(provider ?? {});
