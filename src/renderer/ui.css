@@ -16,10 +16,18 @@
   background: transparent;
   border-radius: 999px;
 }
-:root .scrollbar-active::-webkit-scrollbar-thumb,
-:root ::-webkit-scrollbar-thumb:hover,
-:root ::-webkit-scrollbar-thumb:active {
+:root .scrollbar-active::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text) 35%, transparent);
+}
+/* xterm's custom scrollbar uses unlayered vendor styles. */
+:root .xterm .xterm-scrollable-element > .scrollbar {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: none !important;
+}
+:root .xterm.scrollbar-active .xterm-scrollable-element > .scrollbar {
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 /* Shared layout details for onboarding and chat attention. */

@@ -14,6 +14,7 @@
 }
 
 .project-terminal {
+  position: relative;
   flex: 0 0 auto;
   background: var(--bg-main-surface);
   border-top: 1px solid var(--line);
@@ -33,13 +34,28 @@
 }
 
 .project-terminal.open {
-  height: 250px;
+  max-height: 60vh;
   display: flex;
   flex-direction: column;
 }
 
+.project-terminal-resizer {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 12;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.project-terminal-resizer:is(:hover, :focus-visible) {
+  background: var(--focus-ring);
+}
+
 .project-terminal.open .project-terminal-body {
-  height: calc(250px - 31px);
   display: flex;
   visibility: visible;
   pointer-events: auto;
@@ -118,10 +134,4 @@
 
 .project-terminal:focus-within {
   border-top-color: var(--focus-ring);
-}
-
-@media (max-height: 700px) {
-  .project-terminal.open {
-    height: 190px;
-  }
 }

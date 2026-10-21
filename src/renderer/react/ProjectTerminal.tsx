@@ -43,6 +43,10 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   const terminal = (window.cuppet as typeof window.cuppet & { terminal?: TerminalApi })?.terminal;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
+  const [height, setHeight] = useState(() => window.innerHeight <= 700 ? 190 : 250);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const resizeStart = useRef<{ y: number; height: number } | null>(null);
+  const maxHeight = Math.max(120, Math.floor(window.innerHeight * 0.6));
 
   const openRef = useRef(open);
   useEffect(() => { openRef.current = open; }, [open]);
@@ -153,6 +157,9 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
     term.refresh(0, term.rows - 1);
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // xterm scrolls a virtual viewport, so forward activity to the shared idle timer.
+    term.onScroll(() => term.element?.dispatchEvent(new Event('scroll')));
 
     term.onData((data) => {
       const active = sessionRef.current;
@@ -276,7 +283,37 @@ export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props
   }
 
   return (
-    <section className={`project-terminal ${open ? 'open' : 'collapsed'}`} aria-label="Project terminal">
+    <section ref={panelRef} className={`project-terminal ${open ? 'open' : 'collapsed'}`} style={open ? { height } : undefined} aria-label="Project terminal">
+      {open && <div
+        className="project-terminal-resizer"
+        role="separator"
+        aria-label="Resize terminal"
+        aria-orientation="horizontal"
+        aria-valuemin={120}
+        aria-valuemax={maxHeight}
+        aria-valuenow={Math.min(height, maxHeight)}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          resizeStart.current = { y: event.clientY, height: panelRef.current?.getBoundingClientRect().height ?? height };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const start = resizeStart.current;
+          if (!start || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          setHeight(Math.max(120, Math.min(maxHeight, start.height + start.y - event.clientY)));
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onLostPointerCapture={() => { resizeStart.current = null; }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+          event.preventDefault();
+          setHeight((current) => Math.max(120, Math.min(maxHeight, current + (event.key === 'ArrowUp' ? 24 : -24))));
+        }}
+      />}
       <button type="button" className="project-terminal-bar" aria-expanded={open} aria-label={open ? 'Hide terminal' : 'Show terminal'} onClick={() => setOpen((current) => !current)}>
         <span className="project-terminal-title">{project?.name ? `Terminal — ${project.name}` : 'Terminal'}</span>
         <span className="project-terminal-shortcut">⌘J</span>
