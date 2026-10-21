@@ -9,6 +9,7 @@ import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './p
 import { providerStatusPresentation } from './provider-status-presentation';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
 import { isUnsandboxed } from './sandbox-status';
+import { useModalBehavior } from './use-modal-behavior';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
@@ -35,6 +36,8 @@ type Props = {
 };
 
 export function SettingsModal({ provider, initialSection, onClose, onSaved, onOpenRemote, onError }: Props) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const [section, setSection] = useState(SECTION_META[initialSection] ? initialSection : 'general');
   const [current, setCurrent] = useState<ProviderSettings | null>(provider);
   const [providerID, setProviderID] = useState(provider?.providerID || provider?.primary?.providerID || provider?.presetID || 'openai');
@@ -287,7 +290,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal settings-hub-dialog react-settings-hub" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} tabIndex={-1} className="react-modal settings-hub-dialog react-settings-hub" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="settings-hub-shell">
           <aside className="settings-hub-sidebar">
             <div className="settings-hub-brand"><img className="settings-hub-mark" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><div><strong>Settings</strong><span>Cuppet</span></div></div>
