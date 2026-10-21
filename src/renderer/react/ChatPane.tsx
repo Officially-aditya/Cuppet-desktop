@@ -10,6 +10,7 @@ import { PermissionModal } from './PermissionModal';
 import { renderMarkdown } from './markdown';
 import { ChatLinkPreview } from './ChatLinkPreview';
 import { copyCodeBlock } from './code-copy';
+import { executePaletteAction } from './palette-actions';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -434,7 +435,12 @@ function imageMimeFromName(name: string): string | null {
 
   const choose = async (item: CommandDefinition) => {
     if (item.paletteOnly) {
-      const result = await executePaletteAction(item, session?.id ?? null, mode);
+      let result: CommandResult | null;
+      try { result = await executePaletteAction(item, session?.id ?? null, mode); }
+      catch (error) {
+        // A failed action is shown as one, in the same place a successful result appears.
+        result = { id: item.id, slash: item.title || item.slash, error: true, presentation: error instanceof Error ? error.message : String(error) };
+      }
       setValue('');
       if (composerRef.current.key !== composerKey) return;
       if (result) setCommandResult(result);
@@ -1345,7 +1351,7 @@ function CommandResultView({ result, contextUsage, onDismiss }: { result: Comman
   const summary = result.presentation || summarize(result.result);
   const text = summary.trim() === 'Command completed.' ? `${label} finished with no additional output.` : summary;
   return (
-    <div className="command-result react-command-result" role="status">
+    <div className={`command-result react-command-result${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>
       <strong>{label}</strong>
       <div className="command-result-copy">
         <span>{text}</span>
@@ -1354,36 +1360,6 @@ function CommandResultView({ result, contextUsage, onDismiss }: { result: Comman
       <button type="button" className="text-button" onClick={onDismiss} aria-label="Dismiss">×</button>
     </div>
   );
-}
-
-async function executePaletteAction(item: CommandDefinition, sessionId: string | null, mode: 'plan' | 'build') {
-  if (item.requiresSession && !sessionId) throw new Error('Start or open a chat before using this action.');
-  let input: Record<string, unknown> = {};
-  if (item.id === 'cuppet.memory.remember') {
-    const key = window.prompt('Memory key')?.trim();
-    if (!key) return null;
-    const value = window.prompt('What should Cuppet remember?')?.trim();
-    if (!value) return null;
-    input = { key, value, scope: 'project' };
-  } else if (item.id === 'cuppet.memory.forget') {
-    const key = window.prompt('Memory key to forget')?.trim();
-    if (!key) return null;
-    input = { key };
-  } else if (item.id === 'cuppet.memory.clear') {
-    const scope = (window.prompt('Clear memory scope: session, project, or global', 'session') || '').trim();
-    if (!['session', 'project', 'global'].includes(scope)) return null;
-    if (!window.confirm(`Clear ${scope} memory?`)) return null;
-    input = { scope };
-  } else if (item.id === 'cuppet.steer.interrupt') {
-    const text = window.prompt('Steer instruction')?.trim();
-    if (!text) return null;
-    input = { text };
-  } else if (item.id === 'cuppet.plan.agent') {
-    const next = (window.prompt('Mode: plan or build', mode) || '').trim();
-    if (!['plan', 'build'].includes(next)) return null;
-    input = { mode: next };
-  }
-  return window.cuppet.commands.execute(sessionId, { id: item.id, input });
 }
 
 function currentIntegrationMentionQuery(value: string) {
