@@ -18,6 +18,7 @@ import './general-settings.css';
 import './permission-inline.css';
 import './workspace-enhancements.css';
 import './markdown-code.css';
+import './dialog.css';
 import './tst-memory-sidebar.css';
 import './project-terminal.css';
 import './shell-panel-controls.css';
@@ -26,6 +27,7 @@ import './macos-liquid-glass.css';
 import './appearance.css';
 import { installAppearance } from './react/appearance';
 import { App } from './react/App';
+import { DialogHost } from './react/DialogHost';
 import { installSessionRetentionCleanup } from './react/session-retention';
 import './types';
 
@@ -38,5 +40,6 @@ if (!root) throw new Error('Renderer root is missing');
 createRoot(root).render(
   <React.StrictMode>
     <App />
+    <DialogHost />
   </React.StrictMode>,
 );
