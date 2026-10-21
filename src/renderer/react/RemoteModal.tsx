@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import type { RemoteInvite } from '../types';
 import {
@@ -6,8 +6,11 @@ import {
   refreshClientRemoteStatus,
   useClientRemoteStatus,
 } from './client-remote-state';
+import { useModalBehavior } from './use-modal-behavior';
 
 export function RemoteModal({ onClose, onError }: { onClose: () => void; onError: (error: unknown) => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const status = useClientRemoteStatus();
   const [pairing, setPairing] = useState<RemoteInvite | null>(null);
   const [qrCode, setQrCode] = useState('');
@@ -107,7 +110,7 @@ export function RemoteModal({ onClose, onError }: { onClose: () => void; onError
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal settings-dialog remote-dialog" role="dialog" aria-modal="true" aria-labelledby="remote-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} tabIndex={-1} className="react-modal settings-dialog remote-dialog" role="dialog" aria-modal="true" aria-labelledby="remote-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <div><h2 id="remote-title">Remote</h2><p>{connected ? 'Your Cuppet session is available on this device.' : 'Scan to pair this computer with Cuppet on your device.'}</p></div>
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>×</button>
