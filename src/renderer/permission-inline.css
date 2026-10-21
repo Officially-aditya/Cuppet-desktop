@@ -25,6 +25,7 @@
 .permission-inline-button.primary:active:not(:disabled){transform:translateY(0);box-shadow:0 2px 6px rgba(0,0,0,.22)}
 .permission-inline-button:disabled{cursor:default;opacity:.48}
 .permission-inline-more{display:grid;gap:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)}
+.permission-inline-more[hidden]{display:none}
 .permission-inline-option{display:flex;align-items:flex-start;gap:12px}
 .permission-inline-option .permission-inline-button{flex:0 0 auto;min-width:12.5em;text-align:left}
 .permission-inline-option-help{min-width:0;font-size:11.5px;line-height:1.45;color:#a8b0ba}
