@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron';
 import { realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ import { isLocalCliProvider } from '../runtime/local-cli-descriptors.mjs';
 import { SandboxManager } from '../runtime/sandbox/sandbox-manager.mjs';
 import { createLinkPreviewLoader } from './link-preview.mjs';
 import { resolveProjectFilePath } from './project-file-path.mjs';
+import { createApprovalAttention } from './approval-attention.mjs';
+import { createWindowAppearance } from './window-appearance.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -20,10 +22,23 @@ let settings;
 let mainWindow;
 let runtimeDataDir;
 let terminals;
+let windowAppearance;
+const attention = createApprovalAttention({
+  getWindow: () => mainWindow,
+  setBadgeCount: (count) => app.setBadgeCount(count),
+  notify: ({ title, body, onClick }) => {
+    if (!Notification.isSupported()) return null;
+    const notification = new Notification({ title, body });
+    notification.on('click', onClick);
+    notification.show();
+    return notification;
+  },
+});
 const loadLinkPreview = createLinkPreviewLoader();
 
 async function bootstrap() {
   const userData = app.getPath('userData');
+  windowAppearance = await createWindowAppearance({ nativeTheme, path: join(userData, 'appearance.json'), getWindow: () => mainWindow, isMac: process.platform === 'darwin' });
   runtimeDataDir = join(userData, 'runtime');
   settings = new ProviderSettingsStore(join(userData, 'provider-settings.json'));
   await settings.load();
@@ -39,6 +54,7 @@ async function bootstrap() {
       if (url.protocol === 'https:' && url.hostname === 'accounts.google.com') void openExternal(url.toString()).catch(console.error);
       return;
     }
+    attention.handle(event);
     mainWindow?.webContents.send('cuppet:event', event);
   });
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
@@ -50,6 +66,9 @@ async function bootstrap() {
   registerIpc();
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON_MACOS);
   createWindow();
+  for (const [method, type] of [['permission.list', 'permission.requested'], ['question.list', 'question.requested']]) {
+    for (const request of await runtime.request(method).catch(() => [])) attention.handle({ type, request });
+  }
 }
 
 function registerIpc() {
@@ -131,6 +150,7 @@ function registerIpc() {
   ipcMain.handle('cuppet:terminal:interrupt', (event, sessionId) => terminals.interrupt(event.sender, sessionId));
   ipcMain.handle('cuppet:terminal:stop', (event, sessionId) => terminals.stop(event.sender, sessionId));
 
+  ipcMain.handle('cuppet:native:appearance', (_event, preference) => windowAppearance.set(preference));
   ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
   ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
   ipcMain.handle('cuppet:native:project-file-editor', (_event, projectId, path) => projectFileEditor(request, projectId, path));
@@ -399,7 +419,7 @@ function createWindow() {
     minWidth: 540,
     minHeight: 400,
     show: false,
-    backgroundColor: isMac ? '#00000000' : '#0d0f12',
+    backgroundColor: windowAppearance.background(),
     title: 'Cuppet',
     icon: isMac ? APP_ICON_MACOS : APP_ICON,
     autoHideMenuBar: !isMac,
@@ -413,6 +433,7 @@ function createWindow() {
     webPreferences: { preload: join(here, '..', 'preload', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.on('focus', () => attention.focused());
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('cuppet:window:maximize-change', true);
   });
@@ -431,4 +452,4 @@ function createWindow() {
 app.whenReady().then(bootstrap).catch((error) => { console.error(error); app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0 && runtime) createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { terminals?.stopAll(); void runtime?.stop(); });
+app.on('before-quit', () => { attention.dispose(); windowAppearance?.dispose(); terminals?.stopAll(); void runtime?.stop(); });

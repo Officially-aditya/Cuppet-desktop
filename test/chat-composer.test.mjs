@@ -4,8 +4,13 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/renderer/react/ChatComposer.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+
+const paletteSource = await readFile(new URL('../src/renderer/react/use-chat-palette.tsx', import.meta.url), 'utf8');
+const paletteCompiled = ts.transpileModule(paletteSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
@@ -24,16 +29,17 @@ function fixture(messages = [], initiallyOnline = true) {
     },
     useRef(initial) { return refs[refIndex++] ?? (refs[refIndex - 1] = { current: initial }); },
     useMemo: (compute) => compute(),
+    useImperativeHandle: (ref, create) => { if (ref) ref.current = create(); },
     useEffect: (effect) => effects.push(effect),
   };
   const jsx = (type, props) => ({ type, props });
-  const exports = {};
-  vm.runInNewContext(compiled, {
-    exports,
+  const exports = {}, paletteExports = {};
+  const context = {
     navigator,
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === './use-chat-palette') return paletteExports;
       if (name === './client-transcript') return { useClientTranscript: () => ({}) };
       if (name === './chat-transcript') return { orderedTranscriptItems: (items) => items };
       if (name === './behavior-preferences') return { readSendBehavior: () => 'queue' };
@@ -54,7 +60,9 @@ function fixture(messages = [], initiallyOnline = true) {
     FileReader: class {
       readAsDataURL() { readers.push(this); }
     },
-  });
+  };
+  vm.runInNewContext(paletteCompiled, { ...context, exports: paletteExports });
+  vm.runInNewContext(compiled, { ...context, exports });
   function nodes(node = tree) {
     if (!node) return [];
     if (Array.isArray(node)) return node.flatMap((child) => child == null ? [] : nodes(child));
@@ -64,7 +72,7 @@ function fixture(messages = [], initiallyOnline = true) {
     stateIndex = refIndex = 0;
     effects.length = 0;
     const sessionId = props.session?.id ?? null;
-    tree = exports.ChatPane({ ...props, onSend: async (text, deliveryMode, attachments) => {
+    tree = exports.ChatComposer({ ...props, onSend: async (text, deliveryMode, attachments) => {
       sends.push({ sessionId, text, deliveryMode, attachments });
       return props.onSend ? props.onSend(text, deliveryMode, attachments) : { clear: true };
     } });
@@ -74,7 +82,7 @@ function fixture(messages = [], initiallyOnline = true) {
   const node = { value: '', selectionStart: 0, selectionEnd: 0, style: {}, scrollHeight: 54,
     focus() {}, setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; } };
   refs[0].current = node;
-  refs[3].current = { contains: (child) => child?.inside === true };
+  refs[2].current = { contains: (child) => child?.inside === true };
   const textarea = () => nodes().find((item) => item.type === 'textarea');
   function flush() {
     render();
@@ -305,7 +313,7 @@ test('changing chats resets recalled history', () => {
   chat.key('ArrowUp');
   chat.resetSession('other');
   assert.equal(chat.key('ArrowDown'), false);
-  assert.equal(chat.refs[4].current, null);
+  assert.equal(chat.refs[3].current, null);
 });
 
 test('selected chat text can be copied or appended to the draft, and outside selections are ignored', async () => {

@@ -4,8 +4,11 @@ import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const read = (path) => readFile(join(root, path), 'utf8');
-const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, modelCatalogCache, app, chat, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
+const read = async (path) => {
+  const source = await readFile(join(root, path), 'utf8');
+  return path.endsWith('.css') ? source.replace(/\s*([{}:;,])\s*/g, '$1') : source;
+};
+const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets, customModels, preload, index, entry, controls, reactCss, settingsCss, usageCss, composerCss, selectControl, modelPicker, modelCatalogCache, app, chatPane, chatComposer, chatTranscript, chatPalette, sidebar, search, settings, newChat, remote, permission, question, generalPanel, generalSettingsCss] = await Promise.all([
   read('package.json'),
   read('src/main/main.mjs'),
   read('src/main/codex-auth.mjs'),
@@ -26,6 +29,9 @@ const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets,
   read('src/renderer/react/model-catalog-cache.ts'),
   read('src/renderer/react/App.tsx'),
   read('src/renderer/react/ChatPane.tsx'),
+  read('src/renderer/react/ChatComposer.tsx'),
+  read('src/renderer/react/ChatTranscript.tsx'),
+  read('src/renderer/react/use-chat-palette.tsx'),
   read('src/renderer/react/Sidebar.tsx'),
   read('src/renderer/react/SearchModal.tsx'),
   read('src/renderer/react/SettingsModal.tsx'),
@@ -37,6 +43,8 @@ const [pkgText, main, codexAuth, codexDriver, providerSettings, providerPresets,
   read('src/renderer/general-settings.css'),
 ]);
 const pkg = JSON.parse(pkgText);
+const chat = [chatPane, chatComposer, chatTranscript, chatPalette].join('\n');
+const styleEntry = await read('src/renderer/index.css');
 
 assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0' }, 'renderer libraries must stay build-time only; production dependencies are the provider JSONC parser and native terminal');
 for (const dependency of ['react','react-dom','vite','typescript','@vitejs/plugin-react','qrcode']) assert.ok(pkg.devDependencies?.[dependency], `renderer build dependency missing: ${dependency}`);
@@ -51,9 +59,14 @@ assert.match(index, /type="module"\s+src="(?:\.\/)?main\.tsx"/, 'Vite mount shel
 assert.doesNotMatch(index, /app\.js|commands\.js|remote\.js|d1-navigation\.js|execution-ui\.mjs/);
 assert.match(entry, /createRoot/);
 assert.match(entry, /<App\s*\/>/);
-assert.match(entry, /import '\.\/controls\.css'/, 'app-wide control skin is not loaded by the React renderer');
-assert.match(entry, /import '\.\/usage\.css'/, 'token usage dashboard styles are not loaded');
-assert.match(entry, /import '\.\/composer-refinements\.css'/, 'composer refinement layer is not loaded');
+assert.match(entry, /import '\.\/index\.css'/, 'layered stylesheet entry is not loaded by the React renderer');
+for (const layer of ['theme', 'controls', 'usage', 'composer-refinements', 'ui', 'accessibility']) {
+  assert.ok(styleEntry.includes(`@import url('./${layer}.css') layer(${layer});`), `${layer} styles are not loaded in their cascade layer`);
+}
+assert.match(chatPane, /<ChatTranscript\s+ref=\{transcriptRef\}/, 'chat transcript is not mounted');
+assert.match(chatPane, /<ChatComposer\s+\{\.\.\.props\}\s+ref=\{composerRef\}/, 'chat composer is not mounted');
+assert.match(chatComposer, /useChatPalette\(/, 'chat composer does not use the command palette');
+assert.match(chatPane, /composerRef\.current\?\.ingestFiles/, 'chat file drops are not forwarded to the composer');
 assert.match(controls, /-webkit-appearance:none/, 'native Chromium/macOS form appearance is not disabled');
 assert.match(controls, /input\[type="checkbox"\].*input\[type="radio"\]/s, 'checkbox/radio controls are not custom skinned');
 assert.match(controls, /\.cuppet-select-menu/, 'custom dropdown surface is not styled');

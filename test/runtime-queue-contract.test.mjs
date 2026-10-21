@@ -6,7 +6,7 @@ const source = await readFile(new URL('../src/runtime/main.mjs', import.meta.url
 const runtimeService = await readFile(new URL('../src/runtime/service.mjs', import.meta.url), 'utf8');
 const desktopMain = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
 const runtimeClient = await readFile(new URL('../src/main/runtime-client.mjs', import.meta.url), 'utf8');
-const chatPane = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
+const chatPane = await readFile(new URL('../src/renderer/react/ChatComposer.tsx', import.meta.url), 'utf8');
 
 test('runtime host serializes queued turns through the shared durable turn store', () => {
   assert.match(source, /case 'session\.send': \{/);

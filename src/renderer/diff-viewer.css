@@ -1,12 +1,6 @@
 /* Unified diff viewer using the shared Cuppet surfaces. */
+
 .diff-modal-dialog {
-  --diff-add: #3fb950;
-  --diff-del: #f85149;
-  --diff-add-bg: rgba(46, 160, 67, 0.14);
-  --diff-del-bg: rgba(248, 81, 73, 0.14);
-  --diff-add-gutter: rgba(46, 160, 67, 0.24);
-  --diff-del-gutter: rgba(248, 81, 73, 0.24);
-  --diff-hunk-bg: rgba(88, 166, 255, 0.08);
   width: min(1200px, calc(100vw - 40px));
   height: min(780px, calc(100vh - 56px));
   display: flex;
@@ -14,20 +8,10 @@
   background: var(--panel);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--glass-border-subtle);
+  box-shadow: 0 28px 70px color-mix(in srgb, var(--shadow-ink) 42%, transparent), 0 0 0 1px var(--glass-border-subtle);
   overflow: hidden;
   color: var(--text-main);
   animation: cuppet-modal-scale 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-:root[data-theme="light"] .diff-modal-dialog {
-  --diff-add: #18723b;
-  --diff-del: #b42318;
-  --diff-add-bg: #dafbe1;
-  --diff-del-bg: #ffebe9;
-  --diff-add-gutter: #aceebb;
-  --diff-del-gutter: #ffd7d5;
-  --diff-hunk-bg: #edf3fb;
 }
 
 .diff-modal-header {
@@ -66,12 +50,12 @@
 }
 
 .diff-stat-add {
-  color: var(--diff-add, #3fb950);
+  color: var(--diff-add, var(--success));
   font-weight: 600;
 }
 
 .diff-stat-del {
-  color: var(--diff-del, #f85149);
+  color: var(--diff-del, var(--danger));
   font-weight: 600;
 }
 
@@ -118,7 +102,6 @@
 }
 
 .diff-modal-dialog button:focus-visible {
-  outline: 2px solid var(--text-dim);
   outline-offset: 2px;
 }
 
@@ -181,7 +164,7 @@
   width: 18px;
   height: 18px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
   flex-shrink: 0;
@@ -401,9 +384,19 @@
 }
 
 @media (max-width: 760px) {
-  .diff-modal-body { flex-direction: column; }
-  .diff-modal-header { padding: 14px 16px; gap: 12px; }
-  .diff-modal-title { font-size: 18px; }
+  .diff-modal-body {
+    flex-direction: column;
+  }
+
+  .diff-modal-header {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .diff-modal-title {
+    font-size: 18px;
+  }
+
   .diff-files-sidebar {
     display: flex;
     width: 100%;
@@ -414,15 +407,37 @@
     overflow-x: auto;
     overflow-y: hidden;
   }
-  .diff-files-sidebar-title { display: none; }
-  .diff-file-item { width: auto; max-width: 260px; flex-shrink: 0; margin: 0; }
-  .diff-content-pane { padding: 12px; }
-  .diff-file-header { padding: 10px 12px; }
-  .diff-line { grid-template-columns: 72px 20px minmax(0, 1fr); }
-  .diff-line-num-old, .diff-line-num-new { padding-inline: 4px; }
+
+  .diff-files-sidebar-title {
+    display: none;
+  }
+
+  .diff-file-item {
+    width: auto;
+    max-width: 260px;
+    flex-shrink: 0;
+    margin: 0;
+  }
+
+  .diff-content-pane {
+    padding: 12px;
+  }
+
+  .diff-file-header {
+    padding: 10px 12px;
+  }
+
+  .diff-line {
+    grid-template-columns: 72px 20px minmax(0, 1fr);
+  }
+
+  .diff-line-num-old, .diff-line-num-new {
+    padding-inline: 4px;
+  }
 }
 
 /* Turn Diff Summary in Chat Message - Clickable row */
+
 .turn-diff-card {
   margin: 8px 0;
   padding: 8px 14px;
@@ -430,8 +445,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: var(--surface-inset);
+  border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 12px;
   cursor: pointer;
@@ -440,18 +455,16 @@
 }
 
 .turn-diff-card:hover {
-  background: #161b22;
-  border-color: #38414e;
+  background: var(--surface-hover);
+  border-color: var(--line);
 }
 
 .turn-diff-card:active {
-  background: #1c222b;
+  background: var(--panel);
 }
 
 .turn-diff-card:focus-visible {
-  outline: 0;
-  border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+  border-color: var(--focus-ring);
 }
 
 .turn-diff-info {
@@ -463,17 +476,17 @@
 .turn-diff-icon {
   width: 16px;
   height: 16px;
-  color: #3fb950;
+  color: var(--success);
   flex-shrink: 0;
 }
 
 .turn-diff-label {
   font-weight: 500;
-  color: #d1d9e0;
+  color: var(--text-secondary);
 }
 
 .turn-diff-files-preview {
-  color: #7d8590;
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
 }
@@ -483,12 +496,12 @@
   place-items: center;
   width: 18px;
   height: 18px;
-  color: #6e7681;
+  color: var(--muted);
   flex-shrink: 0;
   transition: transform 0.12s ease, color 0.12s ease;
 }
 
 .turn-diff-card:hover .turn-diff-chevron {
-  color: #c9d1d9;
+  color: var(--text-secondary);
   transform: translateX(2px);
 }

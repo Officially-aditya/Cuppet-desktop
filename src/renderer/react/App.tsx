@@ -55,10 +55,14 @@ export function App() {
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
-  const [permission, setPermission] = useState<PermissionRequest | null>(null);
-  const [question, setQuestion] = useState<QuestionRequest | null>(null);
+  const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
+  const [questions, setQuestions] = useState<QuestionRequest[]>([]);
+  const permission = permissions.find((request) => !request.sessionId || request.sessionId === activeSessionId) ?? null;
+  const question = questions.find((request) => !request.sessionId || request.sessionId === activeSessionId) ?? null;
+  const waitingSessionIds = useMemo(() => new Set([...permissions, ...questions].map((request) => request.sessionId).filter((id): id is string => Boolean(id))), [permissions, questions]);
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([]);
   const [modal, setModal] = useState<ModalName>(null);
+  const [projectSource, setProjectSource] = useState<'local' | 'github'>('local');
   const [settingsSection, setSettingsSection] = useState('general');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -162,11 +166,11 @@ export function App() {
         const initial = (saved && nextSessions.find((session) => session.id === saved)) || nextSessions[0];
         if (initial) await openSession(initial.id);
         else startDraft(null);
-        const [pendingPermission] = await window.cuppet.permissions.list().catch(() => []);
-        const [pendingQuestion] = await window.cuppet.questions.list().catch(() => []);
+        const pendingPermissions = await window.cuppet.permissions.list().catch(() => []);
+        const pendingQuestions = await window.cuppet.questions.list().catch(() => []);
         if (!disposed) {
-          if (pendingPermission) setPermission(pendingPermission);
-          if (pendingQuestion) setQuestion(pendingQuestion);
+          setPermissions(pendingPermissions);
+          setQuestions(pendingQuestions);
         }
       } catch (error) {
         if (!disposed) showToast(error);
@@ -176,6 +180,21 @@ export function App() {
     })();
     return () => { disposed = true; };
   }, [openSession, showToast, startDraft]);
+
+  useEffect(() => window.cuppet.native.onOpenSession?.((id) => {
+    setModal(null);
+    void openSession(id).catch(showToast);
+  }), [openSession, showToast]);
+
+  const openFolder = useCallback(async () => {
+    try {
+      const path = await window.cuppet.native.chooseFolder({ title: 'Open a project folder', buttonLabel: 'Open folder' });
+      if (!path) return;
+      const project = await window.cuppet.projects.addLocal({ path });
+      await refreshLists();
+      startDraft(project.id);
+    } catch (error) { showToast(error); }
+  }, [refreshLists, showToast, startDraft]);
 
   const handleEvent = useCallback(async (event: RuntimeEvent) => {
     if (!event?.type) return;
@@ -193,10 +212,10 @@ export function App() {
       void refreshLists();
     }
 
-    if (event.type === 'permission.requested' && event.request) setPermission(event.request);
-    if (event.type === 'permission.resolved' && permission?.id === event.requestId) setPermission(null);
-    if (event.type === 'question.requested' && event.request) setQuestion(event.request);
-    if (event.type === 'question.resolved' && question?.id === event.requestId) setQuestion(null);
+    if (event.type === 'permission.requested' && event.request) setPermissions((current) => [...current.filter((request) => request.id !== event.request.id), event.request]);
+    if (event.type === 'permission.resolved') setPermissions((current) => current.filter((request) => request.id !== event.requestId));
+    if (event.type === 'question.requested' && event.request) setQuestions((current) => [...current.filter((request) => request.id !== event.request.id), event.request]);
+    if (event.type === 'question.resolved') setQuestions((current) => current.filter((request) => request.id !== event.requestId));
 
     if (event.type === 'queue.queued' && activeSessionId && event.sessionId === activeSessionId) {
       void window.cuppet.sessions.queueList(activeSessionId).then((list) => {
@@ -206,7 +225,7 @@ export function App() {
     if ((event.type === 'queue.dispatched' || event.type === 'queue.cancelled') && event.sessionId === activeSessionId) {
       setQueuedTurns((current) => current.filter((item) => item.id !== event.queueId));
     }
-  }, [activeSessionId, openSession, permission?.id, question?.id, refreshLists, showToast]);
+  }, [activeSessionId, openSession, refreshLists, showToast]);
 
   useEffect(() => window.cuppet.onEvent((event) => {
     void handleEvent(event);
@@ -420,8 +439,7 @@ export function App() {
     try {
       if (enableAuto && permission.autoEligible && permission.sessionId) await window.cuppet.permissions.autoSet(permission.sessionId, true);
       await window.cuppet.permissions.reply(permission.id, enableAuto ? 'once' : reply);
-      const [next] = await window.cuppet.permissions.list().catch(() => []);
-      setPermission(next ?? null);
+      setPermissions(await window.cuppet.permissions.list());
     } catch (error) { showToast(error); }
   }, [permission, showToast]);
 
@@ -430,8 +448,7 @@ export function App() {
     try {
       if (answers) await window.cuppet.questions.reply(question.id, answers);
       else await window.cuppet.questions.reject(question.id);
-      const [next] = await window.cuppet.questions.list().catch(() => []);
-      setQuestion(next ?? null);
+      setQuestions(await window.cuppet.questions.list());
     } catch (error) { showToast(error); }
   }, [question, showToast]);
 
@@ -449,6 +466,7 @@ export function App() {
         generalSessions={generalSessions}
         activeSessionId={activeSessionId}
         unreadSessionIds={unreadSessionIds}
+        waitingSessionIds={waitingSessionIds}
         selectedProjectId={activeProjectId}
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
@@ -457,7 +475,7 @@ export function App() {
         onSearch={() => setModal('search')}
         onRemote={() => setModal('remote')}
         onSettings={() => { setSettingsSection('general'); setModal('settings'); }}
-        onAddProject={() => setModal('add-project')}
+        onAddProject={() => { setProjectSource('local'); setModal('add-project'); }}
         onProject={selectProject}
         onSession={openSession}
         onRenameProject={renameProject}
@@ -488,6 +506,9 @@ export function App() {
         onCancelQueued={cancelQueued}
         onSteerQueued={steerQueued}
         onTerminalOpenChange={setTerminalOpen}
+        onOpenFolder={() => void openFolder()}
+        onCloneRepository={() => { setProjectSource('github'); setModal('add-project'); }}
+        onConfigureProvider={() => { setSettingsSection('platform'); setModal('settings'); }}
         onSend={send}
         onStop={stop}
         onModeChange={changeMode}
@@ -499,7 +520,7 @@ export function App() {
       {active?.projectId && <TstMemorySidebar sessionId={active.id} projectName={activeProject?.name} running={activeRunning} open={panels.memory} onOpenChange={setMemoryOpen} />}
 
       {modal === 'new-chat' && <NewChatModal projects={projects} selectedProjectId={activeProjectId} onClose={() => setModal(null)} onStart={(projectId) => { startDraft(projectId); setModal(null); }} />}
-      {modal === 'add-project' && <AddProjectModal onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}
+      {modal === 'add-project' && <AddProjectModal initialSource={projectSource} onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}
       {modal === 'search' && <SearchModal projects={projects} onClose={() => setModal(null)} onOpen={async (id) => { await openSession(id); setModal(null); }} onChanged={refreshLists} onError={showToast} />}
       {modal === 'remote' && <RemoteModal onClose={() => setModal(null)} onError={showToast} />}
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={hydrateClientProviderSettings} onOpenRemote={() => setModal('remote')} onError={showToast} />}

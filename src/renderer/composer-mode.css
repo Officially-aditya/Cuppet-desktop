@@ -1,4 +1,5 @@
 /* Custom Cuppet mode picker */
+
 .composer-mode-picker {
   position: relative;
   flex: 0 0 auto;
@@ -15,7 +16,7 @@
   border: 0;
   border-radius: 7px;
   background-color: transparent;
-  color: #8993a0;
+  color: var(--muted);
   padding: 5px 8px;
   font-size: 11px;
   line-height: 20px;
@@ -28,13 +29,8 @@
 
 .composer-mode-trigger:hover,
 .composer-mode-picker.open .composer-mode-trigger {
-  background-color: #20262e;
-  color: #e7ebf0;
-}
-
-.composer-mode-trigger:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px rgba(130, 145, 165, .16);
+  background-color: var(--surface-hover);
+  color: var(--text);
 }
 
 .composer-mode-trigger:disabled {
@@ -50,7 +46,7 @@
   width: 9px;
   height: 9px;
   flex: 0 0 auto;
-  color: #6f7986;
+  color: var(--muted);
   transition: transform .12s ease;
 }
 
@@ -62,23 +58,23 @@
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  z-index: 270;
+  z-index: var(--z-menu);
   width: 240px;
   max-width: calc(100vw - 32px);
   padding: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(16, 20, 26, 0.96);
+  background: var(--surface-inset);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 16px 48px color-mix(in srgb, var(--shadow-ink) 36%, transparent), 0 0 0 1px color-mix(in srgb, var(--overlay-ink) 5%, transparent);
   animation: cuppet-dropdown-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .composer-mode-menu-header {
   padding: 4px 8px 6px;
-  color: #687382;
-  font-size: 9.5px;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: .07em;
@@ -93,7 +89,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #cbd2dc;
+  color: var(--text-secondary);
   padding: 7px 8px;
   text-align: left;
   cursor: pointer;
@@ -102,12 +98,12 @@
 
 .composer-mode-option:hover,
 .composer-mode-option.active {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f0f6fc;
+  background: var(--surface-active);
+  color: var(--text);
 }
 
 .composer-mode-option.selected {
-  color: #ffffff;
+  color: var(--text);
 }
 
 .composer-mode-option-text {
@@ -120,23 +116,23 @@
 .composer-mode-option-text strong {
   font-size: 11.5px;
   font-weight: 600;
-  color: #e8ecf1;
+  color: var(--text);
 }
 
 .composer-mode-option-text small {
-  font-size: 10px;
-  color: #737e8b;
+  font-size: 11px;
+  color: var(--muted);
   line-height: 1.35;
 }
 
 .composer-mode-option:hover .composer-mode-option-text small,
 .composer-mode-option.active .composer-mode-option-text small {
-  color: #8f9aa7;
+  color: var(--muted);
 }
 
 .composer-mode-check {
   flex: 0 0 auto;
-  color: #58a6ff;
+  color: var(--link);
 }
 
 @keyframes cuppet-dropdown-in {
@@ -144,6 +140,7 @@
     opacity: 0;
     transform: scale(0.96) translateY(4px);
   }
+
   to {
     opacity: 1;
     transform: scale(1) translateY(0);

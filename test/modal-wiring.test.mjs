@@ -54,10 +54,12 @@ test('New chat and Add project render a focusable dialog with the hook attached'
   }
 });
 
-test('modals that already handle Escape keep their own handlers rather than gaining a second one', async () => {
+test('Search, Diff and Image share focus trapping, Escape and focus return', async () => {
   for (const name of ['SearchModal', 'DiffViewerModal', 'ImageLightboxModal']) {
     const source = await read(name);
-    assert.match(source, /Escape/, name);
-    assert.doesNotMatch(source, /useModalBehavior/, name);
+    assert.match(source, /useModalBehavior\(dialogRef, onClose\)/, name);
+    assert.match(source, /ref=\{dialogRef\}/, name);
+    assert.match(source, /tabIndex=\{-1\}/, name);
+    assert.match(source, /role="dialog" aria-modal="true"|role="dialog"[\s\S]*?aria-modal="true"/, name);
   }
 });

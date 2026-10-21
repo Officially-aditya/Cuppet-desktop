@@ -1,0 +1,52 @@
+/* Shared layout details for onboarding and chat attention. */
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+.empty-state-actions .text-button { flex-basis: 100%; padding: 8px; color: var(--link); }
+.session-waiting-marker {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.react-composer .model-picker-trigger {
+  border: 1px solid var(--line-strong);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+.react-composer .model-picker-trigger:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--accent);
+}
+.react-sidebar { width: var(--sidebar-width); min-width: var(--sidebar-width); }
+.message.assistant .message-content.markdown-rendered .md-code-block pre {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--md-hl-plain);
+}
+.permission-inline, .question-inline-bar, .queued-turn-bar { background: var(--panel); }
+.permission-inline-button.primary, .question-inline-button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.permission-inline-button.primary:hover:not(:disabled), .question-inline-button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+@media (max-width: 720px) { .react-sidebar:not(.collapsed) { width: 180px; min-width: 180px; } }
+@media (max-width: 600px) { .react-sidebar:not(.collapsed) { width: 160px; min-width: 160px; } }

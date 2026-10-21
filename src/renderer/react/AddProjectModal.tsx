@@ -3,11 +3,11 @@ import type { Project } from '../types';
 import { SelectControl } from './SelectControl';
 import { useModalBehavior } from './use-modal-behavior';
 
-export function AddProjectModal({ onClose, onAdded, onError }: { onClose: () => void; onAdded: (project: Project) => void | Promise<void>; onError: (error: unknown) => void }) {
+export function AddProjectModal({ onClose, onAdded, onError, initialSource = 'local' }: { initialSource?: 'local' | 'github'; onClose: () => void; onAdded: (project: Project) => void | Promise<void>; onError: (error: unknown) => void }) {
   const dialogRef = useRef<HTMLElement>(null);
   useModalBehavior(dialogRef, onClose);
   const [name, setName] = useState('');
-  const [source, setSource] = useState('local');
+  const [source, setSource] = useState(initialSource);
   const [localPath, setLocalPath] = useState('');
   const [url, setUrl] = useState('');
   const [note, setNote] = useState('');
@@ -58,7 +58,7 @@ export function AddProjectModal({ onClose, onAdded, onError }: { onClose: () => 
               <div className="project-source-fields">
                 <SelectControl
                   value={source}
-                  onChange={(value) => { setSource(value); setNote(''); }}
+                  onChange={(value) => { setSource(value === 'github' ? 'github' : 'local'); setNote(''); }}
                   ariaLabel="Select the source"
                   disabled={busy}
                   options={[

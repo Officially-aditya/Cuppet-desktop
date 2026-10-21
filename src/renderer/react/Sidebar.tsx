@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Project, Session } from '../types';
 import { CUPPET_LOGO_URL } from './brand';
+import { useModalBehavior } from './use-modal-behavior';
 
 const SIDEBAR_WIDTH_KEY = 'cuppet.desktop.sidebar-width';
 const SIDEBAR_COLLAPSED_KEY = 'cuppet.desktop.sidebar-collapsed';
@@ -17,6 +18,7 @@ type Props = {
   generalSessions: Session[];
   activeSessionId: string | null;
   unreadSessionIds?: ReadonlySet<string>;
+  waitingSessionIds?: ReadonlySet<string>;
   selectedProjectId: string | null;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -61,6 +63,10 @@ export function Sidebar(props: Props) {
   const [deleting, setDeleting] = useState(false);
   const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(() => new Set());
+  const renameRef = useRef<HTMLFormElement>(null);
+  const deleteRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(renameRef, () => { if (!renameSaving) setRenameTarget(null); }, Boolean(renameTarget));
+  useModalBehavior(deleteRef, () => { if (!deleting) setDeleteSession(null); }, Boolean(deleteSession));
   const dragging = useRef(false);
   const isMac = window.cuppet.native.platform === 'darwin';
   const sidebarCollapsed = collapsed;
@@ -299,7 +305,7 @@ export function Sidebar(props: Props) {
   return (
     <aside
       className={`sidebar react-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}
-      style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
       onPointerLeave={handleSessionHoverEnd}
     >
       <button
@@ -321,7 +327,6 @@ export function Sidebar(props: Props) {
           <nav className="primary-nav sidebar-compact-nav" aria-label="Primary">
             <button type="button" className="nav-button sidebar-compact-action" aria-label="New chat" title="New chat" onClick={props.onNewChat} />
             <button type="button" className="nav-button sidebar-compact-action" aria-label="Search" title="Search" onClick={props.onSearch} />
-            <button type="button" className="nav-button sidebar-compact-action" aria-label="Agents" title="Agents" disabled />
             <button type="button" className="nav-button sidebar-compact-action" aria-label="Remote" title="Remote" onClick={props.onRemote} />
           </nav>
           <div className="sidebar-bottom sidebar-compact-bottom">
@@ -339,7 +344,6 @@ export function Sidebar(props: Props) {
           <nav className="primary-nav" aria-label="Primary">
             <button type="button" className="nav-button" onClick={props.onNewChat}>New chat</button>
             <button type="button" className="nav-button" onClick={props.onSearch}>Search</button>
-            <button type="button" className="nav-button" disabled>Agents</button>
             <button type="button" className="nav-button" onClick={props.onRemote}>Remote</button>
           </nav>
         </div>
@@ -386,7 +390,7 @@ export function Sidebar(props: Props) {
                     session={session}
                     title={titleOverrides[session.id]}
                     active={props.activeSessionId === session.id}
-                    unread={props.unreadSessionIds?.has(session.id)}
+                    unread={props.unreadSessionIds?.has(session.id)} waiting={props.waitingSessionIds?.has(session.id)}
                     menuOpen={menu?.kind === 'session' && menu.id === session.id}
                     onOpen={props.onSession}
                     onMenu={openMenu}
@@ -415,7 +419,7 @@ export function Sidebar(props: Props) {
                   session={session}
                   title={titleOverrides[session.id]}
                   active={props.activeSessionId === session.id}
-                  unread={props.unreadSessionIds?.has(session.id)}
+                  unread={props.unreadSessionIds?.has(session.id)} waiting={props.waitingSessionIds?.has(session.id)}
                   menuOpen={menu?.kind === 'session' && menu.id === session.id}
                   onOpen={props.onSession}
                   onMenu={openMenu}
@@ -474,6 +478,8 @@ export function Sidebar(props: Props) {
       {renameTarget && createPortal(
         <div className="sidebar-rename-backdrop" onPointerDown={closeRename}>
           <form
+            ref={renameRef}
+            tabIndex={-1}
             className="sidebar-rename-dialog"
             role="dialog"
             aria-modal="true"
@@ -514,6 +520,8 @@ export function Sidebar(props: Props) {
       {deleteSession && createPortal(
         <div className="sidebar-delete-backdrop" onPointerDown={() => !deleting && setDeleteSession(null)}>
           <div
+            ref={deleteRef}
+            tabIndex={-1}
             className="sidebar-delete-dialog"
             role="alertdialog"
             aria-modal="true"
@@ -546,7 +554,6 @@ export function Sidebar(props: Props) {
               </button>
               <button
                 type="button"
-                autoFocus
                 className="sidebar-danger-button"
                 disabled={deleting}
                 onClick={() => void confirmDeleteSession()}
@@ -582,6 +589,7 @@ function SessionRow({
   title,
   active,
   unread = false,
+  waiting = false,
   menuOpen,
   onOpen,
   onMenu,
@@ -592,6 +600,7 @@ function SessionRow({
   title?: string;
   active: boolean;
   unread?: boolean;
+  waiting?: boolean;
   menuOpen?: boolean;
   onOpen: (id: string) => void | Promise<void>;
   onMenu: (event: React.MouseEvent, kind: 'project' | 'session', id: string) => void;
@@ -615,6 +624,7 @@ function SessionRow({
       >
         {unread && <span className="session-unread-marker" role="img" aria-label="Unread agent work" title="Unread agent work" />}
         <div className="session-title">{displayTitle}</div>
+        {waiting && <span className="session-waiting-marker" role="status">Needs input</span>}
         <div className="session-meta">{relativeTime(session.updatedAt)}</div>
       </button>
       <button

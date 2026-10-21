@@ -368,9 +368,10 @@ test('canonical provider activity and host emit failures cannot fail a successfu
 });
 
 test('renderer consumes one canonical transcript reducer without preload legacy suppression', async () => {
-  const [preload, chat, clientTranscript, transcript, database, runtime, activity, runtimeContract] = await Promise.all([
+  const [preload, chatPane, chat, clientTranscript, transcript, database, runtime, activity, runtimeContract] = await Promise.all([
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/database.mjs', import.meta.url), 'utf8'),
@@ -382,7 +383,7 @@ test('renderer consumes one canonical transcript reducer without preload legacy 
   assert.match(preload, /const listener = \(_event, payload\) => callback\(payload\)/);
   assert.doesNotMatch(preload, /projectActivityForLegacyUi/);
 
-  assert.match(chat, /useClientTranscript\(session\)/);
+  assert.match(chatPane, /useClientTranscript\(session\)/);
   assert.doesNotMatch(chat, /hydrateTranscript\(/);
   assert.doesNotMatch(chat, /reduceTranscriptEvent\(/);
   assert.doesNotMatch(chat, /window\.cuppet\.onEvent/);

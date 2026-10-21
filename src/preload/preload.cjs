@@ -108,6 +108,13 @@ contextBridge.exposeInMainWorld('cuppet', {
   },
   native: {
     platform: process.platform,
+    setAppearance: (preference) => ipcRenderer.invoke('cuppet:native:appearance', preference),
+    onOpenSession: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const listener = (_event, sessionId) => callback(sessionId);
+      ipcRenderer.on('cuppet:attention:open-session', listener);
+      return () => ipcRenderer.removeListener('cuppet:attention:open-session', listener);
+    },
     chooseFolder: (options) => ipcRenderer.invoke('cuppet:native:choose-folder', options),
     openProjectFile: (projectId, path) => ipcRenderer.invoke('cuppet:native:open-project-file', projectId, path),
     projectFileEditor: (projectId, path) => ipcRenderer.invoke('cuppet:native:project-file-editor', projectId, path),

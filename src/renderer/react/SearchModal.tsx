@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useModalBehavior } from './use-modal-behavior';
 import type { Project, SearchResult } from '../types';
 
 const DELETED_CHAT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: { projects: Project[]; onClose: () => void; onOpen: (sessionId: string) => void | Promise<void>; onChanged: () => void | Promise<unknown>; onError: (error: unknown) => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const [query, setQuery] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -52,7 +55,7 @@ export function SearchModal({ projects, onClose, onOpen, onChanged, onError }: {
 
   return (
     <div className="modal-backdrop search-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="react-modal search-dialog react-search-dialog" role="dialog" aria-modal="true" aria-label="Search chats" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} tabIndex={-1} className="react-modal search-dialog react-search-dialog" role="dialog" aria-modal="true" aria-label="Search chats" onMouseDown={(event) => event.stopPropagation()}>
         <div className="search-shell">
           <div className="search-header">
             <div className="search-input-wrap"><span aria-hidden="true">⌕</span><input autoFocus className="search-input" type="search" maxLength={512} autoComplete="off" placeholder="Search chats and messages…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
@@ -99,7 +102,7 @@ function focusMessage(messageId: string) {
     const selector = `[data-message-id="${cssEscape(safeId)}"]`;
     const node = document.querySelector<HTMLElement>(selector);
     if (!node) return;
-    node.scrollIntoView({ block: 'center', behavior: document.body.classList.contains('reduce-motion') ? 'auto' : 'smooth' });
+    node.scrollIntoView({ block: 'center', behavior: document.body.classList.contains('reduce-motion') || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     node.classList.remove('search-hit');
     void node.offsetWidth;
     node.classList.add('search-hit');

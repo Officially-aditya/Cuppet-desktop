@@ -10,7 +10,7 @@ test('QuestionInline renders multi-question requests as a step-by-step wizard', 
   const [modal, css, chatPane] = await Promise.all([
     source('src/renderer/react/QuestionModal.tsx'),
     source('src/renderer/permission-inline.css'),
-    source('src/renderer/react/ChatPane.tsx'),
+    source('src/renderer/react/ChatComposer.tsx'),
   ]);
 
   // QuestionInline component contracts

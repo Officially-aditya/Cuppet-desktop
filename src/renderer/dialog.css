@@ -1,7 +1,3 @@
-/*
- * Native <dialog> prompts, choices and confirmations (see DialogHost). Only theme variables are used, and both
- * themes define them, so no light-theme overrides are needed.
- */
 .cuppet-dialog {
   box-sizing: border-box;
   width: min(440px, calc(100vw - 32px));
@@ -12,16 +8,17 @@
   border-radius: 14px;
   background: var(--panel-2);
   color: var(--text);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 24px 70px color-mix(in srgb, var(--shadow-ink) 27%, transparent);
   overflow: auto;
 }
 
 .cuppet-dialog::backdrop {
-  background: rgba(5, 7, 10, 0.55);
+  background: var(--backdrop);
   backdrop-filter: blur(3px);
 }
 
 /* The form fills the dialog so a click on the dialog element itself can only be a click on the backdrop. */
+
 .cuppet-dialog-form {
   display: grid;
   gap: 14px;
@@ -76,7 +73,6 @@
 .cuppet-dialog-field textarea:focus-visible,
 .cuppet-dialog-choice:has(input:focus-visible),
 .cuppet-dialog-button:focus-visible {
-  outline: 2px solid #78aaf1;
   outline-offset: 1px;
 }
 
@@ -149,9 +145,9 @@
 }
 
 .cuppet-dialog-button.primary.danger {
-  border-color: #c0443e;
-  background: #c0443e;
-  color: #ffffff;
+  border-color: var(--danger);
+  background: var(--danger-solid);
+  color: var(--on-solid);
 }
 
 .cuppet-dialog-button:disabled {

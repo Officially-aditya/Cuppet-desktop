@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { QuestionRequest } from '../types';
 
 export function QuestionInline({
@@ -8,6 +8,8 @@ export function QuestionInline({
   request: QuestionRequest;
   onAnswer: (answers: string[][] | null) => void | Promise<void>;
 }) {
+  const panelRef = useRef<HTMLElement>(null);
+  const titleId = useId();
   const questions = request.questions ?? [];
   const [stepIndex, setStepIndex] = useState(0);
   const [answers, setAnswers] = useState<string[][]>(() => questions.map(() => []));
@@ -18,6 +20,14 @@ export function QuestionInline({
     setStepIndex(0);
     setAnswers(questions.map(() => []));
     setNote('');
+  }, [request.id]);
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    panelRef.current?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus();
+    };
   }, [request.id]);
 
   const totalSteps = questions.length;
@@ -73,6 +83,8 @@ export function QuestionInline({
       await onAnswer(
         answers.map((group) => group.map((value) => value.trim().slice(0, 512)).filter(Boolean))
       );
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -82,6 +94,8 @@ export function QuestionInline({
     setBusy(true);
     try {
       await onAnswer(null);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -92,11 +106,17 @@ export function QuestionInline({
   const hasOptions = (currentQuestion.options ?? []).length > 0;
 
   return (
-    <section className="question-inline-bar" role="alert" aria-labelledby="question-title">
+    <section ref={panelRef} tabIndex={-1} className="question-inline-bar" role="alertdialog" aria-modal="false" aria-labelledby={titleId} onKeyDown={(event) => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !busy) {
+        event.preventDefault();
+        event.stopPropagation();
+        void reject();
+      }
+    }}>
       <div className="question-inline-header">
         <div className="question-inline-title">
           <span className="question-inline-badge">?</span>
-          <strong id="question-title">Cuppet needs your input</strong>
+          <strong id={titleId}>Cuppet needs your input</strong>
           {isMultiStep && (
             <span className="question-inline-step-pill">
               Question {stepIndex + 1} of {totalSteps}
@@ -175,7 +195,6 @@ export function QuestionInline({
               maxLength={512}
               value={currentAnswer[0] ?? ''}
               disabled={busy}
-              autoFocus
               onChange={(event) =>
                 setGroup(stepIndex, event.target.value ? [event.target.value] : [])
               }
@@ -195,7 +214,7 @@ export function QuestionInline({
       </div>
 
       <div className="question-inline-footer">
-        {note ? <span className="question-inline-note">{note}</span> : <span />}
+        {note ? <span className="question-inline-note" role="status">{note}</span> : <span />}
         <div className="question-inline-actions">
           <button
             type="button"

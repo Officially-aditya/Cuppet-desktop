@@ -1,111 +1,112 @@
 /* Keep chat actions inside the highlighted sidebar row and swap them with metadata at the exact same location. */
-.react-sidebar .session-row{
-  position:relative;
-  min-height:36px;
-  margin:0 10px 4px 10px;
+
+.react-sidebar .session-row {
+  position: relative;
+  min-height: 36px;
+  margin: 0 10px 4px 10px;
 }
 
-.react-sidebar .session-row:hover .session-item:not(.active){
-  background:#14181e;
+.react-sidebar .session-row:hover .session-item:not(.active) {
+  background: var(--surface-active);
 }
 
-.react-sidebar .session-item{
-  position:relative;
-  display:flex;
-  align-items:center;
-  width:100%;
-  min-height:36px;
-  padding:8px 12px;
-  padding-right:32px;
-  border-radius:8px;
+.react-sidebar .session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  padding-right: 32px;
+  border-radius: 8px;
 }
 
-.react-sidebar .session-title{
-  min-width:0;
-  flex:1;
-  line-height:20px;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
+.react-sidebar .session-title {
+  min-width: 0;
+  flex: 1;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.react-sidebar .session-unread-marker{
-  flex:0 0 6px;
-  width:6px;
-  height:6px;
-  border-radius:50%;
-  background:#7ab7ff;
+.react-sidebar .session-unread-marker {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-soft);
 }
 
-.react-sidebar .session-meta{
-  position:absolute;
-  z-index:1;
-  top:50%;
-  right:6px;
-  width:22px;
-  height:22px;
-  margin:0;
-  max-width:none;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transform:translateY(-50%);
-  pointer-events:none;
-  text-align:center;
-  font-size:10px;
-  line-height:1;
-  color:#626c79;
-  transition:opacity .12s ease,visibility .12s ease;
+.react-sidebar .session-meta {
+  position: absolute;
+  z-index: var(--z-local);
+  top: 50%;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  max-width: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  pointer-events: none;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  transition: opacity .12s ease,visibility .12s ease;
 }
 
-.react-sidebar .session-item.active .session-meta{
-  color:#8893a2;
+.react-sidebar .session-item.active .session-meta {
+  color: var(--muted);
 }
 
-.react-sidebar .session-menu-button{
-  position:absolute;
-  z-index:2;
-  top:50%;
-  right:6px;
-  width:22px;
-  height:22px;
-  margin:0;
-  display:grid;
-  place-items:center;
-  transform:translateY(-50%);
-  opacity:0;
-  pointer-events:none;
-  visibility:hidden;
-  transition:opacity .12s ease,visibility .12s ease,background .12s ease,color .12s ease;
+.react-sidebar .session-menu-button {
+  position: absolute;
+  z-index: var(--z-menu);
+  top: 50%;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity .12s ease,visibility .12s ease,background .12s ease,color .12s ease;
 }
 
-.react-sidebar .session-menu-button:hover{
-  background:#20262e;
-  color:#fff;
+.react-sidebar .session-menu-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .react-sidebar .session-row:hover .session-meta,
 .react-sidebar .session-row:focus-within .session-meta,
-.react-sidebar .session-row.menu-open .session-meta{
-  opacity:0;
-  visibility:hidden;
+.react-sidebar .session-row.menu-open .session-meta {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .react-sidebar .session-row:hover .session-menu-button,
 .react-sidebar .session-row:focus-within .session-menu-button,
-.react-sidebar .session-row.menu-open .session-menu-button{
-  opacity:1;
-  pointer-events:auto;
-  visibility:visible;
+.react-sidebar .session-row.menu-open .session-menu-button {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
 }
 
-.compact-sidebar .react-sidebar .session-row{
-  min-height:28px;
-  margin-bottom:2px;
+.compact-sidebar .react-sidebar .session-row {
+  min-height: 28px;
+  margin-bottom: 2px;
 }
 
-.compact-sidebar .react-sidebar .session-item{
-  min-height:28px;
-  padding-block:4px;
-  border-radius:6px;
+.compact-sidebar .react-sidebar .session-item {
+  min-height: 28px;
+  padding-block: 4px;
+  border-radius: 6px;
 }

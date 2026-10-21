@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const [app, chat, clientSessionState, clientTranscript, transcript, runtimeMain] = await Promise.all([
   readFile(new URL('../src/renderer/react/App.tsx', import.meta.url), 'utf8'),
-  readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+  Promise.all(['ChatPane.tsx', 'ChatComposer.tsx'].map((file) => readFile(new URL(`../src/renderer/react/${file}`, import.meta.url), 'utf8'))).then((parts) => parts.join('\n')),
   readFile(new URL('../src/renderer/react/client-session-state.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),

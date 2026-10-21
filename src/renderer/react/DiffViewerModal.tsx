@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useModalBehavior } from './use-modal-behavior';
 
 export type DiffFile = {
   path: string;
@@ -30,6 +31,8 @@ type ParsedFileDiff = {
 };
 
 export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const parsedFiles = useMemo(() => parseDiff(rawDiff, files), [rawDiff, files]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -54,11 +57,7 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
+      if (event.defaultPrevented || !dialogRef.current?.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
       if (event.key === 'ArrowDown' || event.key === 'j') {
         if (parsedFiles.length > 1) {
           event.preventDefault();
@@ -98,6 +97,8 @@ export function DiffViewerModal({ files, rawDiff = '', projectId, onClose }: Pro
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="diff-modal-dialog"
         role="dialog"
         aria-modal="true"

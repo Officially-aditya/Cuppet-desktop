@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 
-// Escape, focus trapping, initial focus and focus return for the hand-rolled modals (settings, remote, add project,
-// new chat). They keep their existing markup and styling; this adds the behaviour a modal dialog is expected to have.
+// Escape, focus trapping, initial focus and focus return for the app's modal overlays.
 // The logic is plain and takes its document as a parameter so it can be tested without a browser.
 
 type FocusableLike = {
@@ -102,14 +101,17 @@ export function attachModalBehavior(root: RootLike, onClose: () => void, doc: Do
 }
 
 /** Gives a modal's root element Escape handling, a focus trap, initial focus and focus return. */
-export function useModalBehavior(ref: RefObject<HTMLElement | null>, onClose: () => void) {
+export function useModalBehavior(ref: RefObject<HTMLElement | null>, onClose: () => void, open = true) {
   const close = useRef(onClose);
   // Capture the opener before the mounted dialog or a child's effect autofocuses a control.
-  const returnFocus = useRef(typeof document === 'undefined' ? null : document.activeElement);
+  const returnFocus = useRef<unknown>(null);
+  const wasOpen = useRef(false);
+  if (open && !wasOpen.current) returnFocus.current = typeof document === 'undefined' ? null : document.activeElement;
+  wasOpen.current = open;
   useEffect(() => { close.current = onClose; });
   useEffect(() => {
     const root = ref.current;
-    if (!root) return undefined;
+    if (!open || !root) return undefined;
     return attachModalBehavior(root as unknown as RootLike, () => close.current(), document as unknown as DocumentLike, returnFocus.current);
-  }, [ref]);
+  }, [ref, open]);
 }

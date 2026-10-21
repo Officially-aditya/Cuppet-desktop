@@ -39,16 +39,17 @@ test('edited file events preserve repeated edits across turns while excluding un
 });
 
 test('workspace links, edited files, working state, and reasoning stay on canonical ownership paths', async () => {
-  const [host, runtime, preload, markdown, projectLinks, chatPane, clientTranscript, chatTranscript, styles, filePaths] = await Promise.all([
+  const [host, runtime, preload, markdown, projectLinks, chatPane, chatView, clientTranscript, chatTranscript, styles, filePaths] = await Promise.all([
     readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/markdown.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/project-links.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/client-transcript.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/renderer/react/chat-transcript.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/renderer/workspace-enhancements.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/workspace-enhancements.css', import.meta.url), 'utf8').then((css) => css.replace(/\s*([{}:;,])\s*/g, '$1')),
     readFile(new URL('../src/main/project-file-path.mjs', import.meta.url), 'utf8'),
   ]);
 
@@ -75,7 +76,7 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(projectLinks, /export function openChatLink/);
   assert.doesNotMatch(projectLinks, /MutationObserver|querySelector|react-composer-wrap|workspace-edited-files-mount|createPortal/);
   assert.doesNotMatch(projectLinks, /message\.reasoning|data-cuppet-visible-reasoning|readStoredReasoning|TRACE_KEY_PREFIX|LEGACY_REASONING_KEY_PREFIX|liveReasoning|message-visible-reasoning/);
-  assert.match(chatPane, /openChatLink\(projectId, event\.target\)/);
+  assert.match(chatView, /openChatLink\(projectId, event\.target\)/);
   assert.match(chatPane, /<ChatLinkPreview projectId=\{linkProjectId\} \/>/);
   assert.doesNotMatch(chatPane, /MutationObserver/);
   await assert.rejects(readFile(new URL('../src/renderer/react/WorkspaceEnhancements.tsx', import.meta.url), 'utf8'), { code: 'ENOENT' });
@@ -87,8 +88,8 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(chatTranscript, /event\.type !== 'runtime\.activity'/);
   assert.match(chatTranscript, /activityType === 'activity\.reasoning\.delta'/);
   assert.match(chatPane, /const transcript = useClientTranscript\(session\)/);
-  assert.match(chatPane, /message-reasoning-content markdown-rendered/);
-  assert.match(chatPane, /traceForMessage\(transcript, message\.id\)/);
+  assert.match(chatView, /message-reasoning-content markdown-rendered/);
+  assert.match(chatView, /traceForMessage\(transcript, message\.id\)/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
   assert.match(styles, /content:'Working…'/);
   assert.match(styles, /:has\(\.composer-pause-button\)/);

@@ -280,6 +280,7 @@ export type PermissionRequest = {
 
 export type QuestionRequest = {
   id: string;
+  sessionId?: string;
   questions?: Array<{
     header?: string;
     question?: string;
@@ -391,6 +392,8 @@ export type CuppetApi = {
   };
   native: {
     platform: string;
+    setAppearance?: (preference: 'system' | 'dark' | 'light') => Promise<{ preference: string }>;
+    onOpenSession?: (callback: (sessionId: string) => void) => () => void;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
     copyText: (text: string) => Promise<{ copied: boolean }>;
     openProjectFile: (projectId: string, path: string) => Promise<{ opened: boolean; path: string }>;

@@ -20,6 +20,7 @@ export function writeAppearancePreference(preference: AppearancePreference) {
 
 export function installAppearance() {
   const system = window.matchMedia(SYSTEM_DARK_QUERY);
+  document.body?.classList.toggle('reduce-motion', localStorage.getItem('cuppet.desktop.pref.reduce-motion') === '1');
   const update = () => applyAppearance(readAppearancePreference(), system.matches);
   update();
   system.addEventListener('change', update);
@@ -28,6 +29,7 @@ export function installAppearance() {
 
 function applyAppearance(preference: AppearancePreference, systemDark: boolean) {
   const theme = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+  void window.cuppet?.native.setAppearance?.(preference).catch(console.error);
   document.documentElement.style.colorScheme = theme;
   if (document.documentElement.dataset.theme === theme) return;
   document.documentElement.dataset.theme = theme;

@@ -10,7 +10,7 @@
 .workspace-center-column > .react-main-pane {
   flex: 1;
   min-height: 0;
-  height: auto !important;
+  height: auto;
 }
 
 .project-terminal {
@@ -69,13 +69,13 @@
 
 .project-terminal-title {
   color: var(--text-main);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 620;
 }
 
 .project-terminal-shortcut {
   margin-left: auto;
-  font-size: 8px;
+  font-size: 11px;
   color: var(--text-muted);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -106,8 +106,8 @@
 }
 
 .project-terminal-xterm-container .xterm-viewport {
-  background-color: var(--bg-main-surface) !important;
-  overflow-y: auto !important;
+  background-color: var(--bg-main-surface);
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
 }
@@ -117,7 +117,7 @@
 }
 
 .project-terminal:focus-within {
-  border-top-color: rgba(125, 166, 201, 0.2);
+  border-top-color: var(--focus-ring);
 }
 
 @media (max-height: 700px) {

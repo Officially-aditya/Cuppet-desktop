@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = await readFile(new URL('../src/renderer/react/ChatPane.tsx', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
@@ -18,6 +18,7 @@ function fixture() {
   const react = {
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
     useMemo: (compute) => compute(),
+    useImperativeHandle: () => {},
     useRef: (current) => { const ref = { current }; refs.push(ref); return ref; },
     useEffect: (effect) => effects.push(effect),
   };
@@ -35,7 +36,7 @@ function fixture() {
     requestAnimationFrame: (frame) => { frames.push(frame); return frames.length; },
     cancelAnimationFrame: () => {},
   });
-  exports.ChatPane({ session: { id: 'chat', messages: [] }, draft: null, project: null, commands: [], running: true });
+  exports.ChatTranscript({ session: { id: 'chat', messages: [] }, project: null, transcript: {}, running: true });
   let scrollTop = 0;
   const listeners = new Map();
   const node = {
@@ -46,7 +47,7 @@ function fixture() {
     addEventListener: (name, listener) => listeners.set(name, listener),
     removeEventListener: (name) => listeners.delete(name),
   };
-  refs[2].current = node;
+  refs[0].current = node;
   const scrollEffects = effects.filter((effect) => effect.toString().includes('messagesRef.current'));
   scrollEffects[0]();
   return {

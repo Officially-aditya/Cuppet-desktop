@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useModalBehavior } from './use-modal-behavior';
 
 type ImageLightboxProps = {
   src: string;
@@ -7,19 +8,10 @@ type ImageLightboxProps = {
 };
 
 export function ImageLightboxModal({ src, name = 'Image Preview', onClose }: ImageLightboxProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(dialogRef, onClose);
   const [zoom, setZoom] = useState(1);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [onClose]);
 
   const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3));
   const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
@@ -69,7 +61,7 @@ export function ImageLightboxModal({ src, name = 'Image Preview', onClose }: Ima
 
   return (
     <div className="modal-backdrop lightbox-backdrop" onClick={onClose}>
-      <div className="image-lightbox-dialog" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={name} className="image-lightbox-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="image-lightbox-header">
           <div className="image-lightbox-title" title={name}>
             <span className="image-lightbox-icon">🖼️</span>
