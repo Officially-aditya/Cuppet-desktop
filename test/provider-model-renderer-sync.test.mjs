@@ -78,13 +78,15 @@ test('candidate model refresh crosses preload and main IPC into runtime authorit
   const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8');
   const runtime = await readFile(new URL('../src/runtime/main.mjs', import.meta.url), 'utf8');
   const types = await readFile(new URL('../src/renderer/types.ts', import.meta.url), 'utf8');
-  assert.match(preload, /models: \(options = \{\}\) => ipcRenderer\.invoke\('cuppet:settings:models', options\)/);
-  assert.match(main, /ipcMain\.handle\('cuppet:settings:models',[\s\S]*request\('provider\.models', \{/);
+  assert.match(preload, /cuppet:settings:models/);
+  assert.match(preload, /settings\.models/);
+  assert.match(main, /handle\('settings\.models',[\s\S]*request\('provider\.models', \{/);
   assert.match(main, /provider: settings\.runtimeValue\(\)/);
   assert.match(main, /model: value && typeof value === 'object'/);
   assert.doesNotMatch(main, /fetchProviderModelCatalog/);
   assert.match(runtime, /case 'provider\.models': return providerControl\.models\(boundedProvider\(params\.provider\), \{\s*model: typeof params\.model === 'string' \? params\.model\.slice\(0, 1000\) : '',\s*refresh: params\.refresh === true,/);
-  assert.match(types, /models: \(options\?: \{ model\?: string; refresh\?: boolean \}\) => Promise<ProviderModelCatalog>/);
+  const apiTypes = await readFile(new URL('../src/renderer/ipc-api.d.ts', import.meta.url), 'utf8');
+  assert.match(apiTypes, /models: \(options\?: Record<string, unknown>\) => Promise<Types\.ProviderModelCatalog>/);
   assert.match(types, /modelDependentSettings\?: boolean/);
 });
 

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { createIpcRegistrar } from './ipc-boundary.mjs';
 import { installCodexAuthIpc } from './codex-auth.mjs';
 import { installMacAutoUpdater } from './auto-update.mjs';
 import { applyLocalCliEnvironment } from '../runtime/local-cli-environment.mjs';
@@ -19,7 +20,7 @@ if (!singleInstance) {
     await import('./gui-cli-smoke-entry.mjs');
   } else {
     installSecurityGuards();
-    installCodexAuthIpc();
+    installCodexAuthIpc(createIpcRegistrar({ ipcMain, getWindow: () => BrowserWindow.getAllWindows()[0], rendererUrl: new URL('../../dist-renderer/index.html', import.meta.url).href }));
     app.on('second-instance', () => {
       const window = BrowserWindow.getAllWindows()[0];
       if (!window) return;

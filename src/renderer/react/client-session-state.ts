@@ -114,9 +114,19 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
   } else if (type === 'message.delta' && sessionId && event?.messageId) {
     const session = clientSessionSnapshot(sessionId);
     const message = session?.messages?.find((item) => item.id === event.messageId);
-    if (message) {
-      upsertClientMessage({ ...message, content: String(event.content ?? ''), status: 'streaming' });
+    if (message && message.status === 'streaming' && typeof event.delta === 'string' && Number.isSafeInteger(event.seq)) {
+      const end = Number(event.seq);
+      if (end > message.content.length) {
+        const start = end - event.delta.length;
+        if (start <= message.content.length && start >= 0) {
+          upsertClientMessage({ ...message, content: message.content + event.delta.slice(message.content.length - start) });
+        } else {
+          void refreshClientSession(sessionId).catch(() => undefined);
+        }
+      }
       handled = true;
+    } else if (!message) {
+      void refreshClientSession(sessionId).catch(() => undefined);
     }
   }
   if (SESSION_DETAIL_REFRESH_EVENTS.has(type) && sessionId && !event?.message?.id) {

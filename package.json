@@ -10,9 +10,12 @@
     "cuppet": "src/cli/main.mjs"
   },
   "scripts": {
-    "prebuild:renderer": "npm run mac:prepare-icon",
+    "prebuild:renderer": "npm run ipc:generate && npm run mac:prepare-icon",
+    "ipc:generate": "node scripts/generate-ipc.mjs",
+    "ipc:check": "node scripts/generate-ipc.mjs --check",
+    "runtime:typecheck": "tsc --noEmit -p tsconfig.runtime.json",
     "build:renderer": "vite build",
-    "renderer:verify": "tsc --noEmit && vite build && node scripts/verify-renderer.mjs",
+    "renderer:verify": "npm run ipc:check && tsc --noEmit && npm run runtime:typecheck && vite build && node scripts/verify-renderer.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test test/*.test.mjs",
@@ -89,6 +92,7 @@
     "files": [
       "src/main/**/*",
       "src/preload/**/*",
+      "src/shared/**/*",
       "src/runtime/**/*",
       "src/cli/**/*",
       "dist-renderer/**/*",

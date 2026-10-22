@@ -1,3 +1,12 @@
+// @ts-check
+/** @typedef {import('../shared/runtime-contracts').PermissionEvent} PermissionEvent */
+/** @typedef {import('../shared/runtime-contracts').PermissionRequest} PermissionRequest */
+/** @typedef {import('../shared/runtime-contracts').PermissionOutcome} PermissionOutcome */
+/** @typedef {import('../shared/runtime-contracts').PermissionReply} PermissionReply */
+/** @typedef {{ request: PermissionRequest, fingerprint: string, resolve: (value: PermissionOutcome) => void, reject: (reason?: unknown) => void, signal?: AbortSignal, abortListener: () => void }} PendingPermission */
+/** @typedef {{ deletion: boolean, unknown: boolean, targets: string[] }} DeletionTargets */
+/** @typedef {{ effect: 'allow', source: string } | { effect: 'deny', reason: string, code: string } | { effect: 'ask', autoEligible: boolean }} PermissionDecision */
+
 import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -28,6 +37,7 @@ export const MAX_PERMISSION_RESOURCES = 32;
 export const MAX_PERMISSION_RESOURCE_CHARS = 8000;
 
 export class PermissionDeniedError extends Error {
+  /** @param {string} message @param {{code?: string, requestId?: string | null}} [options] */
   constructor(message, { code = 'permission_denied', requestId = null } = {}) {
     super(message);
     this.name = 'PermissionDeniedError';
@@ -37,8 +47,19 @@ export class PermissionDeniedError extends Error {
 }
 
 export class PermissionBroker {
-  #emit; #interactive; #pending = new Map(); #autoSessions = new Set(); #fullSessions = new Set(); #always = new Map();
+  /** @type {(event: PermissionEvent) => void} */
+  #emit;
+  #interactive;
+  /** @type {Map<string, PendingPermission>} */
+  #pending = new Map();
+  /** @type {Set<string>} */
+  #autoSessions = new Set();
+  /** @type {Set<string>} */
+  #fullSessions = new Set();
+  /** @type {Map<string, Set<string>>} */
+  #always = new Map();
 
+  /** @param {{emit?: (event: PermissionEvent) => void, interactive?: boolean}} [options] */
   constructor({ emit = () => {}, interactive = true } = {}) {
     this.#emit = emit;
     this.#interactive = interactive;
@@ -52,11 +73,13 @@ export class PermissionBroker {
     this.#pending.clear();
   }
 
+  /** @param {string} sessionId */
   autoStatus(sessionId) {
     const fullAccess = this.#fullSessions.has(sessionId);
     const enabled = this.#autoSessions.has(sessionId);
     return { sessionId, enabled, fullAccess, mode: fullAccess ? 'full' : enabled ? 'auto' : 'default' };
   }
+  /** @param {string} sessionId @param {boolean | 'full'} enabled */
   setAuto(sessionId, enabled) {
     if (!sessionId) throw new Error('sessionId is required');
     if (enabled === 'full') {
@@ -71,6 +94,7 @@ export class PermissionBroker {
     }
     return this.autoStatus(sessionId);
   }
+  /** @param {string} sessionId */
   forgetSession(sessionId) {
     if (!sessionId) return { sessionId, forgotten: false };
     const removedAuto = this.#autoSessions.delete(sessionId);
@@ -87,12 +111,14 @@ export class PermissionBroker {
     return { sessionId, forgotten };
   }
 
+  /** @param {string | null} [sessionId] */
   list(sessionId = null) {
     return [...this.#pending.values()]
       .map((entry) => entry.request)
       .filter((request) => !sessionId || request.sessionId === sessionId);
   }
 
+  /** @param {string} requestId @param {PermissionReply} [reply] */
   reply(requestId, reply = 'reject') {
     const pending = this.#pending.get(requestId);
     if (!pending) return { resolved: false, requestId };
@@ -110,6 +136,7 @@ export class PermissionBroker {
     return { resolved: true, requestId, reply };
   }
 
+  /** @param {import('../shared/runtime-contracts').AuthorizationInput} input @returns {Promise<PermissionOutcome>} */
   async authorize({ sessionId, action, resources = [], projectRoot = null, description = '', planMode = false, signal, fingerprintKey = '' }) {
     const normalized = normalizePermissionResources(resources);
     const isFull = Boolean(this.#fullSessions.has(sessionId));
@@ -144,6 +171,7 @@ export class PermissionBroker {
   }
 }
 
+/** @param {{action: string, resources: string[], projectRoot: string | null, planMode: boolean, auto: boolean, fullAccess: boolean}} input @returns {Promise<PermissionDecision>} */
 async function immediateDecision({ action, resources, projectRoot, planMode, auto, fullAccess }) {
   if (['tst_explore', 'cuppet_plan', 'cuppet_memory_search'].includes(action)) return { effect: 'allow', source: 'read-only-tool' };
   if (action === 'browser-read') return { effect: 'allow', source: 'explicit-browser-read' };
@@ -201,6 +229,8 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
   return { effect: 'ask', autoEligible: false };
 }
 
+/** @param {unknown} command @param {string | null} projectRoot
+ * @returns {Promise<{allowed: true, deletion: boolean, targets?: string[]} | {allowed: false, deletion: true, code: string, reason: string}>} */
 export async function inspectFullAccessDeletion(command, projectRoot) {
   const source = String(command ?? '').trim();
   if (!source) return { allowed: true, deletion: false };
@@ -227,6 +257,7 @@ export async function inspectFullAccessDeletion(command, projectRoot) {
   return { allowed: true, deletion: true, targets: scans.targets };
 }
 
+/** @param {unknown} resource @param {string | null} workspaceRoot */
 async function isDeleteTargetInsideProject(resource, workspaceRoot) {
   const target = String(resource ?? '').trim();
   if (!target || !workspaceRoot || target.includes('\0') || target.startsWith('~') || /[$`]/.test(target)) return false;
@@ -236,6 +267,7 @@ async function isDeleteTargetInsideProject(resource, workspaceRoot) {
   return nearestExistingAncestorIsInside(candidate, root);
 }
 
+/** @param {string} command @returns {DeletionTargets} */
 function deletionTargets(command) {
   const tokens = shellTokens(command);
   const segments = splitShellSegments(tokens);
@@ -251,6 +283,7 @@ function deletionTargets(command) {
   return { deletion, unknown, targets: [...new Set(targets)] };
 }
 
+/** @param {string[]} input @returns {DeletionTargets} */
 function deletionTargetsForSegment(input) {
   let tokens = [...input];
   while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
@@ -318,6 +351,7 @@ function deletionTargetsForSegment(input) {
   return { deletion: false, unknown: false, targets: [] };
 }
 
+/** @param {string[]} args */
 function commandOperands(args) {
   const result = [];
   let options = true;
@@ -330,20 +364,25 @@ function commandOperands(args) {
   return result;
 }
 
+/** @param {unknown} value */
 function commandName(value) {
-  return String(value ?? '').replaceAll('\\', '/').split('/').pop().toLowerCase();
+  return String(value ?? '').replaceAll('\\', '/').split('/').pop()?.toLowerCase() ?? '';
 }
 
+/** @param {string[]} tokens */
 function splitShellSegments(tokens) {
+  /** @type {string[][]} */
   const segments = [[]];
   for (const token of tokens) {
+    const current = segments[segments.length - 1];
     if ([';', '&&', '||', '|', '\n'].includes(token)) {
-      if (segments.at(-1).length) segments.push([]);
-    } else segments.at(-1).push(token);
+      if (current.length) segments.push([]);
+    } else current.push(token);
   }
   return segments.filter((segment) => segment.length);
 }
 
+/** @param {string} source */
 function shellTokens(source) {
   const tokens = [];
   let token = '';
@@ -387,6 +426,7 @@ function shellTokens(source) {
   return tokens;
 }
 
+/** @param {string} command */
 export function isSafeAutoBashCommand(command) {
   if (command.length === 0 || command.length > MAX_COMMAND_LENGTH || command.trim() !== command || !PLAIN_COMMAND.test(command)) return false;
   if (VERSION_COMMANDS.has(command)) return true;
@@ -405,6 +445,7 @@ export function isSafeAutoBashCommand(command) {
   }
 }
 
+/** @param {string} resource @param {string} workspaceRoot */
 export async function isProjectScopedResource(resource, workspaceRoot) {
   if (!resource || resource.trim() !== resource || resource.includes('\0') || resource.startsWith('~') || resource.startsWith('file:') || UNSAFE_RESOURCE_CHARACTERS.test(resource)) return false;
   const root = await realpath(workspaceRoot).catch(() => resolve(workspaceRoot));
@@ -413,6 +454,7 @@ export async function isProjectScopedResource(resource, workspaceRoot) {
   return nearestExistingAncestorIsInside(candidate, root);
 }
 
+/** @param {string} command @param {string} projectRoot */
 export async function isAutoProjectBashCommand(command, projectRoot) {
   const source = String(command ?? '').trim();
   if (!source || !projectRoot || source.length > 8000) return false;
@@ -430,6 +472,7 @@ export async function isAutoProjectBashCommand(command, projectRoot) {
   return true;
 }
 
+/** @param {string} resource @param {string} workspaceRoot */
 export async function isSafeWorkspaceResource(resource, workspaceRoot) {
   if (!resource || resource.trim() !== resource || resource.includes('\0') || resource.startsWith('~') || resource.startsWith('file:') || UNSAFE_RESOURCE_CHARACTERS.test(resource)) return false;
   const root = await realpath(workspaceRoot).catch(() => resolve(workspaceRoot));
@@ -439,15 +482,18 @@ export async function isSafeWorkspaceResource(resource, workspaceRoot) {
   return nearestExistingAncestorIsInside(candidate, root);
 }
 
+/** @param {string} path */
 export function isSensitivePath(path) {
   const parts = String(path).split(/[\\/]/).map((part) => part.toLowerCase());
   return parts.some((part) => part === '.env' || part.startsWith('.env.') || part.includes('credentials') || part.endsWith('.pem') || part.endsWith('.key') || part === 'ltm-trie.json');
 }
 
+/** @param {string} resource */
 function isEnvExampleResource(resource) {
   const normalized = String(resource).replaceAll('\\', '/').toLowerCase();
   return normalized === '.env.example' || normalized.endsWith('/.env.example');
 }
+/** @param {string} resource */
 function isProtectedResource(resource) {
   const normalized = String(resource).replaceAll('\\', '/').toLowerCase().replace(/^\.\//, '');
   return normalized === '.claude.json' || normalized.endsWith('/.claude.json') ||
@@ -455,19 +501,22 @@ function isProtectedResource(resource) {
     normalized === '.cuppet/ltm-trie.json' || normalized.endsWith('/.cuppet/ltm-trie.json');
 }
 
+/** @param {string} candidate @param {string} root */
 async function nearestExistingAncestorIsInside(candidate, root) {
   let ancestor = candidate;
   for (;;) {
     try { return isAtOrInside(root, await realpath(ancestor)); }
     catch (error) {
-      if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) return false;
+      if (!error || typeof error !== 'object' || !('code' in error) || !['ENOENT', 'ENOTDIR'].includes(String(error.code))) return false;
       const parent = dirname(ancestor);
       if (parent === ancestor) return false;
       ancestor = parent;
     }
   }
 }
+/** @param {string} root @param {string} candidate */
 function isAtOrInside(root, candidate) { const path = relative(root, candidate); return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path); }
+/** @param {unknown[]} resources @returns {string[]} */
 function normalizePermissionResources(resources) {
   if (resources.length > MAX_PERMISSION_RESOURCES) {
     throw new PermissionDeniedError(
@@ -488,6 +537,7 @@ function normalizePermissionResources(resources) {
 }
 // SHA-256 over the whole request, as JSON so resource boundaries are unambiguous. Nothing is truncated:
 // two requests share a fingerprint only if every character matches.
+/** @param {string} action @param {string[]} resources @param {string} [fingerprintKey] */
 function permissionFingerprint(action, resources, fingerprintKey = '') {
   return createHash('sha256').update(JSON.stringify([action, resources, String(fingerprintKey ?? '')])).digest('hex');
 }

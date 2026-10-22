@@ -85,8 +85,12 @@ export class RuntimeService {
 
   async close() {
     if (this.#closed) return;
+    for (const execution of this.#liveExecutions.values()) {
+      this.#db.flushMessageContent?.(execution.activeAssistantId ?? execution.assistantId);
+      execution.flushDeltas?.();
+      execution.controller.abort();
+    }
     this.#closed = true;
-    for (const execution of this.#liveExecutions.values()) execution.controller.abort();
     this.#liveExecutions.clear();
     await Promise.all([
       ...[...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined)),
@@ -536,7 +540,21 @@ export class RuntimeService {
   async #generate({ sessionId, assistantId, userId, execution = null, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [], integrations = [] }) {
     const currentAssistantId = () => execution?.activeAssistantId ?? assistantId;
     const takeSteering = () => execution ? execution.steering.splice(0, execution.steering.length) : [];
-    const applySteering = (items) => this.#applySteering(execution, items);
+    let pendingDelta = '';
+    let pendingMessageId = '';
+    let pendingSeq = 0;
+    let deltaTimer = null;
+    const flushDeltas = () => {
+      clearTimeout(deltaTimer);
+      deltaTimer = null;
+      if (!pendingDelta) return;
+      /** @type {import('../shared/runtime-contracts').MessageDeltaEvent} */
+      const event = { type: 'message.delta', sessionId, messageId: pendingMessageId, delta: pendingDelta, seq: pendingSeq };
+      pendingDelta = '';
+      if (!this.#closed) this.#emit(event);
+    };
+    if (execution) execution.flushDeltas = flushDeltas;
+    const applySteering = (items) => { flushDeltas(); return this.#applySteering(execution, items); };
     let completedMessage;
     try {
       for (;;) {
@@ -574,7 +592,15 @@ export class RuntimeService {
             if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;
             const messageId = currentAssistantId();
             const message = this.#db.appendMessageContent(messageId, delta);
-            this.#emit({ type: 'message.delta', sessionId, messageId, delta, content: message.content });
+            if (pendingMessageId !== messageId) flushDeltas();
+            pendingMessageId = messageId;
+            pendingDelta += delta;
+            // seq is the UTF-16 end offset, so a session snapshot is also a resync cursor.
+            pendingSeq = message.content.length;
+            if (!deltaTimer) {
+              deltaTimer = setTimeout(flushDeltas, 50);
+              deltaTimer.unref?.();
+            }
           },
           onPaths: async (paths, mutation, details = null) => {
             if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(projectRoot, paths);
@@ -590,9 +616,11 @@ export class RuntimeService {
         const pending = takeSteering();
         if (!pending.length || !applySteering(pending).length) break;
       }
+      flushDeltas();
       completedMessage = this.#db.updateMessage(currentAssistantId(), { status: 'complete' });
       this.#emit({ type: 'message.completed', message: completedMessage });
     } catch (error) {
+      flushDeltas();
       if (this.#closed) return;
       const stopped = signal.aborted || error?.name === 'AbortError';
       const assistantMessageId = currentAssistantId();
@@ -603,6 +631,7 @@ export class RuntimeService {
       this.#emit({ type: 'message.completed', message: completedMessage });
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
+      flushDeltas();
       if (this.#closed) return;
       const currentExecution = this.#liveExecutions.get(sessionId);
       const ownsExecution = currentExecution === execution || currentExecution?.assistantId === assistantId;

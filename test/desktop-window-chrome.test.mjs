@@ -19,10 +19,10 @@ test('Windows/non-Mac BrowserWindow is frameless to eliminate duplicate native h
 });
 
 test('main process provides window lifecycle IPC and maximize event dispatching', () => {
-  assert.match(mainSource, /ipcMain\.handle\('cuppet:native:minimize'/, 'missing cuppet:native:minimize IPC handler');
-  assert.match(mainSource, /ipcMain\.handle\('cuppet:native:toggle-maximize'/, 'missing cuppet:native:toggle-maximize IPC handler');
-  assert.match(mainSource, /ipcMain\.handle\('cuppet:native:close'/, 'missing cuppet:native:close IPC handler');
-  assert.match(mainSource, /ipcMain\.handle\('cuppet:native:is-maximized'/, 'missing cuppet:native:is-maximized IPC handler');
+  assert.match(mainSource, /handle\('native\.minimizeWindow'/, 'missing guarded minimize IPC handler');
+  assert.match(mainSource, /handle\('native\.toggleMaximizeWindow'/, 'missing guarded maximize IPC handler');
+  assert.match(mainSource, /handle\('native\.closeWindow'/, 'missing guarded close IPC handler');
+  assert.match(mainSource, /handle\('native\.isWindowMaximized'/, 'missing guarded window status IPC handler');
 
   assert.match(mainSource, /mainWindow\.on\('maximize'/);
   assert.match(mainSource, /mainWindow\.on\('unmaximize'/);
@@ -30,11 +30,9 @@ test('main process provides window lifecycle IPC and maximize event dispatching'
 });
 
 test('preload bridges window controls to renderer via cuppet.native', () => {
-  assert.match(preloadSource, /minimizeWindow:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('cuppet:native:minimize'\)/);
-  assert.match(preloadSource, /toggleMaximizeWindow:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('cuppet:native:toggle-maximize'\)/);
-  assert.match(preloadSource, /closeWindow:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('cuppet:native:close'\)/);
-  assert.match(preloadSource, /isWindowMaximized:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('cuppet:native:is-maximized'\)/);
-  assert.match(preloadSource, /onWindowMaximizeChange:\s*\(callback\)/);
+  for (const name of ['minimizeWindow', 'toggleMaximizeWindow', 'closeWindow', 'isWindowMaximized', 'onWindowMaximizeChange']) {
+    assert.ok(preloadSource.includes('native.' + name));
+  }
 });
 
 test('ShellPanelControls embeds DesktopWindowControls on non-Mac and supports double-click maximize', () => {

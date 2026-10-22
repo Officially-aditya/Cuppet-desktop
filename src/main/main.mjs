@@ -13,6 +13,7 @@ import { createLinkPreviewLoader } from './link-preview.mjs';
 import { resolveProjectFilePath } from './project-file-path.mjs';
 import { createApprovalAttention } from './approval-attention.mjs';
 import { createWindowAppearance } from './window-appearance.mjs';
+import { createIpcRegistrar } from './ipc-boundary.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -72,100 +73,101 @@ async function bootstrap() {
 }
 
 function registerIpc() {
+  const handle = createIpcRegistrar({ ipcMain, getWindow: () => mainWindow, rendererUrl: new URL('../../dist-renderer/index.html', import.meta.url).href });
   const request = (method, params) => runtime.request(method, params);
-  ipcMain.handle('cuppet:health', () => request('health'));
-  ipcMain.handle('cuppet:usage:summary', () => request('usage.summary'));
-  ipcMain.handle('cuppet:browser-control:status', () => request('integration.browser.status'));
-  ipcMain.handle('cuppet:browser-control:connect', () => request('integration.browser.connect'));
-  ipcMain.handle('cuppet:browser-control:disconnect', () => request('integration.browser.disconnect'));
-  ipcMain.handle('cuppet:cognitive:status', () => request('cognitive.status'));
-  ipcMain.handle('cuppet:session:mode:get', (_event, sessionId) => request('session.mode.get', { sessionId }));
-  ipcMain.handle('cuppet:session:mode:set', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
-  ipcMain.handle('cuppet:session:auto:get', (_event, sessionId) => request('session.auto.get', { sessionId }));
-  ipcMain.handle('cuppet:session:auto:set', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: enabled === 'full' ? 'full' : Boolean(enabled) }));
-  ipcMain.handle('cuppet:permission:list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
-  ipcMain.handle('cuppet:permission:reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
-  ipcMain.handle('cuppet:question:list', (_event, sessionId) => request('question.list', { sessionId: sessionId ?? null }));
-  ipcMain.handle('cuppet:question:reply', (_event, requestId, answers) => request('question.reply', { requestId: boundedId(requestId), answers: validateQuestionAnswers(answers) }));
-  ipcMain.handle('cuppet:question:reject', (_event, requestId) => request('question.reject', { requestId: boundedId(requestId) }));
-  ipcMain.handle('cuppet:orchestrator:set', (_event, enabled) => request('orchestrator.set', { enabled: Boolean(enabled) }));
-  ipcMain.handle('cuppet:background:status', () => request('background.status'));
-  ipcMain.handle('cuppet:background:pause', () => request('background.pause'));
-  ipcMain.handle('cuppet:background:resume', () => request('background.resume'));
-  ipcMain.handle('cuppet:background:flush', (_event, sessionId) => request('background.flush', { sessionId }));
-  ipcMain.handle('cuppet:plan:get', (_event, sessionId, requestValue) => request('plan.get', { sessionId, request: requestValue }));
-  ipcMain.handle('cuppet:memory:query', (_event, sessionId, query) => request('memory.query', { sessionId, query }));
-  ipcMain.handle('cuppet:memory:graph', (_event, sessionId) => request('memory.graph', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:pe3:status', (_event, sessionId) => request('pe3.status', { sessionId }));
-  ipcMain.handle('cuppet:pe3:observe-paths', (_event, sessionId, paths) => request('pe3.observe-paths', { sessionId, paths: validatePaths(paths) }));
-  ipcMain.handle('cuppet:pe3:workspace-mutation', (_event, sessionId, paths) => request('pe3.workspace-mutation', { sessionId, paths: validatePaths(paths) }));
+  handle('health', () => request('health'));
+  handle('usage.summary', () => request('usage.summary'));
+  handle('integrations.browserControl.status', () => request('integration.browser.status'));
+  handle('integrations.browserControl.connect', () => request('integration.browser.connect'));
+  handle('integrations.browserControl.disconnect', () => request('integration.browser.disconnect'));
+  handle('cognitive.status', () => request('cognitive.status'));
+  handle('cognitive.modeGet', (_event, sessionId) => request('session.mode.get', { sessionId }));
+  handle('cognitive.modeSet', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));
+  handle('permissions.autoGet', (_event, sessionId) => request('session.auto.get', { sessionId }));
+  handle('permissions.autoSet', (_event, sessionId, enabled) => request('session.auto.set', { sessionId, enabled: enabled === 'full' ? 'full' : Boolean(enabled) }));
+  handle('permissions.list', (_event, sessionId) => request('permission.list', { sessionId: sessionId ?? null }));
+  handle('permissions.reply', (_event, requestId, reply) => request('permission.reply', { requestId, reply: validatePermissionReply(reply) }));
+  handle('questions.list', (_event, sessionId) => request('question.list', { sessionId: sessionId ?? null }));
+  handle('questions.reply', (_event, requestId, answers) => request('question.reply', { requestId: boundedId(requestId), answers: validateQuestionAnswers(answers) }));
+  handle('questions.reject', (_event, requestId) => request('question.reject', { requestId: boundedId(requestId) }));
+  handle('cognitive.orchestratorSet', (_event, enabled) => request('orchestrator.set', { enabled: Boolean(enabled) }));
+  handle('cognitive.backgroundStatus', () => request('background.status'));
+  handle('cognitive.backgroundPause', () => request('background.pause'));
+  handle('cognitive.backgroundResume', () => request('background.resume'));
+  handle('cognitive.backgroundFlush', (_event, sessionId) => request('background.flush', { sessionId }));
+  handle('cognitive.planGet', (_event, sessionId, requestValue) => request('plan.get', { sessionId, request: requestValue }));
+  handle('cognitive.memoryQuery', (_event, sessionId, query) => request('memory.query', { sessionId, query }));
+  handle('cognitive.memoryGraph', (_event, sessionId) => request('memory.graph', { sessionId: boundedId(sessionId) }));
+  handle('pe3.status', (_event, sessionId) => request('pe3.status', { sessionId }));
+  handle('pe3.observePaths', (_event, sessionId, paths) => request('pe3.observe-paths', { sessionId, paths: validatePaths(paths) }));
+  handle('pe3.workspaceMutation', (_event, sessionId, paths) => request('pe3.workspace-mutation', { sessionId, paths: validatePaths(paths) }));
 
-  ipcMain.handle('cuppet:remote:status', () => request('remote.status'));
-  ipcMain.handle('cuppet:remote:start', (_event, value) => request('remote.start', { ...validateRemoteStart(value), provider: settings.runtimeValue() }));
-  ipcMain.handle('cuppet:remote:stop', () => request('remote.stop'));
-  ipcMain.handle('cuppet:remote:invite', (_event, role) => request('remote.invite', { role: role === 'viewer' ? 'viewer' : 'trusted' }));
-  ipcMain.handle('cuppet:remote:devices', () => request('remote.devices'));
-  ipcMain.handle('cuppet:remote:revoke', (_event, deviceId) => request('remote.revoke', { deviceId: typeof deviceId === 'string' ? deviceId.slice(0, 128) : '' }));
+  handle('remote.status', () => request('remote.status'));
+  handle('remote.start', (_event, value) => request('remote.start', { ...validateRemoteStart(value), provider: settings.runtimeValue() }));
+  handle('remote.stop', () => request('remote.stop'));
+  handle('remote.invite', (_event, role) => request('remote.invite', { role: role === 'viewer' ? 'viewer' : 'trusted' }));
+  handle('remote.devices', () => request('remote.devices'));
+  handle('remote.revoke', (_event, deviceId) => request('remote.revoke', { deviceId: typeof deviceId === 'string' ? deviceId.slice(0, 128) : '' }));
 
-  ipcMain.handle('cuppet:command:list', () => listCommands());
-  ipcMain.handle('cuppet:command:execute', async (_event, sessionId, value) => executeDesktopCommand(request, sessionId, value));
+  handle('commands.list', () => listCommands());
+  handle('commands.execute', async (_event, sessionId, value) => executeDesktopCommand(request, sessionId, value));
 
-  ipcMain.handle('cuppet:session:list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
-  ipcMain.handle('cuppet:session:deleted:list', () => request('session.deleted.list'));
-  ipcMain.handle('cuppet:session:create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
-  ipcMain.handle('cuppet:session:get', (_event, sessionId) => request('session.get', { sessionId }));
-  ipcMain.handle('cuppet:session:edited-files', (_event, sessionId) => request('session.edited-files', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
-  ipcMain.handle('cuppet:session:rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));
-  ipcMain.handle('cuppet:session:archive', (_event, sessionId) => request('session.archive', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:restore', (_event, sessionId) => request('session.restore', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:delete', (_event, sessionId) => request('session.delete', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:send', async (_event, sessionId, text, attachments) => {
+  handle('sessions.list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
+  handle('sessions.deleted', () => request('session.deleted.list'));
+  handle('sessions.create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
+  handle('sessions.get', (_event, sessionId) => request('session.get', { sessionId }));
+  handle('sessions.editedFiles', (_event, sessionId) => request('session.edited-files', { sessionId: boundedId(sessionId) }));
+  handle('sessions.search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
+  handle('sessions.rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));
+  handle('sessions.archive', (_event, sessionId) => request('session.archive', { sessionId: boundedId(sessionId) }));
+  handle('sessions.restore', (_event, sessionId) => request('session.restore', { sessionId: boundedId(sessionId) }));
+  handle('sessions.delete', (_event, sessionId) => request('session.delete', { sessionId: boundedId(sessionId) }));
+  handle('sessions.send', async (_event, sessionId, text, attachments) => {
     const parsed = parseSlashCommand(text);
     if (parsed.kind === 'unknown') throw new Error(`Unknown Cuppet command: /${parsed.name}`);
     if (parsed.kind === 'command') return executeDesktopCommand(request, sessionId, parsed);
     return request('session.send', { sessionId, text, attachments: validateAttachments(attachments), provider: settings.runtimeValue() });
   });
-  ipcMain.handle('cuppet:session:stop', (_event, sessionId) => request('session.stop', { sessionId }));
-  ipcMain.handle('cuppet:session:undo:status', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:queue:list', (_event, sessionId) => request('session.queue.list', { sessionId: boundedId(sessionId) }));
-  ipcMain.handle('cuppet:session:queue:cancel', (_event, queueId, sessionId) => request('session.queue.cancel', { queueId: boundedId(queueId), sessionId: boundedId(sessionId) }));
+  handle('sessions.stop', (_event, sessionId) => request('session.stop', { sessionId }));
+  handle('sessions.undoStatus', (_event, sessionId) => request('session.undo.status', { sessionId: boundedId(sessionId) }));
+  handle('sessions.undo', (_event, sessionId) => request('session.undo', { sessionId: boundedId(sessionId) }));
+  handle('sessions.queueList', (_event, sessionId) => request('session.queue.list', { sessionId: boundedId(sessionId) }));
+  handle('sessions.queueCancel', (_event, queueId, sessionId) => request('session.queue.cancel', { queueId: boundedId(queueId), sessionId: boundedId(sessionId) }));
 
-  ipcMain.handle('cuppet:project:list', () => request('project.list'));
-  ipcMain.handle('cuppet:project:get', (_event, projectId) => request('project.get', { projectId }));
-  ipcMain.handle('cuppet:project:open', (_event, projectId) => request('project.open', { projectId }));
-  ipcMain.handle('cuppet:project:rename', (_event, projectId, name) => request('project.rename', { projectId: boundedId(projectId), name: typeof name === 'string' ? name.trim().slice(0, 120) : '' }));
-  ipcMain.handle('cuppet:project:add-local', (_event, value) => request('project.add-local', validateProjectPayload(value)));
-  ipcMain.handle('cuppet:project:clone-url', (_event, value) => request('project.clone-url', validateClonePayload(value, true)));
-  ipcMain.handle('cuppet:project:github-list', (_event, query) => request('project.github-list', { query: typeof query === 'string' ? query.slice(0, 120) : '' }));
-  ipcMain.handle('cuppet:project:github-clone', (_event, value) => request('project.github-clone', validateClonePayload(value, false)));
-  ipcMain.handle('cuppet:project:relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
-  ipcMain.handle('cuppet:project:checkout-branch', (_event, projectId, branch) => request('project.checkout-branch', { projectId: boundedId(projectId), branch: typeof branch === 'string' ? branch.trim() : '' }));
-  ipcMain.handle('cuppet:project:remove', (_event, projectId) => request('project.remove', { projectId }));
+  handle('projects.list', () => request('project.list'));
+  handle('projects.get', (_event, projectId) => request('project.get', { projectId }));
+  handle('projects.open', (_event, projectId) => request('project.open', { projectId }));
+  handle('projects.rename', (_event, projectId, name) => request('project.rename', { projectId: boundedId(projectId), name: typeof name === 'string' ? name.trim().slice(0, 120) : '' }));
+  handle('projects.addLocal', (_event, value) => request('project.add-local', validateProjectPayload(value)));
+  handle('projects.cloneUrl', (_event, value) => request('project.clone-url', validateClonePayload(value, true)));
+  handle('projects.githubList', (_event, query) => request('project.github-list', { query: typeof query === 'string' ? query.slice(0, 120) : '' }));
+  handle('projects.githubClone', (_event, value) => request('project.github-clone', validateClonePayload(value, false)));
+  handle('projects.relocate', (_event, projectId, path) => request('project.relocate', { projectId, path }));
+  handle('projects.checkoutBranch', (_event, projectId, branch) => request('project.checkout-branch', { projectId: boundedId(projectId), branch: typeof branch === 'string' ? branch.trim() : '' }));
+  handle('projects.remove', (_event, projectId) => request('project.remove', { projectId }));
 
-  ipcMain.handle('cuppet:terminal:start', (event, projectId, options) => terminals.start(event.sender, projectId, options));
-  ipcMain.handle('cuppet:terminal:write', (event, sessionId, input) => terminals.write(event.sender, sessionId, input));
-  ipcMain.handle('cuppet:terminal:resize', (event, sessionId, cols, rows) => terminals.resize(event.sender, sessionId, cols, rows));
-  ipcMain.handle('cuppet:terminal:interrupt', (event, sessionId) => terminals.interrupt(event.sender, sessionId));
-  ipcMain.handle('cuppet:terminal:stop', (event, sessionId) => terminals.stop(event.sender, sessionId));
+  handle('terminal.start', (event, projectId, options) => terminals.start(event.sender, projectId, options));
+  handle('terminal.write', (event, sessionId, input) => terminals.write(event.sender, sessionId, input));
+  handle('terminal.resize', (event, sessionId, cols, rows) => terminals.resize(event.sender, sessionId, cols, rows));
+  handle('terminal.interrupt', (event, sessionId) => terminals.interrupt(event.sender, sessionId));
+  handle('terminal.stop', (event, sessionId) => terminals.stop(event.sender, sessionId));
 
-  ipcMain.handle('cuppet:native:appearance', (_event, preference) => windowAppearance.set(preference));
-  ipcMain.handle('cuppet:native:choose-folder', (_event, options) => chooseFolder(options));
-  ipcMain.handle('cuppet:native:open-project-file', (_event, projectId, path) => openProjectFile(request, projectId, path));
-  ipcMain.handle('cuppet:native:project-file-editor', (_event, projectId, path) => projectFileEditor(request, projectId, path));
-  ipcMain.handle('cuppet:native:link-preview', (_event, url) => loadLinkPreview(url));
-  ipcMain.handle('cuppet:native:open-external', (_event, url) => openExternal(url));
-  ipcMain.handle('cuppet:native:copy-text', (_event, value) => {
+  handle('native.setAppearance', (_event, preference) => windowAppearance.set(preference));
+  handle('native.chooseFolder', (_event, options) => chooseFolder(options));
+  handle('native.openProjectFile', (_event, projectId, path) => openProjectFile(request, projectId, path));
+  handle('native.projectFileEditor', (_event, projectId, path) => projectFileEditor(request, projectId, path));
+  handle('native.linkPreview', (_event, url) => loadLinkPreview(url));
+  handle('native.openExternal', (_event, url) => openExternal(url));
+  handle('native.copyText', (_event, value) => {
     const text = typeof value === 'string' ? value.slice(0, 2_000_000) : '';
     clipboard.writeText(text);
     return { copied: true };
   });
-  ipcMain.handle('cuppet:native:minimize', (event) => {
+  handle('native.minimizeWindow', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.minimize();
   });
-  ipcMain.handle('cuppet:native:toggle-maximize', (event) => {
+  handle('native.toggleMaximizeWindow', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return false;
     if (win.isMaximized()) {
@@ -175,21 +177,21 @@ function registerIpc() {
     win.maximize();
     return true;
   });
-  ipcMain.handle('cuppet:native:close', (event) => {
+  handle('native.closeWindow', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.close();
   });
-  ipcMain.handle('cuppet:native:is-maximized', (event) => {
+  handle('native.isWindowMaximized', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return win?.isMaximized() ?? false;
   });
 
-  ipcMain.handle('cuppet:cli-agent:status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
-  ipcMain.handle('cuppet:cli-agent:connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
+  handle('cliAgents.status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
+  handle('cliAgents.connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
   const sandbox = new SandboxManager();
-  ipcMain.handle('cuppet:sandbox:status', () => sandbox.getCapabilities());
-  ipcMain.handle('cuppet:settings:get', () => settings.rendererValue());
-  ipcMain.handle('cuppet:settings:models', async (_event, value) => {
+  handle('sandbox.status', () => sandbox.getCapabilities());
+  handle('settings.get', () => settings.rendererValue());
+  handle('settings.models', async (_event, value) => {
     const catalog = await request('provider.models', {
       provider: settings.runtimeValue(),
       model: value && typeof value === 'object' && !Array.isArray(value) && typeof value.model === 'string'
@@ -209,7 +211,7 @@ function registerIpc() {
     }
     return catalog;
   });
-  ipcMain.handle('cuppet:settings:save', async (_event, value) => {
+  handle('settings.save', async (_event, value) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const requestedProviderID = typeof source.providerID === 'string' && source.providerID.trim()
       ? source.providerID.trim()

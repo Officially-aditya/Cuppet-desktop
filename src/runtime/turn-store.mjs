@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { migrateDatabase } from './database-migrations.mjs';
 import { normalizeRunPhase, phaseFromRunStatus } from './run-phase.mjs';
 
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'running', 'waiting', 'settling']);
@@ -17,62 +18,13 @@ export class TurnStore {
     if (typeof source === 'string') {
       mkdirSync(dirname(source), { recursive: true });
       const sqlite = new DatabaseSync(source);
-      sqlite.exec('PRAGMA journal_mode = WAL;');
+
       this.#ownedDatabase = sqlite;
       this.#db = sqliteRepository(sqlite);
     } else {
       this.#db = requireSqlRepository(source);
     }
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS runs (
-        run_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        source_session_id TEXT,
-        project_id TEXT,
-        status TEXT NOT NULL,
-        phase TEXT,
-        error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_runs_session_updated
-        ON runs(session_id, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS queued_turns (
-        queue_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        params_json TEXT NOT NULL,
-        status TEXT NOT NULL,
-        error TEXT,
-        queued_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_queued_turns_session_state
-        ON queued_turns(session_id, status, queued_at ASC, queue_id ASC);
-
-      CREATE TABLE IF NOT EXISTS runtime_events (
-        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        run_id TEXT,
-        queue_id TEXT,
-        sequence INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        schema_version INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        UNIQUE(session_id, sequence)
-      );
-      CREATE INDEX IF NOT EXISTS idx_runtime_events_session_sequence
-        ON runtime_events(session_id, sequence ASC);
-
-      CREATE TABLE IF NOT EXISTS runtime_store_migrations (
-        id TEXT PRIMARY KEY,
-        migrated_at INTEGER NOT NULL
-      );
-    `);
-
-    this.#ensureRunPhaseColumn();
-    this.#installConversationProjectionTriggers();
+    try { migrateDatabase(this.#db); } catch (error) { this.close(); throw error; }
     if (legacyPath) this.#migrateLegacyFile(legacyPath);
     this.#recoverInterruptedState(Date.now());
   }
@@ -328,96 +280,7 @@ export class TurnStore {
     });
   }
 
-  #ensureRunPhaseColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(runs)').all();
-    if (!columns.some((column) => column.name === 'phase')) this.#db.exec('ALTER TABLE runs ADD COLUMN phase TEXT');
-    this.#db.prepare(`
-      UPDATE runs
-      SET phase=CASE status
-        WHEN 'starting' THEN 'preparing'
-        WHEN 'running' THEN 'streaming'
-        WHEN 'waiting' THEN 'waiting_for_user'
-        WHEN 'settling' THEN 'settling'
-        WHEN 'complete' THEN 'complete'
-        WHEN 'stopped' THEN 'stopped'
-        WHEN 'interrupted' THEN 'interrupted'
-        ELSE 'error'
-      END
-      WHERE phase IS NULL OR TRIM(phase)=''
-    `).run();
-  }
 
-  #installConversationProjectionTriggers() {
-    const hasMessages = Boolean(this.#db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get());
-    if (!hasMessages) return;
-    // Recreate these projection-only triggers so schema upgrades are applied to
-    // existing databases as well as clean installs. Provider/TST side effects stay
-    // out of SQLite, while message + run transitions remain one transaction.
-    this.#db.exec(`
-      DROP TRIGGER IF EXISTS cuppet_run_start_from_assistant_message;
-      DROP TRIGGER IF EXISTS cuppet_run_settling_from_assistant_message;
-
-      CREATE TRIGGER cuppet_run_start_from_assistant_message
-      AFTER INSERT ON messages
-      WHEN NEW.role='assistant'
-        AND NEW.status='streaming'
-        AND NOT EXISTS (SELECT 1 FROM runs WHERE run_id=NEW.id)
-      BEGIN
-        INSERT INTO runs (
-          run_id,session_id,source_session_id,project_id,status,phase,error,created_at,updated_at
-        ) VALUES (
-          NEW.id,
-          NEW.session_id,
-          NULL,
-          (SELECT project_id FROM sessions WHERE id=NEW.session_id),
-          'starting',
-          'preparing',
-          NULL,
-          NEW.created_at,
-          NEW.updated_at
-        );
-        INSERT INTO runtime_events (
-          session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
-        ) VALUES (
-          NEW.session_id,
-          NEW.id,
-          NULL,
-          (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
-          'run.started',
-          '{"status":"starting","phase":"preparing","source":"assistant_message"}',
-          ${EVENT_SCHEMA_VERSION},
-          NEW.created_at
-        );
-      END;
-
-      CREATE TRIGGER cuppet_run_settling_from_assistant_message
-      AFTER UPDATE OF status ON messages
-      WHEN OLD.role='assistant'
-        AND OLD.status='streaming'
-        AND NEW.status IN ('complete','stopped','interrupted','error')
-        AND EXISTS (
-          SELECT 1 FROM runs
-          WHERE run_id=NEW.id AND status IN ('starting','running','waiting')
-        )
-      BEGIN
-        UPDATE runs
-        SET status='settling', phase='settling', updated_at=NEW.updated_at
-        WHERE run_id=NEW.id AND status IN ('starting','running','waiting');
-        INSERT INTO runtime_events (
-          session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
-        ) VALUES (
-          NEW.session_id,
-          NEW.id,
-          NULL,
-          (SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE session_id=NEW.session_id),
-          'run.settling',
-          '{"status":"settling","phase":"settling","messageStatus":"' || NEW.status || '"}',
-          ${EVENT_SCHEMA_VERSION},
-          NEW.updated_at
-        );
-      END;
-    `);
-  }
 
   #migrateLegacyFile(path) {
     if (this.#db.prepare('SELECT 1 FROM runtime_store_migrations WHERE id=?').get(LEGACY_MIGRATION_ID)) return;

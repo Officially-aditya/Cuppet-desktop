@@ -2,36 +2,10 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { Project } from '../types';
+import type { Project, TerminalSession, TerminalEvent } from '../types';
 import { APPEARANCE_CHANGED_EVENT, terminalAppearance } from './appearance';
 
-type TerminalSession = {
-  sessionId: string;
-  projectId: string;
-  cwd: string;
-  shell: string;
-  startedAt: number;
-};
 
-type TerminalEvent = {
-  sessionId: string;
-  projectId: string;
-  type: 'output' | 'exit' | 'error';
-  stream?: 'stdout' | 'stderr';
-  data?: string;
-  code?: number | null;
-  signal?: string | null;
-  message?: string;
-};
-
-type TerminalApi = {
-  start: (projectId: string, options?: { cols?: number; rows?: number }) => Promise<TerminalSession>;
-  write: (sessionId: string, input: string) => Promise<{ written: boolean }>;
-  resize: (sessionId: string, cols: number, rows: number) => Promise<{ resized: boolean }>;
-  interrupt: (sessionId: string) => Promise<{ interrupted: boolean }>;
-  stop: (sessionId: string) => Promise<{ stopped: boolean }>;
-  onEvent: (handler: (event: TerminalEvent) => void) => () => void;
-};
 
 type Props = {
   project: Project | null;
@@ -40,7 +14,7 @@ type Props = {
 };
 
 export function ProjectTerminal({ project, open: openProp, onOpenChange }: Props) {
-  const terminal = (window.cuppet as typeof window.cuppet & { terminal?: TerminalApi })?.terminal;
+  const terminal = window.cuppet.terminal;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
   const [height, setHeight] = useState(() => window.innerHeight <= 700 ? 190 : 250);

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src/shared/**/*.d.ts",
+    "src/runtime/permissions.mjs",
+    "src/runtime/providers/runtime-contract.mjs",
+    "test/runtime-contracts.types.ts"
+  ]
+}

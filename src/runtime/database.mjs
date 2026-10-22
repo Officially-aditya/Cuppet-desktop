@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { migrateDatabase } from './database-migrations.mjs';
 
 const MESSAGE_STATUSES = new Set(['complete', 'streaming', 'stopped', 'interrupted', 'error']);
 const TOOL_STATUSES = new Set(['running', 'complete', 'error', 'rejected']);
@@ -12,75 +13,16 @@ export class ConversationDatabase {
   #transactionDepth = 0;
   #savepointSequence = 0;
   #searchIndexTimer = null;
+  #pendingContent = new Map();
+  #appendContent;
+  #touchStreamingSession;
   constructor(path) {
     mkdirSync(dirname(path), { recursive: true });
     this.#db = new DatabaseSync(path);
-    this.#db.exec('PRAGMA journal_mode = WAL;');
-    this.#db.exec('PRAGMA foreign_keys = ON;');
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        canonical_path TEXT NOT NULL UNIQUE,
-        repository_id TEXT,
-        remote_url TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        last_opened_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        sequence INTEGER NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
-        content TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'complete',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(session_id, sequence)
-      );
-      CREATE TABLE IF NOT EXISTS message_activities (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-        sequence INTEGER NOT NULL,
-        source TEXT NOT NULL,
-        activity_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        UNIQUE(message_id, sequence)
-      );
-      CREATE TABLE IF NOT EXISTS tool_executions (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        message_id TEXT,
-        call_id TEXT NOT NULL,
-        tool_name TEXT NOT NULL,
-        arguments_json TEXT NOT NULL,
-        output TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','complete','error','rejected')),
-        permission_source TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_projects_last_opened ON projects(last_opened_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_messages_session_sequence ON messages(session_id, sequence ASC);
-      CREATE INDEX IF NOT EXISTS idx_message_activities_message_sequence ON message_activities(message_id, sequence ASC);
-      CREATE INDEX IF NOT EXISTS idx_message_activities_session_sequence ON message_activities(session_id, message_id, sequence ASC);
-      CREATE INDEX IF NOT EXISTS idx_tool_executions_session_created ON tool_executions(session_id, created_at ASC);
-    `);
-    this.#ensureSessionProjectColumn();
-    this.#ensureSessionArchiveColumn();
-    this.#ensureSessionDeletedColumn();
-    this.#ensureMessageAttachmentsColumn();
-    this.#ensureToolExecutionMessageColumn();
-    this.#ensureSearchIndex();
+    try { migrateDatabase(this.#db); } catch (error) { this.#db.close(); throw error; }
+    this.#scheduleSearchIndex(250);
+    this.#appendContent = this.#db.prepare('UPDATE messages SET content=content||?,updated_at=? WHERE id=?');
+    this.#touchStreamingSession = this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=(SELECT session_id FROM messages WHERE id=?)');
     const now = Date.now();
     this.transaction(() => {
       const interrupted = this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming' RETURNING rowid").all(now);
@@ -91,49 +33,6 @@ export class ConversationDatabase {
       }
     });
     this.#db.prepare("UPDATE tool_executions SET status = 'error', output = CASE WHEN output = '' THEN 'Interrupted by runtime restart.' ELSE output END, updated_at = ? WHERE status = 'running'").run(now);
-  }
-  #ensureSessionProjectColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(sessions)').all();
-    if (!columns.some((column) => column.name === 'project_id')) {
-      this.#db.exec('ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL');
-      this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_id, updated_at DESC)');
-    }
-  }
-  #ensureSessionArchiveColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(sessions)').all();
-    if (!columns.some((column) => column.name === 'archived_at')) {
-      this.#db.exec('ALTER TABLE sessions ADD COLUMN archived_at INTEGER');
-      this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_archived_updated ON sessions(archived_at, updated_at DESC)');
-    }
-  }
-  #ensureSessionDeletedColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(sessions)').all();
-    if (!columns.some((column) => column.name === 'deleted_at')) {
-      this.#db.exec('ALTER TABLE sessions ADD COLUMN deleted_at INTEGER');
-      this.#db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)');
-    }
-  }
-  #ensureMessageAttachmentsColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(messages)').all();
-    if (!columns.some((column) => column.name === 'attachments_json')) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN attachments_json TEXT');
-    }
-  }
-  #ensureToolExecutionMessageColumn() {
-    const columns = this.#db.prepare('PRAGMA table_info(tool_executions)').all();
-    if (!columns.some((column) => column.name === 'message_id')) {
-      this.#db.exec('ALTER TABLE tool_executions ADD COLUMN message_id TEXT');
-    }
-    this.#db.exec('CREATE INDEX IF NOT EXISTS idx_tool_executions_message_created ON tool_executions(session_id, message_id, created_at ASC)');
-  }
-  #ensureSearchIndex() {
-    this.#db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(kind UNINDEXED,item_id UNINDEXED,session_id UNINDEXED,title,content,tokenize='unicode61 remove_diacritics 2')`);
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS search_index_progress (kind TEXT PRIMARY KEY, last_rowid INTEGER NOT NULL);
-      INSERT OR IGNORE INTO search_index_progress VALUES ('session', 0), ('message', 0);
-    `);
-    // Let startup finish before touching historical content. Existing results stay usable.
-    this.#scheduleSearchIndex(250);
   }
   #scheduleSearchIndex(delay = SEARCH_INDEX_BATCH_DELAY_MS) {
     this.#searchIndexTimer = setTimeout(() => {
@@ -181,7 +80,7 @@ export class ConversationDatabase {
       this.#db.prepare('INSERT INTO search_index(kind,item_id,session_id,title,content) VALUES (?,?,?,?,?)').run('message', message.id, message.sessionId, message.title, message.content);
     }
   }
-  close(){ clearTimeout(this.#searchIndexTimer); this.#searchIndexTimer = null; this.#db.close(); }
+  close(){ for (const id of this.#pendingContent.keys()) this.flushMessageContent(id); clearTimeout(this.#searchIndexTimer); this.#searchIndexTimer = null; this.#db.close(); }
   sqlRepository() {
     const owner = this;
     return Object.freeze({
@@ -242,12 +141,44 @@ export class ConversationDatabase {
     return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
   }
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
-  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id).map(hydrateMessage); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
+  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id).map((row) => this.#pendingContent.get(row.id)?.message ?? hydrateMessage(row)); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',attachments=[],status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; const attachmentsJson = Array.isArray(attachments) && attachments.length ? JSON.stringify(attachments) : null; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,attachments_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,attachmentsJson,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
-  getMessage(id){ const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
+  getMessage(id){ if (this.#pendingContent.has(id)) return { ...this.#pendingContent.get(id).message }; const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
   getLatestStreamingAssistantMessageId(sessionId){ return this.#db.prepare("SELECT id FROM messages WHERE session_id=? AND role='assistant' AND status='streaming' ORDER BY sequence DESC LIMIT 1").get(sessionId)?.id ?? ''; }
-  updateMessage(id,{content,status,now=Date.now()}){ if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
-  appendMessageContent(id,delta,now=Date.now()){ const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); return this.updateMessage(id,{content:`${current.content}${delta}`,now}); }
+  updateMessage(id,{content,status,now=Date.now()}){ this.flushMessageContent(id); if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
+  appendMessageContent(id, delta, now = Date.now()) {
+    let pending = this.#pendingContent.get(id);
+    if (pending?.error) throw pending.error;
+    if (!pending) {
+      const message = this.getMessage(id);
+      if (!message) throw new Error(`unknown message: ${id}`);
+      if (message.status !== 'streaming') return this.updateMessage(id, { content: message.content + delta, now });
+      pending = { message, delta: '', timer: null, error: null };
+      this.#pendingContent.set(id, pending);
+    }
+    const firstText = pending.message.content.length === 0;
+    pending.delta += delta;
+    pending.message = { ...pending.message, content: pending.message.content + delta, updatedAt: now };
+    if (firstText) this.flushMessageContent(id);
+    else if (!pending.timer) {
+      pending.timer = setTimeout(() => {
+        pending.timer = null;
+        try { this.flushMessageContent(id); } catch (error) { pending.error = error; }
+      }, 250);
+      pending.timer.unref?.();
+    }
+    return pending.message;
+  }
+  flushMessageContent(id) {
+    const pending = this.#pendingContent.get(id);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.transaction(() => {
+      this.#appendContent.run(pending.delta, pending.message.updatedAt, id);
+      this.#touchStreamingSession.run(pending.message.updatedAt, id);
+    });
+    this.#pendingContent.delete(id);
+  }
   appendMessageActivity({sessionId,messageId,source='provider',activity,now=Date.now()}){
     const message=this.getMessage(messageId); if(!message) throw new Error(`unknown message: ${messageId}`);
     if(message.sessionId!==sessionId) throw new Error(`message ${messageId} does not belong to session ${sessionId}`);

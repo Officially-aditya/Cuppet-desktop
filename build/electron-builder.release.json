@@ -11,6 +11,7 @@
   "files": [
     "src/main/**/*",
     "src/preload/**/*",
+    "src/shared/**/*",
     "src/runtime/**/*",
     "src/cli/**/*",
     "dist-renderer/**/*",

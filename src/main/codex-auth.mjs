@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron';
+import { shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 import { parseCodexAccount } from '../runtime/codex-account.mjs';
 import { listCodexModels as listCodexModelsFromDriver } from '../runtime/providers/backends/codex.mjs';
@@ -7,10 +7,10 @@ const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 let activeLogin = null;
 let lastMessage = '';
 
-export function installCodexAuthIpc() {
-  ipcMain.handle('cuppet:codex-auth:status', () => codexAuthStatus());
-  ipcMain.handle('cuppet:codex-auth:login', () => startCodexLogin());
-  ipcMain.handle('cuppet:codex-auth:logout', () => logoutCodex());
+export function installCodexAuthIpc(handle) {
+  handle('codexAuth.status', () => codexAuthStatus());
+  handle('codexAuth.login', () => startCodexLogin());
+  handle('codexAuth.logout', () => logoutCodex());
 }
 
 async function codexAuthStatus() {

@@ -48,13 +48,37 @@ export function renderMarkdown(value: unknown) {
   return renderBlocks(source.split('\n'), 0).join('\n');
 }
 
-function renderBlocks(lines: string[], depth: number): string[] {
+// Keep completed top-level blocks out of the streaming parse/highlight path. The final
+// block stays mutable until a complete following line proves that it has ended.
+export function createStreamingMarkdownRenderer() {
+  let committed = '';
+  let blocks: string[] = [];
+  return (value: string) => {
+    const source = value.replace(/\r\n?/g, '\n');
+    if (!source.startsWith(committed)) { committed = ''; blocks = []; }
+    const tail = source.slice(committed.length);
+    const complete = tail.slice(0, tail.lastIndexOf('\n') + 1);
+    const lines = complete.split('\n');
+    const starts: number[] = [];
+    const rendered = renderBlocks(lines, 0, starts);
+    if (starts.length > 1) {
+      const boundary = starts[starts.length - 1];
+      const prefix = lines.slice(0, boundary).join('\n') + '\n';
+      committed += prefix;
+      blocks = [...blocks, ...rendered.slice(0, -1)];
+    }
+    return { blocks, tail: renderMarkdown(source.slice(committed.length)) };
+  };
+}
+
+function renderBlocks(lines: string[], depth: number, starts?: number[]): string[] {
   const out: string[] = [];
   let index = 0;
 
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index++; continue; }
+    starts?.push(index);
 
     const fence = openFence(line);
     if (fence) {

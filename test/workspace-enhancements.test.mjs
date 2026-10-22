@@ -59,14 +59,14 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(host, /shell\.openPath\(actual\)/);
   assert.match(host, /shell\.openExternal\(url\.toString\(\)\)/);
   assert.match(host, /setWindowOpenHandler/);
-  assert.match(host, /cuppet:session:edited-files'[\s\S]*request\('session\.edited-files'/);
+  assert.match(host, /handle\('sessions\.editedFiles'[\s\S]*request\('session\.edited-files'/);
   assert.doesNotMatch(host, /listSessionEditedFiles|mutation-journal/);
   assert.match(runtime, /listSessionEditedFiles/);
   assert.match(runtime, /case 'session\.edited-files'/);
   assert.match(runtime, /listSessionEditedFiles\(dataDir, sessionId\)/);
-  assert.match(preload, /openProjectFile:.*cuppet:native:open-project-file/s);
-  assert.match(preload, /openExternal:.*cuppet:native:open-external/s);
-  assert.match(preload, /editedFiles:.*cuppet:session:edited-files/s);
+  assert.match(preload, /native\.openProjectFile.*cuppet:native:open-project-file/s);
+  assert.match(preload, /native\.openExternal.*cuppet:native:open-external/s);
+  assert.match(preload, /sessions\.editedFiles.*cuppet:session:edited-files/s);
   assert.match(markdown, /data-cuppet-project-file/);
   assert.match(markdown, /data-cuppet-external/);
   // Inline file paths are linked by the renderer at render time and opened by React handlers; nothing patches

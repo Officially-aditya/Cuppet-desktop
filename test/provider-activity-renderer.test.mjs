@@ -406,7 +406,8 @@ test('renderer consumes one canonical transcript reducer without preload legacy 
   assert.match(transcript, /activity\.reasoning\.delta/);
   assert.match(transcript, /activity\.tool\./);
 
-  assert.match(database, /CREATE TABLE IF NOT EXISTS message_activities/);
+  const migrations = await readFile(new URL('../src/runtime/database-migrations.mjs', import.meta.url), 'utf8');
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS message_activities/);
   assert.match(database, /appendMessageActivity/);
   assert.match(database, /activities:this\.listMessageActivities\(id\)/);
   assert.match(runtime, /appendMessageActivity/);

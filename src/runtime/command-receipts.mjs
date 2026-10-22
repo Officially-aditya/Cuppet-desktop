@@ -4,27 +4,14 @@ const COMMAND_SCHEMA_VERSION = 1;
 const MAX_RECEIPTS = 2000;
 const RECEIPT_STATES = new Set(['processing', 'accepted', 'failed', 'unknown']);
 
+import { migrateDatabase } from './database-migrations.mjs';
+
 export class CommandReceiptStore {
   #db;
 
   constructor(repository, now = Date.now) {
     this.#db = requireSqlRepository(repository);
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS command_receipts (
-        command_id TEXT PRIMARY KEY,
-        method TEXT NOT NULL,
-        session_id TEXT,
-        fingerprint TEXT NOT NULL,
-        state TEXT NOT NULL,
-        result_json TEXT,
-        error TEXT,
-        schema_version INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_command_receipts_session_updated
-        ON command_receipts(session_id, updated_at DESC);
-    `);
+    migrateDatabase(this.#db);
     this.#recoverInterrupted(now());
   }
 

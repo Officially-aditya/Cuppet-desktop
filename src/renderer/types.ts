@@ -269,14 +269,8 @@ export type RemoteStatus = {
   setup?: RemoteInvite | null;
 };
 
-export type PermissionRequest = {
-  id: string;
-  sessionId?: string;
-  action?: string;
-  description?: string;
-  resources?: string[];
-  autoEligible?: boolean;
-};
+export type { PermissionRequest } from '../shared/runtime-contracts';
+import type { PermissionRequest } from '../shared/runtime-contracts';
 
 export type QuestionRequest = {
   id: string;
@@ -289,133 +283,41 @@ export type QuestionRequest = {
   }>;
 };
 
-export type RuntimeEvent = Record<string, any> & { type?: string };
+// Additional projection events remain compatible while checked core contracts migrate.
+export type RuntimeEvent = Record<string, any> & { type?: string; delta?: import('../shared/runtime-contracts').MessageDeltaEvent['delta']; seq?: import('../shared/runtime-contracts').MessageDeltaEvent['seq'] };
 
-export type CuppetApi = {
-  health: () => Promise<any>;
-  usage: {
-    summary: () => Promise<TokenUsageSummary>;
-  };
-  integrations: {
-    browserControl: {
-      status: () => Promise<BrowserControlStatus>;
-      connect: () => Promise<BrowserControlStatus>;
-      disconnect: () => Promise<BrowserControlStatus>;
-    };
-  };
-  cognitive: {
-    status: () => Promise<CognitiveStatus>;
-    modeGet: (sessionId: string) => Promise<{ mode?: 'plan' | 'build' }>;
-    modeSet: (sessionId: string, mode: 'plan' | 'build') => Promise<any>;
-    orchestratorSet: (enabled: boolean) => Promise<any>;
-    backgroundStatus: () => Promise<any>;
-    backgroundPause: () => Promise<any>;
-    backgroundResume: () => Promise<any>;
-    backgroundFlush: (sessionId: string) => Promise<any>;
-    planGet: (sessionId: string, request?: any) => Promise<any>;
-    memoryQuery: (sessionId: string, query: any) => Promise<any>;
-    memoryGraph: (sessionId: string) => Promise<{
+export type { CuppetApi } from './ipc-api';
+import type { CuppetApi } from './ipc-api';
+
+export type MemoryGraph = {
       available?: boolean;
       reason?: string;
       root?: string;
       graph?: { files?: number; modules?: number; symbols?: number; edges?: number; progress?: { discovered?: number; indexed?: number; skipped?: number; complete?: boolean } };
       files?: string[];
       editedFiles?: Array<{ path: string; tool?: string; updatedAt?: number; mutationId?: string | null; executionId?: string | null }>;
-    }>;
-  };
-  commands: {
-    list: () => Promise<CommandDefinition[]>;
-    execute: (sessionId: string | null, value: string | { id: string; input?: Record<string, unknown> }) => Promise<CommandResult>;
-  };
-  permissions: {
-    list: (sessionId?: string | null) => Promise<PermissionRequest[]>;
-    reply: (requestId: string, reply: 'once' | 'always' | 'reject') => Promise<any>;
-    autoGet: (sessionId: string) => Promise<any>;
-    autoSet: (sessionId: string, enabled: boolean | 'full') => Promise<any>;
-  };
-  questions: {
-    list: (sessionId?: string | null) => Promise<QuestionRequest[]>;
-    reply: (requestId: string, answers: string[][]) => Promise<any>;
-    reject: (requestId: string) => Promise<any>;
-  };
-  remote: {
-    status: () => Promise<RemoteStatus>;
-    start: (value?: Record<string, unknown>) => Promise<{ status?: RemoteStatus; invite?: RemoteInvite | null }>;
-    stop: () => Promise<any>;
-    invite: (role?: string) => Promise<RemoteInvite>;
-    devices: () => Promise<RemoteDevice[]>;
-    revoke: (deviceId: string) => Promise<any>;
-  };
-  cliAgents: {
-    status: (providerID: string) => Promise<CliAgentStatus>;
-    connect: (providerID: string) => Promise<CliAgentStatus>;
-  };
-  codexAuth: {
-    status: () => Promise<any>;
-    login: () => Promise<any>;
-    logout: () => Promise<any>;
-  };
-  pe3: {
-    status: (sessionId: string) => Promise<any>;
-    observePaths: (sessionId: string, paths: string[]) => Promise<any>;
-    workspaceMutation: (sessionId: string, paths: string[]) => Promise<any>;
-  };
-  sessions: {
-    list: (projectId?: string) => Promise<Session[]>;
-    deleted: () => Promise<Session[]>;
-    create: (projectId?: string | null) => Promise<Session>;
-    get: (sessionId: string) => Promise<Session>;
-    search: (query: string, options?: Record<string, unknown>) => Promise<SearchResult[]>;
-    rename: (sessionId: string, title: string) => Promise<any>;
-    archive: (sessionId: string) => Promise<any>;
-    restore: (sessionId: string) => Promise<any>;
-    delete: (sessionId: string) => Promise<any>;
-    send: (sessionId: string, text: string, attachments?: Attachment[]) => Promise<any>;
-    stop: (sessionId: string) => Promise<any>;
-    undoStatus: (sessionId: string) => Promise<any>;
-    undo: (sessionId: string) => Promise<any>;
-    queueList: (sessionId: string) => Promise<QueuedTurn[]>;
-    queueCancel: (queueId: string, sessionId?: string) => Promise<{ cancelled: boolean }>;
-  };
-  projects: {
-    list: () => Promise<Project[]>;
-    get: (projectId: string) => Promise<Project>;
-    open: (projectId: string) => Promise<any>;
-    rename: (projectId: string, name: string) => Promise<any>;
-    addLocal: (value: Record<string, unknown>) => Promise<Project>;
-    cloneUrl: (value: Record<string, unknown>) => Promise<Project>;
-    githubList: (query?: string) => Promise<Array<{ nameWithOwner: string; isPrivate?: boolean; defaultBranch?: string }>>;
-    githubClone: (value: Record<string, unknown>) => Promise<Project>;
-    relocate: (projectId: string, path: string) => Promise<Project>;
-    checkoutBranch: (projectId: string, branch: string) => Promise<Project>;
-    remove: (projectId: string) => Promise<any>;
-  };
-  native: {
-    platform: string;
-    setAppearance?: (preference: 'system' | 'dark' | 'light') => Promise<{ preference: string }>;
-    onOpenSession?: (callback: (sessionId: string) => void) => () => void;
-    chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
-    copyText: (text: string) => Promise<{ copied: boolean }>;
-    openProjectFile: (projectId: string, path: string) => Promise<{ opened: boolean; path: string }>;
-    openExternal: (url: string) => Promise<{ opened: boolean }>;
-    projectFileEditor?: (projectId: string, path: string) => Promise<{ path: string; name: string; icon: string | null }>;
-    linkPreview?: (url: string) => Promise<{ url: string; hostname: string; title: string; description: string; siteName: string; image: string | null; icon: string | null }>;
-    minimizeWindow?: () => Promise<void>;
-    toggleMaximizeWindow?: () => Promise<boolean>;
-    closeWindow?: () => Promise<void>;
-    isWindowMaximized?: () => Promise<boolean>;
-    onWindowMaximizeChange?: (callback: (isMaximized: boolean) => void) => () => void;
-  };
-  settings: {
-    get: () => Promise<ProviderSettings>;
-    models: (options?: { model?: string; refresh?: boolean }) => Promise<ProviderModelCatalog>;
-    save: (value: Record<string, unknown>) => Promise<ProviderSettings>;
-  };
-  sandbox: {
-    status: () => Promise<SandboxStatus>;
-  };
-  onEvent: (handler: (event: RuntimeEvent) => void) => () => void;
+    };
+export type EditedFiles = Array<{ path: string; tool: string; updatedAt: number; mutationId: string | null; executionId: string | null }>;
+
+export type TerminalSession = {
+  sessionId: string;
+  projectId: string;
+  cwd: string;
+  shell: string;
+  startedAt: number;
 };
+
+export type TerminalEvent = {
+  sessionId: string;
+  projectId: string;
+  type: 'output' | 'exit' | 'error';
+  stream?: 'stdout' | 'stderr';
+  data?: string;
+  code?: number | null;
+  signal?: string | null;
+  message?: string;
+};
+
 
 export type SandboxStatus = {
   available: boolean;

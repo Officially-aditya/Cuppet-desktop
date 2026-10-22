@@ -3,7 +3,7 @@ import type { Ref } from 'react';
 import type { Project, Session } from '../types';
 import type { ActivityEntry } from './ChatPane';
 import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
-import { renderMarkdown } from './markdown';
+import { createStreamingMarkdownRenderer, renderMarkdown } from './markdown';
 import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
@@ -366,6 +366,7 @@ function MessageView({
             ref={responseRef}
             className="message-content markdown-rendered"
             content={content}
+            streaming={live}
             projectId={projectId}
             onClick={(event) => {
               const target = event.target as HTMLElement;
@@ -479,13 +480,18 @@ function MessageView({
 }
 
 // projectId is the project a rendered file path or link opens against.
-function MarkdownContent({ content, projectId = null, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string; projectId?: string | null }) {
+function MarkdownBlock({ html }: { html: string }) {
+  return <div className="markdown-block" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function MarkdownContent({ content, streaming = false, projectId = null, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; projectId?: string | null }) {
+  const renderStream = useMemo(() => createStreamingMarkdownRenderer(), []);
   // Replacing unchanged HTML destroys the browser's active text selection.
-  const html = useMemo(() => ({ __html: renderMarkdown(content) }), [content]);
+  const rendered = useMemo(() => streaming ? renderStream(content) : { blocks: [], tail: renderMarkdown(content) }, [content, streaming, renderStream]);
+  const completedBlocks = useMemo(() => rendered.blocks.map((html, index) => <MarkdownBlock key={index} html={html} />), [rendered.blocks]);
   return (
     <div
       {...props}
-      dangerouslySetInnerHTML={html}
       onClick={(event) => {
         // Code block copy buttons, links and file paths are marked by renderMarkdown and handled here, declaratively.
         if (copyCodeBlock(event.target)) return;
@@ -496,7 +502,10 @@ function MarkdownContent({ content, projectId = null, onClick, onKeyDown, ...pro
         if ((event.key === 'Enter' || event.key === ' ') && isProjectFileTarget(event.target) && openChatLink(projectId, event.target)) { event.preventDefault(); return; }
         onKeyDown?.(event);
       }}
-    />
+    >
+      {completedBlocks}
+      <MarkdownBlock key="tail" html={rendered.tail} />
+    </div>
   );
 }
 

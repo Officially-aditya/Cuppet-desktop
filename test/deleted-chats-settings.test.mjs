@@ -12,7 +12,7 @@ test('Account Settings exposes only recoverable deleted chats and can restore th
     source('src/main/main.mjs'),
     source('src/preload/preload.cjs'),
     source('src/renderer/react/SettingsModal.tsx'),
-    source('src/renderer/types.ts'),
+    source('src/renderer/ipc-api.d.ts'),
   ]);
 
   assert.match(runtime, /case 'session\.deleted\.list'/);
@@ -20,10 +20,10 @@ test('Account Settings exposes only recoverable deleted chats and can restore th
   assert.match(runtime, /DELETED_CHAT_RETENTION_MS/);
   assert.match(runtime, /purgeAt: Number\(session\.deletedAt\) \+ DELETED_CHAT_RETENTION_MS/);
 
-  assert.match(main, /cuppet:session:deleted:list/);
+  assert.match(main, /handle\('sessions\.deleted'/);
   assert.match(main, /session\.deleted\.list/);
-  assert.match(preload, /deleted: \(\) => ipcRenderer\.invoke\('cuppet:session:deleted:list'\)/);
-  assert.match(types, /deleted: \(\) => Promise<Session\[\]>/);
+  assert.match(preload, /cuppet:session:deleted:list/);
+  assert.match(types, /deleted: \(\) => Promise<Types\.Session\[\]>/);
 
   assert.match(settings, /<strong>Deleted chats<\/strong>/);
   assert.match(settings, /window\.cuppet\.sessions\.deleted\(\)/);
