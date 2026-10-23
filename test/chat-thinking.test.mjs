@@ -190,7 +190,7 @@ test('thinking is collapsed while streaming, expands on click, and becomes a tim
   assert.equal(button.props.children[0].props.children, 'Thought for 1m 25s');
   assert.equal(find(tree, (node) => node.props.content)?.props.content, 'Inspecting the code. Found it.');
   button.props.onClick();
-  assert.equal(find(render(props), (node) => node.props.content), undefined);
+  assert.equal(find(render(props), (node) => node.props.content).props.open, false, 'collapsed thoughts retain their rendered content');
 });
 
 test('history and interrupted thoughts use a stable end time; missing timestamps show no invented duration', () => {
@@ -200,18 +200,20 @@ test('history and interrupted thoughts use a stable end time; missing timestamps
   assert.equal(find(render({ ...props, item: { ...thought, startedAt: undefined } }), (node) => node.type === 'button').props.children[0].props.children, 'Thoughts');
 });
 
-test('thinking toggles immediately while its markdown waits for a deferred render', () => {
-  const render = fixture('ReasoningTraceRow', { deferred: true });
+test('thinking delegates parsing to async content and retains that component when collapsed', () => {
+  const render = fixture('ReasoningTraceRow');
   const props = { item: thought, contentId: 'deferred-thought', live: true };
   find(render(props), (node) => node.type === 'button').props.onClick();
-  let tree = render(props);
+  const tree = render(props);
   assert.equal(find(tree, (node) => node.type === 'button').props['aria-expanded'], true);
-  assert.equal(find(tree, (node) => node.props.content), undefined, 'the urgent click never parses a long thought');
-  render.flushDeferred();
-  tree = render(props);
   const content = find(tree, (node) => node.props.content);
+  assert.equal(content.type.name, 'ReasoningContent');
   assert.equal(content.props.content, thought.text);
   assert.equal(content.props.streaming, true, 'open, active thoughts use incremental markdown');
+  find(tree, (node) => node.type === 'button').props.onClick();
+  const collapsed = find(render(props), (node) => node.props.content);
+  assert.equal(collapsed.type, content.type);
+  assert.equal(collapsed.props.open, false);
 });
 
 test('pre-tool narration is labelled as progress rather than provider thinking', () => {

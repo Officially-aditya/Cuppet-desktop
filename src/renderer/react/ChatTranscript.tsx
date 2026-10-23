@@ -7,6 +7,7 @@ import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
 import { createStreamingMarkdownRenderer, renderMarkdown } from './markdown';
 import { createMarkdownCache } from './markdown-cache';
 import { createScrollFollower, type ScrollFollower } from './scroll-follow';
+import { createReasoningRenderer, type ReasoningRenderResult, type ReasoningMarkdown } from './reasoning-renderer';
 import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
@@ -30,6 +31,8 @@ const IMMEDIATE_HISTORY_ITEMS = 5;
 const EMPTY_TRACE: TraceItem[] = [];
 const EMPTY_PENDING: readonly PendingUserMessage[] = [];
 const renderMarkdownCached = createMarkdownCache((source) => renderMarkdown(source));
+const EMPTY_MARKDOWN: ReasoningMarkdown = { blocks: [], tail: '' };
+const REASONING_BLOCK_BATCH = 24;
 export type ChatTranscriptHandle = { followLatest: () => void };
 type Props = {
   ref?: Ref<ChatTranscriptHandle>;
@@ -445,14 +448,14 @@ function MessageView({
 }
 
 // projectId is the project a rendered file path or link opens against.
-function MarkdownBlock({ html }: { html: string }) {
+const MarkdownBlock = memo(function MarkdownBlock({ html }: { html: string }) {
   return <div className="markdown-block" dangerouslySetInnerHTML={{ __html: html }} />;
-}
+});
 
-function MarkdownContent({ content, streaming = false, projectId = null, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; projectId?: string | null }) {
+function MarkdownContent({ content, streaming = false, rendered: providedRendered, projectId = null, onClick, onKeyDown, children, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; rendered?: ReasoningMarkdown; projectId?: string | null }) {
   const renderStream = useMemo(() => createStreamingMarkdownRenderer(), []);
   // Replacing unchanged HTML destroys the browser's active text selection.
-  const rendered = useMemo(() => streaming ? renderStream(content) : { blocks: [], tail: renderMarkdownCached(content) }, [content, streaming, renderStream]);
+  const rendered = useMemo(() => providedRendered ?? (streaming ? renderStream(content) : { blocks: [], tail: renderMarkdownCached(content) }), [providedRendered, content, streaming, renderStream]);
   const completedBlocks = useMemo(() => rendered.blocks.map((html, index) => <MarkdownBlock key={index} html={html} />), [rendered.blocks]);
   return (
     <div
@@ -468,6 +471,7 @@ function MarkdownContent({ content, streaming = false, projectId = null, onClick
         onKeyDown?.(event);
       }}
     >
+      {children}
       {completedBlocks}
       <MarkdownBlock key="tail" html={rendered.tail} />
     </div>
@@ -492,8 +496,7 @@ function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff,
 
 const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
-  // Commit the toggle before parsing and mounting a potentially long thought.
-  const contentReady = useDeferredValue(open);
+  const [opened, setOpened] = useState(false);
   const active = live && !item.completedAt;
   const end = item.completedAt ?? (!live ? completedAt : null);
   const duration = item.startedAt && end && end >= item.startedAt ? formatWorkedDuration(end - item.startedAt) : null;
@@ -507,16 +510,67 @@ const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, liv
         type="button"
         className="message-reasoning-toggle"
         aria-expanded={open}
-        aria-controls={open && contentReady ? contentId : undefined}
-        onClick={() => setOpen((current) => !current)}
+        aria-controls={opened ? contentId : undefined}
+        onClick={() => { setOpened(true); setOpen((current) => !current); }}
       >
         <span>{label}</span>
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      {open && contentReady && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} streaming={active} projectId={projectId} />}
+      {opened && <ReasoningContent id={contentId} content={item.text} streaming={active} open={open} projectId={projectId} />}
     </div>
   );
 });
+
+function ReasoningContent({ id, content, streaming, open, projectId }: { id: string; content: string; streaming: boolean; open: boolean; projectId: string | null }) {
+  const [result, setResult] = useState<ReasoningRenderResult | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [visibleBlocks, setVisibleBlocks] = useState(REASONING_BLOCK_BATCH);
+  const renderer = useRef<ReturnType<typeof createReasoningRenderer> | null>(null);
+  const current = useRef({ content, result });
+  current.current = { content, result };
+
+  useEffect(() => {
+    if (open) setFailed(false);
+    return () => { renderer.current?.dispose(); renderer.current = null; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || (current.current.result?.content === content && current.current.result?.streaming === streaming)) return;
+    try {
+      renderer.current ??= createReasoningRenderer((next) => {
+        // A late streamed prefix is useful, but a response from a replaced thought is not.
+        if (current.current.content.startsWith(next.content)) setResult(next);
+      }, () => {
+        renderer.current?.dispose();
+        renderer.current = null;
+        setFailed(true);
+      });
+      if (failed) setFailed(false);
+      renderer.current.render(content, streaming);
+    } catch { setFailed(true); }
+  }, [content, streaming, open]);
+
+  useEffect(() => {
+    if (!open || !result || visibleBlocks >= result.rendered.blocks.length) return;
+    const frame = requestAnimationFrame(() => setVisibleBlocks((count) => count + REASONING_BLOCK_BATCH));
+    return () => cancelAnimationFrame(frame);
+  }, [open, result, visibleBlocks]);
+
+  const rendered = useMemo(() => {
+    if (!result) return EMPTY_MARKDOWN;
+    return visibleBlocks >= result.rendered.blocks.length ? result.rendered : {
+      blocks: result.rendered.blocks.slice(0, visibleBlocks), tail: '',
+    };
+  }, [result, visibleBlocks]);
+
+  // Keep the parsed DOM when collapsed, so reopening does not rebuild a long thought.
+  return (
+    <MarkdownContent id={id} className="message-reasoning-content markdown-rendered" content="" rendered={failed ? EMPTY_MARKDOWN : rendered}
+      hidden={!open} aria-busy={!failed && (!result || result.content !== content || result.streaming !== streaming || visibleBlocks < result.rendered.blocks.length)} projectId={projectId}>
+      {failed ? <span className="message-reasoning-plain">{content}</span> : !result ? <span>Loading…</span> : null}
+    </MarkdownContent>
+  );
+}
 
 const ToolTraceRow = memo(function ToolTraceRow({ item, onInspectDiff, deferred = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; deferred?: boolean }) {
   const [requested, setRequested] = useState(false);

@@ -16,6 +16,7 @@
     "runtime:typecheck": "tsc --noEmit -p tsconfig.runtime.json",
     "build:renderer": "vite build",
     "renderer:verify": "npm run ipc:check && tsc --noEmit && npm run runtime:typecheck && vite build && node scripts/verify-renderer.mjs",
+    "renderer:reasoning-smoke": "electron scripts/smoke-reasoning-renderer.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test test/*.test.mjs",

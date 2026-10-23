@@ -14,6 +14,7 @@ const { ChatTranscript } = loadModule(new URL('../src/renderer/react/ChatTranscr
   },
   './DiffViewerModal': { CopyIcon: () => null, CheckIcon: () => null },
   './brand': { CUPPET_LOGO_URL: 'logo.png' },
+  './reasoning-renderer': { createReasoningRenderer: () => assert.fail('Server rendering must not start a worker') },
 });
 const render = (props) => renderToStaticMarkup(React.createElement(ChatTranscript, {
   session: null, project: null, running: false, transcript: {}, onInspectDiff() {}, onOpenLightbox() {}, ...props,

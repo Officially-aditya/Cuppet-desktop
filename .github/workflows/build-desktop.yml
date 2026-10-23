@@ -99,6 +99,9 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
 
+      - name: Verify responsive reasoning in Electron
+        run: npm run renderer:reasoning-smoke
+
       - name: Build unsigned desktop package
         run: npm run ${{ matrix.build-script }}
 

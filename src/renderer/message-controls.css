@@ -55,6 +55,28 @@
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.55;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0px;
+}
+
+.message-reasoning-content[hidden] {
+  display: block;
+  content-visibility: hidden;
+  contain-intrinsic-size: 0px;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+}
+
+.message-reasoning-content > .markdown-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
+}
+
+.message-reasoning-plain {
+  white-space: pre-wrap;
 }
 
 .message-reasoning-content p:first-child {

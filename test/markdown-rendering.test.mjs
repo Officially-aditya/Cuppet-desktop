@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderInline, renderMarkdown } from '../src/renderer/react/markdown.ts';
+import { renderInline, renderMarkdown, renderMarkdownBlocks } from '../src/renderer/react/markdown.ts';
 
 const strip = (html) => html.replace(/<[^>]+>/g, '');
+
+test('block rendering preserves complete lists, fenced code and escaping for progressive reasoning', () => {
+  const source = '# Plan\n\n- first\n  - nested\n- second\n\n```ts\nconst value = "<tag>";\n```\n\n<script>bad()</script>';
+  const blocks = renderMarkdownBlocks(source);
+  assert.equal(blocks.length, 4);
+  assert.match(blocks[1], /^<ul>.*<ul>.*<\/ul>.*<\/ul>$/);
+  assert.match(blocks[2], /^<div class="md-code-block">/);
+  assert.doesNotMatch(blocks.join('\n'), /<script>/);
+  assert.equal(blocks.join('\n'), renderMarkdown(source));
+});
 
 test('UI-01: bullet lists nest to any depth the model writes', () => {
   assert.equal(renderMarkdown('- a\n  - b\n    - c\n- d'), '<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li><li>d</li></ul>');

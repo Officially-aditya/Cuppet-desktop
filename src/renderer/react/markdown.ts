@@ -44,8 +44,12 @@ for (const [name, definition] of Object.entries({
 })) hljs.registerLanguage(name, definition);
 
 export function renderMarkdown(value: unknown) {
+  return renderMarkdownBlocks(value).join('\n');
+}
+
+export function renderMarkdownBlocks(value: unknown): string[] {
   const source = String(value ?? '').replace(/\r\n?/g, '\n');
-  return renderBlocks(source.split('\n'), 0).join('\n');
+  return renderBlocks(source.split('\n'), 0);
 }
 
 // Keep completed top-level blocks out of the streaming parse/highlight path. The final
