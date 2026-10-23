@@ -15,8 +15,10 @@ expect(text['src/runtime/remote/manager.mjs'].includes('this.#bridge?.revokeDevi
 const renderer=text['src/renderer/react/RemoteModal.tsx'];
 expect(renderer.includes('window.cuppet.remote.start({ setup: true, createInvite: true })')&&renderer.includes("window.cuppet.remote.invite('trusted')")&&renderer.includes('window.cuppet.remote.stop()'),'React managed Remote pairing/active-session actions incomplete');
 expect(!/relayUrl|apiBase|viewer/.test(renderer),'React Remote exposes advanced relay/API/viewer configuration');
-const preload=text['src/preload/preload.cjs'];for(const token of ["status: () => ipcRenderer.invoke('cuppet:remote:status')","start: (value = {}) => ipcRenderer.invoke('cuppet:remote:start', value)","stop: () => ipcRenderer.invoke('cuppet:remote:stop')","invite: (role = 'trusted') => ipcRenderer.invoke('cuppet:remote:invite', role)","devices: () => ipcRenderer.invoke('cuppet:remote:devices')","revoke: (deviceId) => ipcRenderer.invoke('cuppet:remote:revoke', deviceId)"])expect(preload.includes(token),`Electron Remote lifecycle bridge missing: ${token}`);
-expect(text['src/main/main.mjs'].includes('cuppet:remote:start')&&text['src/preload/preload.cjs'].includes('remote:'),'Electron Remote bridge missing');
+const preload=text['src/preload/preload.cjs'];
+for(const method of ['status','start','stop','invite','devices','revoke']) {
+  expect(text['src/main/main.mjs'].includes(`handle('remote.${method}'`) && preload.includes(`"remote.${method}"`) && preload.includes(`"cuppet:remote:${method}"`),`Electron Remote lifecycle bridge missing: ${method}`);
+}
 for(const command of ['remote-control','relay','remote-enroll'])expect(text['src/cli/main.mjs'].includes(command),`CLI remote command missing: ${command}`);
-const tests=['test/c2-remote-protocol.test.mjs','test/c2-remote-bridge.test.mjs','test/c2-remote-revocation.test.mjs','test/c2-relay.integration.test.mjs','test/c2-remote-commands.test.mjs','test/c2-remote-lifecycle.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
+const tests=['test/ipc-contract.test.mjs','test/c2-remote-protocol.test.mjs','test/c2-remote-bridge.test.mjs','test/c2-remote-revocation.test.mjs','test/c2-relay.integration.test.mjs','test/c2-remote-commands.test.mjs','test/c2-remote-lifecycle.test.mjs'];const run=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});if(run.status!==0)process.exit(run.status??1);
 console.log('Phase C2 gate passed: remote protocol, pairing/token/setup, scoped relay bridge, live credential revocation, full lifecycle IPC, simplified managed React Remote, CLI controls, and provider-secret boundary verified.');
