@@ -51,7 +51,7 @@ const types = header + "import type * as Types from './types';\n\nexport type Cu
 for (const [path, content] of [['src/preload/preload.cjs', preload], ['src/renderer/ipc-api.d.ts', types]]) {
   const url = new URL('../' + path, import.meta.url);
   if (process.argv.includes('--check')) {
-    if (await readFile(url, 'utf8') !== content) throw new Error('Regenerate IPC contract: ' + fileURLToPath(url));
+    if ((await readFile(url, 'utf8')).replace(/\r\n/g, '\n') !== content) throw new Error('Regenerate IPC contract: ' + fileURLToPath(url));
   } else {
     await writeFile(url, content);
   }
