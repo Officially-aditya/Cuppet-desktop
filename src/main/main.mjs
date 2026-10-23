@@ -14,6 +14,7 @@ import { resolveProjectFilePath } from './project-file-path.mjs';
 import { createApprovalAttention } from './approval-attention.mjs';
 import { createWindowAppearance } from './window-appearance.mjs';
 import { createIpcRegistrar } from './ipc-boundary.mjs';
+import { validateAttachments, validateCommandInput } from './command-input.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -252,7 +253,7 @@ async function executeDesktopCommand(request, sessionId, value) {
       remoteStop: () => request('remote.stop'),
     },
     provider: desktopProviderAuthority(request),
-  }, structured ? validateCommandInput(structured.input) : {});
+  }, structured ? validateCommandInput(structured.input, structured.id) : {});
   mainWindow?.webContents.send('cuppet:event', { type: 'command.completed', ...result });
   return result;
 }
@@ -320,19 +321,6 @@ function validateCliProviderID(value) {
   return id;
 }
 
-function validateCommandInput(value) {
-  const record = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return {
-    ...(typeof record.key === 'string' ? { key: record.key.trim().slice(0, 240) } : {}),
-    ...(typeof record.value === 'string' ? { value: record.value.trim().slice(0, 4000) } : {}),
-    ...(typeof record.text === 'string' ? { text: record.text.trim().slice(0, 8192) } : {}),
-    ...(Array.isArray(record.attachments) ? { attachments: record.attachments.slice(0, 16) } : {}),
-    ...(['session', 'project', 'global'].includes(record.scope) ? { scope: record.scope } : {}),
-    ...(['plan', 'build'].includes(record.mode) ? { mode: record.mode } : {}),
-    ...(record.pinned === true ? { pinned: true } : {}),
-  };
-}
-
 function validateProjectPayload(value) {
   const record = value && typeof value === 'object' ? value : {};
   return { path: typeof record.path === 'string' ? record.path : '', name: typeof record.name === 'string' ? record.name.slice(0, 120) : '' };
@@ -361,19 +349,6 @@ function validateQuestionAnswers(values) {
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function clampLimit(value){ const numeric=Number(value); return Number.isFinite(numeric)?Math.min(Math.max(Math.trunc(numeric),1),100):50; }
 function validatePaths(values) { return Array.isArray(values) ? values.slice(0, 64).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim().slice(0, 512)] : []) : []; }
-function validateAttachments(values) {
-  if (!Array.isArray(values)) return [];
-  return values.slice(0, 16).flatMap((value) => {
-    if (!value || typeof value !== 'object') return [];
-    const name = typeof value.name === 'string' ? value.name.trim().slice(0, 240) : '';
-    const mime = typeof value.mime === 'string' ? value.mime.trim().slice(0, 128) : '';
-    const path = typeof value.path === 'string' ? value.path.trim().slice(0, 512) : '';
-    const rawDataUrl = typeof value.dataUrl === 'string' ? value.dataUrl.trim() : '';
-    const validDataUrl = rawDataUrl.length > 0 && rawDataUrl.length <= 20 * 1024 * 1024 && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(rawDataUrl) ? rawDataUrl : '';
-    if (!name && !path && !validDataUrl) return [];
-    return [{ ...(name ? { name } : {}), ...(mime ? { mime } : {}), ...(path ? { path } : {}), ...(validDataUrl ? { dataUrl: validDataUrl } : {}), ...(Number.isFinite(value.size) ? { size: Math.max(0, Math.trunc(value.size)) } : {}) }];
-  });
-}
 async function chooseFolder(options) {
   const title = typeof options?.title === 'string' ? options.title.slice(0, 100) : 'Choose folder';
   const buttonLabel = typeof options?.buttonLabel === 'string' ? options.buttonLabel.slice(0, 40) : 'Choose';
