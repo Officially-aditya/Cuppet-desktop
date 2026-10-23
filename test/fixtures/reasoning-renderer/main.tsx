@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { ChatTranscript } from '../../../src/renderer/react/ChatTranscript';
 import '../../../src/renderer/index.css';
-import { appendMarkdownText } from '../../../src/renderer/react/markdown-tail';
+import { appendMarkdownText, updateMarkdownTail } from '../../../src/renderer/react/markdown-tail';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
@@ -111,6 +111,28 @@ let updateThought: (text: string, complete: boolean) => void;
     const expected = document.createElement('div');
     expected.innerHTML = next;
     if (!node.isEqualNode(expected)) throw new Error('Mutable-tail update changed text or structure');
+    node.innerHTML = previous;
+    updateMarkdownTail(node, previous, next);
+    if (!node.isEqualNode(expected)) throw new Error('Tail reconciliation changed text or structure');
   }
-  return { tailCases: cases.length, escapedText: true, retainedNodes: true };
+  const node = document.createElement('div');
+  let previous = '<p>Selected prefix <code>src/old.ts</code> **up</p>';
+  node.innerHTML = previous;
+  document.body.appendChild(node);
+  const code = node.querySelector('code');
+  const range = document.createRange();
+  range.setStart(node.querySelector('p')!.firstChild!, 0);
+  range.setEnd(node.querySelector('p')!.firstChild!, 8);
+  getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+  for (const next of [
+    '<p>Selected prefix <code>src/old.ts</code> <strong>update</strong> and `src/live</p>',
+    '<p>Selected prefix <code>src/old.ts</code> <strong>update</strong> and <code>src/live.ts</code></p>',
+  ]) {
+    updateMarkdownTail(node, previous, next);
+    const expected = document.createElement('div'); expected.innerHTML = next;
+    if (!node.isEqualNode(expected) || node.querySelector('code') !== code || getSelection()!.toString() !== 'Selected') throw new Error('Partial formatting replaced the existing prefix');
+    previous = next;
+  }
+  node.remove();
+  return { tailCases: cases.length, escapedText: true, retainedNodes: true, partialFormatting: true };
 };

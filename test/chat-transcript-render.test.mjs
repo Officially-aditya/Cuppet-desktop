@@ -10,7 +10,6 @@ const parsed = [];
 const { ChatTranscript } = loadModule(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url).pathname, {
   './markdown': {
     renderMarkdown: (value) => { parsed.push(value); return value; },
-    createStreamingMarkdownRenderer: () => (value) => { parsed.push(value); return { blocks: [], tail: value }; },
   },
   './DiffViewerModal': { CopyIcon: () => null, CheckIcon: () => null },
   './brand': { CUPPET_LOGO_URL: 'logo.png' },
@@ -49,7 +48,8 @@ test('steered history and the live response retain their conversation order', ()
     message('u1', 'user', 'original task'), message('a1', 'assistant', 'first answer'),
     message('u2', 'user', 'additional guidance'), message('a2', 'assistant', 'continuing now', 'streaming'),
   ] } });
-  const order = ['original task', 'first answer', 'additional guidance', 'continuing now'].map((text) => html.indexOf(text));
+  // Streaming content is rendered by the worker after mount; its message shell keeps its place.
+  const order = ['original task', 'first answer', 'additional guidance', 'data-message-id="a2"'].map((text) => html.indexOf(text));
   assert.ok(order.every((index) => index >= 0));
   assert.deepEqual(order, [...order].sort((a, b) => a - b));
   assert.equal((html.match(/message-preview/g) ?? []).length, 1);

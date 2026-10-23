@@ -68,7 +68,7 @@ app.on('browser-window-created', (_event, window) => {
         window.webContents.send('cuppet:event', { type: 'run.started', sessionId: id, messageId: assistantId });
         if (mode === 'reasoning') window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', text: initial } });
         await evaluate(async ({ mode, assistantId }) => {
-          while (!document.querySelector('.message-preview')) await new Promise(resolve => setTimeout(resolve, 10));
+          while (!document.querySelector('.message-preview') || (mode === 'answer' && document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
           const metrics = { gaps: [], frameGaps: [], tasks: [], inputs: 0, updates: 0, lastToken: -1, maxEventLag: 0 };
           const unsubscribe = window.cuppet.onEvent(event => {
             if (event.messageId !== assistantId) return;
@@ -106,7 +106,7 @@ app.on('browser-window-created', (_event, window) => {
         }, { mode, assistantId });
         let token = 0;
         const produce = setInterval(() => {
-          const delta = `live-${token++} **update** and \`src/live.ts\` `;
+          const delta = [`live-${token} **up`, `date** and \`src/live`, `.ts\` `][token++ % 3];
           if (mode === 'answer') {
             content += delta;
             window.webContents.send('cuppet:event', { type: 'message.delta', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
@@ -150,10 +150,14 @@ app.on('browser-window-created', (_event, window) => {
         clearInterval(produce); clearInterval(typing);
         await Promise.all(keyRequests);
         await new Promise(resolve => setTimeout(resolve, 300));
+        if (mode === 'answer') await evaluate(async () => {
+          while (document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false') await new Promise(resolve => setTimeout(resolve, 10));
+        });
         const result = await evaluate(() => window.endProfile());
         const after = await window.webContents.debugger.sendCommand('Performance.getMetrics');
         const metrics = Object.fromEntries(after.metrics.filter(m => ['ScriptDuration','RecalcStyleDuration','LayoutDuration'].includes(m.name)).map(m => [m.name, m.value - (before.metrics.find(p=>p.name===m.name)?.value ?? 0)]));
-        assert.equal(result.lastToken, token - 1, 'the rendered answer did not catch up with the event stream');
+        console.log('Streaming interaction metrics on '+process.platform+': '+JSON.stringify({ id, mode, sent: token, keys, settings, ...result, metrics }));
+        assert.equal(result.lastToken, (token - 1) - ((token - 1) % 3), 'the rendered answer did not catch up with the event stream');
         if (mode === 'answer') assert.equal(result.retainedCode, true, 'streaming replaced existing code/link DOM');
         assert.ok(result.maxEventLag < 500, 'Runtime events queued behind a blocked renderer');
         assert.ok(result.inputs >= Math.floor(keys * 0.8), 'typing events were lost during output');
@@ -161,7 +165,7 @@ app.on('browser-window-created', (_event, window) => {
         assert.ok(result.maxGap < 500, `The app event loop stalled for ${result.maxGap.toFixed(0)}ms`);
         assert.ok(result.maxFrameGap < 500, `Painting stalled for ${result.maxFrameGap.toFixed(0)}ms`);
         assert.ok(settings.openedMs < 500, 'opening Settings stalled while output was streaming');
-        console.log('Streaming interactions passed on '+process.platform+': '+JSON.stringify({ id, mode, sent: token, keys, settings, ...result, metrics }));
+        console.log('Streaming interactions passed: '+id+' '+mode);
         window.webContents.send('cuppet:event', { type: 'message.completed', message: { id: assistantId, sessionId: id, role: 'assistant', content, status: 'complete', sequence } });
         window.webContents.send('cuppet:event', { type: 'run.finished', sessionId: id });
         // Let the finish-triggered history refresh settle before switching chats or shutting down.

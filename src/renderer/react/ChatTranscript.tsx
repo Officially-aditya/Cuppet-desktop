@@ -4,9 +4,9 @@ import type { Project, Session } from '../types';
 import type { PendingUserMessage } from './client-session-state';
 import type { ActivityEntry } from './ChatPane';
 import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
-import { createStreamingMarkdownRenderer, renderMarkdown } from './markdown';
+import { renderMarkdown } from './markdown';
 import { createMarkdownCache } from './markdown-cache';
-import { appendMarkdownText } from './markdown-tail';
+import { updateMarkdownTail } from './markdown-tail';
 import { createScrollFollower, type ScrollFollower } from './scroll-follow';
 import { createReasoningRenderer, type ReasoningRenderResult, type ReasoningMarkdown } from './reasoning-renderer';
 import { copyCodeBlock } from './code-copy';
@@ -460,20 +460,38 @@ const MarkdownTail = memo(function MarkdownTail({ html }: { html: string }) {
   const rendered = useRef(html);
   useLayoutEffect(() => {
     if (!node.current || rendered.current === html) return;
-    if (!appendMarkdownText(node.current, rendered.current, html)) node.current.innerHTML = html;
+    updateMarkdownTail(node.current, rendered.current, html);
     rendered.current = html;
   }, [html]);
   return <div ref={node} className="markdown-block" dangerouslySetInnerHTML={initial.current} />;
 });
 
 function MarkdownContent({ content, streaming = false, rendered: providedRendered, projectId = null, onClick, onKeyDown, children, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; rendered?: ReasoningMarkdown; projectId?: string | null }) {
-  const renderStream = useMemo(() => createStreamingMarkdownRenderer(), []);
+  const [background, setBackground] = useState<ReasoningRenderResult | null>(null);
+  const [failed, setFailed] = useState(false);
+  const renderer = useRef<ReturnType<typeof createReasoningRenderer> | null>(null);
+  const currentContent = useRef(content);
+  currentContent.current = content;
+  const asynchronous = !providedRendered && (streaming || renderer.current !== null || background !== null || failed);
+  useEffect(() => () => { renderer.current?.dispose(); }, []);
+  useEffect(() => {
+    if (!asynchronous || failed) return;
+    try {
+      renderer.current ??= createReasoningRenderer(next => {
+        if (currentContent.current.startsWith(next.content)) setBackground(next);
+      }, () => { renderer.current?.dispose(); renderer.current = null; setFailed(true); });
+      renderer.current.render(content, streaming);
+    } catch { setFailed(true); }
+  }, [content, streaming, asynchronous, failed]);
   // Replacing unchanged HTML destroys the browser's active text selection.
-  const rendered = useMemo(() => providedRendered ?? (streaming ? renderStream(content) : { blocks: [], tail: renderMarkdownCached(content) }), [providedRendered, content, streaming, renderStream]);
+  const rendered = useMemo(() => providedRendered ?? (asynchronous
+    ? failed ? EMPTY_MARKDOWN : background?.rendered ?? EMPTY_MARKDOWN
+    : { blocks: [], tail: renderMarkdownCached(content) }), [providedRendered, content, asynchronous, failed, background]);
   const completedBlocks = useMemo(() => rendered.blocks.map((html, index) => <MarkdownBlock key={index} html={html} />), [rendered.blocks]);
   return (
     <div
       {...props}
+      aria-busy={asynchronous && !failed ? background?.content !== content || background?.streaming !== streaming : props['aria-busy']}
       onClick={(event) => {
         // Code block copy buttons, links and file paths are marked by renderMarkdown and handled here, declaratively.
         if (copyCodeBlock(event.target)) return;
@@ -486,6 +504,7 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
       }}
     >
       {children}
+      {failed && !providedRendered ? <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span> : null}
       {completedBlocks}
       <MarkdownTail key="tail" html={rendered.tail} />
     </div>

@@ -1,5 +1,12 @@
 // Input is sanitized HTML from markdown.ts. Append a balanced fragment when the
 // existing markup is unchanged, preserving links, code spans and selected text.
+export function updateMarkdownTail(node: HTMLElement, previous: string, next: string) {
+  if (appendMarkdownText(node, previous, next)) return;
+  const parsed = node.ownerDocument.createElement('template');
+  parsed.innerHTML = next;
+  reconcileChildren(node, parsed.content);
+}
+
 export function appendMarkdownText(node: HTMLElement, previous: string, next: string): boolean {
   const closing = previous.match(/(?:<\/[a-z][a-z0-9]*>)+$/i)?.[0];
   if (!closing) return false;
@@ -30,6 +37,33 @@ export function appendMarkdownText(node: HTMLElement, previous: string, next: st
     return true;
   }
   return false;
+}
+
+// Closing a streamed emphasis marker or code span changes existing HTML. Keep the
+// equal prefix in that case too, rather than rebuilding the whole paragraph.
+function reconcileChildren(node: Node, parsed: Node) {
+  let current = node.firstChild;
+  for (const next of Array.from(parsed.childNodes)) {
+    const following = current?.nextSibling ?? null;
+    if (current?.isEqualNode(next)) { current = following; continue; }
+    if (current?.nodeType === 3 && next.nodeType === 3) {
+      const before = current.nodeValue ?? '', after = next.nodeValue ?? '';
+      let prefix = 0;
+      while (prefix < before.length && before[prefix] === after[prefix]) prefix++;
+      (current as Text).replaceData(prefix, before.length - prefix, after.slice(prefix));
+    } else if (current instanceof Element && next instanceof Element && current.tagName === next.tagName
+      && current.attributes.length === next.attributes.length
+      && Array.from(current.attributes).every(attribute => next.getAttribute(attribute.name) === attribute.value)) {
+      reconcileChildren(current, next);
+    } else if (current) node.replaceChild(next, current);
+    else node.appendChild(next);
+    current = following;
+  }
+  while (current) {
+    const following = current.nextSibling;
+    node.removeChild(current);
+    current = following;
+  }
 }
 
 function balanced(html: string) {
