@@ -2,420 +2,161 @@
 
 <p align="center"><img src="src/renderer/assets/cuppet.png" alt="Cuppet" width="88" /></p>
 
-Independent desktop/runtime migration for Cuppet.
+Cuppet is a desktop workspace for AI-assisted software development. Connect a coding provider, open a project, and work through changes in a persistent conversation with file tools, a terminal, and approval controls.
 
-## Current increment
+Projects and conversations stay on your computer. Model requests go to your selected provider, and Cuppet Remote lets a paired browser control the running desktop host.
 
-**Original C2 — command & interaction surface: implemented candidate (`0.9.0-alpha.1`).**
+**Cuppet is in alpha.** Get builds from [GitHub Releases](https://github.com/Officially-aditya/Cuppet-desktop/releases). The source version is recorded in [package.json](package.json).
 
-Cuppet now owns its command layer independently across Desktop, headless CLI, and authorized Remote devices:
+## What you can do
 
-- one canonical registry for the reviewed 16 slash commands, aliases, Remote scopes, bounded parsing, and dispatch contracts;
-- `/models` is canonical while `/model` remains intentionally excluded; `/remote-control` aliases `/remote` and `/login` aliases `/platform`;
-- recognized and unknown slash-prefixed input fails closed before provider inference and does not become synthetic transcript messages;
-- Desktop has visible `/` discovery plus structured palette actions for memory remember/forget/clear, background pause/resume, steering into the active turn, and Plan/Build mode;
-- local control commands work without inference credentials, while provider/model/effort commands continue to use host-local provider authority;
-- `RuntimeService.session.steer` is the single steer authority used by Desktop, headless, and Remote; guidance is appended to the running turn, including the tool result that was executing, instead of stopping and resending;
-- Remote `session.submit` reauthorizes the inner slash command's declared scope before dispatch, preventing a lower-scope wrapper from escalating authority.
+- **Work with projects:** open local folders, clone GitHub repositories, and keep each chat attached to its original project.
+- **Choose your provider:** use Codex with a ChatGPT account, connect a local coding CLI, or configure an API provider.
+- **Plan and build:** switch between read-only planning and implementation, review tool activity and file diffs, and run a project terminal.
+- **Guide an active task:** queue the next message or steer the current turn without stopping it. Attach files and images when needed.
+- **Keep context:** use project code navigation, session context, saved plans, and verified memory through Cuppet's TST context and memory runtime.
+- **Continue remotely:** pair a browser with the desktop host, respond to questions and approvals, or give a device viewer access.
 
-Original C1 and Phases A through E remain intact: SQLite conversation/project state, detached context compilation, lossless plans, TST/STM, evidence-gated background memory, PE3 task routing, runtime-owned permissions/questions/undo, host-authoritative Remote, provider/model/effort policy, and revision-bound structural editing.
+## Download and install
 
-The production source has **no legacy controller dependency**. The next increment should be selected from the remaining original-plan migration inventory rather than inventing a new authority layer.
+Choose the matching artifact from the [releases page](https://github.com/Officially-aditya/Cuppet-desktop/releases):
 
-## Run it
+| Platform | Release target | Packages |
+| --- | --- | --- |
+| macOS | Apple Silicon / arm64 | DMG and ZIP |
+| Windows | x64 | NSIS installer and ZIP |
+| Linux | Source only | No prebuilt release package |
+
+Release builds are currently unsigned, and macOS builds are not notarized. Automatic macOS updates are disabled; download and install updates manually. See [release security and packaging](docs/release-security.md) for the current distribution policy.
+
+## Set up your first project
+
+1. Open **Settings → Platform** and choose an AI provider.
+2. Connect the provider using its sign-in flow or enter its API key, then select a primary model. Choose a reasoning effort if the model supports it. An optional secondary model handles context-memory work.
+3. Choose **Open a folder** or **Clone a repository**. GitHub cloning uses your existing Git credentials; browsing your GitHub repository list requires an authenticated `gh` CLI.
+4. Start a project chat and describe what you want to build or change. Use **Plan** to inspect and plan, or **Build** to implement.
+
+General chats work without a project, but do not receive filesystem or shell tools. Removing a project from Cuppet removes its registration, not the folder on disk.
+
+### Providers
+
+| Connection | Providers available in Settings | Authentication |
+| --- | --- | --- |
+| Codex | Codex through the official OpenAI Codex app-server | **Continue with ChatGPT** |
+| Coding CLI | OpenCode, Claude Code, GitHub Copilot, Google Antigravity, Grok Build, Mistral Vibe, Kiro | Connect the provider and complete its local authentication |
+| API | OpenAI, Anthropic, Gemini, Qwen, DeepSeek, Kimi, Z.ai, Meta, OpenRouter | Provider API key |
+
+Cuppet manages CLI installation where supported. Available models, settings, and connection requirements depend on the selected provider and its installed version. Model and effort choices are shown in the composer and in **Settings → Platform**.
+
+API keys are saved using Electron's OS-backed credential encryption. Cuppet refuses plaintext key persistence when secure storage is unavailable. Codex and the coding CLIs retain ownership of their own authentication credentials.
+
+The runtime also supports OpenAI-compatible API endpoints for custom headless configurations.
+
+## Working in a chat
+
+**Plan and Build.** Plan mode permits inspection while blocking mutating tools. Build mode enables implementation tools under the selected permission policy.
+
+**Queue and Steer.** In **Settings → General**, choose whether a message sent during a run waits for the next turn or adds guidance to the active turn. Queued messages remain visible and can be edited, cancelled, or added to the current turn.
+
+**Commands.** Type `/` to discover the current command palette. It includes status, diagnostics, memory, background-memory controls, compaction, and undo, alongside structured actions for saving memory, steering, and changing modes.
+
+**Approvals.** Cuppet displays the full command or requested resources before a protected action. Choose **Allow once** or **Reject**. **More options** contains **Always this exact request** and, when eligible, **Enable guarded auto**. An exact approval lasts for the current session and does not grant a wildcard permission.
+
+The default permission mode is configurable in **Settings → General**:
+
+| Mode | Behavior |
+| --- | --- |
+| Default | Ordinary project reads are automatic; protected operations require approval. |
+| Auto | Approves web fetches and eligible actions scoped to the active project. |
+| Full access | Allows broader automatic project actions while continuing to block deletion outside the project. |
+
+On macOS and Linux, supported command execution uses the OS sandbox and fails closed if required isolation is unavailable. **Windows currently has no OS command sandbox:** commands run with your user permissions, and the approval panel makes this explicit. Inspect the active boundary in **Settings → Security & Sandbox**.
+
+**Undo.** Cuppet can reverse supported file edits when the files still match its recorded changes. It refuses to overwrite later external edits. Arbitrary shell mutations can create an undo barrier, so undo is not a general rollback for terminal commands.
+
+Chats waiting for an approval or answer show **Needs input** in the sidebar. When the window is unfocused, Cuppet also requests attention through supported OS notifications, badges, or taskbar flashing.
+
+### Browser integration
+
+In **Settings → General → Integrations**, choose **Connect Chrome** and connect the browserControl Chrome extension. Once connected, ask Cuppet to use the browser in plain language; mentioning `@browserControl` is optional. The local browserControl runtime and the extension must both be available.
+
+### Remote access
+
+Open **Remote** in the desktop app to start the host, complete account linking or configure a relay, and create a pairing invitation. Pair a trusted device for control or a viewer for read-only access. Paired devices can be revoked from the host.
+
+The desktop remains the execution and permission authority. Remote devices do not receive provider API keys or endpoint credentials. The desktop host must remain running for remote access.
+
+The self-hosted relay is a trusted transport and does not provide end-to-end encryption. Use TLS before exposing it outside localhost. See [Remote architecture and protocol](docs/phase-c2-remote-control.md) for relay setup and scope details.
+
+## Run from source
+
+Use **Node.js 22 or newer**, npm, and Git. Installing native dependencies such as `node-pty` may also require your platform's native build tools.
 
 ```bash
-npm install
+git clone https://github.com/Officially-aditya/Cuppet-desktop.git
+cd Cuppet-desktop
+npm ci
 npm start
 ```
 
-Open **Provider settings** and configure the local provider ID/base URL, primary model, optional secondary/background model, supported effort selection, and API key. Provider credentials remain encrypted through Electron `safeStorage` and never enter renderer authority.
+`npm start` builds the renderer and launches Electron. `npm run dev:renderer` starts the Vite renderer development server; native desktop features still require the Electron host.
 
-## Session and control parity
+A fresh checkout does not contain all runtime resources bundled with release builds. Stage the resources needed for the features you are developing:
 
-The independent CLI supports durable continuation and inspection:
+- **TST code context and memory:** follow [managed TST setup](docs/f1-managed-tst-runtime.md). Developers can supply a compatible daemon through `CUPPET_TST_BIN`, or an external connection through both `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN`.
+- **Codex:** run `npm run e2:stage-codex` to stage the official app-server package. See the [staging script](scripts/stage-codex-app-server.mjs) for supported platforms and options.
+- **Browser integration:** run `npm run browsercontrol:stage -- --source=<browserControl-checkout>` with a built browserControl checkout. See the [staging script](scripts/stage-browsercontrol-runtime.mjs).
 
-```bash
-cuppet prompt "Continue this task" --session <session-id>
-cuppet prompt "Continue the latest task" --continue
-cuppet prompt "Try another approach" --session <session-id> --fork
-cuppet sessions
-cuppet status
-cuppet doctor
-cuppet undo --session <session-id>
-```
+On Linux, command sandboxing requires `bubblewrap`, and saving API keys requires an available secure credential backend. Native managed TST is not currently bundled for Windows.
 
-A session fork transactionally copies the durable visible transcript and project binding into a new SQLite session. Historical `tool_executions` are deliberately **not** cloned because they are audit records belonging to the source session. If a lossless canonical plan exists, it is copied separately and its source-message IDs are remapped to the forked transcript.
-
-Forking a currently streaming session fails closed.
-
-### Interactive questions
-
-`QuestionBroker` is the only authority for model-requested user questions.
-
-```text
-model question tool
-      │
-      ▼
-QuestionBroker
-  ├── question.requested
-  │      ├── Desktop
-  │      └── authorized Remote device
-  ├── reply  → bounded answers resume the tool loop
-  └── reject → explicit tool failure
-```
-
-Question requests are bounded to eight questions, twelve options per question, twelve answer values per question, and 512 characters per answer value. Desktop and Remote recover pending requests through `question.list`, so a renderer reload or reconnect does not lose a blocked question.
-
-Headless/noninteractive runs fail closed instead of waiting indefinitely for unavailable user interaction.
-
-### Conflict-safe undo
-
-Undo is runtime-owned by `MutationJournal`. It does **not** use `git reset`, `git checkout`, `git restore`, `git clean`, or transcript deletion.
-
-For deterministic `workspace_edit` and `workspace_write` calls, Cuppet records:
-
-- the exact raw pre-mutation bytes, persisted as base64;
-- the SHA-256 post-mutation hash;
-- the original canonical project workspace;
-- the durable SQLite `tool_executions` ID that performed the mutation.
-
-Journal state is private runtime data, persisted atomically in a `0700` directory with `0600` files. The journal keeps at most 256 entries per session and snapshots files up to 1 MiB.
-
-Undo succeeds only when the session is idle, the original workspace is still attached, and the current file still matches Cuppet's recorded postimage. It then restores the exact recorded bytes—or removes a file Cuppet created—and verifies the restored hash before marking the entry undone.
-
-If a user, editor, hook, formatter, or another process changes the file afterward, Cuppet refuses to overwrite that work. Rebinding/relocating the session to a different checkout also fails closed.
-
-A successful shell command that leaves Git-visible workspace mutations creates an **opaque undo barrier**. Cuppet will not guess how to reverse arbitrary shell behavior or cross that barrier with destructive Git commands.
-
-## Remote control
-
-The desktop **Remote** surface can start/stop the local host, use a manual relay or managed Cuppet account-link flow, create trusted/viewer pairing invitations, list paired devices, and revoke them.
-
-Headless equivalents:
+### Checks and packaging
 
 ```bash
-cuppet remote-control
-cuppet relay
-cuppet remote-enroll --token <session-token>
+npm test
+npm run renderer:verify
 ```
 
-Remote protocol v1 preserves:
+The renderer verification checks generated IPC files, renderer types, opted-in runtime types, and the production renderer build. The full test suite includes native sandbox checks; run it on a host that supports the platform's isolation mechanism.
 
-- 512 KiB frame cap;
-- monotonic host event sequence numbers;
-- reconnect snapshots + host-process `connectionId`;
-- replay-safe command IDs;
-- per-command scopes;
-- single-use short-lived pairing invites;
-- viewer read-only scope;
-- host/device-bound Ed25519 managed tokens;
-- host replacement invalidating prior device authority.
+After staging the required runtime resources, use `npm run pack:dir` for an unpacked application, `npm run release:mac` for the macOS arm64 package, or `npm run release:win` for the Windows x64 package. Packaging validates the staged resources before building. The [release guide](docs/release-security.md) describes validation gates and publishing.
 
-Phase E adds shared control routing without moving authority to the relay:
+## Command-line use
 
-- `question.list` → `session.read`;
-- `question.reply` / `question.reject` → `question.write`;
-- `session.undo` → `session.write`;
-- `status` / `doctor` → `session.read`.
-
-Remote devices cannot provide or retrieve host provider credentials/endpoints. Provider/model/effort selection remains constrained to host-advertised policy, and the host performs final request lowering locally.
-
-The self-host relay is a trusted transport, **not** an end-to-end-encrypted boundary. Use TLS before exposing it outside localhost.
-
-## Provider, model-role, and effort policy
-
-Phase D remains the provider-policy authority:
-
-- provider API key and endpoint authority stay on the local host;
-- primary and secondary roles are independently persisted and resolved;
-- model catalogs require text input/output, streaming, and tool-calling capability;
-- OpenAI/Azure and Vertex/Vertex-Anthropic aliases remain grouped without crossing vendors;
-- future provider IDs can participate when they advertise the required capability contract;
-- live variants and compatibility bridge data are sanitized before projection;
-- effort/reasoning is lowered into provider request metadata, not prompt text;
-- the background canonicalizer uses the independent secondary model role;
-- Desktop, headless, and Remote expose the same non-secret model/variant policy.
-
-Inspect the sanitized host policy with:
+Run the CLI directly from a source checkout:
 
 ```bash
-cuppet models --provider-id openai-compatible --model <model-id> --effort <variant>
+node src/cli/main.mjs --help
+node src/cli/main.mjs sessions
+node src/cli/main.mjs status
+node src/cli/main.mjs doctor
+node src/cli/main.mjs prompt "Continue this task" --session <session-id>
+node src/cli/main.mjs prompt "Try another approach" --session <session-id> --fork
+node src/cli/main.mjs undo --session <session-id>
 ```
 
-Headless provider configuration stays local through `CUPPET_PROVIDER_ID`, `CUPPET_API_KEY`, `CUPPET_MODEL`, `CUPPET_BACKGROUND_MODEL`, `CUPPET_EFFORT`, `CUPPET_BACKGROUND_EFFORT`, and `CUPPET_BASE_URL`. Optional non-secret discovery metadata can be provided through `CUPPET_MODEL_CATALOG_JSON` and `CUPPET_VARIANT_BRIDGE_JSON`.
+Configure headless inference with `CUPPET_PROVIDER_ID`, `CUPPET_API_KEY`, `CUPPET_BASE_URL`, and `CUPPET_MODEL`. Optional settings include `CUPPET_EFFORT`, `CUPPET_BACKGROUND_MODEL`, and `CUPPET_BACKGROUND_EFFORT`.
 
-## Runtime-owned coding tools
+The CLI stores data in `~/.cuppet-desktop` by default. Override it with `--data-dir` or `CUPPET_DATA_DIR`. A noninteractive command fails rather than waiting indefinitely for an approval or answer it cannot collect.
 
-Project-bound chats expose a deliberately small tool surface:
-
-- `tst_explore` — TST workspace/tree/search/trace discovery plus revision-bound edit targets;
-- `tst_read` — exact bounded filesystem reads and checked revision-target reads;
-- `tst_edit_batch` — write-free structural prepare followed by checked multi-file apply;
-- `tst_validate` — explicit approved repository checks bound to stable post-edit hashes;
-- `workspace_edit` — precise text replacement fallback for unsupported/unstructured cases;
-- `workspace_write` — bounded file creation/replacement fallback;
-- `bash` — project-scoped shell execution;
-- `question` — bounded interactive user input through `QuestionBroker`;
-- `cuppet_plan` — lossless implementation-plan retrieval;
-- `cuppet_memory_search` — Cuppet memory retrieval. `source=messages` searches stored user messages; `source=activity` inspects the latest assistant message's recorded tool executions (or pass `message_id`/`tool_execution_id`), returns arguments and bounded output with `offset`/`next_offset`, and `include_activities=true` adds the stored activity timeline.
-
-General chats do not receive filesystem or shell tools.
-
-### Structural edit path
-
-For supported code edits, the preferred path is:
-
-```text
-tst_explore
-→ revision-bound target
-→ tst_read
-→ tst_edit_batch prepare (zero writes)
-→ exact permission for the prepared batch + diff digest
-→ tst_edit_batch apply
-→ current-hash TST graph refresh receipt
-→ tst_validate
-```
-
-Prepare never changes project files. Apply revalidates base hashes, publishes one checked batch under the shared project writer, records one multi-file Undo boundary, and owns the graph refresh barrier. If TST cannot acknowledge every changed path at its final filesystem hash, later structural work remains blocked until freshness is recovered.
-
-Successful validation becomes reusable behavioral evidence only when approved checks pass against unchanged post-edit hashes. The observation uses verifier provenance and records both command-success and content-hash evidence. Model claims and prepared-but-unapplied edits do not become verified memory.
-
-### Structural exploration first
-
-`tst_explore` consolidates structural navigation:
-
-```text
-workspace → bounded project overview
-tree      → bounded project-relative file tree
-search    → structural symbol/path localization
-trace     → bounded caller/callee/dependency trace
-```
-
-TST owns structural discovery, not source-content truth. `tst_read` resolves and reads the current filesystem after navigation. Identical exploration calls are cached per session so duplicate graph output is not repeatedly sent to the model.
-
-### Provider tool loop
-
-```text
-SQLite durable transcript
-        │ detached model projection
-        ▼
-ContextCompiler + PE3 ephemeral context
-        ▼
-Provider inference
-   │                 │
-   │ text            │ tool call
-   ▼                 ▼
-visible stream   JournaledToolRuntime
-                     │
-                     ├── QuestionBroker
-                     ├── PermissionBroker
-                     └── ToolRuntime
-                            │
-                            ├── bounded result → provider loop
-                            ├── durable audit → SQLite tool_executions
-                            ├── reversible mutation → MutationJournal
-                            └── observed/mutated paths → PE3
-```
-
-Provider-only tool-call/tool-result messages remain ephemeral and are not appended to the visible SQLite message transcript.
-
-## Permission boundary
-
-Permissions are runtime policy, not model, renderer, or Remote policy.
-
-Ordinary project reads remain automatic. Sensitive files such as `.env`, credential-like files, private keys, and certificates require approval; Cuppet-owned credential/runtime files are denied. Edits/writes require approval unless narrow session-scoped **guarded auto** is enabled and the exact path passes containment/sensitivity checks.
-
-Only a pinned metadata-only shell command family can run automatically. Arbitrary commands, shell chaining/redirection/expansion, installs, builds, tests, mutations, and path-bearing discovery commands require permission.
-
-Visible approval choices are:
-
-- **Allow once**;
-- **Always this exact request**;
-- **Reject**;
-- **Enable guarded auto** from the local Desktop only when eligible.
-
-“Always” is an exact action + exact resource fingerprint for the current session, never a wildcard. Plan mode stays read-only and noninteractive execution fails closed when consent is required.
-
-## Durable tool audit
-
-SQLite `tool_executions` is the authority for model-requested execution history. It stores tool name, provider call ID, argument JSON, bounded output, terminal status, permission source, and timestamps separately from visible chat messages.
-
-A stale `running` row after restart becomes an interrupted error rather than a false success.
-
-Key runtime limits:
-
-- 64 tool calls per generation;
-- 128 KiB tool output;
-- 1 MiB file read/edit/write and undo snapshot ceiling;
-- 16 resources per permission request;
-- 120-second maximum shell timeout.
-
-## PE3 task-local routing
-
-PE3 remains the project task-context scheduler:
-
-```text
-incoming project prompt
-        │
-        ▼
-deterministic task affinity
-  ├─ continuation / active structural match → continue
-  ├─ dormant structural match → reactivate
-  └─ ambiguous
-        │
-        ▼
-optional TST graph localization
-        │ still ambiguous
-        ▼
-local sentence embedding
-        │
-        ├─ decisive dormant winner → reactivate
-        ├─ strong active match → continue
-        ├─ clear novelty → create sibling task session
-        └─ low confidence / failure → continue active task
-```
-
-Successful exploration/read feeds observed paths; successful edit/write and Git-visible shell changes feed workspace mutation. Rejected/failed tools do not gain path privilege. Cross-task routing remains transactional: prepare → target accept → SQLite transaction → router commit.
-
-## Cognitive runtime
-
-Synthetic retrieval remains detached from durable conversation truth:
-
-```text
-SQLite durable task transcript
-        │ detached copy
-        ▼
-Cuppet ContextCompiler
-        ├── TST session continuity (STM)
-        ├── workspace graph context
-        ├── verified project memory (LTM)
-        └── lossless plan projection
-        │ ephemeral provider request only
-        ▼
-Provider + runtime tool loop
-        │
-        ▼
-SQLite durable assistant result
-```
-
-Foreground synthetic context is capped at 2,048 tokens, targeting 4% of usable provider context with a 512-token floor. STM / graph / verified LTM allocation remains 45 / 35 / 20, with cache-stable memoization by session + user-message epoch. History trimming fails closed without complete TST coverage.
-
-Build/Plan mode is session-persisted. Plan mode can use up to 12% of usable context, capped at 16K tokens, with workspace / graph / STM / LTM allocation of 70 / 15 / 10 / 5. `LosslessPlanStore` preserves canonical source requirements independently from todo/chat projection.
-
-When `CUPPET_TST_SOCKET` and `CUPPET_TST_TOKEN` are configured, the runtime lazily connects to authenticated `cuppet.tst.v3`. TST is optional for startup; unsafe history replacement and STM compaction fail closed when it is unavailable. The secondary/background model remains a canonicalizer only and cannot promote its own `model_candidate` output into trusted memory.
-
-## Projects
-
-Project behavior remains unchanged:
-
-- **Local folder** — register an existing folder and detect Git root/origin;
-- **GitHub URL** — clone normal HTTPS/SSH `github.com` repositories with existing credentials;
-- **GitHub repositories** — browse through an already-authenticated `gh` CLI session and clone the selected repository.
-
-Chats stay permanently bound to their project. Switching projects cannot retarget an active run, removing a registration does not delete the checkout, and missing folders can be relocated without losing conversation history. Phase E additionally refuses to replay an old undo entry against a different canonical checkout.
-
-## Phase gates
+For a long-running Remote host or a self-hosted relay:
 
 ```bash
-npm run phase0:verify
-npm run phase1:verify
-npm run phaseb:verify
-npm run phaseb1:verify
-npm run phaseb2:verify
-npm run phasec1:verify
-npm run phasec2:verify
-npm run phased:verify
-npm run phasee:verify
+node src/cli/main.mjs remote-control
+node src/cli/main.mjs relay --bind 127.0.0.1 --port 8787
 ```
 
-Phase E verifies all earlier contracts plus durable continuation/fork semantics, lossless-plan remapping, status/doctor privacy, bounded question brokerage, Desktop/Remote scope routing, byte-exact restart-persistent undo, external-edit conflicts, original-workspace binding, opaque shell barriers, durable audit-ID linkage, UI syntax, and the absence of destructive Git restoration or a production OpenCode dependency.
+## Technical documentation
 
-## Architecture
+The React renderer handles presentation. Electron owns native integrations and credential storage, while the independent Node runtime owns conversations, provider execution, permissions, questions, and undo. SQLite stores the durable conversation and tool audit; TST supplies code navigation and memory.
 
-```text
-Electron renderer
-    ├── conversations/projects
-    ├── provider/model/effort controls
-    ├── permission decisions
-    ├── question responses
-    ├── session Undo
-    └── Remote lifecycle
-          │ narrow contextBridge
-          ▼
-Electron main
-    ├── native folder picker
-    ├── OS-encrypted provider credentials/endpoints
-    └── bounded runtime IPC methods
-          │ NDJSON runtime protocol
-          ▼
-Independent Node runtime
-    ├── SQLite
-    │    ├── projects
-    │    ├── task sessions/messages
-    │    └── tool_executions
-    ├── ProjectManager
-    ├── PE3 project router
-    ├── CognitiveStateStore
-    ├── ContextCompiler / LosslessPlanStore
-    ├── TST / STM bridge
-    ├── PermissionBroker
-    ├── QuestionBroker
-    ├── MutationJournal
-    ├── JournaledToolRuntime / ToolRuntime
-    ├── evidence-gated background enricher
-    ├── ProviderPolicy
-    ├── OpenAI-compatible execution adapter
-    ├── RemoteManager / RemoteBridge
-    └── generation/tool cancellation
-          │ outbound WebSocket only
-          ▼
-Cuppet relay
-    ├── transport/presence
-    ├── bounded in-memory replay
-    └── optional browser Remote client
-```
+| Topic | Documentation |
+| --- | --- |
+| Provider ownership, capabilities, and transports | [Provider architecture](docs/provider-architecture-v2.md) |
+| Code context, memory, and daemon lifecycle | [Managed TST runtime](docs/f1-managed-tst-runtime.md) |
+| Tool permissions and protected operations | [Tools and permissions](docs/phase-c1-tools-permissions.md) |
+| Session continuation, questions, and undo | [Session controls](docs/phase-e-session-control.md) |
+| Remote pairing, scopes, and relay | [Remote control](docs/phase-c2-remote-control.md) |
+| Streaming, IPC, database migrations, and runtime typing | [Architecture review fixes](docs/architecture-review-ar04-ar09.md) |
+| Distribution, signing limitations, and publishing | [Release guide](docs/release-security.md) |
 
-## Authority map
-
-Each fact/state class has one authority; everything else is a projection, index, cache, or transport:
-
-- filesystem → source/workspace truth;
-- TST graph → structural navigation;
-- SQLite project rows → project registration identity;
-- SQLite sessions/messages → visible task/conversation truth;
-- SQLite `tool_executions` → durable tool audit;
-- `PermissionBroker` → protected-operation approval;
-- `QuestionBroker` → pending interactive question state;
-- `MutationJournal` → reversible Cuppet-owned file mutation state;
-- PE3 registry → bounded task-routing metadata only;
-- `LosslessPlanStore` → canonical implementation requirements;
-- TST LTM → verified reusable memory;
-- `CognitiveStateStore` → mode/orchestrator/background controls;
-- Electron main/headless host → provider secret/endpoint authority;
-- `ProviderPolicy` → non-secret provider/model/role/effort policy and request lowering;
-- Remote device state → scoped presentation/selection state only;
-- relay → transport/presence only;
-- renderer → presentation/navigation only.
-
-## Migration docs
-
-- Phase 0 audit: [`docs/phase-0-behavior-inventory.md`](docs/phase-0-behavior-inventory.md)
-- Phase A architecture: [`docs/phase-1-architecture.md`](docs/phase-1-architecture.md)
-- Phase B projects: [`docs/phase-b-projects.md`](docs/phase-b-projects.md)
-- Phase B1 cognitive runtime: [`docs/phase-b1-cognitive-runtime.md`](docs/phase-b1-cognitive-runtime.md)
-- Phase B2 PE3 routing: [`docs/phase-b2-pe3-routing.md`](docs/phase-b2-pe3-routing.md)
-- Phase C1 tools/permissions: [`docs/phase-c1-tools-permissions.md`](docs/phase-c1-tools-permissions.md)
-- Phase C1 contract: [`migration/phase-c1-contract.json`](migration/phase-c1-contract.json)
-- Phase C2 remote control: [`docs/phase-c2-remote-control.md`](docs/phase-c2-remote-control.md)
-- Phase C2 contract: [`migration/phase-c2-contract.json`](migration/phase-c2-contract.json)
-- Phase D provider/model/effort: [`docs/phase-d-provider-model-effort.md`](docs/phase-d-provider-model-effort.md)
-- Phase D contract: [`migration/phase-d-contract.json`](migration/phase-d-contract.json)
-- Phase E session/control parity: [`docs/phase-e-session-control.md`](docs/phase-e-session-control.md)
-- Phase E contract: [`migration/phase-e-contract.json`](migration/phase-e-contract.json)
-
-## Migration rule
-
-A later phase may replace an old mechanism, but it may not silently replace Cuppet policy or create a second authority. Context compilation, plans, PE3, evidence-gated memory, permissions, provider policy, questions, undo, session controls, and Remote compatibility remain explicit contracts.
-
-**Phase E completes the currently defined migration acceptance sequence through shared session/control parity.** Any later increment should start from the same authority-map rule rather than reopening controller duplication.
+The [docs directory](docs/) contains the earlier migration records and acceptance notes. Those documents describe individual increments; current behavior is defined by the source and its tests.
