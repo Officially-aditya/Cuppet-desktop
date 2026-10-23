@@ -87,8 +87,14 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   const createdAt = Number(event.createdAt) || Date.now();
 
   if (event.type === 'message.preview') {
-    const content = typeof event.content === 'string' ? event.content : '';
     return updateMessageState(state, messageId, (current) => {
+      let content = typeof event.content === 'string' ? event.content : current.preview;
+      if (typeof event.delta === 'string' && Number.isSafeInteger(event.seq)) {
+        const end = Number(event.seq);
+        const start = end - event.delta.length;
+        if (start < 0 || end <= content.length || start > content.length) return current;
+        content += event.delta.slice(content.length - start);
+      }
       const items = content ? completeReasoning(current.items, createdAt) : current.items;
       if (current.preview === content && items === current.items) return current;
       return { ...current, items, preview: content };

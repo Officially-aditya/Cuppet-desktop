@@ -78,6 +78,7 @@ export class CodexSessionRuntime {
   }
 
   async runTurn(input = {}, hooks = {}) {
+    if (hooks.signal?.aborted) throw abortError();
     if (this.#state === 'idle' || this.#state === 'error') await this.start();
     if (this.#state !== 'ready') throw new Error('Codex app-server runtime is not ready.');
     if (this.#activeTurn) throw new Error('Codex app-server runtime already has an active turn.');
@@ -87,6 +88,8 @@ export class CodexSessionRuntime {
     const dynamicTools = toDynamicTools(hooks.tools);
     if (dynamicTools.length && typeof hooks.executeTool !== 'function') throw new Error('Cuppet tool execution bridge is unavailable for Codex.');
     const completed = deferred();
+    // Cancellation and process exit can happen while a startup request is pending.
+    completed.promise.catch(() => undefined);
     const selection = normalizeCodexSelection(input.selection, this.#configuration);
     const turn = {
       completed,
@@ -97,9 +100,18 @@ export class CodexSessionRuntime {
       signal: hooks.signal,
       hooks,
       abortListener: null,
+      cancellation: null,
     };
     this.#activeTurn = turn;
     this.#state = 'running';
+    const request = (method, params) => {
+      if (hooks.signal?.aborted) throw abortError();
+      const pending = client.request(method, params);
+      return Promise.race([pending, completed.promise.then(() => pending)]);
+    };
+    turn.abortListener = () => { void this.cancel(); };
+    hooks.signal?.addEventListener('abort', turn.abortListener, { once: true });
+    if (hooks.signal?.aborted) turn.abortListener();
 
     try {
       const threadParams = {
@@ -120,7 +132,7 @@ export class CodexSessionRuntime {
       const configuredEffort = reasoningEffort(selection.effort);
       if (configuredEffort) threadParams.config = { model_reasoning_effort: configuredEffort };
 
-      const startedThread = await client.request('thread/start', threadParams);
+      const startedThread = await request('thread/start', threadParams);
       turn.threadId = String(record(startedThread).thread?.id ?? '');
       if (!turn.threadId) throw new Error('Codex app-server did not return a thread ID.');
 
@@ -142,21 +154,20 @@ export class CodexSessionRuntime {
           }
         }
       }
-      const startedTurn = await client.request('turn/start', {
+      const startedTurn = await request('turn/start', {
         threadId: turn.threadId,
         input: turnInput,
       });
       turn.turnId = String(record(startedTurn).turn?.id ?? '');
       if (!turn.turnId) throw new Error('Codex app-server did not return a turn ID.');
 
-      turn.abortListener = () => { void this.cancel(); };
-      hooks.signal?.addEventListener('abort', turn.abortListener, { once: true });
-      if (hooks.signal?.aborted) turn.abortListener();
-
       const finished = await completed.promise;
       if (hooks.signal?.aborted || finished.status === 'interrupted') throw abortError();
       if (finished.status && !['completed', 'complete'].includes(finished.status)) throw new Error(`Codex turn ${finished.status}.`);
       return { text: turn.text, toolCalls: [], usage: finished.usage };
+    } catch (error) {
+      if (hooks.signal?.aborted || turn.cancellation) throw abortError();
+      throw error;
     } finally {
       if (turn.abortListener) hooks.signal?.removeEventListener('abort', turn.abortListener);
       if (this.#activeTurn === turn) this.#activeTurn = null;
@@ -167,8 +178,23 @@ export class CodexSessionRuntime {
   async cancel() {
     const turn = this.#activeTurn;
     const client = this.#client;
-    if (!turn || !client || !turn.threadId || !turn.turnId) return;
-    await client.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId }, 5_000).catch(() => undefined);
+    if (turn?.cancellation) return turn.cancellation;
+    if (!turn || !client) return;
+    this.#client = null;
+    if (this.#state !== 'closed') this.#state = 'idle';
+    turn.cancellation = (async () => {
+      try {
+        if (turn.threadId && turn.turnId) {
+          void client.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId }, 5_000).catch(() => undefined);
+        }
+        // The runtime is discarded after an aborted turn. Retire it now rather
+        // than depending on an interrupt acknowledgement or turn/completed.
+        await client.close().catch(() => undefined);
+      } finally {
+        turn.completed.reject(abortError());
+      }
+    })();
+    return turn.cancellation;
   }
 
   async close() {
@@ -182,6 +208,7 @@ export class CodexSessionRuntime {
 
   #installClientHandlers(client) {
     client.on('request', (message) => {
+      if (this.#client !== client) return;
       const turn = this.#activeTurn;
       if (!turn) {
         client.respondError(message.id, 'Codex requested a tool outside an active Cuppet turn.');
@@ -192,10 +219,13 @@ export class CodexSessionRuntime {
       });
     });
     client.on('notification', (message) => {
+      if (this.#client !== client) return;
       const turn = this.#activeTurn;
-      if (!turn) return;
+      if (!turn?.threadId) return;
       const params = record(message.params);
       if (message.method === 'item/agentMessage/delta') {
+        if (turn.threadId && params.threadId && String(params.threadId) !== turn.threadId) return;
+        if (turn.turnId && params.turnId && String(params.turnId) !== turn.turnId) return;
         const delta = typeof params.delta === 'string' ? params.delta : '';
         if (delta) {
           turn.text += delta;
@@ -242,7 +272,8 @@ export class CodexSessionRuntime {
       }
     });
     client.on('exit', ({ code, signal: exitSignal }) => {
-      if (this.#client === client) this.#client = null;
+      if (this.#client !== client) return;
+      this.#client = null;
       if (this.#state !== 'closed') this.#state = 'idle';
       this.#activeTurn?.completed.reject(new Error(`Codex app-server exited during turn (${code ?? 'null'}${exitSignal ? `, ${exitSignal}` : ''})`));
     });

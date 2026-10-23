@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RuntimeService } from '../src/runtime/service.mjs';
+import { consumeSseBody } from '../src/runtime/provider.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -75,6 +76,40 @@ test('Stop aborts the active generation and persists partial output as stopped',
     const restored = await runtime.handle('session.get', { sessionId: session.id });
     assert.equal(restored.messages.at(-1).content, 'partial');
     assert.equal(restored.messages.at(-1).status, 'stopped');
+  } finally {
+    await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a streamed provider error preserves partial text durably and releases the session for another turn', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-stream-error-'));
+  const events = [];
+  const providerFactory = () => ({
+    async stream(messages, { signal, onDelta }) {
+      const recovered = messages.some((message) => message.content === 'retry');
+      const end = recovered ? 'data: [DONE]\n\n' : 'data: {"error":{"message":"Connection lost"}}\n\n';
+      const body = new Response(`data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n${end}`).body;
+      return consumeSseBody(body, onDelta, signal);
+    },
+  });
+  let runtime = new RuntimeService({ databasePath: join(dir, 'db.sqlite3'), emit: (event) => events.push(event), providerFactory });
+  try {
+    const session = await runtime.handle('session.create');
+    await runtime.handle('session.send', { sessionId: session.id, text: 'fail' });
+    const completed = await waitFor(events, (event) => event.type === 'message.completed');
+    assert.equal(completed.message.status, 'error');
+    assert.match(completed.message.content, /^Partial answer\n\n/);
+    await waitFor(events, (event) => event.type === 'run.finished');
+    assert.equal((await runtime.handle('health')).activeRuns, 0);
+    await runtime.close();
+    runtime = new RuntimeService({ databasePath: join(dir, 'db.sqlite3'), emit: (event) => events.push(event), providerFactory });
+    const restored = await runtime.handle('session.get', { sessionId: session.id });
+    assert.equal(restored.messages.at(-1).content, completed.message.content);
+    const next = await runtime.handle('session.send', { sessionId: session.id, text: 'retry' });
+    const retried = await waitFor(events, (event) => event.type === 'message.completed' && event.message.id === next.messageId);
+    assert.equal(retried.message.status, 'complete');
+    assert.equal(retried.message.content, 'Partial answer');
   } finally {
     await runtime.close();
     await rm(dir, { recursive: true, force: true });

@@ -186,10 +186,134 @@ test('subscription provider interrupts the Codex turn on abort', async () => {
   const controller = new AbortController();
   const running = provider.stream([{ role: 'user', content: 'Keep working.' }], { signal: controller.signal });
   await client.startedTurn.promise;
+  await new Promise(setImmediate);
   controller.abort();
   await assert.rejects(running, (error) => error?.name === 'AbortError');
   assert.ok(client.requests.some((request) => request.method === 'turn/interrupt'));
   assert.equal(client.closed, true);
+});
+
+test('Codex abort completes and retires the process when interrupt fails or never completes', async () => {
+  for (const mode of ['failure', 'acknowledged', 'unresponsive']) {
+    const client = new FakeCodexClient({ toolCall: false });
+    client.finish = () => {};
+    const request = client.request.bind(client);
+    client.request = (method, params) => {
+      if (method !== 'turn/interrupt') return request(method, params);
+      if (mode === 'failure') return Promise.reject(new Error('interrupt failed'));
+      if (mode === 'unresponsive') return new Promise(() => {});
+      return Promise.resolve({});
+    };
+    const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => client } });
+    const controller = new AbortController();
+    try {
+      const running = runtime.runTurn({ messages: [] }, { signal: controller.signal });
+      await client.startedTurn.promise;
+      await new Promise(setImmediate);
+      const rejected = assert.rejects(running, (error) => error.name === 'AbortError');
+      controller.abort();
+      await rejected;
+      assert.deepEqual(runtime.snapshot(), { state: 'idle', active: false }, mode);
+      assert.equal(client.closeCount, 1, mode);
+    } finally { await runtime.close(); }
+  }
+});
+
+test('Codex can abort while thread/start or turn/start is still waiting', async () => {
+  for (const pendingMethod of ['thread/start', 'turn/start']) {
+    const client = new FakeCodexClient({ toolCall: false });
+    const waiting = deferred();
+    const response = deferred();
+    const request = client.request.bind(client);
+    client.request = (method, params) => {
+      if (method !== pendingMethod) return request(method, params);
+      waiting.resolve();
+      return response.promise;
+    };
+    const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => client } });
+    const controller = new AbortController();
+    try {
+      const running = runtime.runTurn({ messages: [] }, { signal: controller.signal });
+      await waiting.promise;
+      const rejected = assert.rejects(running, (error) => error.name === 'AbortError');
+      controller.abort();
+      await rejected;
+      assert.equal(client.closed, true);
+      response.resolve(pendingMethod === 'thread/start' ? { thread: { id: 'late-thread' } } : { turn: { id: 'late-turn' } });
+      await new Promise(setImmediate);
+      assert.equal(runtime.snapshot().active, false);
+      if (pendingMethod === 'thread/start') assert.equal(client.requests.some(({ method }) => method === 'turn/start'), false);
+    } finally { await runtime.close(); }
+  }
+});
+
+test('Codex rejects a pre-aborted turn without starting a process', async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => client } });
+  await assert.rejects(runtime.runTurn({}, { signal: AbortSignal.abort() }), (error) => error.name === 'AbortError');
+  assert.equal(client.startCount, 0);
+  await runtime.close();
+});
+
+test('Codex discards text from another thread or turn', async () => {
+  const client = new FakeCodexClient({ toolCall: false });
+  client.finish = () => {};
+  const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => client } });
+  const deltas = [];
+  try {
+    const running = runtime.runTurn({}, { onDelta: (delta) => deltas.push(delta) });
+    await client.startedTurn.promise;
+    await new Promise(setImmediate);
+    for (const [threadId, turnId] of [['old-thread', 'turn-1'], ['thread-1', 'old-turn'], ['thread-1', 'turn-1']]) {
+      client.emit('notification', { method: 'item/agentMessage/delta', params: { threadId, turnId, delta: 'valid' } });
+    }
+    client.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    assert.equal((await running).text, 'valid');
+    assert.deepEqual(deltas, ['valid']);
+  } finally { await runtime.close(); }
+});
+
+test('Codex ignores old notifications during thread creation and preserves early turn/start deltas', async () => {
+  const client = new FakeCodexClient({ toolCall: false });
+  const request = client.request.bind(client);
+  client.request = (method, params) => {
+    if (method === 'thread/start') {
+      client.emit('notification', { method: 'item/agentMessage/delta', params: { threadId: 'old-thread', turnId: 'old-turn', delta: 'stale' } });
+      client.emit('notification', { method: 'turn/completed', params: { threadId: 'old-thread', turn: { id: 'old-turn', status: 'failed' } } });
+    }
+    if (method === 'turn/start') {
+      client.emit('notification', { method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', delta: 'early ' } });
+    }
+    return request(method, params);
+  };
+  const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => client } });
+  try {
+    assert.equal((await runtime.runTurn({})).text, 'early done');
+  } finally { await runtime.close(); }
+});
+
+test('a cancelled Codex client cannot emit into the next turn or reset its runtime', async () => {
+  const clients = [new FakeCodexClient({ toolCall: false }), new FakeCodexClient({ toolCall: false })];
+  for (const client of clients) client.finish = () => {};
+  let next = 0;
+  const runtime = new CodexSessionRuntime({ configuration: { codexLaunch: { command: 'fake' }, clientFactory: () => clients[next++] } });
+  const controller = new AbortController();
+  try {
+    const first = runtime.runTurn({}, { signal: controller.signal });
+    await clients[0].startedTurn.promise;
+    const rejected = assert.rejects(first, (error) => error.name === 'AbortError');
+    controller.abort();
+    await rejected;
+    const second = runtime.runTurn({});
+    await clients[1].startedTurn.promise;
+    await new Promise(setImmediate);
+    clients[0].emit('notification', { method: 'item/agentMessage/delta', params: { delta: 'stale' } });
+    clients[0].emit('exit', { code: 0 });
+    assert.equal(runtime.snapshot().state, 'running');
+    FakeCodexClient.prototype.finish.call(clients[1]);
+    assert.equal((await second).text, 'done');
+    assert.equal(next, 2);
+  } finally { await runtime.close(); }
 });
 
 test('subscription provider refuses API-key Codex auth', async () => {

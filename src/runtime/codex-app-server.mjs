@@ -105,6 +105,7 @@ export class CodexAppServerClient extends EventEmitter {
         const timer = setTimeout(resolve, 500);
         child.once('exit', () => { clearTimeout(timer); resolve(); });
       });
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     }
   }
 

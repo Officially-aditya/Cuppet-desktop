@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 import { providerActivity } from '../src/runtime/providers/activity.mjs';
+import { reduceTranscriptEvent } from '../src/renderer/react/chat-transcript.ts';
 
 function isProviderActivity(event, type) {
   return event?.type === 'runtime.activity'
@@ -30,11 +31,12 @@ function harness(adapter) {
   return {
     events,
     final,
-    run: () => runtime.run({
+    run: (options = {}) => runtime.run({
       adapter,
       messages: [{ role: 'user', content: 'do work' }],
       sessionId: 'session_1',
       onDelta: async (delta) => final.push(delta),
+      ...options,
     }),
   };
 }
@@ -224,4 +226,59 @@ test('providers without reasoning preserve the complete answer without creating 
     assert.deepEqual(h.final, ['Plain answer.']);
     assert.equal(h.events.some((event) => isProviderActivity(event, 'activity.reasoning.delta')), false);
   }
+});
+
+test('a failed stream preserves its partial answer without restoring earlier tool commentary', async () => {
+  const h = harness({
+    async stream(_messages, options) {
+      options.onDelta('Inspecting the plan.');
+      await options.executeTool({ id: 'tool', name: 'cuppet_plan', arguments: '{"action":"overview"}' });
+      options.onDelta('Partial answer after the tool.');
+      throw new Error('Connection reset');
+    },
+  });
+  await assert.rejects(h.run(), /Connection reset/);
+  assert.deepEqual(h.final, ['Partial answer after the tool.']);
+  assert.deepEqual(h.events.filter((event) => isProviderActivity(event, 'activity.reasoning.delta')).map((event) => event.activity.text), ['Inspecting the plan.']);
+  assert.equal(h.events.filter((event) => event.type === 'message.preview').at(-1).content, '');
+});
+
+test('live previews batch incremental text with linear payload size and clear pending timers at completion', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const ready = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  let send;
+  const h = harness({
+    async stream(_messages, { onDelta }) {
+      send = onDelta;
+      for (let i = 0; i < 8000; i++) onDelta('word');
+      ready.resolve();
+      await finish.promise;
+      return { text: 'word'.repeat(8000) + ' tail end' };
+    },
+  });
+  const running = h.run();
+  await ready.promise;
+  assert.equal(h.events.filter((event) => event.type === 'message.preview').length, 1, 'the first chunk is visible immediately');
+  t.mock.timers.tick(50);
+  const previews = h.events.filter((event) => event.type === 'message.preview');
+  assert.equal(previews.length, 2);
+  assert.ok(previews.reduce((bytes, event) => bytes + (event.delta ?? event.content).length, 0) <= 2 * 32000);
+  const live = previews.reduce(reduceTranscriptEvent, {});
+  assert.equal(live.msg_assistant.preview, 'word'.repeat(8000));
+  assert.equal(previews.slice(1).reduce(reduceTranscriptEvent, {}).msg_assistant.preview, live.msg_assistant.preview, 'a view that missed the first preview can recover');
+  send(' tail');
+  t.mock.timers.tick(50);
+  const incremental = h.events.filter((event) => event.type === 'message.preview').at(-1);
+  assert.equal(incremental.delta, ' tail');
+  assert.equal(incremental.seq, 32005);
+  send(' end');
+  finish.resolve();
+  await running;
+  assert.equal(h.final.join(''), 'word'.repeat(8000) + ' tail end');
+  const eventCount = h.events.length;
+  t.mock.timers.tick(100);
+  assert.equal(h.events.length, eventCount, 'no delayed preview may appear after completion');
+  const final = h.events.reduce(reduceTranscriptEvent, {});
+  assert.equal(final.msg_assistant.preview, '');
 });

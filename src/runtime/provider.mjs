@@ -91,6 +91,7 @@ export async function consumeSseBody(body, onDelta, signal) {
   let buffer = '';
   let text = '';
   let usage = null;
+  let finished = false;
   const toolCalls = new Map();
 
   try {
@@ -107,6 +108,7 @@ export async function consumeSseBody(body, onDelta, signal) {
         if (result.done) return finalizeStream(text, usage, toolCalls);
         if (result.delta) text += result.delta;
         if (result.usage) usage = result.usage;
+        finished ||= result.finished;
       }
     }
 
@@ -116,14 +118,15 @@ export async function consumeSseBody(body, onDelta, signal) {
       mergeToolCallDeltas(toolCalls, result.toolCallDeltas);
       if (result.delta) text += result.delta;
       if (result.usage) usage = result.usage;
+      finished ||= result.done || result.finished;
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 
-  const final = finalizeStream(text, usage, toolCalls);
-  if (!final.text && !final.toolCalls.length) throw new Error('Provider stream completed without text or tool calls.');
-  return final;
+  if (!finished) throw new Error('Provider stream ended before completion.');
+  return finalizeStream(text, usage, toolCalls);
 }
 
 export function splitSseEvents(value) {
@@ -138,11 +141,17 @@ async function consumeSseEvent(event, onDelta) {
   if (data === '[DONE]') return { done: true, delta: '', toolCallDeltas: [] };
   let payload;
   try { payload = JSON.parse(data); } catch { throw new Error('Provider returned malformed streaming JSON.'); }
+  if (payload?.error || payload?.type === 'error') {
+    const failure = payload.error ?? payload;
+    const detail = typeof failure === 'string' ? failure : failure.message ?? failure.code ?? 'Unknown provider error';
+    throw new Error(`Provider stream failed: ${String(detail).slice(0, 500)}`);
+  }
   const choice = payload?.choices?.[0] ?? {};
   const delta = choice?.delta?.content;
   if (typeof delta === 'string' && delta.length > 0) await onDelta(delta);
+  if (['length', 'content_filter'].includes(choice.finish_reason)) throw new Error(`Provider response incomplete (${choice.finish_reason}).`);
   const toolCallDeltas = Array.isArray(choice?.delta?.tool_calls) ? choice.delta.tool_calls.map(normalizeToolCallDelta) : [];
-  return { done: false, delta: typeof delta === 'string' ? delta : '', usage: payload?.usage ?? null, toolCallDeltas };
+  return { done: false, finished: Boolean(choice.finish_reason), delta: typeof delta === 'string' ? delta : '', usage: payload?.usage ?? null, toolCallDeltas };
 }
 
 function mergeToolCallDeltas(target, deltas) {
@@ -156,7 +165,11 @@ function mergeToolCallDeltas(target, deltas) {
   }
 }
 function normalizeToolCallDelta(value) { return { index: Number.isInteger(value?.index) ? value.index : undefined, id: typeof value?.id === 'string' ? value.id : '', name: typeof value?.function?.name === 'string' ? value.function.name : '', arguments: typeof value?.function?.arguments === 'string' ? value.function.arguments : '' }; }
-function finalizeStream(text, usage, toolCalls) { return { text, usage, toolCalls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([index, value]) => ({ id: value.id || `tool_call_${index}`, name: value.name, arguments: value.arguments || '{}' })).filter((call) => call.name) }; }
+function finalizeStream(text, usage, toolCalls) {
+  const result = { text, usage, toolCalls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([index, value]) => ({ id: value.id || `tool_call_${index}`, name: value.name, arguments: value.arguments || '{}' })).filter((call) => call.name) };
+  if (!result.text && !result.toolCalls.length) throw new Error('Provider stream completed without text or tool calls.');
+  return result;
+}
 function completionText(payload) { const content = payload?.choices?.[0]?.message?.content; if (typeof content === 'string') return content; if (Array.isArray(content)) return content.map((part) => typeof part?.text === 'string' ? part.text : '').join(''); return ''; }
 function completionToolCalls(payload) { const calls = payload?.choices?.[0]?.message?.tool_calls; if (!Array.isArray(calls)) return []; return calls.flatMap((call, index) => { const name = typeof call?.function?.name === 'string' ? call.function.name : ''; if (!name) return []; return [{ id: typeof call?.id === 'string' ? call.id : `tool_call_${index}`, name, arguments: typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}' }]; }); }
 async function safeResponseText(response) { try { const raw = (await response.text()).trim(); if (!raw) return ''; try { const parsed = JSON.parse(raw); return String(parsed?.error?.message ?? parsed?.message ?? raw).slice(0, 500); } catch { return raw.slice(0, 500); } } catch { return ''; } }

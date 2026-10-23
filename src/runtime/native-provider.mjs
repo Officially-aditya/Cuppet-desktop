@@ -215,6 +215,7 @@ export function nativeProviderKind(providerID) {
 export async function consumeOpenAIResponsesSse(body, onDelta = async () => {}, signal) {
   let text = '';
   let usage = null;
+  let completed = false;
   const calls = new Map();
   for await (const payload of ssePayloads(body, signal)) {
     const type = payload?.type;
@@ -246,20 +247,25 @@ export async function consumeOpenAIResponsesSse(body, onDelta = async () => {}, 
       if (typeof payload.item.arguments === 'string') call.arguments = payload.item.arguments;
       calls.set(key, call);
     } else if (type === 'response.completed') {
+      completed = true;
       usage = payload.response?.usage ?? usage;
       mergeOpenAIFinalCalls(calls, payload.response);
+    } else if (type === 'response.incomplete') {
+      throw new Error(`OpenAI response incomplete (${payload.response?.incomplete_details?.reason ?? 'unknown reason'}).`);
     } else if (type === 'response.failed') {
       throw new Error(providerFailure(payload.response?.error ?? payload.error, 'OpenAI response failed'));
     } else if (type === 'error') {
       throw new Error(providerFailure(payload.error ?? payload, 'OpenAI stream failed'));
     }
   }
+  if (!completed) throw new Error('OpenAI stream ended before response.completed.');
   return { text, toolCalls: callsToArray(calls), usage };
 }
 
 export async function consumeAnthropicSse(body, onDelta = async () => {}, signal) {
   let text = '';
   let usage = null;
+  let completed = false;
   const blocks = new Map();
   for await (const payload of ssePayloads(body, signal)) {
     const type = payload?.type;
@@ -284,10 +290,16 @@ export async function consumeAnthropicSse(body, onDelta = async () => {}, signal
       }
     } else if (type === 'message_delta') {
       usage = { ...(usage ?? {}), ...(payload.usage ?? {}) };
+      if (['max_tokens', 'model_context_window_exceeded'].includes(payload.delta?.stop_reason)) {
+        throw new Error(`Anthropic response incomplete (${payload.delta.stop_reason}).`);
+      }
+    } else if (type === 'message_stop') {
+      completed = true;
     } else if (type === 'error') {
       throw new Error(providerFailure(payload.error, 'Anthropic stream failed'));
     }
   }
+  if (!completed) throw new Error('Anthropic stream ended before message_stop.');
   const toolCalls = [...blocks.entries()]
     .filter(([, block]) => block?.name)
     .sort(([a], [b]) => a - b)
@@ -298,6 +310,7 @@ export async function consumeAnthropicSse(body, onDelta = async () => {}, signal
 export async function consumeGeminiInteractionSse(body, onDelta = async () => {}, signal) {
   let text = '';
   let usage = null;
+  let completed = false;
   let interactionId = null;
   const steps = new Map();
   const argumentsByIndex = new Map();
@@ -332,6 +345,7 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
       }
       steps.set(payload.index, step);
     } else if (type === 'interaction.completed' || type === 'interaction.requires_action') {
+      completed = true;
       const interaction = payload.interaction ?? {};
       interactionId = interaction.id ?? payload.interaction_id ?? interactionId;
       usage = interaction.usage ?? usage;
@@ -342,6 +356,7 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
       throw new Error(providerFailure(payload.error ?? payload, 'Gemini stream failed'));
     }
   }
+  if (!completed) throw new Error('Gemini stream ended before interaction completion.');
   const modelSteps = completeSteps ?? [...steps.entries()].sort(([a], [b]) => a - b).map(([index, step]) => {
     if (step.type === 'function_call' && argumentsByIndex.has(index)) step.arguments = JSON.parse(argumentsByIndex.get(index) || '{}');
     return step;
@@ -354,9 +369,11 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
 export async function consumeVertexSse(body, onDelta = async () => {}, signal) {
   let text = '';
   let usage = null;
+  let completed = false;
   const calls = new Map();
   const modelParts = [];
   for await (const payload of ssePayloads(body, signal)) {
+    if (payload?.error) throw new Error(providerFailure(payload.error, 'Vertex Gemini stream failed'));
     const chunk = vertexChunkResult(payload);
     if (chunk.text) {
       text += chunk.text;
@@ -374,7 +391,11 @@ export async function consumeVertexSse(body, onDelta = async () => {}, signal) {
         else modelParts.push({ text: part.text });
       } else modelParts.push(structuredClone(part));
     }
+    const finishReason = payload?.candidates?.[0]?.finishReason;
+    if (finishReason && finishReason !== 'STOP') throw new Error(`Vertex Gemini response incomplete (${finishReason}).`);
+    completed ||= finishReason === 'STOP';
   }
+  if (!completed) throw new Error('Vertex Gemini stream ended before a finish reason.');
   return {
     text,
     toolCalls: [...calls.values()],
@@ -723,6 +744,7 @@ async function* ssePayloads(body, signal) {
       if (payload && payload !== '[DONE]') yield payload;
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

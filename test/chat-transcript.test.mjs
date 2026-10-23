@@ -8,6 +8,22 @@ import {
   mergeTranscriptState,
 } from '../src/renderer/react/chat-transcript.ts';
 
+test('incremental previews preserve Unicode, tolerate overlaps, and reset between tool segments', () => {
+  const event = (delta, seq) => ({ type: 'message.preview', messageId: 'm', delta, seq });
+  let state = reduceTranscriptEvent({}, event('Hello 👋', 8));
+  const second = event('👋 world', 14);
+  state = reduceTranscriptEvent(state, second);
+  assert.equal(state.m.preview, 'Hello 👋 world');
+  assert.equal(reduceTranscriptEvent(state, second), state, 'duplicate preview deltas are ignored');
+  assert.equal(reduceTranscriptEvent(state, event('missing prefix', 100)), state, 'a gap cannot silently corrupt the preview');
+  state = reduceTranscriptEvent(state, { type: 'message.preview', messageId: 'm', content: '' });
+  assert.equal(state.m.preview, '');
+  state = reduceTranscriptEvent(state, event('Answer', 6));
+  assert.equal(state.m.preview, 'Answer');
+  state = reduceTranscriptEvent(state, { type: 'message.completed', messageId: 'm' });
+  assert.equal(state.m.preview, '');
+});
+
 test('provider retries render as status entries without contaminating reasoning or duplicating hydrated events', () => {
   const event = { type: 'runtime.activity', source: 'provider', messageId: 'retry-message', sequence: 1,
     activity: { type: 'activity.warning', code: 'provider_retry', message: 'OpenCode is retrying the request (attempt 1). Endpoint is unavailable' } };

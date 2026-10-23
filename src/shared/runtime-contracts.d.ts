@@ -44,7 +44,12 @@ export interface RuntimeMessage {
   createdAt?: number;
   updatedAt?: number;
 }
-export type RuntimeEvent = PermissionEvent | MessageDeltaEvent
+export type MessagePreviewEvent = {
+  type: 'message.preview';
+  sessionId: string;
+  messageId: string;
+} & ({ content: string } | { delta: string; seq: number });
+export type RuntimeEvent = PermissionEvent | MessageDeltaEvent | MessagePreviewEvent
   | { type: 'message.created' | 'message.completed'; message: RuntimeMessage }
   | { type: 'run.started' | 'run.finished'; sessionId: string; messageId: string; projectId?: string | null }
   | { type: 'runtime.activity'; sessionId: string; messageId: string; sequence: number; activity: ProviderActivity };

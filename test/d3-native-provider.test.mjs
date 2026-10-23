@@ -7,7 +7,10 @@ import {
   GeminiInteractionsProvider,
   OpenAIResponsesProvider,
   VertexGeminiProvider,
+  consumeOpenAIResponsesSse,
+  consumeAnthropicSse,
   consumeGeminiInteractionSse,
+  consumeVertexSse,
 } from '../src/runtime/native-provider.mjs';
 
 const TOOL = {
@@ -231,10 +234,10 @@ test('Vertex native adapter keeps model function-call history, returns functionR
   const requests = [];
   const responses = [
     sse([
-      { candidates: [{ content: { role: 'model', parts: [{ functionCall: { id: 'vertex_call_1', name: 'lookup', args: { value: 'delta' } } }] } }], usageMetadata: { promptTokenCount: 8 } },
+      { candidates: [{ content: { role: 'model', parts: [{ functionCall: { id: 'vertex_call_1', name: 'lookup', args: { value: 'delta' } } }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 8 } },
     ]),
     sse([
-      { candidates: [{ content: { role: 'model', parts: [{ text: 'Resolved delta.' }] } }], usageMetadata: { candidatesTokenCount: 4 } },
+      { candidates: [{ content: { role: 'model', parts: [{ text: 'Resolved delta.' }] }, finishReason: 'STOP' }], usageMetadata: { candidatesTokenCount: 4 } },
     ]),
   ];
   const provider = createChatProvider(lowered('google-vertex', async (url, init) => {
@@ -277,4 +280,49 @@ test('unknown providers still execute through the OpenAI-compatible chat fallbac
   assert.equal(url, 'https://future.example/v1/chat/completions');
   assert.equal(result.text, 'fallback-ok');
   assert.deepEqual(deltas, ['fallback-ok']);
+});
+
+test('native streams reject EOF or [DONE] without their provider completion event', async () => {
+  const cases = [
+    [consumeOpenAIResponsesSse, { type: 'response.output_text.delta', delta: 'Partial' }],
+    [consumeAnthropicSse, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Partial' } }],
+    [consumeGeminiInteractionSse, { event_type: 'step.delta', index: 0, delta: { type: 'text', text: 'Partial' } }],
+    [consumeVertexSse, { candidates: [{ content: { role: 'model', parts: [{ text: 'Partial' }] } }] }],
+  ];
+  for (const [consume, delta] of cases) {
+    for (const ending of [[], ['[DONE]']]) {
+      const deltas = [];
+      const body = sse([delta, ...ending]).body;
+      await assert.rejects(consume(body, async (text) => deltas.push(text)), /ended before/);
+      assert.deepEqual(deltas, ['Partial']);
+      assert.equal(body.locked, false);
+    }
+  }
+});
+
+test('native streams reject explicit incomplete responses and Vertex error events', async () => {
+  await assert.rejects(consumeOpenAIResponsesSse(sse([
+    { type: 'response.output_text.delta', delta: 'Partial' },
+    { type: 'response.incomplete', response: { incomplete_details: { reason: 'max_output_tokens' } } },
+  ]).body), /incomplete.*max_output_tokens/);
+  await assert.rejects(consumeAnthropicSse(sse([
+    { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }, { type: 'message_stop' },
+  ]).body), /incomplete.*max_tokens/);
+  await assert.rejects(consumeVertexSse(sse([
+    { candidates: [{ content: { parts: [{ text: 'Partial' }] }, finishReason: 'MAX_TOKENS' }] },
+  ]).body), /incomplete.*MAX_TOKENS/);
+  await assert.rejects(consumeVertexSse(sse([{ error: { message: 'service overloaded' } }]).body), /service overloaded/);
+});
+
+test('native streams require completion before returning fragmented tool calls', async () => {
+  for (const [consume, events] of [
+    [consumeOpenAIResponsesSse, [
+      { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc', call_id: 'call', name: 'lookup' } },
+      { type: 'response.function_call_arguments.delta', item_id: 'fc', delta: '{"value":' },
+    ]],
+    [consumeAnthropicSse, [
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'call', name: 'lookup' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"value":' } },
+    ]],
+  ]) await assert.rejects(consume(sse(events).body), /ended before/);
 });

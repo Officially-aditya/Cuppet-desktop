@@ -82,10 +82,10 @@ export class JournaledToolRuntime {
         if (!currentMessageId() || !segment) return;
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment, kind: 'commentary', ...timing }));
       },
-      onPreview: (content) => {
+      onPreview: (preview) => {
         const messageId = currentMessageId();
         if (!messageId) return;
-        this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, content });
+        this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, ...preview });
       },
       onActivity: emitProviderActivity,
     });
@@ -181,6 +181,31 @@ class ToolMutationCapture {
     let pendingStartedAt = null;
     let receivedText = false;
     let streamedText = '';
+    let pendingPreview = '';
+    let previewSeq = 0;
+    let previewSnapshotLength = 0;
+    let previewTimer = null;
+    const flushPreview = () => {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+      if (!pendingPreview) return;
+      previewSeq += pendingPreview.length;
+      // Occasional snapshots let newly subscribed views recover a missing prefix.
+      // Doubling their spacing keeps total snapshot traffic linear in answer size.
+      if (previewSeq >= previewSnapshotLength * 2) {
+        this.#onPreview({ content: pendingText });
+        previewSnapshotLength = previewSeq;
+      } else this.#onPreview({ delta: pendingPreview, seq: previewSeq });
+      pendingPreview = '';
+    };
+    const clearPreview = () => {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+      pendingPreview = '';
+      previewSeq = 0;
+      previewSnapshotLength = 0;
+      this.#onPreview({ content: '' });
+    };
 
     const previewDelta = (delta) => {
       const text = typeof delta === 'string' ? delta : String(delta ?? '');
@@ -189,7 +214,14 @@ class ToolMutationCapture {
       streamedText += text;
       pendingStartedAt ??= Date.now();
       pendingText += text;
-      if (this.#previewPolicy !== 'defer-unclassified') this.#onPreview(pendingText);
+      if (this.#previewPolicy !== 'defer-unclassified') {
+        pendingPreview += text;
+        if (!previewSeq) flushPreview();
+        else if (!previewTimer) {
+          previewTimer = setTimeout(flushPreview, 50);
+          previewTimer.unref?.();
+        }
+      }
     };
 
     const flushReasoning = async () => {
@@ -197,7 +229,7 @@ class ToolMutationCapture {
       if (segment) await this.#onReasoning(segment, { startedAt: pendingStartedAt ?? Date.now(), completedAt: Date.now() });
       pendingText = '';
       pendingStartedAt = null;
-      this.#onPreview('');
+      clearPreview();
     };
 
     const executeTool = typeof options?.executeTool === 'function'
@@ -237,12 +269,14 @@ class ToolMutationCapture {
       });
     } catch (error) {
       const stopped = options?.signal?.aborted || error?.name === 'AbortError';
-      if (stopped && this.#previewPolicy !== 'defer-unclassified' && pendingText) {
-        await finalDelta(pendingText, { stoppedPartial: true });
+      if (this.#previewPolicy !== 'defer-unclassified' && pendingText) {
+        await finalDelta(pendingText, stopped ? { stoppedPartial: true } : {});
         pendingText = '';
       }
-      this.#onPreview('');
+      clearPreview();
       throw error;
+    } finally {
+      clearTimeout(previewTimer);
     }
     if (!receivedText && typeof response?.text === 'string') pendingText = response.text;
     const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
@@ -285,7 +319,7 @@ class ToolMutationCapture {
     }
     if (pendingText) await finalDelta(pendingText);
     pendingText = '';
-    this.#onPreview('');
+    clearPreview();
     const steering = this.#drainSteering();
     if (steering.length) {
       const applied = await this.#applySteering(steering);

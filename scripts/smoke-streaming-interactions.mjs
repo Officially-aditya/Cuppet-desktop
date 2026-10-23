@@ -56,6 +56,9 @@ app.on('browser-window-created', (_event, window) => {
           const button = [...document.querySelectorAll('.session-item')].find(node => node.textContent.includes(id));
           if (!button) throw new Error('Missing fixture chat '+id);
           button.click();
+          // Drain the session-open requests before injecting a synthetic run.
+          await Promise.all([window.cuppet.sessions.get(id), window.cuppet.cognitive.modeGet(id)]);
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           for (let i = 0; i < 500; i++) {
             if (document.querySelector(`article[data-message-id="${id}-u0"]`) && !document.querySelector('article[aria-busy="true"]')) return;
             await new Promise(resolve => setTimeout(resolve, 20));
@@ -66,11 +69,13 @@ app.on('browser-window-created', (_event, window) => {
         const initial = '## Current answer\n\n' + 'Streaming **implementation details** with `src/app.ts` and [a reference](https://example.com). '.repeat(800);
         let content = mode === 'answer' ? initial : '';
         const sequence = mode === 'answer' ? 999 : 1000;
-        window.webContents.send('cuppet:event', { type: 'message.created', message: { id: assistantId, sessionId: id, role: 'assistant', content, status: 'streaming', sequence, createdAt: Date.now() } });
+        window.webContents.send('cuppet:event', { type: 'message.created', message: { id: assistantId, sessionId: id, role: 'assistant', content: '', status: 'streaming', sequence, createdAt: Date.now() } });
         window.webContents.send('cuppet:event', { type: 'run.started', sessionId: id, messageId: assistantId });
+        if (mode === 'answer') window.webContents.send('cuppet:event', { type: 'message.preview', sessionId: id, messageId: assistantId, content: initial });
         if (mode === 'reasoning') window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', text: initial } });
         await evaluate(async ({ mode, assistantId }) => {
-          while (!document.querySelector('.message-preview') || (mode === 'answer' && document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
+          const selector = `article.message-preview[data-message-id="${assistantId}"]`;
+          while (!document.querySelector(selector) || (mode === 'answer' && document.querySelector(selector + ' .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
           // Exclude the initial fixture insertion and first window paint from live-update timing.
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const metrics = { gaps: [], frameGaps: [], tasks: [], inputs: 0, updates: 0, lastToken: -1, maxEventLag: 0 };
@@ -113,7 +118,7 @@ app.on('browser-window-created', (_event, window) => {
           const delta = [`live-${token} **up`, `date** and \`src/live`, `.ts\` `][token++ % 3];
           if (mode === 'answer') {
             content += delta;
-            window.webContents.send('cuppet:event', { type: 'message.delta', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
+            window.webContents.send('cuppet:event', { type: 'message.preview', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
           } else {
             window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: token, activity: { type: 'activity.reasoning.delta', text: delta }, diagnosticSentAt: Date.now() });
           }

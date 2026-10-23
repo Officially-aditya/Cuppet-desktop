@@ -44,8 +44,7 @@ test('runtime coalesces deltas without cumulative payloads and publishes the ful
   const done = Promise.withResolvers();
   const runtime = new RuntimeService({
     databasePath: join(dir, 'chat.sqlite3'),
-    providerFactory: () => ({ async stream() { return { text: '' }; } }),
-    toolRuntime: { async run({ onDelta }) { for (let i = 0; i < 8000; i++) await onDelta('word'); } },
+    providerFactory: () => ({ async stream(_messages, { onDelta }) { for (let i = 0; i < 8000; i++) await onDelta('word'); return { text: 'word'.repeat(8000) }; } }),
     emit(event) { events.push(event); if (event.type === 'run.finished') done.resolve(); },
   });
   try {
@@ -61,6 +60,11 @@ test('runtime coalesces deltas without cumulative payloads and publishes the ful
     assert.equal(final.content, deltas[0].delta);
     assert.equal(final.status, 'complete');
     assert.ok(events.indexOf(deltas[0]) < events.findIndex((event) => event.type === 'message.completed'));
+    const previews = events.filter((event) => event.type === 'message.preview');
+    assert.equal(previews.length, 2, 'the real provider path sends the first preview and a final reset');
+    assert.equal(previews[0].content, 'word');
+    assert.equal(previews.at(-1).content, '');
+    assert.ok(previews.reduce((bytes, event) => bytes + (event.delta ?? event.content).length, 0) <= 3 * final.content.length);
   } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

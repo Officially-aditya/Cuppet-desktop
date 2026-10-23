@@ -79,3 +79,28 @@ test('account parser rejects API-key auth as subscription login', () => {
   assert.equal(account.loggedIn, false);
   assert.equal(account.method, 'apiKey');
 });
+
+test('closing Codex forcefully retires a process that ignores graceful shutdown', { skip: process.platform === 'win32' }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-codex-stubborn-'));
+  const path = join(dir, 'server.mjs');
+  await writeFile(path, `
+    import { createInterface } from 'node:readline';
+    process.on('SIGTERM', () => {});
+    setInterval(() => {}, 1000);
+    createInterface({ input: process.stdin }).on('line', (line) => {
+      const message = JSON.parse(line);
+      if (message.id != null) process.stdout.write(JSON.stringify({ id: message.id, result: {} }) + '\\n');
+    });
+  `);
+  const client = new CodexAppServerClient({ command: process.execPath, args: [path] });
+  try {
+    await client.start();
+    const exited = once(client, 'exit');
+    await client.close();
+    const [event] = await exited;
+    assert.equal(event.signal, 'SIGKILL');
+  } finally {
+    await client.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -43,3 +43,46 @@ test('provider adapter applies sanitized effort request metadata while auth and 
   assert.equal(body.stream, true);
   assert.deepEqual(body.reasoning, { effort: 'high' });
 });
+
+test('chat streaming rejects upstream errors and preserves already emitted text', async () => {
+  for (const error of [{ message: 'upstream failed', code: 'server_error' }, 'upstream failed']) {
+    const deltas = [];
+    const body = new Response(`data: {"choices":[{"delta":{"content":"Partial"}}]}\n\ndata: ${JSON.stringify({ error })}\n\ndata: [DONE]\n\n`).body;
+    await assert.rejects(consumeSseBody(body, async (delta) => deltas.push(delta)), /upstream failed/);
+    assert.deepEqual(deltas, ['Partial']);
+    assert.equal(body.locked, false);
+  }
+});
+
+test('chat streaming requires completion before returning text or tool calls', async () => {
+  for (const delta of [{ content: 'Partial' }, { tool_calls: [{ index: 0, id: 'call', function: { name: 'write', arguments: '{"path":' } }] }]) {
+    const body = new Response(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`).body;
+    await assert.rejects(consumeSseBody(body, async () => {}), /ended before completion/);
+  }
+  await assert.rejects(consumeSseBody(new Response('data: [DONE]\n\n').body, async () => {}), /without text or tool calls/);
+  const finished = new Response('data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}').body;
+  assert.equal((await consumeSseBody(finished, async () => {})).text, 'Done', 'finish_reason is sufficient for providers that omit [DONE]');
+});
+
+test('chat streaming reports output limits instead of completing a truncated answer', async () => {
+  const deltas = [];
+  const body = new Response('data: {"choices":[{"delta":{"content":"Partial"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n').body;
+  await assert.rejects(consumeSseBody(body, async (delta) => deltas.push(delta)), /incomplete.*length/);
+  assert.deepEqual(deltas, ['Partial']);
+});
+
+test('chat streaming handles split UTF-8 and CRLF and cancels the reader at [DONE]', async () => {
+  const bytes = new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hi 👋"}}]}\r\n\r\ndata: [DONE]');
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) { for (const byte of bytes) controller.enqueue(Uint8Array.of(byte)); controller.close(); },
+  });
+  assert.equal((await consumeSseBody(body, async () => {})).text, 'Hi 👋');
+  const openBody = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Done"}}]}\n\ndata: [DONE]\n\n')); },
+    cancel() { cancelled = true; },
+  });
+  assert.equal((await consumeSseBody(openBody, async () => {})).text, 'Done');
+  assert.equal(cancelled, true);
+  assert.equal(openBody.locked, false);
+});
