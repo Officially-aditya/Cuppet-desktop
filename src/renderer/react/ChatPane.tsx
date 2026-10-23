@@ -6,6 +6,7 @@ import { DiffViewerModal, type DiffFile } from './DiffViewerModal';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { ChatLinkPreview } from './ChatLinkPreview';
 import { useClientTranscript } from './client-transcript';
+import { usePendingUserMessages } from './client-session-state';
 import type { Attachment, CommandDefinition, CommandResult, PermissionRequest, Project, QueuedTurn, QuestionRequest, Session } from '../types';
 
 export type DeliveryMode = 'queue' | 'steer';
@@ -56,6 +57,7 @@ export function ChatPane(props: ChatPaneProps) {
   const onInspectDiff = useCallback((files: DiffFile[], rawDiff?: string) => setDiffModal({ files, rawDiff }), []);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name?: string } | null>(null);
   const transcript = useClientTranscript(session);
+  const pending = usePendingUserMessages(session?.id);
   const latestAssistant = [...(session?.messages ?? [])].reverse().find((message) => message.role === 'assistant' && transcript[message.id]?.contextUsage);
   const contextUsage = latestAssistant ? transcript[latestAssistant.id]?.contextUsage : undefined;
   const linkProjectId = project?.id ?? session?.projectId ?? null;
@@ -77,7 +79,7 @@ export function ChatPane(props: ChatPaneProps) {
         void composerRef.current?.ingestFiles(Array.from(event.dataTransfer.files));
       }}>
       {isDraggingOver && <div className="chat-dropzone-overlay" aria-hidden="true"><div className="chat-dropzone-indicator">Drop images or files to attach</div></div>}
-      <ChatTranscript ref={transcriptRef} session={session} project={project} running={running} transcript={transcript}
+      <ChatTranscript ref={transcriptRef} session={session} project={project} running={running} transcript={transcript} pending={pending}
         onInspectDiff={onInspectDiff} onOpenLightbox={setLightboxImage}
         onOpenFolder={props.onOpenFolder} onCloneRepository={props.onCloneRepository} onConfigureProvider={props.onConfigureProvider} />
       <ChatComposer {...props} ref={composerRef} paneRef={paneRef} contextUsage={contextUsage}

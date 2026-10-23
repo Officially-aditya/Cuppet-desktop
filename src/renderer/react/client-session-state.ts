@@ -1,5 +1,18 @@
 import { useSyncExternalStore } from 'react';
-import type { Message, RuntimeEvent, Session } from '../types';
+import type { Attachment, Message, RuntimeEvent, Session } from '../types';
+
+export type PendingUserMessage = {
+  id: string;
+  sessionId: string;
+  kind: 'send' | 'steer';
+  content: string;
+  attachments: Attachment[];
+  afterSequence: number;
+};
+const EMPTY_PENDING: readonly PendingUserMessage[] = [];
+const pendingMessages = new Map<string, readonly PendingUserMessage[]>();
+const confirmedPendingMessages = new Set<string>();
+let nextPendingId = 0;
 
 let sessions: Session[] = frozenSessions([]);
 const UNREAD_SESSIONS_KEY = 'cuppet.desktop.unread-sessions';
@@ -12,6 +25,49 @@ let unsubscribeRuntime: (() => void) | null = null;
 
 export function useClientSessions(): Session[] {
   return useSyncExternalStore(subscribeClientSessions, clientSessionsSnapshot, clientSessionsSnapshot);
+}
+
+export function usePendingUserMessages(sessionId: string | null | undefined) {
+  const snapshot = () => pendingUserMessagesSnapshot(sessionId);
+  return useSyncExternalStore(subscribeClientSessions, snapshot, snapshot);
+}
+
+export function pendingUserMessagesSnapshot(sessionId: string | null | undefined) {
+  return sessionId ? pendingMessages.get(sessionId) ?? EMPTY_PENDING : EMPTY_PENDING;
+}
+
+export function addPendingUserMessage(input: Omit<PendingUserMessage, 'id' | 'afterSequence'>) {
+  const id = `pending_${++nextPendingId}`;
+  const afterSequence = Math.max(0, ...(clientSessionSnapshot(input.sessionId)?.messages ?? []).map((message) => message.sequence ?? 0));
+  pendingMessages.set(input.sessionId, [...pendingUserMessagesSnapshot(input.sessionId), { ...input, id, afterSequence }]);
+  notify();
+  return id;
+}
+
+export function removePendingUserMessage(id: string) {
+  for (const [sessionId, items] of pendingMessages) {
+    const next = items.filter((item) => item.id !== id);
+    if (next.length === items.length) continue;
+    if (next.length) pendingMessages.set(sessionId, next);
+    else pendingMessages.delete(sessionId);
+    notify();
+    return;
+  }
+}
+
+function reconcilePendingMessages(session: Session) {
+  for (const message of session.messages ?? []) {
+    if (message.role !== 'user' || confirmedPendingMessages.has(message.id)) continue;
+    const pending = pendingUserMessagesSnapshot(session.id).find((item) =>
+      (message.sequence == null || message.sequence > item.afterSequence) && item.content === message.content &&
+      item.attachments.length === (message.attachments?.length ?? 0) &&
+      item.attachments.every((attachment, index) => attachment.name === message.attachments?.[index]?.name &&
+        attachment.dataUrl === message.attachments?.[index]?.dataUrl && attachment.path === message.attachments?.[index]?.path));
+    if (pending) {
+      confirmedPendingMessages.add(message.id);
+      removePendingUserMessage(pending.id);
+    }
+  }
 }
 
 export function clientSessionsSnapshot(): Session[] {
@@ -41,6 +97,7 @@ export function hydrateClientSessions(values: Session[] = []) {
   const next = sortSessions(values.map((session) => mergeSession(current.get(session.id), session)));
   if (sameSessions(sessions, next)) return sessions;
   sessions = next;
+  for (const session of next) reconcilePendingMessages(session);
   notify();
   return sessions;
 }
@@ -51,7 +108,9 @@ export function upsertClientSession(session: Session | null | undefined) {
   const index = next.findIndex((item) => item.id === session.id);
   if (index >= 0) next[index] = mergeSession(next[index], session);
   else next.push(normalizeSession(session));
-  return replaceSessions(next);
+  const result = replaceSessions(next);
+  reconcilePendingMessages(session);
+  return result;
 }
 
 export function upsertClientMessage(message: Message | null | undefined) {
@@ -68,6 +127,7 @@ export function upsertClientMessage(message: Message | null | undefined) {
   next[index] = { ...session, messages };
   const previous = sessions;
   replaceSessions(next);
+  reconcilePendingMessages({ ...session, messages: [message] });
   return sessions !== previous;
 }
 
@@ -98,6 +158,13 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
   let handled = false;
   const type = String(event?.type ?? '');
   const sessionId = text(event?.sessionId ?? event?.message?.sessionId);
+
+  if ((type === 'run.finished' || type === 'session.purged') && pendingMessages.delete(sessionId)) notify();
+  if (type === 'run.started' && event.sourceSessionId && event.sourceSessionId !== sessionId) {
+    for (const item of pendingUserMessagesSnapshot(String(event.sourceSessionId))) {
+      if (item.kind === 'send') removePendingUserMessage(item.id);
+    }
+  }
 
   if (type === 'message.completed' && event?.message?.role === 'assistant' && sessionId && sessionId !== viewedSessionId) {
     setSessionUnread(sessionId, true);
@@ -147,6 +214,8 @@ export function resetClientSessionStateStore() {
   viewedSessionId = null;
   refreshPromise = null;
   detailRefreshes.clear();
+  pendingMessages.clear();
+  confirmedPendingMessages.clear();
   listeners.clear();
 }
 

@@ -4,57 +4,75 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+const compile = async (path) => ts.transpileModule(await readFile(new URL(path, import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
+const transcriptCode = await compile('../src/renderer/react/ChatTranscript.tsx');
+const followerCode = await compile('../src/renderer/react/scroll-follow.ts');
 
-function fixture() {
-  const effects = [];
-  const refs = [];
-  const frames = [];
-  const saved = new Map();
-  const exports = {};
+function fixture(savedValue = null) {
+  const effects = [], refs = [], frames = new Map(), timers = new Map(), saved = new Map();
+  const observers = {}, handle = {}, exports = {};
+  let nextId = 0;
+  if (savedValue !== null) saved.set('cuppet.desktop.scroll.chat', savedValue);
   const react = {
+    memo: (component) => component,
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
     useMemo: (compute) => compute(),
-    useImperativeHandle: () => {},
+    useImperativeHandle: (_ref, factory) => { handle.current = factory(); },
     useRef: (current) => { const ref = { current }; refs.push(ref); return ref; },
     useEffect: (effect) => effects.push(effect),
   };
-  vm.runInNewContext(compiled, {
+  const context = vm.createContext({
     exports,
-    navigator: { onLine: true },
-    require: (name) => {
+    require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null };
-      if (name === './client-transcript') return { useClientTranscript: () => ({}) };
-      if (name === './behavior-preferences') return { readSendBehavior: () => 'queue' };
+      if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
+      if (name === './scroll-follow') {
+        const module = {};
+        vm.runInContext(`(function (exports) {${followerCode}\n})`, context)(module);
+        return module;
+      }
       return {};
     },
     localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
-    requestAnimationFrame: (frame) => { frames.push(frame); return frames.length; },
-    cancelAnimationFrame: () => {},
+    requestAnimationFrame: (frame) => { frames.set(++nextId, frame); return nextId; },
+    cancelAnimationFrame: (id) => frames.delete(id),
+    setTimeout: (callback) => { timers.set(++nextId, callback); return nextId; },
+    clearTimeout: (id) => timers.delete(id),
+    ResizeObserver: class {
+      constructor(callback) { this.callback = callback; this.targets = new Set(); observers.resize = this; }
+      observe(node) { this.targets.add(node); }
+      unobserve(node) { this.targets.delete(node); }
+      disconnect() { this.targets.clear(); }
+    },
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; observers.mutation = this; }
+      observe() {}
+      disconnect() { this.disconnected = true; }
+    },
   });
+  vm.runInContext(transcriptCode, context);
   exports.ChatTranscript({ session: { id: 'chat', messages: [] }, project: null, transcript: {}, running: true });
   let scrollTop = 0;
   const listeners = new Map();
   const node = {
-    clientHeight: 500,
-    scrollHeight: 2000,
+    clientHeight: 500, scrollHeight: 2000, children: [],
     get scrollTop() { return scrollTop; },
     set scrollTop(value) { scrollTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
     addEventListener: (name, listener) => listeners.set(name, listener),
     removeEventListener: (name) => listeners.delete(name),
   };
   refs[0].current = node;
-  const scrollEffects = effects.filter((effect) => effect.toString().includes('messagesRef.current'));
-  scrollEffects[0]();
+  const cleanup = effects.find((effect) => effect.toString().includes('createScrollFollower'))();
+  const flush = () => { for (const [id, callback] of [...frames]) { frames.delete(id); callback(); } };
   return {
-    node,
-    saved,
-    update: scrollEffects[1],
-    flush: () => { while (frames.length) frames.shift()(); },
+    node, saved, handle, cleanup, listeners, observers, frames,
+    update: effects.find((effect) => effect.toString().includes('.schedule()')),
+    flush,
+    resize: () => { observers.resize.callback(); flush(); },
+    flushTimers: () => { for (const [id, callback] of [...timers]) { timers.delete(id); callback(); } },
     scrollTo: (top) => { node.scrollTop = top; listeners.get('scroll')(); },
   };
 }
@@ -64,11 +82,13 @@ test('small upward scroll survives pending frames and streaming updates', () => 
   chat.update();
   chat.scrollTo(1470);
   chat.flush();
-  assert.equal(chat.node.scrollTop, 1470, 'pending auto-scroll must respect manual scrolling');
+  assert.equal(chat.node.scrollTop, 1470);
   chat.node.scrollHeight += 100;
   chat.update();
   chat.flush();
-  assert.equal(chat.node.scrollTop, 1470, 'streaming must preserve the position while reading history');
+  assert.equal(chat.node.scrollTop, 1470);
+  assert.equal(chat.saved.has('cuppet.desktop.scroll.chat'), false, 'storage writes stay off the scroll path');
+  chat.flushTimers();
   assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1470');
 });
 
@@ -76,20 +96,71 @@ test('scrolling down to the latest messages resumes auto-follow', () => {
   const chat = fixture();
   chat.scrollTo(1200);
   chat.node.scrollHeight += 100;
-  chat.update();
-  chat.flush();
+  chat.resize();
   assert.equal(chat.node.scrollTop, 1200);
   chat.scrollTo(1600);
   chat.node.scrollHeight += 100;
-  chat.update();
-  chat.flush();
+  chat.resize();
   assert.equal(chat.node.scrollTop, 1700);
 });
 
-test('new messages still follow automatically before manual scrolling', () => {
+test('a delayed programmatic scroll event during rapid tool growth never disables following', () => {
   const chat = fixture();
-  chat.node.scrollHeight += 100;
+  chat.node.scrollHeight += 400;
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 1900);
+  chat.node.scrollHeight += 600;
+  chat.listeners.get('scroll')();
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 2500);
+});
+
+test('new live and pending rows are observed after they mount and removed rows are released', () => {
+  const chat = fixture();
+  const row = {};
+  chat.node.children.push(row);
+  chat.observers.mutation.callback();
+  assert.equal(chat.observers.resize.targets.has(row), true);
+  chat.node.scrollHeight += 800;
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 2300);
+  chat.node.children = [];
+  chat.observers.mutation.callback();
+  assert.equal(chat.observers.resize.targets.has(row), false);
+});
+
+test('wheel-up stops a queued pin immediately and sending resumes following', () => {
+  const chat = fixture();
+  chat.listeners.get('wheel')({ deltaY: -40 });
+  chat.node.scrollHeight += 300;
   chat.update();
   chat.flush();
-  assert.equal(chat.node.scrollTop, 1600);
+  assert.equal(chat.node.scrollTop, 1500);
+  chat.handle.current.followLatest();
+  assert.equal(chat.node.scrollTop, 1800);
+});
+
+test('content shrinking is not interpreted as the user scrolling upward', () => {
+  const chat = fixture();
+  chat.node.scrollHeight -= 800;
+  chat.scrollTo(700);
+  chat.node.scrollHeight += 100;
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 800);
+});
+
+test('a saved top position is restored and leaving a chat releases all work', () => {
+  const chat = fixture('0');
+  assert.equal(chat.node.scrollTop, 0);
+  chat.node.scrollHeight += 300;
+  chat.update();
+  chat.flush();
+  assert.equal(chat.node.scrollTop, 0);
+  chat.handle.current.followLatest();
+  chat.cleanup();
+  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1800');
+  assert.equal(chat.listeners.size, 0);
+  assert.equal(chat.frames.size, 0);
+  assert.equal(chat.observers.resize.targets.size, 0);
+  assert.equal(chat.observers.mutation.disconnected, true);
 });

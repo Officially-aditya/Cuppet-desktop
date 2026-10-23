@@ -35,6 +35,8 @@ import {
   useClientProviderSettings,
 } from './client-provider-state';
 import {
+  addPendingUserMessage,
+  removePendingUserMessage,
   refreshClientSession,
   refreshClientSessions,
   setViewedClientSession,
@@ -289,17 +291,21 @@ export function App() {
       showToast('Cannot steer with an empty message.');
       return;
     }
+    let pendingId: string | undefined;
     try {
-      await window.cuppet.sessions.queueCancel(turn.id, activeSessionId).catch(() => undefined);
+      await window.cuppet.sessions.queueCancel(turn.id, activeSessionId);
       setQueuedTurns((current) => current.filter((item) => item.id !== turn.id));
+      const attachments = Array.isArray(turn.params?.attachments) ? turn.params.attachments : [];
+      pendingId = addPendingUserMessage({ sessionId: activeSessionId, kind: 'steer', content: text, attachments });
       await window.cuppet.commands.execute(activeSessionId, {
         id: 'cuppet.steer.interrupt',
         input: {
-          text: text.slice(0, 8192),
+          text,
           ...(Array.isArray(turn.params?.attachments) && turn.params.attachments.length ? { attachments: turn.params.attachments } : {}),
         },
       });
     } catch (error) {
+      if (pendingId) removePendingUserMessage(pendingId);
       showToast(error);
     }
   }, [activeSessionId, showToast]);
@@ -308,6 +314,7 @@ export function App() {
     const trimmed = text.trim();
     const value = trimmed || (attachments.length ? `Attached: ${attachments.map((item) => item.name).join(', ')}` : '');
     if (!value) return { clear: false };
+    let pendingId: string | undefined;
     try {
       if (trimmed.startsWith('/')) {
         if (attachments.length) throw new Error('Attachments cannot be sent with slash commands.');
@@ -330,8 +337,11 @@ export function App() {
       if (project?.missing) throw new Error(`Relocate ${project.name} before continuing.`);
 
       if (running.has(session.id)) {
-        if (deliveryMode === 'steer' && !attachments.length) {
-          await window.cuppet.commands.execute(session.id, { id: 'cuppet.steer.interrupt', input: { text: value.slice(0, 8192) } });
+        if (deliveryMode === 'steer') {
+          pendingId = addPendingUserMessage({ sessionId: session.id, kind: 'steer', content: value, attachments });
+          await window.cuppet.commands.execute(session.id, {
+            id: 'cuppet.steer.interrupt', input: { text: value, ...(attachments.length ? { attachments } : {}) },
+          });
         } else {
           const res = await window.cuppet.sessions.send(session.id, value, attachments);
           if (res?.queued) {
@@ -350,12 +360,14 @@ export function App() {
         return { clear: true };
       }
 
+      pendingId = addPendingUserMessage({ sessionId: session.id, kind: 'send', content: value, attachments });
       const result = await window.cuppet.sessions.send(session.id, value, attachments);
       const target = String(result?.sessionId || session.id);
       markClientRunStarted(target);
       if (target !== activeSessionId) await openSession(target);
       return { clear: true };
     } catch (error) {
+      if (pendingId) removePendingUserMessage(pendingId);
       if (String(error instanceof Error ? error.message : error).includes('Settings > General > Integrations')) {
         setSettingsSection('general');
         setModal('settings');

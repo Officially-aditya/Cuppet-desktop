@@ -15,10 +15,11 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function fixture() {
+async function fixture({ activeSession = null, running = false, executeError = null } = {}) {
   const created = deferred(), sent = deferred(), loaded = deferred();
-  const states = [], effects = [], saved = new Map(), sends = [];
-  let stateIndex = 0, sessions = [];
+  const states = [], effects = [], saved = new Map(), sends = [], executions = [], pendingAdded = [], pendingRemoved = [];
+  let stateIndex = 0, sessions = activeSession ? [activeSession] : [];
+  if (activeSession) saved.set('cuppet.desktop.last-session', activeSession.id);
   const ChatPane = () => null;
   const react = {
     useState(initial) {
@@ -51,9 +52,11 @@ async function fixture() {
           return session;
         },
         upsertClientSession,
+        addPendingUserMessage(input) { pendingAdded.push(input); return `pending_${pendingAdded.length}`; },
+        removePendingUserMessage(id) { pendingRemoved.push(id); },
       };
       if (name === './client-run-state') return {
-        useClientRunState: () => new Set(),
+        useClientRunState: () => new Set(running && activeSession ? [activeSession.id] : []),
         hydrateClientRunState() {}, hydrateClientRunSession() {}, markClientRunStarted() {},
       };
       if (name === './client-provider-state') return {
@@ -71,7 +74,7 @@ async function fixture() {
         send: (...args) => { sends.push(args); return sent.promise; },
       },
       cognitive: { status: async () => ({}), modeGet: async () => ({ mode: 'build' }) },
-      commands: { list: async () => [] },
+      commands: { list: async () => [], execute: async (...args) => { executions.push(args); if (executeError) throw executeError; return { result: { accepted: true } }; } },
       permissions: { list: async () => [] },
       questions: { list: async () => [] },
     } },
@@ -83,10 +86,11 @@ async function fixture() {
   };
   const pane = () => render().props.children.find((node) => node?.type === ChatPane).props;
   const settle = () => new Promise(setImmediate);
+  if (activeSession) loaded.resolve(activeSession);
   render();
   effects.find((effect) => effect.toString().includes('Runtime unavailable'))();
   await settle();
-  return { pane, created, sent, loaded, sends, saved, settle };
+  return { pane, created, sent, loaded, sends, executions, pendingAdded, pendingRemoved, saved, settle };
 }
 
 for (const target of ['created-chat', 'routed-chat']) {
@@ -142,4 +146,37 @@ test('a failed first send keeps the original draft visible for retry', async () 
   assert.equal(chat.pane().session, null);
   assert.equal(chat.pane().draft, originalDraft);
   assert.equal(chat.saved.has('cuppet.desktop.last-session'), false);
+});
+
+for (const attachments of [[], [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }]]) {
+  test(`steering delivers the full prompt and ${attachments.length} attachments to the running chat`, async () => {
+    const chat = await fixture({ activeSession: { id: 'busy', messages: [] }, running: true });
+    const text = 'additional guidance '.repeat(500);
+    assert.equal((await chat.pane().onSend(text, 'steer', attachments)).clear, true);
+    assert.equal(chat.sends.length, 0, 'steering must not enqueue another turn');
+    assert.equal(chat.executions[0][0], 'busy');
+    assert.equal(chat.executions[0][1].id, 'cuppet.steer.interrupt');
+    assert.equal(chat.executions[0][1].input.text, text.trim());
+    assert.deepEqual(chat.executions[0][1].input.attachments ?? [], attachments);
+    assert.equal(chat.pendingAdded[0].content, text.trim());
+    assert.equal(chat.pendingAdded[0].attachments, attachments);
+    assert.equal(chat.pendingRemoved.length, 0, 'the prompt remains visible until confirmation');
+  });
+}
+
+test('a failed steer removes its pending bubble and retains the composer draft', async () => {
+  const chat = await fixture({ activeSession: { id: 'busy', messages: [] }, running: true, executeError: new Error('steer failed') });
+  assert.equal((await chat.pane().onSend('try again', 'steer', [])).clear, false);
+  assert.deepEqual(chat.pendingRemoved, ['pending_1']);
+});
+
+test('queue mode still queues attachments without a pending history bubble', async () => {
+  const chat = await fixture({ activeSession: { id: 'busy', messages: [] }, running: true });
+  const attachments = [{ name: 'notes.txt' }];
+  chat.sent.resolve({ queued: true, queueId: 'q1' });
+  assert.equal((await chat.pane().onSend('later', 'queue', attachments)).clear, true);
+  assert.equal(chat.executions.length, 0);
+  assert.equal(chat.sends[0][2], attachments);
+  assert.equal(chat.pendingAdded.length, 0);
+  assert.equal(chat.pane().queuedTurns[0].params.attachments, attachments);
 });

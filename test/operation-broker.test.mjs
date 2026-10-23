@@ -240,7 +240,7 @@ test('DMG staging permits app framework links but rejects links outside staging'
   await assert.rejects(validateStagedLinks(root), /escapes/);
 });
 
-test('broker helpers honor Full Access, require approval in other modes, and remain blocked in plan mode', async () => {
+test('broker pushes need no extra prompt, packaging keeps its approval, and plan mode stays read-only', async () => {
   const broker = new PermissionBroker({ interactive: false });
   try {
     for (const mode of [false, true, 'full']) {
@@ -249,6 +249,9 @@ test('broker helpers honor Full Access, require approval in other modes, and rem
         const request = { sessionId: 's', action, projectRoot: '/project', resources: ['bound-operation'] };
         if (mode === 'full') {
           assert.deepEqual(await broker.authorize(request), { allowed: true, source: 'session-full-access' });
+          assert.equal(broker.list('s').length, 0);
+        } else if (action === 'git-push') {
+          assert.deepEqual(await broker.authorize(request), { allowed: true, source: 'broker-git-push' });
           assert.equal(broker.list('s').length, 0);
         } else {
           await assert.rejects(broker.authorize(request), { code: 'interaction_required' });

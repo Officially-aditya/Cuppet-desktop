@@ -1,9 +1,12 @@
-import { useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { Project, Session } from '../types';
+import type { PendingUserMessage } from './client-session-state';
 import type { ActivityEntry } from './ChatPane';
 import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
 import { createStreamingMarkdownRenderer, renderMarkdown } from './markdown';
+import { createMarkdownCache } from './markdown-cache';
+import { createScrollFollower, type ScrollFollower } from './scroll-follow';
 import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
@@ -25,6 +28,8 @@ type TraceItem = TraceReasoning | TraceTool | TraceStatus;
 const MAX_VISIBLE_USER_LINES = 10;
 const IMMEDIATE_HISTORY_ITEMS = 5;
 const EMPTY_TRACE: TraceItem[] = [];
+const EMPTY_PENDING: readonly PendingUserMessage[] = [];
+const renderMarkdownCached = createMarkdownCache((source) => renderMarkdown(source));
 export type ChatTranscriptHandle = { followLatest: () => void };
 type Props = {
   ref?: Ref<ChatTranscriptHandle>;
@@ -32,6 +37,7 @@ type Props = {
   project: Project | null;
   running: boolean;
   transcript: TranscriptState;
+  pending?: readonly PendingUserMessage[];
   onInspectDiff: (files: DiffFile[], rawDiff?: string) => void;
   onOpenLightbox: (image: { src: string; name?: string }) => void;
   onOpenFolder?: () => void;
@@ -39,77 +45,27 @@ type Props = {
   onConfigureProvider?: () => void;
 };
 
-export function ChatTranscript({ ref, session, project, running, transcript, onInspectDiff, onOpenLightbox, onOpenFolder, onCloneRepository, onConfigureProvider }: Props) {
+export function ChatTranscript({ ref, session, project, running, transcript, pending = EMPTY_PENDING, onInspectDiff, onOpenLightbox, onOpenFolder, onCloneRepository, onConfigureProvider }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
+  const followerRef = useRef<ScrollFollower | null>(null);
 
   useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
-    const key = session?.id ? `cuppet.desktop.scroll.${session.id}` : null;
-    if (!key) {
-      node.scrollTop = node.scrollHeight;
-      shouldAutoScrollRef.current = true;
-      return;
-    }
-    const saved = Number(localStorage.getItem(key));
-    if (Number.isFinite(saved) && saved > 0) {
-      node.scrollTop = saved;
-      const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
-      shouldAutoScrollRef.current = distance < 60;
-    } else {
-      node.scrollTop = node.scrollHeight;
-      shouldAutoScrollRef.current = true;
-    }
-    let lastScrollTop = node.scrollTop;
-    const onScroll = () => {
-      const distance = node.scrollHeight - node.clientHeight - node.scrollTop;
-      if (node.scrollTop < lastScrollTop) {
-        shouldAutoScrollRef.current = false;
-      } else if (distance < 60) {
-        shouldAutoScrollRef.current = true;
-      } else if (distance > 120) {
-        shouldAutoScrollRef.current = false;
-      }
-      lastScrollTop = node.scrollTop;
-      localStorage.setItem(key, String(Math.max(0, Math.round(node.scrollTop))));
+    const follower = createScrollFollower(node, session?.id ? `cuppet.desktop.scroll.${session.id}` : null);
+    followerRef.current = follower;
+    return () => {
+      follower.dispose();
+      if (followerRef.current === follower) followerRef.current = null;
     };
-    node.addEventListener('scroll', onScroll, { passive: true });
-    return () => node.removeEventListener('scroll', onScroll);
   }, [session?.id]);
 
   useEffect(() => {
-    const node = messagesRef.current;
-    if (!node) return;
-    if (shouldAutoScrollRef.current) {
-      const frame = requestAnimationFrame(() => {
-        if (shouldAutoScrollRef.current) node.scrollTop = node.scrollHeight;
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [session?.messages, transcript, running]);
-
-  useEffect(() => {
-    const node = messagesRef.current;
-    if (!node || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      if (shouldAutoScrollRef.current) {
-        node.scrollTop = node.scrollHeight;
-      }
-    });
-    observer.observe(node);
-    for (const child of Array.from(node.children)) {
-      observer.observe(child);
-    }
-    return () => observer.disconnect();
-  }, [session?.id, session?.messages?.length]);
-
+    followerRef.current?.schedule();
+  }, [session?.messages, transcript, running, pending]);
 
   useImperativeHandle(ref, () => ({
-    followLatest() {
-      shouldAutoScrollRef.current = true;
-      if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-    },
+    followLatest() { followerRef.current?.followLatest(); },
   }), []);
 
   const previousRun = useRef({ sessionId: session?.id, running });
@@ -124,7 +80,8 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
   }, [session?.id, session?.messages, running]);
 
   const messages = session?.messages?.filter((message) => message.role !== 'system') ?? [];
-  const runningAssistant = running ? [...messages].reverse().find((message) => message.role === 'assistant') ?? null : null;
+  const lastMessage = messages[messages.length - 1];
+  const runningAssistant = running && lastMessage?.role === 'assistant' && lastMessage.status === 'streaming' ? lastMessage : null;
   const stableMessages = runningAssistant ? messages.filter((message) => message.id !== runningAssistant.id) : messages;
   const runningState = runningAssistant ? transcript[runningAssistant.id] : undefined;
   const runningPreview = runningState?.preview ?? '';
@@ -136,7 +93,7 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
   return (
     <>
       <section ref={messagesRef} className="messages react-messages" role="log" aria-label="Conversation" aria-live="off" aria-busy={running} tabIndex={0}>
-        {!messages.length ? (
+        {!messages.length && !pending.length ? (
           <div className="empty-state">
             <img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" />
             <h1>{emptyTitle}</h1><p>{emptyDescription}</p>
@@ -155,6 +112,11 @@ export function ChatTranscript({ ref, session, project, running, transcript, onI
           <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
             items={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         )}
+        {pending.map((item) => (
+          <MessageView key={item.id} message={{ ...item, role: 'user', status: 'complete' }}
+            pendingLabel={item.kind === 'steer' ? 'Adding to the current turn…' : 'Sending…'}
+            onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
+        ))}
       </section>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{completion}</div>
     </>
@@ -191,6 +153,7 @@ function MessageView({
   trace: providedTrace,
   items,
   live = false,
+  pendingLabel,
   onInspectDiff,
   onOpenLightbox,
   projectId = null,
@@ -199,6 +162,7 @@ function MessageView({
   trace?: TraceItem[];
   items?: TranscriptItem[];
   live?: boolean;
+  pendingLabel?: string;
   onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void;
   onOpenLightbox?: (image: { src: string; name?: string }) => void;
   projectId?: string | null;
@@ -340,7 +304,7 @@ function MessageView({
   };
 
   return (
-    <article className={`message ${message.role}${live ? ' message-preview' : ''}`} data-message-id={message.id}>
+    <article className={`message ${message.role}${live ? ' message-preview' : ''}${pendingLabel ? ' message-pending' : ''}`} data-message-id={message.id} aria-busy={pendingLabel ? true : undefined}>
       <div className="message-role">
         {hasTrace ? (
           <button
@@ -358,6 +322,7 @@ function MessageView({
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         ) : assistant ? 'Cuppet' : 'You'}
+        {pendingLabel && <span className="message-pending-label" role="status">{pendingLabel}</span>}
       </div>
       {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
       {assistant ? (
@@ -487,7 +452,7 @@ function MarkdownBlock({ html }: { html: string }) {
 function MarkdownContent({ content, streaming = false, projectId = null, onClick, onKeyDown, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; projectId?: string | null }) {
   const renderStream = useMemo(() => createStreamingMarkdownRenderer(), []);
   // Replacing unchanged HTML destroys the browser's active text selection.
-  const rendered = useMemo(() => streaming ? renderStream(content) : { blocks: [], tail: renderMarkdown(content) }, [content, streaming, renderStream]);
+  const rendered = useMemo(() => streaming ? renderStream(content) : { blocks: [], tail: renderMarkdownCached(content) }, [content, streaming, renderStream]);
   const completedBlocks = useMemo(() => rendered.blocks.map((html, index) => <MarkdownBlock key={index} html={html} />), [rendered.blocks]);
   return (
     <div
@@ -510,12 +475,12 @@ function MarkdownContent({ content, streaming = false, projectId = null, onClick
 }
 
 function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
-  const ordered = orderedTrace(trace);
-  const immediateTools = new Set(ordered.filter((item) => item.type === 'tool').slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id));
+  const ordered = useMemo(() => orderedTrace(trace), [trace]);
+  const immediateTools = useMemo(() => new Set(ordered.filter((item) => item.type === 'tool').slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id)), [ordered]);
   return (
     <div className="message-trace thread-activity" aria-label="Cuppet activity">
       {ordered.map((item) => item.type === 'reasoning' ? (
-        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={completedAt} projectId={projectId} />
+        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={live ? undefined : completedAt} projectId={projectId} />
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
@@ -525,8 +490,10 @@ function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff,
   );
 }
 
-function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
+const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
+  // Commit the toggle before parsing and mounting a potentially long thought.
+  const contentReady = useDeferredValue(open);
   const active = live && !item.completedAt;
   const end = item.completedAt ?? (!live ? completedAt : null);
   const duration = item.startedAt && end && end >= item.startedAt ? formatWorkedDuration(end - item.startedAt) : null;
@@ -540,18 +507,18 @@ function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = nul
         type="button"
         className="message-reasoning-toggle"
         aria-expanded={open}
-        aria-controls={open ? contentId : undefined}
+        aria-controls={open && contentReady ? contentId : undefined}
         onClick={() => setOpen((current) => !current)}
       >
         <span>{label}</span>
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      {open && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} projectId={projectId} />}
+      {open && contentReady && <MarkdownContent id={contentId} className="message-reasoning-content markdown-rendered" content={item.text} streaming={active} projectId={projectId} />}
     </div>
   );
-}
+});
 
-function ToolTraceRow({ item, onInspectDiff, deferred = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; deferred?: boolean }) {
+const ToolTraceRow = memo(function ToolTraceRow({ item, onInspectDiff, deferred = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; deferred?: boolean }) {
   const [requested, setRequested] = useState(false);
   const view = useMemo(() => <ToolTraceDetails item={item} onInspectDiff={onInspectDiff} initialOpen={requested} />, [item, onInspectDiff, requested]);
   const deferredView = useDeferredValue(view, deferred ? null : view);
@@ -562,7 +529,7 @@ function ToolTraceRow({ item, onInspectDiff, deferred = false }: { item: TraceTo
       </button>
     </div>
   );
-}
+});
 
 function ToolTraceDetails({ item, onInspectDiff, initialOpen = false }: { item: TraceTool; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; initialOpen?: boolean }) {
   const [open, setOpen] = useState(initialOpen);

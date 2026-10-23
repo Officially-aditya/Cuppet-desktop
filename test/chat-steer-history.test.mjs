@@ -17,6 +17,7 @@ function fixture() {
     exports,
     require(name) {
       if (name === 'react') return {
+        memo: (component) => component,
         useState(initial) {
           const slot = stateIndex++;
           if (!(slot in states)) states[slot] = typeof initial === 'function' ? initial() : initial;
@@ -34,6 +35,7 @@ function fixture() {
         jsx: (type, props) => ({ type, props }),
         jsxs: (type, props) => ({ type, props }),
       };
+      if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { renderMarkdown: (value) => value, formatWorkedDuration: () => '1s' };
     },
   });

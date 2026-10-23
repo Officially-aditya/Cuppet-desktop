@@ -52,7 +52,7 @@ export class OperationBroker {
       await copyFile(exportedBundle, bundle);
       const env = hostEnvironment(false);
       const advertised = await this.#host(GIT, [...GIT_OPTIONS, 'bundle', 'list-heads', bundle, 'HEAD'], job, env, signal);
-      if (advertised.stdout.trim() !== `${commit} HEAD`) throw new Error('HEAD changed while preparing push; request approval again for the new commit.');
+      if (advertised.stdout.trim() !== `${commit} HEAD`) throw new Error('HEAD changed while preparing push; retry with the new commit.');
       const repo = join(job, 'repo.git');
       await this.#host(GIT, [...GIT_OPTIONS, 'clone', '--bare', '--no-local', '--template=', bundle, repo], job, env, signal);
 

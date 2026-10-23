@@ -20,6 +20,7 @@ function fixture(component, { deferred = false } = {}) {
     JSON: { parse(value) { parsed.push(value); return JSON.parse(value); }, stringify: JSON.stringify },
     require(name) {
       if (name === 'react') return {
+        memo: (component) => component,
         useState(initial) {
           const slot = stateIndex++;
           if (!(slot in states)) states[slot] = typeof initial === 'function' ? initial() : initial;
@@ -43,6 +44,7 @@ function fixture(component, { deferred = false } = {}) {
         jsx: (type, props) => ({ type, props }),
         jsxs: (type, props) => ({ type, props }),
       };
+      if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { formatWorkedDuration, orderedTranscriptItems };
     },
   });
@@ -196,6 +198,20 @@ test('history and interrupted thoughts use a stable end time; missing timestamps
   const props = { item: thought, contentId: 'thought-content', live: false, completedAt: 13000 };
   assert.equal(find(render(props), (node) => node.type === 'button').props.children[0].props.children, 'Thought for 12s');
   assert.equal(find(render({ ...props, item: { ...thought, startedAt: undefined } }), (node) => node.type === 'button').props.children[0].props.children, 'Thoughts');
+});
+
+test('thinking toggles immediately while its markdown waits for a deferred render', () => {
+  const render = fixture('ReasoningTraceRow', { deferred: true });
+  const props = { item: thought, contentId: 'deferred-thought', live: true };
+  find(render(props), (node) => node.type === 'button').props.onClick();
+  let tree = render(props);
+  assert.equal(find(tree, (node) => node.type === 'button').props['aria-expanded'], true);
+  assert.equal(find(tree, (node) => node.props.content), undefined, 'the urgent click never parses a long thought');
+  render.flushDeferred();
+  tree = render(props);
+  const content = find(tree, (node) => node.props.content);
+  assert.equal(content.props.content, thought.text);
+  assert.equal(content.props.streaming, true, 'open, active thoughts use incremental markdown');
 });
 
 test('pre-tool narration is labelled as progress rather than provider thinking', () => {
