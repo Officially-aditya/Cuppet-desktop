@@ -89,7 +89,8 @@ export function createScrollFollower(node: HTMLElement, key: string | null) {
     dispose() {
       if (frame !== null) cancelAnimationFrame(frame);
       clearTimeout(saveTimer);
-      savedTop = node.scrollTop;
+      // Not node.scrollTop: the next chat is already committed into this node when cleanup runs,
+      // so it would be the wrong chat's position. savedTop was captured at the last scroll or pin.
       persist();
       resize?.disconnect();
       mutation?.disconnect();

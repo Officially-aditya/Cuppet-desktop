@@ -164,3 +164,25 @@ test('a saved top position is restored and leaving a chat releases all work', ()
   assert.equal(chat.observers.resize.targets.size, 0);
   assert.equal(chat.observers.mutation.disconnected, true);
 });
+
+test('leaving a chat saves the position the user was at, not the next chat\'s layout', () => {
+  // React commits the next chat into the same scroll node before it runs this chat's cleanup, so
+  // reading node.scrollTop at cleanup time would store the wrong number under this chat's key.
+  const chat = fixture();
+  chat.scrollTo(900);
+  chat.node.scrollHeight = 600; // the next chat is much shorter...
+  chat.node.scrollTop = 100; // ...and the browser has already clamped the scroll position
+  chat.cleanup();
+  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '900');
+});
+
+test('a pin that follows new content is what gets saved while the user is at the bottom', () => {
+  const chat = fixture();
+  chat.node.scrollHeight += 400;
+  chat.update();
+  chat.flush();
+  chat.node.scrollHeight = 300; // next chat committed before cleanup...
+  chat.node.scrollTop = 0; // ...and the browser clamped the position
+  chat.cleanup();
+  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1900');
+});
