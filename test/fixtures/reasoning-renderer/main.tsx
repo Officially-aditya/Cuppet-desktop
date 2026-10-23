@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { ChatTranscript } from '../../../src/renderer/react/ChatTranscript';
 import '../../../src/renderer/index.css';
+import { appendMarkdownText } from '../../../src/renderer/react/markdown-tail';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
@@ -85,4 +86,31 @@ let updateThought: (text: string, complete: boolean) => void;
   if (!content.querySelector('.md-code-copy')) throw new Error('Code copy buttons were lost');
   if (getSelection()!.toString() !== selection) throw new Error('Streaming replaced selected text');
   return { collapseWhileLoading: true, latestStreamedContent: true, finalFormatting: true, projectLinks: true, codeCopyButtons: true, retainedSelection: true };
+};
+
+(window as any).exerciseMarkdownTail = () => {
+  const cases: [string, string, boolean][] = [
+    ['<p>Text <code>src/app.ts</code> suffix</p>', '<p>Text <code>src/app.ts</code> suffix next &amp; &lt;tag&gt; 😀</p>', true],
+    ['<div><pre><code>line one</code></pre></div>', '<div><pre><code>line one\nline two &lt;x&gt;\n</code></pre></div>', true],
+    ['<ul><li>first</li><li>last</li></ul>', '<ul><li>first</li><li>last appended</li></ul>', true],
+    ['<p>Before <strong>bold</strong></p>', '<p>Before <strong>bold</strong> &amp; <code>src/new.ts</code></p>', true],
+    ['<p>**bold</p>', '<p><strong>bold</strong></p>', false],
+    ['<p>longer</p>', '<p>short</p>', false],
+    ['<p>https://exa</p>', '<p><a href="https://example.com">https://example.com</a></p>', false],
+    ['<table><tbody><tr><td>one</td></tr></tbody></table>', '<table><tbody><tr><td>one</td></tr><tr><td>two</td></tr></tbody></table>', true],
+    ['<p>Value</p>', '<p>Value &lt;script&gt;bad()&lt;/script&gt;</p>', true],
+  ];
+  for (const [previous, next, fast] of cases) {
+    const node = document.createElement('div');
+    node.innerHTML = previous;
+    const existing = [...node.querySelectorAll('*')];
+    const appended = appendMarkdownText(node, previous, next);
+    if (appended !== fast) throw new Error('Unexpected mutable-tail update path');
+    if (appended && !existing.every(element => node.contains(element))) throw new Error('Appending text replaced existing markup');
+    if (!appended) node.innerHTML = next;
+    const expected = document.createElement('div');
+    expected.innerHTML = next;
+    if (!node.isEqualNode(expected)) throw new Error('Mutable-tail update changed text or structure');
+  }
+  return { tailCases: cases.length, escapedText: true, retainedNodes: true };
 };

@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { Project, Session } from '../types';
 import type { PendingUserMessage } from './client-session-state';
@@ -6,6 +6,7 @@ import type { ActivityEntry } from './ChatPane';
 import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
 import { createStreamingMarkdownRenderer, renderMarkdown } from './markdown';
 import { createMarkdownCache } from './markdown-cache';
+import { appendMarkdownText } from './markdown-tail';
 import { createScrollFollower, type ScrollFollower } from './scroll-follow';
 import { createReasoningRenderer, type ReasoningRenderResult, type ReasoningMarkdown } from './reasoning-renderer';
 import { copyCodeBlock } from './code-copy';
@@ -452,6 +453,19 @@ const MarkdownBlock = memo(function MarkdownBlock({ html }: { html: string }) {
   return <div className="markdown-block" dangerouslySetInnerHTML={{ __html: html }} />;
 });
 
+const MarkdownTail = memo(function MarkdownTail({ html }: { html: string }) {
+  const node = useRef<HTMLDivElement>(null);
+  // React owns the initial HTML; subsequent tail updates preserve the existing DOM.
+  const initial = useRef({ __html: html });
+  const rendered = useRef(html);
+  useLayoutEffect(() => {
+    if (!node.current || rendered.current === html) return;
+    if (!appendMarkdownText(node.current, rendered.current, html)) node.current.innerHTML = html;
+    rendered.current = html;
+  }, [html]);
+  return <div ref={node} className="markdown-block" dangerouslySetInnerHTML={initial.current} />;
+});
+
 function MarkdownContent({ content, streaming = false, rendered: providedRendered, projectId = null, onClick, onKeyDown, children, ...props }: React.ComponentProps<'div'> & { content: string; streaming?: boolean; rendered?: ReasoningMarkdown; projectId?: string | null }) {
   const renderStream = useMemo(() => createStreamingMarkdownRenderer(), []);
   // Replacing unchanged HTML destroys the browser's active text selection.
@@ -473,7 +487,7 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
     >
       {children}
       {completedBlocks}
-      <MarkdownBlock key="tail" html={rendered.tail} />
+      <MarkdownTail key="tail" html={rendered.tail} />
     </div>
   );
 }

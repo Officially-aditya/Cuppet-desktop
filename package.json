@@ -1,7 +1,7 @@
 {
   "name": "cuppet-desktop",
   "private": true,
-  "version": "0.9.0-alpha.27",
+  "version": "0.9.0-alpha.28",
   "description": "Independent Cuppet desktop/runtime migration",
   "author": "Officially-aditya",
   "type": "module",
@@ -17,6 +17,7 @@
     "build:renderer": "vite build",
     "renderer:verify": "npm run ipc:check && tsc --noEmit && npm run runtime:typecheck && vite build && node scripts/verify-renderer.mjs",
     "renderer:reasoning-smoke": "electron scripts/smoke-reasoning-renderer.mjs",
+    "renderer:streaming-smoke": "electron scripts/smoke-streaming-interactions.mjs",
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test test/*.test.mjs",

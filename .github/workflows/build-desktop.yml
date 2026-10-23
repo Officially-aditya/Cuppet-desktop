@@ -102,6 +102,9 @@ jobs:
       - name: Verify responsive reasoning in Electron
         run: npm run renderer:reasoning-smoke
 
+      - name: Verify interactions during live output
+        run: npm run renderer:streaming-smoke
+
       - name: Build unsigned desktop package
         run: npm run ${{ matrix.build-script }}
 

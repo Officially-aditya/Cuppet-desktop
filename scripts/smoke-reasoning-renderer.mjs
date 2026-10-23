@@ -37,8 +37,9 @@ app.whenReady().then(async () => {
     assert.ok(first.maxGap < 200, `First open stalled the renderer for ${first.maxGap.toFixed(0)}ms`);
     assert.ok(reopen.maxGap < 200, `Reopen stalled the renderer for ${reopen.maxGap.toFixed(0)}ms`);
     const streamed = await window.webContents.executeJavaScript('window.exerciseStreaming()');
+    const tail = await window.webContents.executeJavaScript('window.exerciseMarkdownTail()');
     assert.deepEqual(errors, [], 'Renderer or worker reported an error');
-    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...streamed })}`);
+    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...streamed, ...tail })}`);
     clearTimeout(timeout);
     window.destroy();
     await rm(workspace, { recursive: true, force: true });

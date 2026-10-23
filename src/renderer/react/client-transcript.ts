@@ -19,8 +19,8 @@ export function useClientTranscript(session: Session | null): TranscriptState {
 
   useEffect(() => {
     if (!sessionId) return;
-    hydrateClientTranscript(sessionId, activities);
-  }, [sessionId, activities]);
+    mergeClientTranscript(sessionId, durable);
+  }, [sessionId, durable]);
 
   const subscribe = useMemo(() => (listener: () => void) => {
     if (!sessionId) return () => {};
@@ -29,13 +29,19 @@ export function useClientTranscript(session: Session | null): TranscriptState {
   const getSnapshot = useMemo(() => () => sessionId ? clientTranscriptSnapshot(sessionId) : EMPTY_TRANSCRIPT, [sessionId]);
   const live = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
-  return useMemo(() => sessionId ? mergeTranscriptState(live, durable) : EMPTY_TRANSCRIPT, [sessionId, live, durable]);
+  // The store already merged the durable snapshot. Re-merging it for every live delta
+  // recreates historical trace entries and defeats unchanged-history memoization.
+  if (!sessionId) return EMPTY_TRANSCRIPT;
+  return live === EMPTY_TRANSCRIPT ? durable : live;
 }
 
 export function hydrateClientTranscript(sessionId: string, activities: MessageActivity[] = []) {
+  return mergeClientTranscript(sessionId, hydrateTranscript(activities));
+}
+
+function mergeClientTranscript(sessionId: string, durable: TranscriptState) {
   const id = text(sessionId);
   if (!id) return EMPTY_TRANSCRIPT;
-  const durable = hydrateTranscript(activities);
   const current = states.get(id);
   const next = current ? mergeTranscriptState(current, durable) : durable;
   states.set(id, next);
