@@ -94,11 +94,13 @@ let updateThought: (text: string, complete: boolean) => void;
     ['<div><pre><code>line one</code></pre></div>', '<div><pre><code>line one\nline two &lt;x&gt;\n</code></pre></div>', true],
     ['<ul><li>first</li><li>last</li></ul>', '<ul><li>first</li><li>last appended</li></ul>', true],
     ['<p>Before <strong>bold</strong></p>', '<p>Before <strong>bold</strong> &amp; <code>src/new.ts</code></p>', true],
-    ['<p>**bold</p>', '<p><strong>bold</strong></p>', false],
-    ['<p>longer</p>', '<p>short</p>', false],
-    ['<p>https://exa</p>', '<p><a href="https://example.com">https://example.com</a></p>', false],
+    ['<p>**bold</p>', '<p><strong>bold</strong></p>', true],
+    ['<p>longer</p>', '<p>short</p>', true],
+    ['<p>https://exa</p>', '<p><a href="https://example.com">https://example.com</a></p>', true],
     ['<table><tbody><tr><td>one</td></tr></tbody></table>', '<table><tbody><tr><td>one</td></tr><tr><td>two</td></tr></tbody></table>', true],
     ['<p>Value</p>', '<p>Value &lt;script&gt;bad()&lt;/script&gt;</p>', true],
+    ['<p>Heading</p>', '<h2>Heading</h2>', false],
+    ['<p><code class="before">text</code></p>', '<p><code class="after">text</code></p>', false],
   ];
   for (const [previous, next, fast] of cases) {
     const node = document.createElement('div');

@@ -71,6 +71,8 @@ app.on('browser-window-created', (_event, window) => {
         if (mode === 'reasoning') window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', text: initial } });
         await evaluate(async ({ mode, assistantId }) => {
           while (!document.querySelector('.message-preview') || (mode === 'answer' && document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
+          // Exclude the initial fixture insertion and first window paint from live-update timing.
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const metrics = { gaps: [], frameGaps: [], tasks: [], inputs: 0, updates: 0, lastToken: -1, maxEventLag: 0 };
           const unsubscribe = window.cuppet.onEvent(event => {
             if (event.messageId !== assistantId) return;
