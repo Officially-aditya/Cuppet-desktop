@@ -33,7 +33,6 @@ app.on('browser-window-created', (_event, window) => {
   if (started) return;
   started = true;
   window.webContents.setBackgroundThrottling(false);
-  window.on('show', () => window.hide());
   window.webContents.once('did-finish-load', async () => {
     const errors = [];
     window.webContents.on('console-message', (_event, details) => { if (details.level === 'error') errors.push(details.message); });
@@ -46,6 +45,9 @@ app.on('browser-window-created', (_event, window) => {
         }
         throw new Error('App did not load');
       });
+      window.show();
+      window.focus();
+      assert.equal(await evaluate(() => document.visibilityState), 'visible', 'the interaction test requires a foreground window');
       window.webContents.debugger.attach('1.3');
       await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
       await window.webContents.debugger.sendCommand('Performance.enable');
