@@ -263,9 +263,60 @@ function mergeSession(current: Session | undefined, incoming: Session) {
     : { ...current, ...incoming };
   return normalizeSession({
     ...base,
-    messages: Object.prototype.hasOwnProperty.call(value, 'messages') ? incoming.messages : current?.messages ?? [],
+    messages: Object.prototype.hasOwnProperty.call(value, 'messages') ? mergeMessages(current?.messages, incoming.messages) : current?.messages ?? [],
     activities: Object.prototype.hasOwnProperty.call(value, 'activities') ? incoming.activities : current?.activities,
     toolExecutions: Object.prototype.hasOwnProperty.call(value, 'toolExecutions') ? incoming.toolExecutions : current?.toolExecutions,
+  });
+}
+
+const TERMINAL_MESSAGE_STATUSES = new Set(['complete', 'error', 'stopped']);
+
+// A refreshed session is a point-in-time read that can arrive after newer events. Merge it by id
+// instead of replacing the list so it can never drop a message created after the read (a sent or
+// steered prompt) or roll a message back to an earlier streaming state. Unchanged messages keep
+// their identity so memoized transcript rows are not re-rendered by every refresh.
+function mergeMessages(current: Message[] | undefined, incoming: Message[] | undefined): Message[] {
+  if (!Array.isArray(incoming)) return current ?? [];
+  if (!current?.length) return incoming;
+  const known = new Map(current.map((message) => [message.id, message]));
+  const incomingIds = new Set<string>();
+  let incomingLatest = 0;
+  const merged = incoming.map((message) => {
+    incomingIds.add(message.id);
+    incomingLatest = Math.max(incomingLatest, message.sequence ?? 0);
+    const previous = known.get(message.id);
+    return previous ? reconcileMessage(previous, message) : message;
+  });
+  for (const message of current) {
+    // Created after the snapshot was read, so the snapshot cannot know about it.
+    if (!incomingIds.has(message.id) && (message.sequence ?? 0) > incomingLatest) merged.push(message);
+  }
+  merged.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+  return merged.length === current.length && merged.every((message, index) => message === current[index]) ? current : merged;
+}
+
+function reconcileMessage(current: Message, incoming: Message): Message {
+  const currentDone = TERMINAL_MESSAGE_STATUSES.has(current.status ?? '');
+  const incomingDone = TERMINAL_MESSAGE_STATUSES.has(incoming.status ?? '');
+  if (currentDone && !incomingDone) return current;
+  if (!currentDone && !incomingDone && (current.content ?? '').length > (incoming.content ?? '').length) return current;
+  if (sameMessage(current, incoming)) return current;
+  return { ...current, ...incoming };
+}
+
+function sameMessage(a: Message, b: Message) {
+  return a.status === b.status && a.content === b.content && a.sequence === b.sequence
+    && a.updatedAt === b.updatedAt && sameAttachments(a.attachments, b.attachments);
+}
+
+function sameAttachments(a: Attachment[] | undefined, b: Attachment[] | undefined) {
+  if (a === b) return true;
+  if ((a?.length ?? 0) !== (b?.length ?? 0)) return false;
+  // Attachments are immutable once sent, so cheap metadata is enough (avoids comparing multi-MB data URLs).
+  return (a ?? []).every((item, index) => {
+    const other = (b ?? [])[index];
+    return item.name === other.name && item.path === other.path && item.mime === other.mime
+      && item.size === other.size && item.dataUrl?.length === other.dataUrl?.length;
   });
 }
 
