@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
-
-const source = stripTypeScriptTypes(await readFile(new URL('../src/renderer/react/client-session-state.ts', import.meta.url), 'utf8'))
-  .replace(/import \{ useSyncExternalStore \} from 'react';/, '');
+import { loadModule } from './helpers/load-tsx.mjs';
 
 async function fixture(t, saved = null) {
   const previousStorage = globalThis.localStorage;
@@ -13,7 +9,7 @@ async function fixture(t, saved = null) {
     getItem() { return value; },
     setItem(_key, next) { value = next; },
   };
-  const store = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  const store = loadModule(new URL('../src/renderer/react/client-session-state.ts', import.meta.url).pathname);
   store.resetClientSessionStateStore();
   t.after(() => {
     store.resetClientSessionStateStore();

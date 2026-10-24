@@ -104,3 +104,38 @@ test('terminal run cleanup prevents late interaction resolution from resurrectin
     await f.close();
   }
 });
+
+test('1000 streaming deltas enter one transaction and prepare no new statements, with cache invalidation across waits and tools', async () => {
+  const f = await fixture();
+  try {
+    const repository = f.db.sqlRepository();
+    let transactions = 0, prepares = 0;
+    const waits = new RunWaitProjection({
+      exec: (sql) => repository.exec(sql),
+      prepare(sql) { prepares++; return repository.prepare(sql); },
+      transaction(callback) { transactions++; return repository.transaction(callback); },
+    });
+    f.turns.startRun({ runId: 'r', sessionId: 's' });
+    prepares = 0;
+    const stream = () => { for (let i = 0; i < 1000; i++) waits.observe({ type: 'message.delta', sessionId: 's', messageId: 'r', delta: 'x' }); };
+    stream();
+    assert.equal(transactions, 1);
+    assert.equal(prepares, 0);
+    waits.beginWait({ sessionId: 's', requestId: 'p' });
+    waits.observe({ type: 'message.delta', sessionId: 's', messageId: 'r', delta: 'x' });
+    assert.equal(f.turns.getRun('r').phase, 'waiting_for_user');
+    waits.endWait('p');
+    const before = transactions;
+    stream();
+    assert.equal(transactions, before + 1);
+    waits.observe({ type: 'tool.started', sessionId: 's', messageId: 'r', callId: 'c', tool: 'read' });
+    assert.equal(f.turns.getRun('r').phase, 'tool_running');
+    waits.observe({ type: 'tool.finished', sessionId: 's', messageId: 'r', callId: 'c', tool: 'read', success: true });
+    stream();
+    assert.equal(f.turns.getRun('r').phase, 'streaming');
+    waits.observe({ type: 'run.finished', sessionId: 's', messageId: 'r' });
+    f.turns.finishRun('r', { status: 'complete' });
+    stream();
+    assert.equal(f.turns.getRun('r').phase, 'complete');
+  } finally { await f.close(); }
+});

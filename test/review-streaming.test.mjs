@@ -73,13 +73,15 @@ test('client deltas tolerate duplicates and overlapping snapshots, and resync mi
   let refreshes = 0;
   const message = (content, status = 'streaming') => ({ id: 'm', sessionId: 's', role: 'assistant', content, status });
   globalThis.window = { cuppet: { sessions: { async get() { refreshes++; return { id: 's', messages: [message('Hello world')] }; } } } };
-  const store = loadModule(resolve('src/renderer/react/client-session-state.ts'));
+  const live = loadModule(resolve('src/renderer/react/client-transcript.ts'));
+  const store = loadModule(resolve('src/renderer/react/client-session-state.ts'), { './client-transcript': live });
   try {
     store.hydrateClientSessions([{ id: 's', messages: [message('Hello')] }]);
     const delta = { type: 'message.delta', sessionId: 's', messageId: 'm', delta: 'lo world', seq: 11 };
     store.reduceClientSessionEvent(delta);
     store.reduceClientSessionEvent(delta);
-    assert.equal(store.clientSessionSnapshot('s').messages[0].content, 'Hello world');
+    assert.equal(live.clientTranscriptSnapshot('s').m.content, 'Hello world');
+    assert.equal(store.clientSessionSnapshot('s').messages[0].content, 'Hello', 'live content does not mutate the session collection');
     store.hydrateClientSessions([{ id: 's', messages: [message('H')] }]);
     store.reduceClientSessionEvent({ ...delta, delta: 'world' });
     await store.refreshClientSession('s');

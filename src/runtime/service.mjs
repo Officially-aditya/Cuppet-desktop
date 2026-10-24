@@ -160,7 +160,7 @@ export class RuntimeService {
       }
       case 'session.list': return this.#db.listSessions(params.projectId === undefined ? {} : { projectId: params.projectId });
       case 'session.create': return this.createSession(params.projectId ?? null);
-      case 'session.get': return this.requireSession(params.sessionId);
+      case 'session.get': return this.requireSession(params.sessionId, { full: true });
       case 'session.send': return this.send(params);
       case 'session.steer': return this.#steer(params);
       case 'session.stop': return this.stop(params.sessionId);
@@ -219,9 +219,10 @@ export class RuntimeService {
   }
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
-    const prompt = typeof params.prompt === 'string' ? params.prompt : [...session.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-    const userMessageId = [...session.messages].reverse().find((message) => message.role === 'user')?.id;
-    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages: session.messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(session.messages), userMessageId });
+    const messages = this.#db.getSessionMessages(session.id);
+    const prompt = typeof params.prompt === 'string' ? params.prompt : [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+    const userMessageId = [...messages].reverse().find((message) => message.role === 'user')?.id;
+    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(messages), userMessageId });
   }
   async #queryMemory(params) {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
@@ -342,9 +343,9 @@ export class RuntimeService {
     this.#emit({ type: 'session.created', session });
     return session;
   }
-  requireSession(sessionId) {
+  requireSession(sessionId, { full = false } = {}) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
-    const session = this.#db.getSession(sessionId); if (!session) throw new Error(`unknown session: ${sessionId}`); return session;
+    const session = full ? this.#db.getSession(sessionId) : this.#db.getSessionSummary(sessionId); if (!session) throw new Error(`unknown session: ${sessionId}`); return session;
   }
 
   async #cleanupSession(sessionId) {
@@ -558,7 +559,7 @@ export class RuntimeService {
     let completedMessage;
     try {
       for (;;) {
-        const durable = this.#db.getSession(sessionId).messages
+        const durable = this.#db.getSessionMessages(sessionId)
           .filter((message) => message.status !== 'streaming')
           .map((message) => {
             const imageAttachments = Array.isArray(message.attachments)

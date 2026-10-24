@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { Attachment, Message, RuntimeEvent, Session } from '../types';
+import { applyClientMessageDelta, resetClientTranscriptStore, syncClientTranscriptMessages } from './client-transcript';
 
 export type PendingUserMessage = {
   id: string;
@@ -97,7 +98,10 @@ export function hydrateClientSessions(values: Session[] = []) {
   const next = sortSessions(values.map((session) => mergeSession(current.get(session.id), session)));
   if (sameSessions(sessions, next)) return sessions;
   sessions = next;
-  for (const session of next) reconcilePendingMessages(session);
+  for (const session of next) {
+    syncClientTranscriptMessages(session.id, session.messages);
+    reconcilePendingMessages(session);
+  }
   notify();
   return sessions;
 }
@@ -109,6 +113,8 @@ export function upsertClientSession(session: Session | null | undefined) {
   if (index >= 0) next[index] = mergeSession(next[index], session);
   else next.push(normalizeSession(session));
   const result = replaceSessions(next);
+  const merged = clientSessionSnapshot(session.id);
+  if (merged) syncClientTranscriptMessages(session.id, merged.messages);
   reconcilePendingMessages(session);
   return result;
 }
@@ -127,6 +133,7 @@ export function upsertClientMessage(message: Message | null | undefined) {
   next[index] = { ...session, messages };
   const previous = sessions;
   replaceSessions(next);
+  syncClientTranscriptMessages(session.id, [messages.find((item) => item.id === message.id)!]);
   reconcilePendingMessages({ ...session, messages: [message] });
   return sessions !== previous;
 }
@@ -182,15 +189,7 @@ export function reduceClientSessionEvent(event: RuntimeEvent) {
     const session = clientSessionSnapshot(sessionId);
     const message = session?.messages?.find((item) => item.id === event.messageId);
     if (message && message.status === 'streaming' && typeof event.delta === 'string' && Number.isSafeInteger(event.seq)) {
-      const end = Number(event.seq);
-      if (end > message.content.length) {
-        const start = end - event.delta.length;
-        if (start <= message.content.length && start >= 0) {
-          upsertClientMessage({ ...message, content: message.content + event.delta.slice(message.content.length - start) });
-        } else {
-          void refreshClientSession(sessionId).catch(() => undefined);
-        }
-      }
+      if (!applyClientMessageDelta(message, event)) void refreshClientSession(sessionId).catch(() => undefined);
       handled = true;
     } else if (!message) {
       void refreshClientSession(sessionId).catch(() => undefined);
@@ -217,6 +216,7 @@ export function resetClientSessionStateStore() {
   pendingMessages.clear();
   confirmedPendingMessages.clear();
   listeners.clear();
+  resetClientTranscriptStore();
 }
 
 function subscribeClientSessions(listener: () => void) {
@@ -371,8 +371,6 @@ const SESSION_DETAIL_REFRESH_EVENTS = new Set([
   'message.created',
   'message.completed',
   'run.finished',
-  'tool.started',
-  'tool.finished',
 ]);
 
 const SESSION_COLLECTION_REFRESH_EVENTS = new Set([

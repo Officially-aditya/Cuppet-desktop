@@ -26,7 +26,7 @@ export type TranscriptTool = {
 export type TranscriptStatus = { id: string; type: 'status'; text: string; sequence: number };
 export type TranscriptItem = TranscriptReasoning | TranscriptTool | TranscriptStatus;
 export type ContextUsage = { usedTokens: number; windowTokens: number; sequence: number; estimated?: boolean };
-export type TranscriptMessageState = { items: TranscriptItem[]; preview: string; contextUsage?: ContextUsage };
+export type TranscriptMessageState = { items: TranscriptItem[]; preview: string; content?: string; completedAt?: number; contextUsage?: ContextUsage };
 export type TranscriptState = Record<string, TranscriptMessageState>;
 
 export function hydrateTranscript(rows: MessageActivity[] = []): TranscriptState {
@@ -72,7 +72,10 @@ export function mergeTranscriptState(live: TranscriptState, durable: TranscriptS
     const contextUsage = current.contextUsage && (!persisted.contextUsage || current.contextUsage.sequence >= persisted.contextUsage.sequence)
       ? current.contextUsage : persisted.contextUsage;
     next[messageId] = {
-      items: boundItems(orderedTranscriptItems([...byId.values()])),
+      ...current,
+      items: current.completedAt
+        ? completeReasoning(boundItems(orderedTranscriptItems([...byId.values()])), current.completedAt)
+        : boundItems(orderedTranscriptItems([...byId.values()])),
       preview: current.preview,
       ...(contextUsage ? { contextUsage } : {}),
     };
@@ -88,6 +91,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
 
   if (event.type === 'message.preview') {
     return updateMessageState(state, messageId, (current) => {
+      if (current.completedAt) return current;
       let content = typeof event.content === 'string' ? event.content : current.preview;
       if (typeof event.delta === 'string' && Number.isSafeInteger(event.seq)) {
         const end = Number(event.seq);
@@ -101,10 +105,30 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
     });
   }
 
-  if (event.type === 'message.delta' || event.type === 'message.completed') {
+  if (event.type === 'message.delta') {
     return updateMessageState(state, messageId, (current) => {
+      if (current.completedAt) return current;
+      const snapshot = typeof event.content === 'string' ? event.content : current.content;
+      if (snapshot === undefined || typeof event.delta !== 'string' || !Number.isSafeInteger(event.seq)) {
+        const items = completeReasoning(current.items, createdAt);
+        return current.preview || items !== current.items ? { ...current, items, preview: '' } : current;
+      }
+      const content = (current.content?.length ?? 0) > snapshot.length ? current.content! : snapshot;
+      const end = Number(event.seq), start = end - event.delta.length;
+      if (start < 0 || start > content.length) return current;
+      const next = end > content.length ? content + event.delta.slice(content.length - start) : content;
       const items = completeReasoning(current.items, createdAt);
-      return current.preview || items !== current.items ? { ...current, items, preview: '' } : current;
+      return current.preview || items !== current.items || current.content !== next ? { ...current, items, preview: '', content: next } : current;
+    });
+  }
+
+  if (event.type === 'message.completed') {
+    return updateMessageState(state, messageId, (current) => {
+      const completedAt = Number(event.message?.updatedAt) || createdAt;
+      const items = completeReasoning(current.items, completedAt);
+      if (!current.preview && current.content === undefined && current.completedAt === completedAt && items === current.items) return current;
+      const { content: _content, ...rest } = current;
+      return { ...rest, items, preview: '', completedAt };
     });
   }
 
@@ -178,7 +202,8 @@ function appendReasoning(items: TranscriptItem[], segment: string, sequence: num
   const ordered = orderedTranscriptItems(items);
   const last = ordered.at(-1);
   if (last?.type === 'reasoning' && last.kind === timing.kind && !last.completedAt && reasoningCanMerge(last, sequence)) {
-    const textValue = mergeReasoningText(last.text, segment);
+    const textValue = sequence === null ? mergeReasoningText(last.text, segment)
+      : sequence <= (last.endSequence ?? last.sequence) ? last.text : last.text + segment;
     if (textValue === last.text) return items;
     return boundItems(items.map((item) => item.id === last.id && item.type === 'reasoning' ? {
       ...item,

@@ -260,7 +260,7 @@ async function purgeExpiredDeleted(now = Date.now()) {
     for (const candidate of localState.listExpiredDeleted(cutoff, 100)) {
       const sessionId = boundedId(candidate.id);
       if (!sessionId || runState.isActive(sessionId) || turnStore.hasQueued(sessionId) || purgingSessions.has(sessionId)) continue;
-      const current = localState.getSession(sessionId);
+      const current = localState.getSessionSummary(sessionId);
       if (!current?.deletedAt || current.deletedAt > cutoff) continue;
       purgingSessions.add(sessionId);
       try {
@@ -268,13 +268,14 @@ async function purgeExpiredDeleted(now = Date.now()) {
         await purgeSessionArtifacts({ dataDir, sessionId });
         const latest = localState.getSessionSummary(sessionId);
         if (!latest?.deletedAt || latest.deletedAt > cutoff) continue;
+        const messageIds = localState.getSessionMessages(sessionId).map((message) => message.id);
         const deleted = localState.deleteSession(sessionId);
         if (!deleted) continue;
         purged += 1;
         emit({
           type: 'session.purged',
           sessionId,
-          messageIds: current.messages.map((message) => message.id),
+          messageIds,
           preserved: ['tst-memory', 'project-files'],
         });
       } catch (error) {

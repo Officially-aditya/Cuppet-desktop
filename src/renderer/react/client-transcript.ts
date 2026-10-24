@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import type { MessageActivity, RuntimeEvent, Session } from '../types';
+import type { Message, MessageActivity, RuntimeEvent, Session } from '../types';
 import {
   hydrateTranscript,
   mergeTranscriptState,
@@ -37,6 +37,32 @@ export function useClientTranscript(session: Session | null): TranscriptState {
 
 export function hydrateClientTranscript(sessionId: string, activities: MessageActivity[] = []) {
   return mergeClientTranscript(sessionId, hydrateTranscript(activities));
+}
+
+export function applyClientMessageDelta(message: Message, event: RuntimeEvent) {
+  const current = states.get(message.sessionId)?.[message.id];
+  if (message.status !== 'streaming' || current?.completedAt) return true;
+  const content = (current?.content?.length ?? 0) > message.content.length ? current!.content! : message.content;
+  const start = Number(event.seq) - String(event.delta ?? '').length;
+  if (start < 0 || start > content.length) return false;
+  reduceClientTranscriptEvent({ ...event, content: message.content });
+  return true;
+}
+
+export function syncClientTranscriptMessages(sessionId: string, messages: Message[]) {
+  const current = states.get(sessionId) ?? EMPTY_TRANSCRIPT;
+  let next = current;
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    const entry = next[message.id] ?? { items: [], preview: '' };
+    if (message.status === 'streaming') {
+      if (entry.completedAt || (entry.content !== undefined && entry.content.length >= message.content.length)) continue;
+      next = { ...next, [message.id]: { ...entry, content: message.content } };
+    } else {
+      next = reduceTranscriptEvent(next, { type: 'message.completed', messageId: message.id, message, createdAt: message.updatedAt ?? message.createdAt ?? entry.completedAt ?? Date.now() });
+    }
+  }
+  if (next !== current) { states.set(sessionId, next); notify(sessionId); }
 }
 
 function mergeClientTranscript(sessionId: string, durable: TranscriptState) {

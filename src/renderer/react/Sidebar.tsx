@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Project, Session } from '../types';
 import { CUPPET_LOGO_URL } from './brand';
@@ -44,7 +44,7 @@ type RenameTarget =
   | { kind: 'project'; project: Project }
   | { kind: 'session'; session: Session };
 
-export function Sidebar(props: Props) {
+export const Sidebar = memo(function Sidebar(props: Props) {
   const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH));
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   const collapsed = props.collapsed ?? uncontrolledCollapsed;
@@ -169,7 +169,7 @@ export function Sidebar(props: Props) {
   const [hoveredSession, setHoveredSession] = useState<{ id: string; title: string; x: number; y: number; isBottom: boolean } | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSessionHoverStart = (session: Session, displayTitle: string, event: React.MouseEvent) => {
+  const handleSessionHoverStart = useCallback((session: Session, displayTitle: string, event: React.MouseEvent) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHoveredSession(null);
     const rect = event.currentTarget.getBoundingClientRect();
@@ -183,15 +183,15 @@ export function Sidebar(props: Props) {
         isBottom,
       });
     }, 500);
-  };
+  }, []);
 
-  const handleSessionHoverEnd = () => {
+  const handleSessionHoverEnd = useCallback(() => {
     if (hoverTimer.current) {
       clearTimeout(hoverTimer.current);
       hoverTimer.current = null;
     }
     setHoveredSession(null);
-  };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -199,12 +199,12 @@ export function Sidebar(props: Props) {
     };
   }, []);
 
-  const openMenu = (event: React.MouseEvent, kind: 'project' | 'session', id: string) => {
+  const openMenu = useCallback((event: React.MouseEvent, kind: 'project' | 'session', id: string) => {
     event.preventDefault();
     event.stopPropagation();
     handleSessionHoverEnd();
     setMenu({ kind, id, x: Math.min(event.clientX || event.currentTarget.getBoundingClientRect().right, window.innerWidth - 200), y: Math.min(event.clientY || event.currentTarget.getBoundingClientRect().bottom, window.innerHeight - 180) });
-  };
+  }, [handleSessionHoverEnd]);
 
   const beginRenameProject = (project: Project) => {
     handleSessionHoverEnd();
@@ -582,9 +582,9 @@ export function Sidebar(props: Props) {
       )}
     </aside>
   );
-}
+});
 
-function SessionRow({
+const SessionRow = memo(function SessionRow({
   session,
   title,
   active,
@@ -638,7 +638,7 @@ function SessionRow({
       >⋯</button>
     </div>
   );
-}
+});
 
 function ContextMenu(props: Props & {
   menu: { kind: 'project' | 'session'; id: string; x: number; y: number };

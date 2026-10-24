@@ -112,8 +112,8 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
             deferred={index < stableMessages.length - IMMEDIATE_HISTORY_ITEMS}
             onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         ))}
-        {runningAssistant && (runningPreview || runningAssistant.content || runningTrace.length > 0) && (
-          <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningAssistant.content }}
+        {runningAssistant && (runningPreview || runningState?.content || runningAssistant.content || runningTrace.length > 0) && (
+          <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningState?.content || runningAssistant.content }}
             items={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         )}
         {pending.map((item) => (
@@ -127,7 +127,7 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
   );
 }
 
-function TranscriptMessage({ message, items, deferred, onInspectDiff, onOpenLightbox, projectId }: {
+const TranscriptMessage = memo(function TranscriptMessage({ message, items, deferred, onInspectDiff, onOpenLightbox, projectId }: {
   message: Session['messages'][number];
   items?: TranscriptItem[];
   deferred: boolean;
@@ -150,7 +150,7 @@ function TranscriptMessage({ message, items, deferred, onInspectDiff, onOpenLigh
       )}
     </div>
   );
-}
+});
 
 function MessageView({
   message,

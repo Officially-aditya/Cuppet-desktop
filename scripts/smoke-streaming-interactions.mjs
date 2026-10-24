@@ -26,7 +26,21 @@ for (const [id, turns] of [['short-chat', 1], ['long-chat', 50]]) {
 }
 });
 db.close();
-await build({ logLevel: 'error' });
+await build({
+  logLevel: 'error',
+  resolve: { alias: { 'react-dom/client': 'react-dom/profiling' } },
+  plugins: [{
+    name: 'streaming-sidebar-profiler',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.endsWith('/src/renderer/react/Sidebar.tsx')) return;
+      return { code: code
+        .replace('import { memo,', 'import { Profiler, memo,')
+        .replace('    <aside', '    <Profiler id="Sidebar" onRender={() => { (window as any).__sidebarCommits = ((window as any).__sidebarCommits ?? 0) + 1; }}><aside')
+        .replace('    </aside>', '    </aside></Profiler>'), map: null };
+    },
+  }],
+});
 const timeout = setTimeout(() => { console.error('Streaming interaction profile timed out'); app.exit(1); }, 90_000);
 let started = false;
 app.on('browser-window-created', (_event, window) => {
@@ -51,7 +65,7 @@ app.on('browser-window-created', (_event, window) => {
       window.webContents.debugger.attach('1.3');
       await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
       await window.webContents.debugger.sendCommand('Performance.enable');
-      for (const [id, mode] of [['short-chat', 'answer'], ['short-chat', 'reasoning'], ['long-chat', 'answer'], ['long-chat', 'reasoning']]) {
+      for (const [id, mode] of [['short-chat', 'answer'], ['short-chat', 'delta'], ['short-chat', 'reasoning'], ['long-chat', 'answer'], ['long-chat', 'delta'], ['long-chat', 'reasoning']]) {
         await evaluate(async (id) => {
           const button = [...document.querySelectorAll('.session-item')].find(node => node.textContent.includes(id));
           if (!button) throw new Error('Missing fixture chat '+id);
@@ -67,17 +81,19 @@ app.on('browser-window-created', (_event, window) => {
         }, id);
         const assistantId = id + '-' + mode + '-live';
         const initial = '## Current answer\n\n' + 'Streaming **implementation details** with `src/app.ts` and [a reference](https://example.com). '.repeat(800);
-        let content = mode === 'answer' ? initial : '';
-        const sequence = mode === 'answer' ? 999 : 1000;
-        window.webContents.send('cuppet:event', { type: 'message.created', message: { id: assistantId, sessionId: id, role: 'assistant', content: '', status: 'streaming', sequence, createdAt: Date.now() } });
+        let content = mode !== 'reasoning' ? initial : '';
+        const sequence = 998 + ['answer', 'delta', 'reasoning'].indexOf(mode);
+        window.webContents.send('cuppet:event', { type: 'message.created', message: { id: assistantId, sessionId: id, role: 'assistant', content: mode === 'delta' ? initial : '', status: 'streaming', sequence, createdAt: Date.now() } });
         window.webContents.send('cuppet:event', { type: 'run.started', sessionId: id, messageId: assistantId });
         if (mode === 'answer') window.webContents.send('cuppet:event', { type: 'message.preview', sessionId: id, messageId: assistantId, content: initial });
         if (mode === 'reasoning') window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', text: initial } });
         await evaluate(async ({ mode, assistantId }) => {
           const selector = `article.message-preview[data-message-id="${assistantId}"]`;
-          while (!document.querySelector(selector) || (mode === 'answer' && document.querySelector(selector + ' .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
+          while (!document.querySelector(selector) || (mode !== 'reasoning' && document.querySelector(selector + ' .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
           // Exclude the initial fixture insertion and first window paint from live-update timing.
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          if (!window.__sidebarCommits) throw new Error('React Sidebar profiler did not attach');
+          const sidebarCommits = window.__sidebarCommits;
           const metrics = { gaps: [], frameGaps: [], tasks: [], inputs: 0, updates: 0, lastToken: -1, maxEventLag: 0 };
           const unsubscribe = window.cuppet.onEvent(event => {
             if (event.messageId !== assistantId) return;
@@ -110,15 +126,15 @@ app.on('browser-window-created', (_event, window) => {
           window.endProfile = () => {
             clearInterval(timer); cancelAnimationFrame(frame); tasks.disconnect(); dom.disconnect(); unsubscribe();
             document.querySelector('textarea').removeEventListener('input', input);
-            return { maxEventLag: metrics.maxEventLag, maxGap: Math.max(...metrics.gaps), maxFrameGap: Math.max(...metrics.frameGaps), frames: metrics.frameGaps.length, retainedCode: code === document.querySelector('.message-preview .message-content code'), longTasks: metrics.tasks, inputs: metrics.inputs, updates: metrics.updates, lastToken: metrics.lastToken };
+            return { sidebarCommits: window.__sidebarCommits - sidebarCommits, maxEventLag: metrics.maxEventLag, maxGap: Math.max(...metrics.gaps), maxFrameGap: Math.max(...metrics.frameGaps), frames: metrics.frameGaps.length, retainedCode: code === document.querySelector('.message-preview .message-content code'), longTasks: metrics.tasks, inputs: metrics.inputs, updates: metrics.updates, lastToken: metrics.lastToken };
           };
         }, { mode, assistantId });
         let token = 0;
         const produce = setInterval(() => {
           const delta = [`live-${token} **up`, `date** and \`src/live`, `.ts\` `][token++ % 3];
-          if (mode === 'answer') {
+          if (mode !== 'reasoning') {
             content += delta;
-            window.webContents.send('cuppet:event', { type: 'message.preview', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
+            window.webContents.send('cuppet:event', { type: mode === 'delta' ? 'message.delta' : 'message.preview', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
           } else {
             window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: token, activity: { type: 'activity.reasoning.delta', text: delta }, diagnosticSentAt: Date.now() });
           }
@@ -159,7 +175,7 @@ app.on('browser-window-created', (_event, window) => {
         clearInterval(produce); clearInterval(typing);
         await Promise.all(keyRequests);
         await new Promise(resolve => setTimeout(resolve, 300));
-        if (mode === 'answer') await evaluate(async () => {
+        if (mode !== 'reasoning') await evaluate(async () => {
           while (document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false') await new Promise(resolve => setTimeout(resolve, 10));
         });
         const result = await evaluate(() => window.endProfile());
@@ -167,7 +183,8 @@ app.on('browser-window-created', (_event, window) => {
         const metrics = Object.fromEntries(after.metrics.filter(m => ['ScriptDuration','RecalcStyleDuration','LayoutDuration'].includes(m.name)).map(m => [m.name, m.value - (before.metrics.find(p=>p.name===m.name)?.value ?? 0)]));
         console.log('Streaming interaction metrics on '+process.platform+': '+JSON.stringify({ id, mode, sent: token, keys, settings, ...result, metrics }));
         assert.equal(result.lastToken, (token - 1) - ((token - 1) % 3), 'the rendered answer did not catch up with the event stream');
-        if (mode === 'answer') assert.equal(result.retainedCode, true, 'streaming replaced existing code/link DOM');
+        if (mode !== 'reasoning') assert.equal(result.retainedCode, true, 'streaming replaced existing code/link DOM');
+        assert.equal(result.sidebarCommits, 0, 'Sidebar committed during streaming');
         assert.ok(result.maxEventLag < 500, 'Runtime events queued behind a blocked renderer');
         assert.ok(result.inputs >= Math.floor(keys * 0.8), 'typing events were lost during output');
         assert.ok(result.frames > 10, 'streaming did not produce visible frames');

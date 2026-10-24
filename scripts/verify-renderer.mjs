@@ -83,7 +83,7 @@ assert.match(app, /if \((?:value|trimmed)\.startsWith\('\/'\)\)/, 'slash command
 assert.match(app, /window\.cuppet\.commands\.execute/, 'React command path does not use the bounded preload command API');
 assert.match(app, /const result = await window\.cuppet\.sessions\.send/, 'normal prompt send path missing');
 assert.match(app, /sessions\.send\(session\.id, value, attachments\)/, 'composer attachments are not forwarded through the bounded session send path');
-assert.match(app, /onNewProjectChat=\{\(projectId\) => startDraft\(projectId\)\}/, 'project hover new-chat action does not create a project-bound draft');
+assert.match(app, /onNewProjectChat=\{startDraft\}/, 'project hover new-chat action does not create a project-bound draft');
 assert.match(app, /result\?\.sessionId/, 'React send path does not follow PE3-selected target sessions');
 assert.match(app, /event\.type === 'pe3\.routed'/, 'React event path does not follow PE3 routing');
 const runtimeService = await read('src/runtime/service.mjs');

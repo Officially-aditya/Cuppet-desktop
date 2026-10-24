@@ -105,3 +105,33 @@ test('forkSession copies canonical message activities to mapped assistant messag
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('activity counters remain correct after rollback, restart, and message-scoped reads', () => {
+  const { dir, path, db } = fixture();
+  const append = (messageId) => db.appendMessageActivity({ sessionId: 'session-1', messageId, activity: { type: 'activity.text.delta', text: 'text' } });
+  try {
+    append('assistant-1');
+    assert.throws(() => db.transaction(() => { append('assistant-1'); throw new Error('rollback'); }), /rollback/);
+    assert.equal(append('assistant-1').sequence, 2);
+    db.appendMessage({ id: 'assistant-2', sessionId: 'session-1', role: 'assistant' });
+    append('assistant-2');
+    assert.deepEqual(db.listMessageActivities('session-1', { messageIds: ['assistant-2'], limit: 1 }).map((row) => row.messageId), ['assistant-2']);
+    assert.deepEqual(db.listMessageActivities('session-1', { messageIds: [] }), []);
+    assert.equal(db.listMessageActivities('session-1', { messageIds: ['assistant-1'], limit: 1 }).length, 1);
+    const reopened = new ConversationDatabase(path);
+    try {
+      assert.equal(reopened.appendMessageActivity({ sessionId: 'session-1', messageId: 'assistant-1', activity: {} }).sequence, 3);
+    } finally { reopened.close(); }
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('messages-only snapshots include buffered text and never load activities or tool executions', () => {
+  const { dir, db } = fixture();
+  try {
+    db.appendMessageContent('assistant-1', 'first');
+    db.appendMessageContent('assistant-1', ' pending');
+    db.listMessageActivities = () => assert.fail('messages-only reads must not load activity history');
+    db.listToolExecutions = () => assert.fail('messages-only reads must not load tool history');
+    assert.equal(db.getSessionMessages('session-1').at(-1).content, 'first pending');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});

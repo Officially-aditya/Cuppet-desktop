@@ -1,23 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import vm from 'node:vm';
-import ts from 'typescript';
-
-const source = await readFile(new URL('../src/renderer/react/client-session-state.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+import { loadModule } from './helpers/load-tsx.mjs';
 
 function loadStore() {
-  const exports = {};
-  vm.runInNewContext(compiled, {
-    exports,
-    require: (name) => (name === 'react' ? { useSyncExternalStore: () => [] } : {}),
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    window: { cuppet: { sessions: { list: async () => [], get: async () => ({}) } } },
-  });
-  return exports;
+  return loadModule(new URL('../src/renderer/react/client-session-state.ts', import.meta.url).pathname);
 }
 
 const plain = (value) => JSON.parse(JSON.stringify(value));

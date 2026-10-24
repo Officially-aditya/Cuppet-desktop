@@ -51,7 +51,7 @@ export class JournaledToolRuntime {
 
   async run(options) {
     const initialMessageId = latestAssistantMessageID(this.#db, options.sessionId);
-    const currentMessageId = () => latestAssistantMessageID(this.#db, options.sessionId) || initialMessageId;
+    const currentMessageId = () => options.getAssistantMessageId?.() || latestAssistantMessageID(this.#db, options.sessionId) || initialMessageId;
     const benchmarkBefore = this.#benchmark ? this.executionSnapshot(options.sessionId) ?? {} : null;
     const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
     let benchmarkResult = null;
@@ -62,9 +62,41 @@ export class JournaledToolRuntime {
       projectRoot: options.projectRoot,
       adapter: options.adapter,
     });
+    let textRunMessageId = null;
+    let pendingReasoning = null;
+    let reasoningTimer = null;
+    const flushReasoning = () => {
+      clearTimeout(reasoningTimer);
+      reasoningTimer = null;
+      if (!pendingReasoning) return;
+      const pending = pendingReasoning;
+      pendingReasoning = null;
+      this.#emitActivity({ source: 'provider', sessionId: options.sessionId, ...pending });
+    };
+    const flushActivities = () => { flushReasoning(); textRunMessageId = null; };
     const emitProviderActivity = (activity) => {
       const messageId = currentMessageId();
       if (!messageId || !isProviderActivity(activity)) return;
+      if (activity.type === 'activity.reasoning.delta') {
+        textRunMessageId = null;
+        if (pendingReasoning && (pendingReasoning.messageId !== messageId || pendingReasoning.activity.kind !== activity.kind)) flushReasoning();
+        if (!pendingReasoning) pendingReasoning = { messageId, activity: { ...activity } };
+        else {
+          const previous = pendingReasoning.activity;
+          pendingReasoning.activity = { ...previous, ...activity, text: previous.text + activity.text,
+            ...(previous.startedAt !== undefined ? { startedAt: previous.startedAt } : {}) };
+        }
+        if (!reasoningTimer) {
+          reasoningTimer = setTimeout(flushReasoning, 50);
+          reasoningTimer.unref?.();
+        }
+        return;
+      }
+      flushReasoning();
+      if (activity.type === 'activity.text.delta') {
+        if (textRunMessageId === messageId) return;
+        textRunMessageId = messageId;
+      } else textRunMessageId = null;
       this.#emitActivity({ source: 'provider', sessionId: options.sessionId, messageId, activity });
     };
     const capture = new ToolMutationCapture({
@@ -77,7 +109,8 @@ export class JournaledToolRuntime {
       contextWindow: options.contextWindow,
       executionKernel: this.#executionKernel,
       takeSteering: options.takeSteering,
-      applySteering: options.applySteering,
+      applySteering: (...args) => { flushActivities(); return options.applySteering?.(...args) ?? []; },
+      flushActivities,
       onReasoning: (segment, timing) => {
         if (!currentMessageId() || !segment) return;
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment, kind: 'commentary', ...timing }));
@@ -105,6 +138,7 @@ export class JournaledToolRuntime {
       benchmarkError = error;
       throw error;
     } finally {
+      flushActivities();
       if (this.#benchmark) {
         const after = this.executionSnapshot(options.sessionId) ?? {};
         this.#safeEmit({
@@ -128,6 +162,7 @@ export class JournaledToolRuntime {
 
   #onToolEvent(event) {
     const capture = this.#captures.get(event?.sessionId);
+    capture?.flushActivities();
     capture?.onToolEvent(event);
     const decorated = capture ? capture.decorateToolEvent(event) : event;
     this.#safeEmit(decorated);
@@ -169,10 +204,13 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
-  #journal; #sessionId; #getMessageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #takeSteering; #applySteering; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity;
-  constructor({ journal, sessionId, getMessageId = () => '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, takeSteering = () => [], applySteering = () => [], onReasoning = () => {}, onPreview = () => {}, onActivity = () => {} }) {
+  #journal; #sessionId; #getMessageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #takeSteering; #applySteering; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #flushActivities;
+  constructor({ journal, sessionId, getMessageId = () => '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, takeSteering = () => [], applySteering = () => [], onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, flushActivities = () => {} }) {
     this.#journal = journal; this.#sessionId = sessionId; this.#getMessageId = getMessageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#contextWindow = contextWindow; this.#executionKernel = executionKernel; this.#takeSteering = takeSteering; this.#applySteering = applySteering; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
+    this.#flushActivities = flushActivities;
   }
+
+  flushActivities() { this.#flushActivities(); }
 
   async stream(messages, options) {
     if (this.#failure) throw this.#failure;

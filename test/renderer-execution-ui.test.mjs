@@ -37,14 +37,13 @@ test('React composer selects queue or steer intent while durable queue ownership
 });
 
 test('React transcript consumes canonical runtime events through client projections', () => {
-  // App owns navigation and dispatch only. Durable session detail refreshes at tool/run
-  // boundaries belong to the shared session projection, while live Activity reduction
-  // belongs to the shared transcript projection.
+  // App owns navigation and dispatch. The session projection reconciles at run
+  // completion; tool activity and streaming content update the transcript directly.
   assert.doesNotMatch(app, /tool\.started|tool\.finished|validation\.completed|setActivities\(|hydrateToolActivity\(|reduceActivity\(/);
 
   assert.match(clientSessionState, /SESSION_DETAIL_REFRESH_EVENTS/);
-  assert.match(clientSessionState, /'tool\.started'/);
-  assert.match(clientSessionState, /'tool\.finished'/);
+  assert.doesNotMatch(clientSessionState, /'tool\.started'/);
+  assert.doesNotMatch(clientSessionState, /'tool\.finished'/);
   assert.match(clientSessionState, /'run\.finished'/);
   assert.match(clientSessionState, /refreshClientSession\(sessionId\)/);
 

@@ -287,7 +287,7 @@ export class ToolRuntime {
       if (!message || message.sessionId !== sessionId || message.role !== 'user') throw new Error('User message not found in this chat.');
       messages = [{ message, matchIndex: 0 }];
     } else {
-      messages = (this.#db.getSession(sessionId)?.messages ?? [])
+      messages = this.#db.getSessionMessages(sessionId)
         .filter((message) => message.role === 'user')
         .map((message) => {
           const content = message.content.toLowerCase();
@@ -332,7 +332,7 @@ export class ToolRuntime {
     }
     const candidates = requested
       ? [requested]
-      : (this.#db.getSession(sessionId)?.messages ?? []).filter((message) => message.role === 'assistant').reverse();
+      : this.#db.getSessionMessages(sessionId).filter((message) => message.role === 'assistant').reverse();
     let selected = null;
     let executions = [];
     let fallback = null;
@@ -362,9 +362,7 @@ export class ToolRuntime {
   #toolActivities(sessionId, message, limit) {
     if (!message) return [];
     try {
-      return this.#db.listMessageActivities(sessionId)
-        .filter((entry) => entry.messageId === message.id)
-        .slice(0, limit)
+      return this.#db.listMessageActivities(sessionId, { messageIds: [message.id], limit })
         .map((entry) => ({
           sequence: entry.sequence,
           source: entry.source,

@@ -39,8 +39,9 @@ test('client session store owns list refresh, event upserts, lifecycle reconcili
   assert.match(sessionState, /type === 'message\.delta'/);
   assert.match(sessionState, /SESSION_DETAIL_REFRESH_EVENTS/);
   assert.match(sessionState, /'run\.finished'/);
-  assert.match(sessionState, /'tool\.started'/);
-  assert.match(sessionState, /'tool\.finished'/);
+  assert.doesNotMatch(sessionState, /'tool\.started'/);
+  assert.doesNotMatch(sessionState, /'tool\.finished'/);
+  assert.match(sessionState, /applyClientMessageDelta\(message, event\)/);
   assert.match(sessionState, /SESSION_COLLECTION_REFRESH_EVENTS/);
   assert.match(sessionState, /'session\.archived'/);
   assert.match(sessionState, /'session\.deleted'/);

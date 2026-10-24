@@ -13,6 +13,8 @@ const DURABLE_RUNTIME_EVENT_TYPES = new Set([
 
 export class RunWaitProjection {
   #db;
+  #phases = new Map();
+  #statements;
 
   constructor(repository) {
     this.#db = requireSqlRepository(repository);
@@ -32,9 +34,19 @@ export class RunWaitProjection {
       DELETE FROM run_waits
       WHERE run_id NOT IN (SELECT run_id FROM runs WHERE status='waiting')
     `).run();
+    this.#statements = {
+      run: this.#db.prepare(`SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
+        project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt FROM runs WHERE run_id=?`),
+      phase: this.#db.prepare("UPDATE runs SET status=?, phase=?, updated_at=? WHERE run_id=? AND status IN ('starting','running','waiting')"),
+      pending: this.#db.prepare('SELECT COUNT(*) AS count FROM run_waits WHERE run_id=?'),
+      latest: this.#db.prepare("SELECT run_id AS runId FROM runs WHERE session_id=? AND status IN ('starting','running','waiting','settling') ORDER BY updated_at DESC, created_at DESC, run_id DESC LIMIT 1"),
+      sequence: this.#db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM runtime_events WHERE session_id=?'),
+      event: this.#db.prepare('INSERT INTO runtime_events (session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at) VALUES (?,?,?,?,?,?,?,?)'),
+    };
   }
 
   observe(event, now = Date.now()) {
+    if (event?.type === 'run.started' && event.messageId) this.#phases.delete(event.messageId);
     const interaction = interactionEvent(event);
     if (interaction?.phase === 'requested') {
       return this.beginWait({
@@ -55,7 +67,7 @@ export class RunWaitProjection {
 
     const durable = durableRuntimeProjection(event);
     if (!durable) return null;
-    return this.#db.transaction(() => {
+    try { return this.#db.transaction(() => {
       const runId = durable.runId ?? this.#latestActiveRunId(durable.sessionId);
       if (runId && durable.type === 'tool.started') this.#transitionPhase(runId, 'tool_running', now, { transactional: false });
       if (runId && durable.type === 'tool.finished') this.#transitionPhase(runId, 'waiting_for_provider', now, { transactional: false });
@@ -67,7 +79,7 @@ export class RunWaitProjection {
         createdAt: now,
       });
       return { sessionId: durable.sessionId, runId, type: durable.type };
-    });
+    }); } catch (error) { this.#phases.clear(); throw error; }
   }
 
   beginWait({ sessionId, requestId, kind = 'interaction', now = Date.now() } = {}) {
@@ -83,6 +95,7 @@ export class RunWaitProjection {
         LIMIT 1
       `).get(session);
       if (!run || !ACTIVE_WAITABLE_RUN_STATUSES.has(String(run.status))) return null;
+      this.#phases.delete(run.runId);
 
       const inserted = this.#db.prepare(`
         INSERT OR IGNORE INTO run_waits (request_id,run_id,session_id,kind,created_at)
@@ -114,6 +127,7 @@ export class RunWaitProjection {
         FROM run_waits WHERE request_id=?
       `).get(request);
       if (!wait) return null;
+      this.#phases.delete(wait.runId);
       this.#db.prepare('DELETE FROM run_waits WHERE request_id=?').run(request);
 
       const run = this.#runSnapshot(wait.runId);
@@ -146,6 +160,7 @@ export class RunWaitProjection {
 
   clearRun(runId) {
     const id = requiredText(runId, 'runId');
+    this.#phases.delete(id);
     return this.#db.prepare('DELETE FROM run_waits WHERE run_id=?').run(id).changes;
   }
 
@@ -154,21 +169,17 @@ export class RunWaitProjection {
   }
 
   #pendingCount(runId) {
-    return Number(this.#db.prepare('SELECT COUNT(*) AS count FROM run_waits WHERE run_id=?').get(runId)?.count ?? 0);
+    return Number(this.#statements.pending.get(runId)?.count ?? 0);
   }
 
   #latestActiveRunId(sessionId) {
-    const row = this.#db.prepare(`
-      SELECT run_id AS runId
-      FROM runs
-      WHERE session_id=? AND status IN ('starting','running','waiting','settling')
-      ORDER BY updated_at DESC, created_at DESC, run_id DESC
-      LIMIT 1
-    `).get(sessionId);
+    const row = this.#statements.latest.get(sessionId);
     return optionalText(row?.runId);
   }
 
   #transitionPhase(runId, phase, now, { transactional = true } = {}) {
+    if (phase === 'streaming' && this.#phases.get(runId) === 'streaming') return null;
+    this.#phases.delete(runId);
     const apply = () => {
       const run = this.#runSnapshot(runId);
       if (!run || !ACTIVE_WAITABLE_RUN_STATUSES.has(run.status)) return run;
@@ -178,10 +189,7 @@ export class RunWaitProjection {
       const nextPhase = normalizeRunPhase(phase, run.status);
       if (run.phase === nextPhase) return run;
       const nextStatus = statusForRunPhase(nextPhase);
-      this.#db.prepare(`
-        UPDATE runs SET status=?, phase=?, updated_at=?
-        WHERE run_id=? AND status IN ('starting','running','waiting')
-      `).run(nextStatus, nextPhase, now, runId);
+      this.#statements.phase.run(nextStatus, nextPhase, now, runId);
       this.#appendEvent({
         sessionId: run.sessionId,
         runId,
@@ -191,15 +199,13 @@ export class RunWaitProjection {
       });
       return this.#runSnapshot(runId);
     };
-    return transactional ? this.#db.transaction(apply) : apply();
+    const run = transactional ? this.#db.transaction(apply) : apply();
+    if (run?.status === 'running' && run.phase === 'streaming') this.#phases.set(runId, 'streaming');
+    return run;
   }
 
   #runSnapshot(runId) {
-    const row = this.#db.prepare(`
-      SELECT run_id AS runId, session_id AS sessionId, source_session_id AS sourceSessionId,
-             project_id AS projectId, status, phase, error, created_at AS createdAt, updated_at AS updatedAt
-      FROM runs WHERE run_id=?
-    `).get(runId);
+    const row = this.#statements.run.get(runId);
     return row ? {
       runId: String(row.runId),
       sessionId: String(row.sessionId),
@@ -214,14 +220,8 @@ export class RunWaitProjection {
   }
 
   #appendEvent({ sessionId, runId, type, payload, createdAt }) {
-    const nextSequence = Number(this.#db.prepare(`
-      SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM runtime_events WHERE session_id=?
-    `).get(sessionId)?.sequence ?? 1);
-    this.#db.prepare(`
-      INSERT INTO runtime_events (
-        session_id,run_id,queue_id,sequence,type,payload_json,schema_version,created_at
-      ) VALUES (?,?,?,?,?,?,?,?)
-    `).run(sessionId, runId, null, nextSequence, type, JSON.stringify(payload ?? {}), EVENT_SCHEMA_VERSION, createdAt);
+    const nextSequence = Number(this.#statements.sequence.get(sessionId)?.sequence ?? 1);
+    this.#statements.event.run(sessionId, runId, null, nextSequence, type, JSON.stringify(payload ?? {}), EVENT_SCHEMA_VERSION, createdAt);
   }
 }
 

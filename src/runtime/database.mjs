@@ -16,6 +16,11 @@ export class ConversationDatabase {
   #pendingContent = new Map();
   #appendContent;
   #touchStreamingSession;
+  #sessionMessages;
+  #activityMessage;
+  #nextActivitySequence;
+  #insertActivity;
+  #activitySequences = new Map();
   constructor(path) {
     mkdirSync(dirname(path), { recursive: true });
     this.#db = new DatabaseSync(path);
@@ -23,6 +28,10 @@ export class ConversationDatabase {
     this.#scheduleSearchIndex(250);
     this.#appendContent = this.#db.prepare('UPDATE messages SET content=content||?,updated_at=? WHERE id=?');
     this.#touchStreamingSession = this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=(SELECT session_id FROM messages WHERE id=?)');
+    this.#sessionMessages = this.#db.prepare('SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence');
+    this.#activityMessage = this.#db.prepare('SELECT session_id AS sessionId FROM messages WHERE id=?');
+    this.#nextActivitySequence = this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM message_activities WHERE message_id=?');
+    this.#insertActivity = this.#db.prepare('INSERT INTO message_activities (session_id,message_id,sequence,source,activity_json,created_at) VALUES (?,?,?,?,?,?)');
     const now = Date.now();
     this.transaction(() => {
       const interrupted = this.#db.prepare("UPDATE messages SET status = 'interrupted', updated_at = ? WHERE status = 'streaming' RETURNING rowid").all(now);
@@ -104,6 +113,7 @@ export class ConversationDatabase {
       else this.#db.exec('COMMIT');
       return result;
     } catch (error) {
+      this.#activitySequences.clear();
       this.#transactionDepth = Math.max(0, this.#transactionDepth - 1);
       if (nested) {
         try { this.#db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); } catch {}
@@ -141,11 +151,12 @@ export class ConversationDatabase {
     return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE ${clauses.join(' AND ')} ORDER BY s.updated_at DESC`).all(...values);
   }
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
-  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; const messages=this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=? ORDER BY sequence`).all(id).map((row) => this.#pendingContent.get(row.id)?.message ?? hydrateMessage(row)); return {...session,messages,activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
+  getSessionMessages(id){ return this.#sessionMessages.all(id).map((row) => this.#pendingContent.get(row.id)?.message ?? hydrateMessage(row)); }
+  getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; return {...session,messages:this.getSessionMessages(id),activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
   appendMessage({id,sessionId,role,content='',attachments=[],status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; const attachmentsJson = Array.isArray(attachments) && attachments.length ? JSON.stringify(attachments) : null; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,attachments_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,attachmentsJson,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
   getMessage(id){ if (this.#pendingContent.has(id)) return { ...this.#pendingContent.get(id).message }; const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
   getLatestStreamingAssistantMessageId(sessionId){ return this.#db.prepare("SELECT id FROM messages WHERE session_id=? AND role='assistant' AND status='streaming' ORDER BY sequence DESC LIMIT 1").get(sessionId)?.id ?? ''; }
-  updateMessage(id,{content,status,now=Date.now()}){ this.flushMessageContent(id); if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') this.#upsertSearchMessage(id); return this.getMessage(id); }
+  updateMessage(id,{content,status,now=Date.now()}){ this.flushMessageContent(id); if(status!==undefined&&!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const current=this.getMessage(id); if(!current) throw new Error(`unknown message: ${id}`); this.#db.prepare('UPDATE messages SET content=?,status=?,updated_at=? WHERE id=?').run(content??current.content,status??current.status,now,id); this.touchSession(current.sessionId,now); const nextStatus=status??current.status; if(nextStatus!=='streaming') { this.#activitySequences.delete(id); this.#upsertSearchMessage(id); } return this.getMessage(id); }
   appendMessageContent(id, delta, now = Date.now()) {
     let pending = this.#pendingContent.get(id);
     if (pending?.error) throw pending.error;
@@ -180,14 +191,18 @@ export class ConversationDatabase {
     this.#pendingContent.delete(id);
   }
   appendMessageActivity({sessionId,messageId,source='provider',activity,now=Date.now()}){
-    const message=this.getMessage(messageId); if(!message) throw new Error(`unknown message: ${messageId}`);
+    const message=this.#activityMessage.get(messageId); if(!message) throw new Error(`unknown message: ${messageId}`);
     if(message.sessionId!==sessionId) throw new Error(`message ${messageId} does not belong to session ${sessionId}`);
-    const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM message_activities WHERE message_id=?').get(messageId)?.sequence ?? 1;
-    this.#db.prepare('INSERT INTO message_activities (session_id,message_id,sequence,source,activity_json,created_at) VALUES (?,?,?,?,?,?)').run(sessionId,messageId,next,String(source||'provider'),JSON.stringify(activity??{}),now);
+    const next=this.#activitySequences.get(messageId) ?? this.#nextActivitySequence.get(messageId).sequence;
+    this.#insertActivity.run(sessionId,messageId,next,String(source||'provider'),JSON.stringify(activity??{}),now);
+    this.#activitySequences.set(messageId, next + 1);
     return { sessionId, messageId, sequence: next, source: String(source||'provider'), activity: activity??{}, createdAt: now };
   }
-  listMessageActivities(sessionId){
-    return this.#db.prepare('SELECT session_id AS sessionId,message_id AS messageId,sequence,source,activity_json AS activityJson,created_at AS createdAt FROM message_activities WHERE session_id=? ORDER BY (SELECT sequence FROM messages WHERE id=message_id) ASC,sequence ASC,id ASC').all(sessionId).map((row)=>({ ...row, activity: parseActivity(row.activityJson) })).map(({activityJson,...row})=>row);
+  listMessageActivities(sessionId, { messageIds, limit } = {}){
+    if (Array.isArray(messageIds) && !messageIds.length) return [];
+    const filter = Array.isArray(messageIds) ? ` AND a.message_id IN (${messageIds.map(() => '?').join(',')})` : '';
+    const bounded = Number.isSafeInteger(limit) && limit >= 0;
+    return this.#db.prepare(`SELECT a.session_id AS sessionId,a.message_id AS messageId,a.sequence,a.source,a.activity_json AS activityJson,a.created_at AS createdAt FROM message_activities a JOIN messages m ON m.id=a.message_id WHERE a.session_id=?${filter} ORDER BY m.sequence ASC,a.sequence ASC,a.id ASC${bounded ? ' LIMIT ?' : ''}`).all(sessionId, ...(messageIds ?? []), ...(bounded ? [limit] : [])).map((row)=>({ ...row, activity: parseActivity(row.activityJson) })).map(({activityJson,...row})=>row);
   }
   renameSession(id,title,now=Date.now()){ const value=String(title??'').trim().slice(0,160); if(!value) throw new Error('chat title is required'); this.#db.prepare('UPDATE sessions SET title=?,updated_at=? WHERE id=?').run(value,now,id); this.#upsertSearchSession(id); return this.getSessionSummary(id); }
   archiveSession(id,archived=true,now=Date.now()){
@@ -202,7 +217,7 @@ export class ConversationDatabase {
     return this.getSessionSummary(id);
   }
   listExpiredDeleted(cutoff,limit=100){ return this.#db.prepare(`SELECT id,project_id AS projectId,deleted_at AS deletedAt FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at<=? ORDER BY deleted_at ASC LIMIT ?`).all(cutoff,Math.min(Math.max(Number(limit)||100,1),500)); }
-  deleteSession(id){ this.#db.prepare('DELETE FROM search_index WHERE session_id=?').run(id); const result=this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id); return result.changes>0; }
+  deleteSession(id){ this.#activitySequences.clear(); this.#db.prepare('DELETE FROM search_index WHERE session_id=?').run(id); const result=this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id); return result.changes>0; }
   touchSession(id,now=Date.now()){ this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now,id); }
   search(query,{limit=50,includeArchived=false}={}){
     const match=ftsQuery(query); if(!match) return [];

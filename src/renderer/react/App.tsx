@@ -468,6 +468,16 @@ export function App() {
   }, [question, showToast]);
 
   const generalSessions = useMemo(() => sessions.filter((session) => !session.projectId && !session.archivedAt), [sessions]);
+  const visibleSessions = useMemo(() => sessions.filter((session) => !session.archivedAt), [sessions]);
+  const openNewChat = useCallback(() => setModal('new-chat'), []);
+  const openSearch = useCallback(() => setModal('search'), []);
+  const openRemote = useCallback(() => setModal('remote'), []);
+  const openSettings = useCallback(() => { setSettingsSection('general'); setModal('settings'); }, []);
+  const openAddProject = useCallback(() => { setProjectSource('local'); setModal('add-project'); }, []);
+  const openProjectGraph = useCallback((projectId: string) => {
+    if (activeProjectId === projectId) setMemoryOpen((current) => !current);
+    else { selectProject(projectId); setMemoryOpen(true); }
+  }, [activeProjectId, selectProject]);
   const panels = { sidebar: !sidebarCollapsed, memory: memoryOpen, terminal: terminalOpen };
 
   if (loading) return <div className="react-boot"><div className="react-boot-brand"><img src={CUPPET_LOGO_URL} alt="" aria-hidden="true" /><span>Starting Cuppet…</span></div></div>;
@@ -477,7 +487,7 @@ export function App() {
       <Sidebar
         onError={showToast}
         projects={projects}
-        sessions={sessions.filter((session) => !session.archivedAt)}
+        sessions={visibleSessions}
         generalSessions={generalSessions}
         activeSessionId={activeSessionId}
         unreadSessionIds={unreadSessionIds}
@@ -485,12 +495,12 @@ export function App() {
         selectedProjectId={activeProjectId}
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
-        onNewChat={() => setModal('new-chat')}
-        onNewProjectChat={(projectId) => startDraft(projectId)}
-        onSearch={() => setModal('search')}
-        onRemote={() => setModal('remote')}
-        onSettings={() => { setSettingsSection('general'); setModal('settings'); }}
-        onAddProject={() => { setProjectSource('local'); setModal('add-project'); }}
+        onNewChat={openNewChat}
+        onNewProjectChat={startDraft}
+        onSearch={openSearch}
+        onRemote={openRemote}
+        onSettings={openSettings}
+        onAddProject={openAddProject}
         onProject={selectProject}
         onSession={openSession}
         onRenameProject={renameProject}
@@ -498,14 +508,7 @@ export function App() {
         onArchiveSession={archiveSession}
         onDeleteSession={deleteSession}
         isGraphOpen={panels.memory}
-        onOpenProjectGraph={(projectId) => {
-          if (activeProjectId === projectId) {
-            setMemoryOpen((current) => !current);
-          } else {
-            selectProject(projectId);
-            setMemoryOpen(true);
-          }
-        }}
+        onOpenProjectGraph={openProjectGraph}
       />
       <ChatPane
         session={active}
