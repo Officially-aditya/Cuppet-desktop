@@ -51,6 +51,12 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
 
   useEffect(() => {
     const updateSelection = () => {
+      // Composer caret changes are not transcript selections. Reading the document
+      // selection here can force layout of a concurrently changing transcript.
+      if (document.activeElement === textarea.current) {
+        setSelectionMenu(null);
+        return;
+      }
       const selection = window.getSelection();
       const pane = paneRef.current;
       if (!selection || selection.isCollapsed || !selection.rangeCount || !pane ||

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderInline, renderMarkdown, renderMarkdownBlocks } from '../src/renderer/react/markdown.ts';
+import { createStreamingMarkdownRenderer, renderInline, renderMarkdown, renderMarkdownBlocks } from '../src/renderer/react/markdown.ts';
 
 const strip = (html) => html.replace(/<[^>]+>/g, '');
 
@@ -12,6 +12,40 @@ test('block rendering preserves complete lists, fenced code and escaping for pro
   assert.match(blocks[2], /^<div class="md-code-block">/);
   assert.doesNotMatch(blocks.join('\n'), /<script>/);
   assert.equal(blocks.join('\n'), renderMarkdown(source));
+});
+
+test('long paragraphs keep their inline markup and text inside bounded rendering sections', () => {
+  const source = 'Review **bold _details_** with `src/app.ts`, [a reference](https://example.com/?q=a&b=c), and <escaped> text. '.repeat(800).trim();
+  const html = renderMarkdown(source);
+  assert.match(html, /class="md-paragraph-continuation"/);
+  assert.equal((html.match(/<p>/g) ?? []).length, 1, 'one source paragraph stays one paragraph');
+  const original = renderInline(source);
+  assert.equal(strip(html), strip(original));
+  assert.equal((html.match(/<strong>/g) ?? []).length, 800);
+  assert.equal((html.match(/data-cuppet-project-file=/g) ?? []).length, 800);
+  assert.equal((html.match(/data-cuppet-external=/g) ?? []).length, 800);
+  assert.doesNotMatch(html, /<escaped>/);
+  const stack = [];
+  for (const match of html.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>/gi)) {
+    if (match[1]) assert.equal(stack.pop(), match[2], 'sections must not split inline elements');
+    else stack.push(match[2]);
+  }
+  assert.deepEqual(stack, []);
+});
+
+test('streaming a long paragraph keeps earlier sections stable when blocks become committed', () => {
+  const render = createStreamingMarkdownRenderer();
+  let source = 'Read `src/app.ts` and **keep this text**. '.repeat(180);
+  const initial = render(source);
+  const prefix = initial.tail.slice(0, initial.tail.lastIndexOf('<span class="md-paragraph-continuation">'));
+  assert.ok(prefix.length > 0);
+  for (const delta of [' More *det', 'ails* and `src/next.ts`.', '\n\n## Next\n\nNew paragraph.\n']) {
+    source += delta;
+    const result = render(source);
+    const html = [...result.blocks, result.tail].join('\n');
+    assert.ok(html.startsWith(prefix));
+    assert.equal(html.replaceAll('\n', ''), renderMarkdown(source).replaceAll('\n', ''));
+  }
 });
 
 test('UI-01: bullet lists nest to any depth the model writes', () => {

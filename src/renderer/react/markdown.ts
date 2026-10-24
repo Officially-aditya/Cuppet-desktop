@@ -137,7 +137,7 @@ function renderBlocks(lines: string[], depth: number, starts?: number[]): string
     const paragraph = [line.trim()];
     index++;
     while (index < lines.length && lines[index].trim() && !startsBlock(lines, index)) paragraph.push(lines[index++].trim());
-    out.push(`<p>${renderInline(paragraph.join(' '))}</p>`);
+    out.push(renderParagraph(paragraph.join(' ')));
   }
 
   return out;
@@ -477,8 +477,31 @@ function tableCells(line: string) {
   return cells;
 }
 
+function renderParagraph(value: string) {
+  const html = renderInline(value);
+  // One large inline paragraph defeats block-level visibility containment. Split
+  // only between complete inline elements so offscreen portions can skip layout.
+  const chunks: string[] = [];
+  let from = 0;
+  let depth = 0;
+  if (html.length > 4096) {
+    for (const match of html.matchAll(/<\/?([a-z][a-z0-9]*)\b[^>]*>|\s+/gi)) {
+      if (match[1]) {
+        if (match[0][1] === '/') depth--;
+        else if (!['br', 'hr', 'img'].includes(match[1].toLowerCase())) depth++;
+      } else if (depth === 0 && match.index + match[0].length - from >= 4096) {
+        const end = match.index + match[0].length;
+        chunks.push(html.slice(from, end));
+        from = end;
+      }
+    }
+  }
+  if (from < html.length || !chunks.length) chunks.push(html.slice(from));
+  return `<p>${chunks.map((chunk, index) => index ? `<span class="md-paragraph-continuation">${chunk}</span>` : chunk).join('')}</p>`;
+}
+
 function renderParagraphs(lines: string[]) {
-  return lines.join('\n').split(/\n\s*\n/).map((part) => `<p>${renderInline(part.replace(/\n/g, ' '))}</p>`).join('');
+  return lines.join('\n').split(/\n\s*\n/).map((part) => renderParagraph(part.replace(/\n/g, ' '))).join('');
 }
 
 function safeLink(value: unknown): { kind: 'external' | 'anchor'; href: string } | { kind: 'project'; path: string } | null {

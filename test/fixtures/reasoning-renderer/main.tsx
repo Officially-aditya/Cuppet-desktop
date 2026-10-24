@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import { ChatTranscript } from '../../../src/renderer/react/ChatTranscript';
 import '../../../src/renderer/index.css';
 import { appendMarkdownText, updateMarkdownTail } from '../../../src/renderer/react/markdown-tail';
+import { renderMarkdown } from '../../../src/renderer/react/markdown';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
@@ -135,6 +136,34 @@ let updateThought: (text: string, complete: boolean) => void;
     if (!node.isEqualNode(expected) || node.querySelector('code') !== code || getSelection()!.toString() !== 'Selected') throw new Error('Partial formatting replaced the existing prefix');
     previous = next;
   }
-  node.remove();
-  return { tailCases: cases.length, escapedText: true, retainedNodes: true, partialFormatting: true };
+  // Growing past a paragraph section boundary must preserve existing links and
+  // selected text, and copied text must include sections outside the viewport.
+  const response = document.createElement('article');
+  response.className = 'message assistant message-preview';
+  const responseContent = document.createElement('div');
+  responseContent.className = 'message-content markdown-rendered';
+  response.appendChild(responseContent);
+  document.body.appendChild(response);
+  responseContent.appendChild(node);
+  node.className = 'markdown-block';
+  let source = 'Selected prefix `src/old.ts` and **formatted text**. '.repeat(20);
+  previous = renderMarkdown(source);
+  node.innerHTML = previous;
+  const retainedCode = node.querySelector('code');
+  range.setStart(node.querySelector('p')!.firstChild!, 0);
+  range.setEnd(node.querySelector('p')!.firstChild!, 8);
+  getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+  for (const delta of [' More text and [a link](https://example.com). '.repeat(180), ' More **format', 'ting** and `src/new.ts`.']) {
+    source += delta;
+    const next = renderMarkdown(source);
+    updateMarkdownTail(node, previous, next);
+    const expected = document.createElement('div'); expected.innerHTML = next;
+    if (node.innerHTML !== expected.innerHTML || node.querySelector('code') !== retainedCode || getSelection()!.toString() !== 'Selected') throw new Error('Paragraph section growth replaced content or selection');
+    response.classList.remove('message-preview');
+    if (node.innerText.replace(/\s+/g, ' ').trim() !== expected.textContent!.replace(/\s+/g, ' ').trim()) throw new Error('Copying a long paragraph omitted offscreen sections');
+    response.classList.add('message-preview');
+    previous = next;
+  }
+  response.remove();
+  return { tailCases: cases.length, escapedText: true, retainedNodes: true, partialFormatting: true, paragraphSections: true };
 };

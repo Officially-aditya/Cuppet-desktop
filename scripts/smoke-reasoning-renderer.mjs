@@ -4,7 +4,8 @@ import { app, BrowserWindow } from 'electron';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
 import { createPackage } from '@electron/asar';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
+import { promises as originalFs } from 'original-fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const workspace = await mkdtemp(join(tmpdir(), 'cuppet-reasoning-smoke-'));
 await mkdir(join(workspace, 'profile'));
 app.setPath('userData', join(workspace, 'profile'));
+// Keep teardown from quitting successfully before a failed assertion exits.
+app.on('window-all-closed', () => {});
 const timeout = setTimeout(() => { console.error('Reasoning renderer smoke timed out'); app.exit(1); }, 90_000);
 
 app.whenReady().then(async () => {
@@ -24,7 +27,9 @@ app.whenReady().then(async () => {
     window = new BrowserWindow({ show: false, width: 1180, height: 800,
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
     const errors = [];
-    window.webContents.on('console-message', (_event, details) => { if (details.level === 'error') errors.push(details.message); });
+    window.webContents.on('console-message', (event) => {
+      if (event.level === 'error') { errors.push(event.message); console.error(event.message); }
+    });
     await window.loadFile(join(workspace, 'app.asar/index.html'));
     window.webContents.setBackgroundThrottling(false);
     window.webContents.debugger.attach('1.3');
@@ -42,13 +47,13 @@ app.whenReady().then(async () => {
     console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...streamed, ...tail })}`);
     clearTimeout(timeout);
     window.destroy();
-    await rm(workspace, { recursive: true, force: true });
+    await originalFs.rm(workspace, { recursive: true, force: true, maxRetries: 3 });
     app.quit();
   } catch (error) {
     console.error(error);
     clearTimeout(timeout);
     window?.destroy();
-    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+    await originalFs.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
     app.exit(1);
   }
 });

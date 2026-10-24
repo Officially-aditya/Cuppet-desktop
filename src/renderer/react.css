@@ -282,6 +282,11 @@
   white-space: normal;
 }
 
+.message-preview .message-content.markdown-rendered {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+
 .message.assistant .message-content.markdown-rendered p:first-child {
   margin-top: 0;
 }

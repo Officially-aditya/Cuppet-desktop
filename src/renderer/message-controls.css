@@ -75,6 +75,18 @@
   contain-intrinsic-size: auto 60px;
 }
 
+.message-reasoning-content .markdown-block > p,
+.message-reasoning-content .md-paragraph-continuation,
+.message-preview .markdown-block > p,
+.message-preview .md-paragraph-continuation {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.md-paragraph-continuation {
+  display: block;
+}
+
 .message-reasoning-plain {
   white-space: pre-wrap;
 }

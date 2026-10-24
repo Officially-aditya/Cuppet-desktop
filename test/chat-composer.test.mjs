@@ -18,7 +18,7 @@ function fixture(messages = [], initiallyOnline = true) {
   const navigator = { onLine: initiallyOnline };
   const connectionListeners = new Map();
   const states = [], refs = [], effects = [], frames = [], copied = [], sends = [], readers = [];
-  let stateIndex = 0, refIndex = 0, tree, selection = null;
+  let stateIndex = 0, refIndex = 0, tree, selection = null, selectionReads = 0;
   const listeners = new Map();
   const props = { session: { id: 'chat', messages }, draft: null, project: null, commands: [], running: false };
   const react = {
@@ -46,12 +46,13 @@ function fixture(messages = [], initiallyOnline = true) {
       return {};
     },
     window: {
-      innerWidth: 800, innerHeight: 600, getSelection: () => selection,
+      innerWidth: 800, innerHeight: 600, getSelection: () => { selectionReads++; return selection; },
       addEventListener: (name, listener) => connectionListeners.set(name, listener),
       removeEventListener: (name) => connectionListeners.delete(name),
       cuppet: { native: { copyText: async (text) => { copied.push(text); } } },
     },
     document: {
+      activeElement: null,
       addEventListener: (name, listener) => listeners.set(name, listener),
       removeEventListener: (name) => listeners.delete(name),
     },
@@ -111,8 +112,10 @@ function fixture(messages = [], initiallyOnline = true) {
       flush();
       return prevented;
     },
-    select(text, inside = true) {
+    selectionReads: () => selectionReads,
+    select(text, inside = true, inComposer = false) {
       effects[0]();
+      context.document.activeElement = inComposer ? node : null;
       selection = { isCollapsed: false, rangeCount: 1, anchorNode: { inside }, focusNode: { inside },
         toString: () => text, getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 750, top: 570, bottom: 590 }) }),
         removeAllRanges: () => { selection = null; } };
@@ -332,4 +335,15 @@ test('selected chat text can be copied or appended to the draft, and outside sel
   assert.equal(chat.nodes().some((item) => item.props?.className === 'chat-selection-menu'), false);
   chat.select('outside text', false);
   assert.equal(chat.nodes().some((item) => item.props?.className === 'chat-selection-menu'), false);
+});
+
+test('composer caret changes do not query the document selection or keep chat selection actions open', () => {
+  const chat = fixture();
+  chat.select('selected answer');
+  const before = chat.selectionReads();
+  chat.select('draft text', true, true);
+  assert.equal(chat.selectionReads(), before, 'reading the document selection can force transcript layout');
+  assert.equal(chat.nodes().some(item => item.props?.className === 'chat-selection-menu'), false);
+  chat.select('selected answer again');
+  assert.ok(chat.nodes().some(item => item.props?.className === 'chat-selection-menu'));
 });
