@@ -1,13 +1,21 @@
 // Runs the complete app with real event stores and input handling; no provider requests are sent.
 import assert from 'node:assert/strict';
-import { app } from 'electron';
+import { app, contentTracing } from 'electron';
 import { build } from 'vite';
 import { mkdir, mkdtemp } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { cpus, release, totalmem } from 'node:os';
 import { ConversationDatabase } from '../src/runtime/database.mjs';
 
 await mkdir(resolve('.release/streaming-smoke'), { recursive: true });
 const profile = await mkdtemp(resolve('.release/streaming-smoke/profile-'));
+const tracePath = process.env.CUPPET_STREAMING_TRACE ? resolve(process.env.CUPPET_STREAMING_TRACE) : null;
+let tracing = false;
+async function saveTrace() {
+  if (!tracing) return;
+  tracing = false;
+  console.log('Streaming trace: ' + await contentTracing.stopRecording(tracePath));
+}
 app.setPath('userData', profile);
 const db = new ConversationDatabase(join(profile, 'runtime', 'conversations.sqlite3'));
 db.transaction(() => {
@@ -28,6 +36,7 @@ for (const [id, turns] of [['short-chat', 1], ['long-chat', 50]]) {
 db.close();
 await build({
   logLevel: 'error',
+  build: { sourcemap: Boolean(tracePath) },
   resolve: { alias: { 'react-dom/client': 'react-dom/profiling' } },
   plugins: [{
     name: 'streaming-sidebar-profiler',
@@ -41,7 +50,11 @@ await build({
     },
   }],
 });
-const timeout = setTimeout(() => { console.error('Streaming interaction profile timed out'); app.exit(1); }, 90_000);
+const timeout = setTimeout(async () => {
+  console.error('Streaming interaction profile timed out');
+  await saveTrace().catch(console.error);
+  app.exit(1);
+}, 90_000);
 let started = false;
 app.on('browser-window-created', (_event, window) => {
   if (started) return;
@@ -65,6 +78,15 @@ app.on('browser-window-created', (_event, window) => {
       window.webContents.debugger.attach('1.3');
       await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
       await window.webContents.debugger.sendCommand('Performance.enable');
+      console.log('Streaming environment: ' + JSON.stringify({ platform: process.platform, arch: process.arch, os: release(), versions: process.versions,
+        cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: totalmem() / 1024 ** 3, cpuThrottle: 4,
+        gpuFeatures: app.getGPUFeatureStatus(), gpu: await app.getGPUInfo('basic') }));
+      if (tracePath) {
+        await mkdir(dirname(tracePath), { recursive: true });
+        await contentTracing.startRecording({ included_categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline',
+          'disabled-by-default-devtools.timeline.frame', 'disabled-by-default-v8.cpu_profiler', 'blink.user_timing', 'toplevel', 'v8', 'cc', 'viz', 'gpu', 'ipc'] });
+        tracing = true;
+      }
       for (const [id, mode] of [['short-chat', 'answer'], ['short-chat', 'delta'], ['short-chat', 'reasoning'], ['long-chat', 'answer'], ['long-chat', 'delta'], ['long-chat', 'reasoning']]) {
         await evaluate(async (id) => {
           const button = [...document.querySelectorAll('.session-item')].find(node => node.textContent.includes(id));
@@ -86,7 +108,8 @@ app.on('browser-window-created', (_event, window) => {
         window.webContents.send('cuppet:event', { type: 'message.created', message: { id: assistantId, sessionId: id, role: 'assistant', content: mode === 'delta' ? initial : '', status: 'streaming', sequence, createdAt: Date.now() } });
         window.webContents.send('cuppet:event', { type: 'run.started', sessionId: id, messageId: assistantId });
         if (mode === 'answer') window.webContents.send('cuppet:event', { type: 'message.preview', sessionId: id, messageId: assistantId, content: initial });
-        if (mode === 'reasoning') window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', text: initial } });
+        window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 0, activity: { type: 'activity.reasoning.delta', kind: 'commentary', text: initial } });
+        window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 1, activity: { type: 'activity.reasoning.delta', text: initial, ...(mode !== 'reasoning' ? { completedAt: Date.now() } : {}) } });
         await evaluate(async ({ mode, assistantId }) => {
           const selector = `article.message-preview[data-message-id="${assistantId}"]`;
           while (!document.querySelector(selector) || (mode !== 'reasoning' && document.querySelector(selector + ' .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
@@ -136,7 +159,7 @@ app.on('browser-window-created', (_event, window) => {
             content += delta;
             window.webContents.send('cuppet:event', { type: mode === 'delta' ? 'message.delta' : 'message.preview', sessionId: id, messageId: assistantId, delta, seq: content.length, diagnosticSentAt: Date.now() });
           } else {
-            window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: token, activity: { type: 'activity.reasoning.delta', text: delta }, diagnosticSentAt: Date.now() });
+            window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: token + 1, activity: { type: 'activity.reasoning.delta', text: delta }, diagnosticSentAt: Date.now() });
           }
 
         }, 50);
@@ -150,6 +173,41 @@ app.on('browser-window-created', (_event, window) => {
         }, 100);
         const before = await window.webContents.debugger.sendCommand('Performance.getMetrics');
         await new Promise(resolve => setTimeout(resolve, 1000));
+        const disclosures = await evaluate(async ({ id, mode }) => {
+          const messages = document.querySelector('.messages');
+          messages.dispatchEvent(new WheelEvent('wheel', { deltaY: -80 }));
+          const results = [];
+          const buttons = [...document.querySelectorAll('.message-preview .message-reasoning-toggle')];
+          if (buttons.length !== 2) throw new Error('Missing thought/worked disclosure fixtures');
+          for (const [index, button] of buttons.entries()) {
+            button.scrollIntoView({ block: 'start' });
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const mark = `${id}:${mode}:${index === 0 ? 'worked' : 'thought'}:${attempt}`;
+              performance.mark(mark + ':click');
+              const start = performance.now();
+              button.click();
+              while (!button.parentElement.querySelector('.message-reasoning-content:not([hidden]) strong')) {
+                if (performance.now() - start > 20_000) throw new Error('Thought disclosure did not render');
+                await new Promise(resolve => setTimeout(resolve, 10));
+              }
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              results.push({ label: button.textContent.trim(), attempt, openedMs: performance.now() - start });
+              performance.measure(mark + ':open', mark + ':click');
+              const firstToken = window.currentStreamToken();
+              await new Promise(resolve => setTimeout(resolve, 200));
+              if (window.currentStreamToken() <= firstToken) throw new Error('Streaming stalled while a disclosure was open');
+              if (mode === 'reasoning' && index === 1) {
+                const text = button.parentElement.querySelector('.message-reasoning-content').textContent;
+                const tokens = [...text.matchAll(/live-(\d+)/g)];
+                if (!tokens.length || Number(tokens.at(-1)[1]) < firstToken) throw new Error('Expanded thought did not display new streamed content');
+              }
+              button.click();
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+          }
+          return results;
+        }, { id, mode });
         typingEnabled = false;
         const settings = await evaluate(async () => {
           const button = [...document.querySelectorAll('button')].find(node => node.textContent.trim() === 'Settings' || node.getAttribute('aria-label') === 'Settings');
@@ -181,7 +239,7 @@ app.on('browser-window-created', (_event, window) => {
         const result = await evaluate(() => window.endProfile());
         const after = await window.webContents.debugger.sendCommand('Performance.getMetrics');
         const metrics = Object.fromEntries(after.metrics.filter(m => ['ScriptDuration','RecalcStyleDuration','LayoutDuration'].includes(m.name)).map(m => [m.name, m.value - (before.metrics.find(p=>p.name===m.name)?.value ?? 0)]));
-        console.log('Streaming interaction metrics on '+process.platform+': '+JSON.stringify({ id, mode, sent: token, keys, settings, ...result, metrics }));
+        console.log('Streaming interaction metrics on '+process.platform+': '+JSON.stringify({ id, mode, sent: token, keys, disclosures, settings, ...result, metrics }));
         assert.equal(result.lastToken, (token - 1) - ((token - 1) % 3), 'the rendered answer did not catch up with the event stream');
         if (mode !== 'reasoning') assert.equal(result.retainedCode, true, 'streaming replaced existing code/link DOM');
         assert.equal(result.sidebarCommits, 0, 'Sidebar committed during streaming');
@@ -191,6 +249,7 @@ app.on('browser-window-created', (_event, window) => {
         assert.ok(result.maxGap < 500, `The app event loop stalled for ${result.maxGap.toFixed(0)}ms`);
         // Throttled macOS CI can delay frames despite timely events; keep Windows' stricter paint limit.
         assert.ok(result.maxFrameGap < (process.platform === 'darwin' ? 1000 : 500), `Painting stalled for ${result.maxFrameGap.toFixed(0)}ms`);
+        assert.ok(disclosures.every(item => item.openedMs < 500), 'opening a thought/worked block stalled while output was streaming');
         assert.ok(settings.openedMs < 500, 'opening Settings stalled while output was streaming');
         console.log('Streaming interactions passed: '+id+' '+mode);
         window.webContents.send('cuppet:event', { type: 'message.completed', message: { id: assistantId, sessionId: id, role: 'assistant', content, status: 'complete', sequence } });
@@ -203,8 +262,9 @@ app.on('browser-window-created', (_event, window) => {
       }
       assert.deepEqual(errors, [], 'The full app reported renderer errors during streaming');
       clearTimeout(timeout);
+      await saveTrace();
       app.quit();
-    } catch (error) { console.error(error); clearTimeout(timeout); app.exit(1); }
+    } catch (error) { console.error(error); clearTimeout(timeout); await saveTrace().catch(console.error); app.exit(1); }
   });
 });
 await import('../src/main/bootstrap.mjs');
