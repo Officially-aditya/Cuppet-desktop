@@ -14,7 +14,7 @@
     "activeOrQueuedChatsCannotArchiveOrDelete": true,
     "searchResultNavigatesToExactMessage": true,
     "lastConversationRestoredLocally": true,
-    "perConversationScrollRestoredLocally": true,
+    "eachConversationOpensAtLatestMessage": true,
     "liveStreamingDoesNotForceBottomWhenUserScrolledUp": true,
     "keyboardSearchShortcut": true,
     "executionMarkdownModuleLoaded": true,
