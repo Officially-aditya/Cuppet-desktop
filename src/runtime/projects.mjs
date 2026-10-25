@@ -21,6 +21,7 @@ export class ProjectManager {
   #lstat;
   #access;
   #rm;
+  #openStatuses = new Map();
 
   constructor({
     db,
@@ -101,7 +102,17 @@ export class ProjectManager {
   async open(id) {
     const project = this.#db.touchProject(id);
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', `Unknown project: ${id}`);
-    return this.status(project);
+    const path = project.canonicalPath;
+    let cached = this.#openStatuses.get(path);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      cached = { expiresAt: Infinity, promise: this.status(project) };
+      this.#openStatuses.set(path, cached);
+      const entry = cached;
+      entry.promise.then(() => { entry.expiresAt = Date.now() + 10_000; }, () => {
+        if (this.#openStatuses.get(path) === entry) this.#openStatuses.delete(path);
+      });
+    }
+    return { ...await cached.promise, ...project };
   }
 
   async inspectLocalPath(path) {
@@ -137,7 +148,7 @@ export class ProjectManager {
 
     const [branch, status, branchList] = await Promise.all([
       this.#git(['-C', project.canonicalPath, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { allowFailure: true }),
-      this.#git(['-C', project.canonicalPath, 'status', '--porcelain=v1', '--untracked-files=normal'], { allowFailure: true }),
+      this.#git(['--no-optional-locks', '-C', project.canonicalPath, 'status', '--porcelain=v1', '--untracked-files=normal'], { allowFailure: true }),
       this.#git(['-C', project.canonicalPath, 'branch', '--list', '--format=%(refname:short)'], { allowFailure: true }),
     ]);
     let branchName = branch.ok ? branch.stdout.trim() : '';
@@ -162,6 +173,7 @@ export class ProjectManager {
     if (!result.ok) {
       throw new ProjectError('CHECKOUT_FAILED', result.stderr.trim() || 'Failed to switch branch');
     }
+    this.#openStatuses.delete(project.canonicalPath);
     return this.status(project);
   }
 

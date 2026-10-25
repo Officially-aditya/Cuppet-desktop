@@ -83,6 +83,10 @@ export function App() {
   const activeComposerMode: ComposerMode = cognitive.orchestratorEnabled ? 'orchestrate' : mode;
 
   useEffect(() => {
+    if (activeProjectId) void window.cuppet.projects.open(activeProjectId).catch(() => undefined);
+  }, [activeProjectId]);
+
+  useEffect(() => {
     const updateViewedSession = () => {
       setViewedClientSession(!loading && !modal && !document.hidden && document.hasFocus() ? activeSessionId : null);
     };
@@ -121,7 +125,6 @@ export function App() {
     setDraft(null);
     setMode(modeState.mode === 'plan' ? 'plan' : 'build');
     localStorage.setItem(LAST_SESSION_KEY, session.id);
-    if (session.projectId) void window.cuppet.projects.open(session.projectId).catch(() => undefined);
     hydrateClientRunSession(session);
   }, []);
 
@@ -254,7 +257,6 @@ export function App() {
   const selectProject = useCallback(async (projectId: string) => {
     const project = projects.find((item) => item.id === projectId);
     if (!project) return;
-    await window.cuppet.projects.open(projectId).catch(() => undefined);
     const latest = sessions
       .filter((session) => session.projectId === projectId)
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];

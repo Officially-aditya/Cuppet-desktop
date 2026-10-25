@@ -97,3 +97,35 @@ test('authenticated picker uses existing gh auth data and filters repositories l
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('ten concurrent and repeated opens share status for ten seconds and still touch the project', async t => {
+  const project = { id: 'p1', canonicalPath: '/project', name: 'Project' };
+  let touches = 0, now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const calls = [];
+  const manager = new ProjectManager({
+    db: {
+      touchProject: () => ({ ...project, lastOpenedAt: ++touches }),
+      getProject: () => project,
+    },
+    accessImpl: async () => {},
+    runCommand: async (command, args) => {
+      calls.push(args);
+      return { ok: true, stdout: args.includes('symbolic-ref') ? 'main\n' : '', stderr: '' };
+    },
+  });
+  await Promise.all(Array.from({ length: 10 }, () => manager.open('p1')));
+  assert.equal(calls.filter(args => args.includes('status')).length, 1);
+  assert.equal(calls.length, 3, 'branch and branch-list queries also share the cached result');
+  assert.equal(touches, 10);
+  assert.equal((await manager.open('p1')).lastOpenedAt, 11, 'cached status preserves the latest touch');
+  assert.ok(calls.find(args => args.includes('status')).includes('--no-optional-locks'));
+  await manager.get('p1');
+  assert.equal(calls.filter(args => args.includes('status')).length, 2, 'explicit status reads remain fresh');
+  now += 10_001;
+  await manager.open('p1');
+  assert.equal(calls.filter(args => args.includes('status')).length, 3, 'the open cache expires');
+  await manager.checkoutBranch('p1', 'other');
+  await manager.open('p1');
+  assert.equal(calls.filter(args => args.includes('status')).length, 5, 'checkout invalidates the open cache');
+});
