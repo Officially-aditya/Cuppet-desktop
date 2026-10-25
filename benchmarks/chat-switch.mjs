@@ -30,6 +30,7 @@ export function seedChatSwitchFixture(db) {
     }
     db.createSession({ id: HOME, title: 'Benchmark home', now: 2000 });
     db.appendMessage({ id: `${HOME}-m1`, sessionId: HOME, role: 'user', content: 'Ready to switch.', now: 2001 });
+    db.appendMessage({ id: `${HOME}-m2`, sessionId: HOME, role: 'assistant', content: 'Ready to inspect **the change** in `src/app.ts`.', now: 2002 });
   });
 }
 
@@ -80,6 +81,7 @@ async function rendererBenchmark() {
         window.show();
         window.focus();
         const result = await window.webContents.executeJavaScript(`(${async function () {
+          const startupStart = performance.now();
           const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
           const ready = async id => {
             for (let tries = 0; tries < 1000; tries++) {
@@ -91,7 +93,9 @@ async function rendererBenchmark() {
             }
             throw new Error('History did not become visible: ' + id);
           };
-          await ready('benchmark-home-m1');
+          await ready('benchmark-home-m2');
+          await document.fonts.ready;
+          const startupPaintMs = performance.now() - startupStart;
           const select = async (title, messageId) => {
             const button = [...document.querySelectorAll('.session-item')].find(node => node.textContent.includes(title));
             if (!button) throw new Error('Missing benchmark chat: ' + title);
@@ -103,11 +107,11 @@ async function rendererBenchmark() {
           const cold = await select('Benchmark history', 'benchmark-history-m1000');
           const warm = [];
           for (let index = 0; index < 5; index++) {
-            await select('Benchmark home', 'benchmark-home-m1');
+            await select('Benchmark home', 'benchmark-home-m2');
             warm.push(await select('Benchmark history', 'benchmark-history-m1000'));
           }
           const payload = await window.cuppet.sessions.get('benchmark-history', { limit: 60 });
-          return { coldSwitchMs: cold.paintMs, coldDomMs: cold.domMs,
+          return { startupPaintMs, coldSwitchMs: cold.paintMs, coldDomMs: cold.domMs,
             warmSwitchMaxMs: Math.max(...warm.map(item => item.paintMs)), warmSwitchMs: warm,
             payloadBytes: new TextEncoder().encode(JSON.stringify(payload)).length,
             appMeasuresMs: performance.getEntriesByName('chat-switch').map(entry => entry.duration) };
