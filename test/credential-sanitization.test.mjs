@@ -18,6 +18,7 @@ const SECRET = 'cuppet_canary_81b3c90e2974cd65';
 test('credentials are removed from JSON, headers, URLs and echoed error text', () => {
   for (const value of [
     JSON.stringify({ api_key: SECRET, access_token: SECRET, refresh_token: SECRET }),
+    JSON.stringify({ message: JSON.stringify({ response: { access_token: SECRET, refresh_token: SECRET } }) }),
     `{'access_token':'${SECRET}'}`,
     `{"access\\u005ftoken":"${SECRET}"}`,
     `{"message":"provider failed", "token":"${SECRET}`,

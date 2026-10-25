@@ -20,7 +20,14 @@ export function redactCredentials(value, context = {}) {
   let text = value instanceof Error ? value.message : String(value ?? '');
   if (/^\s*[\[{]/.test(text)) {
     try {
-      text = JSON.stringify(JSON.parse(text), (key, item) => isCredentialKey(key) || key.toLowerCase() === 'key' ? '[redacted]' : item);
+      const redactJson = (key, item) => {
+        if (isCredentialKey(key) || key.toLowerCase() === 'key') return '[redacted]';
+        if (typeof item === 'string' && /^\s*[\[{]/.test(item)) {
+          try { return JSON.stringify(JSON.parse(item), redactJson); } catch {}
+        }
+        return item;
+      };
+      text = JSON.stringify(JSON.parse(text), redactJson);
     } catch {}
   }
   const secrets = new Set();
