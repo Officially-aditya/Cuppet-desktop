@@ -78,7 +78,8 @@ async function fixture({ activeSession = null, running = false, executeError = n
         delete: (id) => { deletions.push(id); return deleted.promise; },
         send: (...args) => { sends.push(args); return sent.promise; },
       },
-      cognitive: { status: async () => ({}), modeGet: (id) => modeLoads.get(id)?.promise ?? Promise.resolve({ mode: 'build' }) },
+      cognitive: { status: async () => ({}), modeGet: (id) => modeLoads.get(id)?.promise ?? Promise.resolve({ mode: 'build' }),
+        modeSet: async () => ({}), orchestratorSet: async () => ({}) },
       commands: { list: async () => [], execute: async (...args) => { executions.push(args); if (executeError) throw executeError; return { result: { accepted: true } }; } },
       permissions: { list: async () => [] },
       questions: { list: async () => [] },
@@ -261,6 +262,19 @@ test('a failed switch restores the loaded chat and reports the error', async () 
   assert.equal(chat.pane().loading, false);
   assert.match(chat.toast(), /history unavailable/);
   assert.equal(chat.saved.get('cuppet.desktop.last-session'), 'A');
+});
+
+test('a failed switch restores the project and mode of the previous draft', async () => {
+  const failure = deferred();
+  const chat = await fixture({ sessionLoads: new Map([['B', failure]]) });
+  chat.sidebar().onNewProjectChat('project');
+  await chat.pane().onModeChange('plan');
+  const switching = chat.sidebar().onSession('B');
+  failure.reject(new Error('history unavailable'));
+  await switching;
+  assert.equal(chat.pane().draft.projectId, 'project');
+  assert.equal(chat.pane().draft.mode, 'plan');
+  assert.equal(chat.pane().mode, 'plan');
 });
 
 test('starting a draft cancels an outstanding switch without reopening its chat', async () => {

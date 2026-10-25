@@ -153,7 +153,8 @@ export function App() {
       const session = await refreshClientSession(sessionId, { limit: 60 });
       loadedSessionIds.current.add(sessionId);
       if (token !== switchRequest.current) return;
-      previousSelection.current = { sessionId: session.id, draft: null, mode: nextMode };
+      previousSelection.current = { sessionId: session.id, draft: null,
+        mode: modeToken === modeRequest.current ? nextMode : previousSelection.current.mode };
       setSessionLoading(false);
       localStorage.setItem(LAST_SESSION_KEY, session.id);
       hydrateClientRunSession(session);
@@ -499,7 +500,8 @@ export function App() {
       if (activeSessionId) await window.cuppet.cognitive.modeSet(activeSessionId, sessionMode);
       else setDraft((current) => current ? { ...current, mode: sessionMode } : current);
       setMode(sessionMode);
-      previousSelection.current = { ...previousSelection.current, mode: sessionMode };
+      previousSelection.current = { ...previousSelection.current, mode: sessionMode,
+        draft: previousSelection.current.draft ? { ...previousSelection.current.draft, mode: sessionMode } : null };
       await window.cuppet.cognitive.orchestratorSet(orchestratorEnabled);
       setCognitive((current) => ({ ...current, orchestratorEnabled }));
     } catch (error) { showToast(error); }
