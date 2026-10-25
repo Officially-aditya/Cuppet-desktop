@@ -58,15 +58,15 @@ function fixture() {
   };
 }
 
-test('steering leaves the previous response activity collapsed after stopping', () => {
+test('steering keeps the previous response activity visible after stopping', () => {
   const view = fixture();
-  assert.equal(view.render('streaming', true).traceOpen, false);
-  assert.equal(view.render('stopped').traceOpen, false);
-  assert.equal(view.render('stopped').traceOpen, false);
+  assert.equal(view.render('streaming', true).traceOpen, true);
+  assert.equal(view.render('stopped').traceOpen, true);
+  assert.equal(view.render('stopped').traceOpen, true);
 });
 
-test('stopped response activity starts collapsed when mounted from history', () => {
-  assert.equal(fixture().render('stopped').traceOpen, false);
+test('stopped response activity starts visible when mounted from history', () => {
+  assert.equal(fixture().render('stopped').traceOpen, true);
 });
 
 test('successful completion still collapses the activity trace', () => {

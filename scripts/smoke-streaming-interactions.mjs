@@ -112,7 +112,7 @@ app.on('browser-window-created', (_event, window) => {
         window.webContents.send('cuppet:event', { type: 'runtime.activity', sessionId: id, messageId: assistantId, source: 'provider', sequence: 1, activity: { type: 'activity.reasoning.delta', text: initial, ...(mode !== 'reasoning' ? { completedAt: Date.now() } : {}) } });
         await evaluate(async ({ mode, assistantId }) => {
           const selector = `article.message-preview[data-message-id="${assistantId}"]`;
-          while (!document.querySelector(selector) || (mode !== 'reasoning' && document.querySelector(selector + ' .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
+          while (!document.querySelector(selector) || (mode !== 'reasoning' && document.querySelector(selector + ' > .message-content')?.getAttribute('aria-busy') !== 'false')) await new Promise(resolve => setTimeout(resolve, 10));
           // Exclude the initial fixture insertion and first window paint from live-update timing.
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           if (!window.__sidebarCommits) throw new Error('React Sidebar profiler did not attach');
@@ -127,7 +127,7 @@ app.on('browser-window-created', (_event, window) => {
             }
           });
           window.currentStreamToken = () => metrics.lastToken;
-          const code = document.querySelector('.message-preview .message-content code');
+          const code = document.querySelector('.message-preview > .message-content code');
           let lastFrame = performance.now();
           let frame;
           const onFrame = (now) => { metrics.frameGaps.push(now - lastFrame); lastFrame = now; frame = requestAnimationFrame(onFrame); };
@@ -141,7 +141,7 @@ app.on('browser-window-created', (_event, window) => {
           document.querySelector('textarea').addEventListener('input', input);
           const dom = new MutationObserver(() => {
             metrics.updates++;
-            const text = document.querySelector('.message-preview .message-content')?.textContent ?? '';
+            const text = document.querySelector('.message-preview > .message-content')?.textContent ?? '';
             const values = [...text.matchAll(/live-(\d+)/g)];
             if (values.length) metrics.lastToken = Number(values.at(-1)[1]);
           });
@@ -149,7 +149,7 @@ app.on('browser-window-created', (_event, window) => {
           window.endProfile = () => {
             clearInterval(timer); cancelAnimationFrame(frame); tasks.disconnect(); dom.disconnect(); unsubscribe();
             document.querySelector('textarea').removeEventListener('input', input);
-            return { sidebarCommits: window.__sidebarCommits - sidebarCommits, maxEventLag: metrics.maxEventLag, maxGap: Math.max(...metrics.gaps), maxFrameGap: Math.max(...metrics.frameGaps), frames: metrics.frameGaps.length, retainedCode: code === document.querySelector('.message-preview .message-content code'), longTasks: metrics.tasks, inputs: metrics.inputs, updates: metrics.updates, lastToken: metrics.lastToken };
+            return { sidebarCommits: window.__sidebarCommits - sidebarCommits, maxEventLag: metrics.maxEventLag, maxGap: Math.max(...metrics.gaps), maxFrameGap: Math.max(...metrics.frameGaps), frames: metrics.frameGaps.length, retainedCode: code === document.querySelector('.message-preview > .message-content code'), longTasks: metrics.tasks, inputs: metrics.inputs, updates: metrics.updates, lastToken: metrics.lastToken };
           };
         }, { mode, assistantId });
         let token = 0;
@@ -177,17 +177,16 @@ app.on('browser-window-created', (_event, window) => {
           const messages = document.querySelector('.messages');
           messages.dispatchEvent(new WheelEvent('wheel', { deltaY: -80 }));
           const results = [];
-          const activity = document.querySelector('.message-preview .trace-card-toggle');
-          if (activity?.getAttribute('aria-expanded') !== 'false') throw new Error('Live activity must start collapsed');
-          activity.click();
+          const activity = document.querySelector('.message-preview .message-cuppet-toggle');
+          if (activity?.getAttribute('aria-expanded') !== 'true') throw new Error('Live Cuppet activity must start visible');
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const buttons = [...document.querySelectorAll('.message-preview .message-reasoning-toggle')];
-          if (buttons.length !== 2) throw new Error('Missing thought/worked disclosure fixtures');
+          const buttons = [...document.querySelectorAll('.message-preview .message-work-toggle')];
+          if (buttons.length !== 1) throw new Error('Missing inline thought disclosure');
           for (const [index, button] of buttons.entries()) {
             button.scrollIntoView({ block: 'start' });
             await new Promise(resolve => requestAnimationFrame(resolve));
             for (let attempt = 0; attempt < 2; attempt++) {
-              const mark = `${id}:${mode}:${index === 0 ? 'worked' : 'thought'}:${attempt}`;
+              const mark = `${id}:${mode}:thought:${attempt}`;
               performance.mark(mark + ':click');
               const start = performance.now();
               button.click();
@@ -201,7 +200,7 @@ app.on('browser-window-created', (_event, window) => {
               const firstToken = window.currentStreamToken();
               await new Promise(resolve => setTimeout(resolve, 200));
               if (window.currentStreamToken() <= firstToken) throw new Error('Streaming stalled while a disclosure was open');
-              if (mode === 'reasoning' && index === 1) {
+              if (mode === 'reasoning') {
                 const text = button.parentElement.querySelector('.message-reasoning-content').textContent;
                 const tokens = [...text.matchAll(/live-(\d+)/g)];
                 if (!tokens.length || Number(tokens.at(-1)[1]) < firstToken) throw new Error('Expanded thought did not display new streamed content');
@@ -238,7 +237,7 @@ app.on('browser-window-created', (_event, window) => {
         await Promise.all(keyRequests);
         await new Promise(resolve => setTimeout(resolve, 300));
         if (mode !== 'reasoning') await evaluate(async () => {
-          while (document.querySelector('.message-preview .message-content')?.getAttribute('aria-busy') !== 'false') await new Promise(resolve => setTimeout(resolve, 10));
+          while (document.querySelector('.message-preview > .message-content')?.getAttribute('aria-busy') !== 'false') await new Promise(resolve => setTimeout(resolve, 10));
         });
         const result = await evaluate(() => window.endProfile());
         const after = await window.webContents.debugger.sendCommand('Performance.getMetrics');

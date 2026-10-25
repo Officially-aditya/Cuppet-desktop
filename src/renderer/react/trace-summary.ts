@@ -1,7 +1,7 @@
 import type { TranscriptItem, TranscriptTool } from './chat-transcript';
 
 export type ToolKind = 'read' | 'search' | 'edit' | 'write' | 'command' | 'validate' | 'other';
-export type ToolGroup = { id: string; type: 'tool-group'; tools: TranscriptTool[] };
+export type WorkGroup = { id: string; type: 'work-group'; items: Exclude<TranscriptItem, { type: 'status' }>[] };
 
 export function classifyTool(toolName: string): ToolKind {
   const name = toolName.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[.:/]/).at(-1) ?? '';
@@ -97,12 +97,12 @@ export function summarizeTrace(trace: readonly TranscriptItem[]) {
 }
 
 export function groupTrace(trace: readonly TranscriptItem[]) {
-  const groups: (Exclude<TranscriptItem, TranscriptTool> | ToolGroup)[] = [];
+  const groups: (Exclude<TranscriptItem, TranscriptTool> | WorkGroup)[] = [];
   for (const item of [...trace].sort((a, b) => a.sequence - b.sequence)) {
-    if (item.type !== 'tool') { groups.push(item); continue; }
+    if (item.type === 'status' || (item.type === 'reasoning' && item.kind === 'commentary')) { groups.push(item); continue; }
     const previous = groups.at(-1);
-    if (previous?.type === 'tool-group') previous.tools.push(item);
-    else groups.push({ id: item.id, type: 'tool-group', tools: [item] });
+    if (previous?.type === 'work-group') previous.items.push(item);
+    else groups.push({ id: item.id, type: 'work-group', items: [item] });
   }
   return groups;
 }

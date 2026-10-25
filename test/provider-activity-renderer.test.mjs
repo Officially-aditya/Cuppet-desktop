@@ -389,7 +389,7 @@ test('renderer consumes one canonical transcript reducer without preload legacy 
   assert.doesNotMatch(chat, /window\.cuppet\.onEvent/);
   assert.match(chat, /items=\{transcript\[message\.id\]\?\.items\}/);
   assert.match(chat, /providedTrace \?\? traceForItems\(items/);
-  assert.match(chat, /useState\(\(\) => readTraceOpen\(message.id, live\)\)/);
+  assert.match(chat, /useState\(\(\) => readTraceOpen\(message.id, live, live \|\| message.status === 'stopped'\)\)/);
   assert.match(chat, /traceOpen && <TraceView trace=\{trace\} messageId=\{message.id\}/);
   assert.doesNotMatch(chat, /TRACE_KEY_PREFIX/);
   assert.doesNotMatch(chat, /LEGACY_REASONING_KEY_PREFIX/);

@@ -13,8 +13,8 @@ import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
-import { classifyTool, compactActivityText, groupTrace, humanToolLabel, liveStatus, liveThoughtLine, parseToolArguments, summarizeTrace, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type ToolGroup } from './trace-summary';
-import { observeTraceVisibility, readTraceOpen, splitTraceText, writeTraceOpen } from './trace-presentation';
+import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type WorkGroup } from './trace-summary';
+import { readTraceOpen, writeTraceOpen } from './trace-presentation';
 
 type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -175,8 +175,7 @@ function MessageView({
 }) {
   const trace = useMemo(() => providedTrace ?? traceForItems(items ?? EMPTY_TRACE), [providedTrace, items]);
   const diffTrace = useDeferredValue(trace, EMPTY_TRACE);
-  const [traceOpen, setTraceOpen] = useState(() => readTraceOpen(message.id, live));
-  const traceCardRef = useRef<HTMLDivElement>(null);
+  const [traceOpen, setTraceOpen] = useState(() => readTraceOpen(message.id, live, live || message.status === 'stopped'));
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
   const prevLiveRef = useRef(live);
@@ -191,17 +190,14 @@ function MessageView({
   const visibleContent = canExpand && !messageExpanded ? userLines.slice(0, MAX_VISIBLE_USER_LINES).join('\n') : content;
   const hasTrace = assistant && (live || trace.length > 0);
   const traceSummary = useMemo(() => summarizeTrace(trace), [trace]);
-  const activityTitle = useMemo(() => liveStatus(trace), [trace]);
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
-    if (live && hasTrace && traceCardRef.current) return observeTraceVisibility(traceCardRef.current);
-  }, [live, hasTrace]);
-
-  useEffect(() => {
     if (prevLiveRef.current && !live) {
-      setTraceOpen(false);
-      writeTraceOpen(message.id, false, false);
+      if (message.status !== 'stopped') {
+        setTraceOpen(false);
+        writeTraceOpen(message.id, false, false);
+      }
       setCompletedAt(Date.now());
     }
     prevLiveRef.current = live;
@@ -323,32 +319,18 @@ function MessageView({
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}${pendingLabel ? ' message-pending' : ''}`} data-message-id={message.id} aria-busy={pendingLabel ? true : undefined}>
       <div className="message-role">
-        {assistant ? 'Cuppet' : 'You'}
+        {hasTrace ? <button type="button" className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
+          aria-expanded={traceOpen} aria-controls={traceOpen ? `trace-${message.id}` : undefined}
+          aria-label={`${traceOpen ? 'Hide' : 'Show'} Cuppet activity${workedDurationText ? ` (${workedDurationText})` : ''}`}
+          onClick={toggleTrace}>
+          <span>Cuppet</span>
+          {workedDurationText && <span className="message-worked-time">({workedDurationText})</span>}
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button> : assistant ? 'Cuppet' : 'You'}
+        {!traceOpen && traceSummary.failed > 0 && <span className="trace-failure-count">{traceSummary.failed} failed</span>}
         {pendingLabel && <span className="message-pending-label" role="status">{pendingLabel}</span>}
       </div>
-      {hasTrace && (
-        <div ref={traceCardRef} className={`trace-card${live ? ' live' : ''}${traceOpen ? ' open' : ''}`}>
-          <button
-            type="button"
-            className="trace-card-toggle"
-            aria-expanded={traceOpen}
-            aria-controls={traceOpen ? `trace-${message.id}` : undefined}
-            onClick={toggleTrace}
-          >
-            <span className="trace-card-heading">
-              {live && <span className="trace-card-indicator" aria-hidden="true" />}
-              <span className="trace-card-title"><TraceAnimatedText text={live ? activityTitle : `${workedDurationText ?? (message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped' : 'Activity')}${traceSummary.label ? ` · ${traceSummary.label}` : ''}`} /></span>
-              <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </span>
-            {(live || traceSummary.failed > 0) && <span className="trace-card-meta">
-              {live && traceSummary.label && <span><TraceAnimatedText text={traceSummary.label} /></span>}
-              {live && <TraceElapsed startedAt={startedAtRef.current} />}
-              {traceSummary.failed > 0 && <span className="trace-failure-count">{traceSummary.failed} failed</span>}
-            </span>}
-          </button>
-          {traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
-        </div>
-      )}
+      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
       {assistant ? (
         content ? (
           <MarkdownContent
@@ -531,83 +513,45 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
   );
 }
 
-function TraceAnimatedText({ text }: { text: string }) {
-  const [transition, setTransition] = useState({ previous: text, current: text });
-  if (transition.current !== text) setTransition({ previous: transition.current, current: text });
-  const parts = useMemo(() => splitTraceText(transition.previous, text), [transition.previous, text]);
-  return <span className="trace-animated-text">{parts.prefix}{(parts.removed || parts.added) && <span key={text} className="trace-text-change">
-    {parts.removed && <span className="trace-text-removed" aria-hidden="true" data-previous={parts.removed} />}
-    <span className="trace-text-added">{parts.added}</span>
-  </span>}{parts.suffix}</span>;
-}
-
-function TraceElapsed({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return <span>{formatWorkedDuration(Math.max(0, now - startedAt))}</span>;
-}
-
 function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const groups = useMemo(() => groupTrace(trace), [trace]);
   return (
     <div id={`trace-${messageId}`} className="message-trace thread-activity" aria-label="Cuppet activity">
       {groups.map((item) => item.type === 'reasoning' ? (
-        <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={live ? undefined : completedAt} projectId={projectId} />
+        <MarkdownContent key={item.id} className="message-content message-commentary markdown-rendered" content={item.text}
+          streaming={live && !item.completedAt} projectId={projectId} />
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
-        <ToolGroupRow key={item.id} group={item} contentId={`tools-${messageId}-${item.id}`} onInspectDiff={onInspectDiff} />
+        <WorkTraceRow key={item.id} group={item} contentId={`work-${messageId}-${item.id}`} live={live} onInspectDiff={onInspectDiff} projectId={projectId} />
       ))}
+      {live && !groups.length && <div className="message-work-waiting">Thinking…</div>}
     </div>
   );
 }
 
-const ToolGroupRow = memo(function ToolGroupRow({ group, contentId, onInspectDiff }: { group: ToolGroup; contentId: string; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const summary = useMemo(() => summarizeTrace(group.tools), [group.tools]);
-  return (
-    <div className={`trace-tool-group${open ? ' open' : ''}`}>
-      <button type="button" className="trace-group-toggle" aria-expanded={open} aria-controls={open ? contentId : undefined} onClick={() => setOpen((current) => !current)}>
-        <TraceAnimatedText text={summary.label || `${summary.total} action${summary.total === 1 ? '' : 's'}`} />
-        {summary.running > 0 && <span className="trace-group-running"><TraceAnimatedText text={`${summary.running} running`} /></span>}
-        {summary.failed > 0 && <span className="trace-failure-count">{summary.failed} failed</span>}
-        <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      </button>
-      {open && <div id={contentId} className="trace-group-tools">
-        {group.tools.map((item, index) => <ToolTraceRow key={item.id} item={item} deferred={index < group.tools.length - IMMEDIATE_HISTORY_ITEMS && item.status === 'complete'} onInspectDiff={onInspectDiff} />)}
-      </div>}
-    </div>
-  );
-});
-
-const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
+const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false, onInspectDiff, projectId = null }: { group: WorkGroup; contentId: string; live?: boolean; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
-  const active = live && !item.completedAt;
-  const end = item.completedAt ?? (!live ? completedAt : null);
-  const duration = item.startedAt && end && end >= item.startedAt ? formatWorkedDuration(end - item.startedAt) : null;
-  const commentary = item.kind === 'commentary';
-  const label = active
-    ? (commentary ? 'Working…' : 'Thinking…')
-    : duration ? `${commentary ? 'Worked' : 'Thought'} for ${duration}` : (commentary ? 'Progress' : 'Thoughts');
-  const preview = useMemo(() => liveThoughtLine(item.text), [item.text]);
+  const tools = group.items.filter((item) => item.type === 'tool');
+  const failed = tools.filter((item) => item.status === 'error').length;
+  const working = live && tools.some((item) => item.status === 'running');
+  const thinking = live && group.items.some((item) => item.type === 'reasoning' && !item.completedAt);
+  const label = working ? 'Working…' : thinking ? 'Thinking…' : tools.length ? 'Worked' : 'Thought';
+  const immediateTools = new Set(tools.slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id));
   return (
-    <div className={`message-reasoning${open ? ' open' : ''}`}>
-      <button
-        type="button"
-        className="message-reasoning-toggle"
-        aria-expanded={open}
-        aria-controls={opened ? contentId : undefined}
-        onClick={() => { setOpened(true); setOpen((current) => !current); }}
-      >
-        <span className="message-reasoning-preview">{preview || label}</span>
-        {preview && <span className="message-reasoning-duration">{label}</span>}
-        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    <div className={`message-work${open ? ' open' : ''}`}>
+      <button type="button" className="message-work-toggle" aria-expanded={open} aria-controls={opened ? contentId : undefined}
+        onClick={() => { setOpened(true); setOpen((current) => !current); }}>
+        <span>{label}</span>
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        {failed > 0 && <span className="trace-failure-count">{failed} failed</span>}
       </button>
-      {opened && <ReasoningContent id={contentId} content={item.text} streaming={active} open={open} projectId={projectId} />}
+      {opened && <div id={contentId} className="message-work-details" hidden={!open}>
+        {group.items.map((item) => item.type === 'tool'
+          ? <ToolTraceRow key={item.id} item={item} deferred={!immediateTools.has(item.id) && item.status === 'complete'} onInspectDiff={onInspectDiff} />
+          : <ReasoningContent key={item.id} id={`${contentId}-${item.id}`} content={item.text} streaming={live && !item.completedAt} open={open} projectId={projectId} />)}
+      </div>}
     </div>
   );
 });

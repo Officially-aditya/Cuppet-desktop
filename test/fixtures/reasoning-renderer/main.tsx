@@ -9,125 +9,65 @@ import { renderMarkdown } from '../../../src/renderer/react/markdown';
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
 function openTrace() {
-  const toggle = document.querySelector('.trace-card-toggle') as HTMLButtonElement;
+  const toggle = document.querySelector('.message-cuppet-toggle') as HTMLButtonElement;
   if (toggle.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
 }
 
-(window as any).exerciseTraceCard = () => {
-  const startedAt = Date.now() - 12000;
-  let live = true;
-  let items: any[] = [
-    { id: 'thought', type: 'reasoning', text: '**Checking the implementation**\nDetailed reasoning stays available on demand.', sequence: 1, startedAt },
-    { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'complete', sequence: 2 },
-    { id: 'cmd', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'running', sequence: 3 },
-  ];
-  const render = () => flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key="trace-card" session={{ id: 'trace-card', messages: [{
-    id: 'card-answer', role: 'assistant', content: live ? '' : 'The implementation and tests are ready.', status: live ? 'streaming' : 'stopped', createdAt: startedAt, updatedAt: startedAt + 12000,
-  }] } as any} project={null} running={live} transcript={{ 'card-answer': { items, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
-  const card = () => document.querySelector('.trace-card-toggle') as HTMLButtonElement;
-  render();
-  if (card().getAttribute('aria-expanded') !== 'false' || document.querySelector('.message-trace')) throw new Error('Live card was not collapsed');
-  if (!card().textContent?.includes('Checking the implementation') || !card().textContent?.includes('Read 1 file')) throw new Error('Live summary is missing');
-  openTrace();
-  if (!document.querySelector('.message-reasoning-preview')?.textContent?.includes('Checking the implementation')) throw new Error('Thought preview is missing');
-  const group = document.querySelector('.trace-group-toggle') as HTMLButtonElement;
-  if (group.getAttribute('aria-expanded') !== 'false' || document.querySelector('.thread-tool-row')) throw new Error('Tool group was not collapsed');
-  flushSync(() => group.click());
-  const firstTool = document.querySelector('.thread-tool-row');
-  items = [...items, { id: 'read-2', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/tests.ts"}', status: 'complete', sequence: 4 }];
-  render();
-  if (card().getAttribute('aria-expanded') !== 'true' || document.querySelector('.trace-group-toggle') !== group || group.getAttribute('aria-expanded') !== 'true') throw new Error('Streaming reset an open disclosure');
-  if (firstTool !== document.querySelector('.thread-tool-row')) throw new Error('Growing a group remounted its tools');
-  if (!card().textContent?.includes('Read 2 files')) throw new Error('Live counts did not update');
-  flushSync(() => card().click());
-  items = items.map(item => item.id === 'cmd' ? { ...item, status: 'error', details: 'Test command failed' } : item);
-  render();
-  if (card().getAttribute('aria-expanded') !== 'false' || !document.querySelector('.trace-failure-count')?.textContent?.includes('1 failed')) throw new Error('A collapsed card hid a failure or reopened');
-  openTrace();
-  if (!document.querySelector('.trace-group-toggle .trace-failure-count')) throw new Error('A collapsed tool group hid its failure');
-  live = false;
-  render();
-  if (card().getAttribute('aria-expanded') !== 'false' || !card().textContent?.includes('Stopped after 12s')) throw new Error('A stopped turn did not fold with a stable duration');
-  if (!document.querySelector('.message-content')?.textContent?.includes('The implementation and tests are ready.')) throw new Error('Folding hid the answer');
-  return { collapsedLiveCard: true, liveCounts: true, stableGroups: true, manualToggle: true, visibleFailures: true, stoppedDuration: true };
-};
-
-let polishItems: any[] = [];
-function renderPolish(id = 'polish-live', live = true) {
+const inlineItems = () => [
+  { id: 'commentary-1', type: 'reasoning', kind: 'commentary', text: 'I’ll check the transcript renderer and how activity is grouped.', sequence: 1, completedAt: 2000 },
+  { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/renderer/react/ChatTranscript.tsx"}', status: 'complete', sequence: 2 },
+  { id: 'test', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'complete', sequence: 3 },
+  { id: 'commentary-2', type: 'reasoning', kind: 'commentary', text: 'The output can stay inline, with tool calls tucked under each work step.', sequence: 4, completedAt: 4000 },
+  { id: 'thought', type: 'reasoning', text: 'Private reasoning with **formatting** and `src/app.ts`.', sequence: 5 },
+];
+function renderInline(items: any[], live = true, id = 'inline-activity') {
   flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key={id} session={{ id, messages: [{
-    id, role: 'assistant', content: live ? '' : 'Finished.', status: live ? 'streaming' : 'complete', createdAt: 1000, updatedAt: 13000,
-  }] } as any} project={null} running={live} transcript={{ [id]: { items: polishItems, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
+    id, role: 'assistant', content: live ? '' : 'The transcript layout is updated.', status: live ? 'streaming' : 'complete', createdAt: 1000, updatedAt: 13000,
+  }] } as any} project={null} running={live} transcript={{ [id]: { items, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
 }
-const waitForPolish = async (predicate: () => boolean) => {
-  const deadline = performance.now() + 5000;
-  while (!predicate()) {
-    if (performance.now() > deadline) throw new Error('Trace polish update timed out');
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-};
-const readTool = (id: number, status = 'complete') => ({ id: `read-${id}`, type: 'tool', tool: 'read_file', argumentsJson: JSON.stringify({ path: `file-${id}.ts` }), status, sequence: id });
-function assertStaticMotion() {
-  const title = document.querySelector('.trace-card-title')!;
-  if (getComputedStyle(title).animationName !== 'none' || getComputedStyle(title).backgroundImage !== 'none') throw new Error('Reduced motion left the shimmer active');
-  for (const node of document.querySelectorAll('.trace-text-added')) if (getComputedStyle(node).animationName !== 'none') throw new Error('Reduced motion animated the text');
-  for (const node of document.querySelectorAll('.trace-text-removed')) if (getComputedStyle(node).display !== 'none') throw new Error('Reduced motion exposed old text');
-}
-
-(window as any).exerciseTracePolish = async () => {
-  for (const id of ['polish-live', 'polish-other']) localStorage.removeItem(`cuppet.desktop.trace.${id}`);
-  polishItems = [readTool(1, 'running')];
-  renderPolish();
-  const container = document.querySelector('.trace-card') as HTMLElement;
-  const title = document.querySelector('.trace-card-title')!;
-  await waitForPolish(() => container.dataset.traceVisible === 'true');
-  if (getComputedStyle(title).animationName !== 'trace-shimmer' || getComputedStyle(title).animationPlayState !== 'running') throw new Error('Visible live header did not shimmer');
-  polishItems = [readTool(1)]; renderPolish();
-  if (title.textContent !== 'Read file-1.ts' || !title.querySelector('.trace-text-removed')) throw new Error('Tool completion did not morph the label');
-  polishItems = [...polishItems, readTool(2)]; renderPolish();
-  polishItems = [...polishItems, readTool(3)]; renderPolish();
-  const changedCount = document.querySelector('.trace-card-meta .trace-text-added')!;
-  if (changedCount.textContent !== '3' || getComputedStyle(changedCount).animationName !== 'trace-text-in') throw new Error(`Counts did not animate only the changed number: ${changedCount.textContent}, ${getComputedStyle(changedCount).animationName}`);
-  document.body.classList.add('reduce-motion');
-  polishItems = [...polishItems, readTool(4)]; renderPolish();
-  assertStaticMotion();
-  document.body.classList.remove('reduce-motion');
-
-  const messages = document.querySelector('.messages') as HTMLElement;
-  messages.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
-  const spacer = document.createElement('div');
-  spacer.style.height = '2000px'; spacer.style.flex = '0 0 2000px';
-  messages.prepend(spacer);
-  messages.scrollTop = 0;
-  await waitForPolish(() => container.dataset.traceVisible === 'false');
-  if (getComputedStyle(title).animationPlayState !== 'paused') throw new Error('Offscreen shimmer did not pause');
-  container.scrollIntoView();
-  await waitForPolish(() => container.dataset.traceVisible === 'true');
-  spacer.remove();
-
+(window as any).exerciseInlineActivity = () => {
+  localStorage.removeItem('cuppet.desktop.trace.inline-activity');
+  let items: any[] = inlineItems();
+  renderInline(items);
+  const cuppet = () => document.querySelector('.message-cuppet-toggle') as HTMLButtonElement;
+  if (document.querySelector('.trace-card') || cuppet().getAttribute('aria-expanded') !== 'true') throw new Error('The original Cuppet disclosure was not restored');
+  const rows = [...document.querySelector('.message-trace')!.children];
+  if (rows.length !== 4 || !rows[0].textContent?.includes('I’ll check') || rows[1].textContent !== 'Worked' || !rows[2].textContent?.includes('The output can stay inline') || rows[3].textContent !== 'Thinking…') throw new Error('Text and work intervals are out of order');
+  if (document.querySelector('.thread-tool-row') || document.querySelector('.message-reasoning-content')) throw new Error('A collapsed work step exposed its internals');
+  const first = rows[1].querySelector('button') as HTMLButtonElement;
+  flushSync(() => first.click());
+  const firstTool = rows[1].querySelector('.thread-tool-row');
+  if (rows[1].querySelectorAll('.thread-tool-row').length !== 2 || rows[3].querySelector('.thread-tool-row')) throw new Error('Work expansion included another interval');
+  items = [...items, { id: 'next-tool', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'running', sequence: 6 }];
+  renderInline(items);
+  if (rows[1].querySelector('.thread-tool-row') !== firstTool || first.getAttribute('aria-expanded') !== 'true' || rows[3].querySelector('button')?.textContent !== 'Working…') throw new Error('Streaming reset an interval or its label');
+  flushSync(() => first.click());
+  items = items.map(item => item.id === 'test' ? { ...item, status: 'error', details: 'Test failure' } : item);
+  renderInline(items);
+  if (!first.textContent?.includes('1 failed')) throw new Error('A collapsed step hid a failure');
+  flushSync(() => cuppet().click());
+  renderInline(items);
+  if (document.querySelector('.message-trace') || !document.querySelector('.message-role .trace-failure-count')) throw new Error('Cuppet did not fold the trace or hid a failure');
+  renderInline(items, true, 'another-message');
+  renderInline(items);
+  if (cuppet().getAttribute('aria-expanded') !== 'false') throw new Error('A manually closed live trace did not stay closed');
   openTrace();
-  renderPolish('polish-other');
-  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'false') throw new Error('Disclosure state leaked between messages');
-  renderPolish();
-  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Live disclosure did not restore after switching chats');
-  renderPolish('polish-live', false);
-  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'false') throw new Error('Persisted live state prevented the completion fold');
+  renderInline(items, false);
+  if (cuppet().getAttribute('aria-expanded') !== 'false' || !cuppet().textContent?.includes('Worked for 12s') || !document.querySelector('.message-content')?.textContent?.includes('The transcript layout is updated')) throw new Error('Completion changed the Cuppet summary behavior');
   openTrace();
-  renderPolish('polish-other', false);
-  renderPolish('polish-live', false);
-  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Finished disclosure did not restore after switching chats');
-  return { labelMorph: true, animatedCounts: true, offscreenShimmerPaused: true, appReducedMotion: true, persistedLiveAndFinishedState: true };
+  renderInline(items, false, 'another-message');
+  renderInline(items, false);
+  if (cuppet().getAttribute('aria-expanded') !== 'true') throw new Error('Finished Cuppet disclosure did not restore');
+  return { originalCuppetToggle: true, inlineProgress: true, orderedIntervals: true, toolsHiddenByDefault: true, independentExpansion: true, stableStreaming: true, visibleFailures: true, persistedDisclosure: true };
 };
-(window as any).exerciseSystemTraceMotion = async () => {
-  polishItems = [readTool(1, 'running')]; renderPolish('polish-motion');
-  await waitForPolish(() => document.querySelector<HTMLElement>('.trace-card')?.dataset.traceVisible === 'true');
-  polishItems = [readTool(1)]; renderPolish('polish-motion');
-  assertStaticMotion();
-  return { systemReducedMotion: true };
-};
-(window as any).restoreTraceDisclosure = () => {
-  polishItems = [readTool(1)]; renderPolish('polish-live', false);
-  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Disclosure preference did not survive a reload');
+(window as any).restoreInlineDisclosure = () => {
+  renderInline(inlineItems(), false);
+  if (document.querySelector('.message-cuppet-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Cuppet disclosure did not survive a reload');
   return { persistedAcrossReload: true };
+};
+(window as any).showInlinePreview = () => {
+  localStorage.removeItem('cuppet.desktop.trace.inline-preview');
+  renderInline(inlineItems(), true, 'inline-preview');
 };
 
 let updateThought: (text: string, complete: boolean) => void;
@@ -147,7 +87,7 @@ let updateThought: (text: string, complete: boolean) => void;
 };
 (window as any).runToggle = async () => {
   openTrace();
-  const button = document.querySelector('.message-reasoning-toggle') as HTMLButtonElement;
+  const button = document.querySelector('.message-work-toggle') as HTMLButtonElement;
   const longTasks: number[] = [];
   const observer = new PerformanceObserver((list) => longTasks.push(...list.getEntries().map(entry => entry.duration)));
   observer.observe({ type: 'longtask' });
@@ -186,7 +126,7 @@ let updateThought: (text: string, complete: boolean) => void;
   };
   (window as any).setThought(200, true);
   openTrace();
-  const toggle = document.querySelector('.message-reasoning-toggle') as HTMLButtonElement;
+  const toggle = document.querySelector('.message-work-toggle') as HTMLButtonElement;
   toggle.click();
   await new Promise(resolve => setTimeout(resolve, 0));
   toggle.click();

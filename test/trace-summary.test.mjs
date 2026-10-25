@@ -80,16 +80,18 @@ test('malformed tool arguments and unknown tools still have useful summaries', (
   assert.equal(toolActivityLabel('bash', '{}', 'error'), 'Command failed');
 });
 
-test('grouping preserves chronology, boundaries, item identity, and the first tool ID as a group grows', () => {
+test('grouping preserves chronology, boundaries, item identity, and the first activity ID as a group grows', () => {
   const first = tool('first', 'read_file', {}, 'complete', 1);
   const second = tool('second', 'read_file', {}, 'running', 2);
-  const reasoning = thought('Next step.', 3);
-  const warning = { id: 'status', type: 'status', text: 'Retrying', sequence: 5 };
-  const trace = [warning, tool('third', 'bash', {}, 'error', 4), reasoning, second, first, tool('last', 'glob', {}, 'complete', 6)];
+  const commentary = { ...thought('Next step.', 3), kind: 'commentary' };
+  const reasoning = thought('Hidden thought.', 4);
+  const warning = { id: 'status', type: 'status', text: 'Retrying', sequence: 6 };
+  const trace = [warning, tool('third', 'bash', {}, 'error', 5), reasoning, commentary, second, first, tool('last', 'glob', {}, 'complete', 7)];
   const groups = groupTrace(trace);
-  assert.deepEqual(groups.map((entry) => entry.id), ['first', reasoning.id, 'third', 'status', 'last']);
-  assert.equal(groups[0].tools[0], first);
-  assert.equal(groups[0].tools[1], second);
+  assert.deepEqual(groups.map((entry) => entry.id), ['first', commentary.id, reasoning.id, 'status', 'last']);
+  assert.equal(groups[0].items[0], first);
+  assert.equal(groups[0].items[1], second);
   assert.equal(groups[0].id, groupTrace([first])[0].id);
+  assert.deepEqual(groups[2].items.map(item => item.id), [reasoning.id, 'third']);
   assert.equal(trace[0], warning, 'sorting must not mutate the store');
 });

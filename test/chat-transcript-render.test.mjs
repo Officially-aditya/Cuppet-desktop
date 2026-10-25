@@ -62,13 +62,13 @@ test('a long tool loop does not parse any collapsed thinking content', () => {
     : { id: `t${i}`, type: 'tool', tool: 'read_file', status: 'complete', argumentsJson: '{"path":"a.ts"}', sequence: i });
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: { a1: { items } } });
   assert.equal((html.match(/message-reasoning-toggle/g) ?? []).length, 0);
-  assert.match(html, /trace-card-toggle[^>]*aria-expanded="false"/);
-  assert.match(html, /Read 1 file/);
+  assert.match(html, /message-cuppet-toggle[^>]*aria-expanded="true"/);
+  assert.match(html, /Worked/);
   assert.equal(parsed.some((value) => value.includes('Thought')), false);
-  assert.doesNotMatch(html, /message-reasoning-content/);
+  assert.doesNotMatch(html, /message-reasoning-content|trace-card/);
 });
 
-test('the collapsed live card reads the current transcript and exposes failures', () => {
+test('live work disclosures hide reasoning and tools but expose failures', () => {
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: {
     a1: { items: [
       { id: 'r', type: 'reasoning', text: '**Checking the fix**\nHidden detailed thought.', sequence: 1 },
@@ -76,16 +76,16 @@ test('the collapsed live card reads the current transcript and exposes failures'
       { id: 'cmd', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'error', sequence: 3 },
     ] },
   } });
-  assert.match(html, /Checking the fix/);
-  assert.match(html, /Read 1 file/);
+  assert.doesNotMatch(html, /Checking the fix/);
+  assert.match(html, /Thinking…/);
   assert.match(html, /trace-failure-count[^>]*>1<!-- --> failed|trace-failure-count[^>]*>1 failed/);
   assert.doesNotMatch(html, /Hidden detailed thought|thread-tool-row/);
 });
 
-test('a response waiting for its first event shows Working', () => {
+test('a response waiting for its first event shows Thinking', () => {
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] } });
-  assert.match(html, /Working…/);
-  assert.match(html, /trace-card-toggle[^>]*aria-expanded="false"/);
+  assert.match(html, /Thinking…/);
+  assert.match(html, /message-cuppet-toggle[^>]*aria-expanded="true"/);
 });
 
 test('finished cards show stable duration and stopped turns say Stopped after', () => {
@@ -96,4 +96,18 @@ test('finished cards show stable duration and stopped turns say Stopped after', 
     assert.match(html, /Final answer/);
     assert.doesNotMatch(html, /Detailed thought/);
   }
+});
+
+test('progress text and collapsed work intervals stay in chronological order', () => {
+  const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: { a1: { items: [
+    { id: 'first', type: 'reasoning', kind: 'commentary', text: 'Some previous text', sequence: 1, completedAt: 100 },
+    { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"secret-tool-target.ts"}', status: 'complete', sequence: 2 },
+    { id: 'next', type: 'reasoning', kind: 'commentary', text: 'This should be done like this', sequence: 3, completedAt: 200 },
+    { id: 'thinking', type: 'reasoning', text: 'Private reasoning', sequence: 4 },
+  ] } } });
+  const positions = ['Some previous text', '>Worked<', 'This should be done like this', '>Thinking…<'].map(text => html.indexOf(text));
+  assert.ok(positions.every(index => index >= 0));
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
+  assert.equal((html.match(/message-work-toggle/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /Private reasoning|secret-tool-target|trace-card|thread-tool-row/);
 });
