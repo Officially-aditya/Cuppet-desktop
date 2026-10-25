@@ -52,6 +52,84 @@ function openTrace() {
   return { collapsedLiveCard: true, liveCounts: true, stableGroups: true, manualToggle: true, visibleFailures: true, stoppedDuration: true };
 };
 
+let polishItems: any[] = [];
+function renderPolish(id = 'polish-live', live = true) {
+  flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key={id} session={{ id, messages: [{
+    id, role: 'assistant', content: live ? '' : 'Finished.', status: live ? 'streaming' : 'complete', createdAt: 1000, updatedAt: 13000,
+  }] } as any} project={null} running={live} transcript={{ [id]: { items: polishItems, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
+}
+const waitForPolish = async (predicate: () => boolean) => {
+  const deadline = performance.now() + 5000;
+  while (!predicate()) {
+    if (performance.now() > deadline) throw new Error('Trace polish update timed out');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+};
+const readTool = (id: number, status = 'complete') => ({ id: `read-${id}`, type: 'tool', tool: 'read_file', argumentsJson: JSON.stringify({ path: `file-${id}.ts` }), status, sequence: id });
+function assertStaticMotion() {
+  const title = document.querySelector('.trace-card-title')!;
+  if (getComputedStyle(title).animationName !== 'none' || getComputedStyle(title).backgroundImage !== 'none') throw new Error('Reduced motion left the shimmer active');
+  for (const node of document.querySelectorAll('.trace-text-added')) if (getComputedStyle(node).animationName !== 'none') throw new Error('Reduced motion animated the text');
+  for (const node of document.querySelectorAll('.trace-text-removed')) if (getComputedStyle(node).display !== 'none') throw new Error('Reduced motion exposed old text');
+}
+
+(window as any).exerciseTracePolish = async () => {
+  for (const id of ['polish-live', 'polish-other']) localStorage.removeItem(`cuppet.desktop.trace.${id}`);
+  polishItems = [readTool(1, 'running')];
+  renderPolish();
+  const container = document.querySelector('.trace-card') as HTMLElement;
+  const title = document.querySelector('.trace-card-title')!;
+  await waitForPolish(() => container.dataset.traceVisible === 'true');
+  if (getComputedStyle(title).animationName !== 'trace-shimmer' || getComputedStyle(title).animationPlayState !== 'running') throw new Error('Visible live header did not shimmer');
+  polishItems = [readTool(1)]; renderPolish();
+  if (title.textContent !== 'Read file-1.ts' || !title.querySelector('.trace-text-removed')) throw new Error('Tool completion did not morph the label');
+  polishItems = [...polishItems, readTool(2)]; renderPolish();
+  polishItems = [...polishItems, readTool(3)]; renderPolish();
+  const changedCount = document.querySelector('.trace-card-meta .trace-text-added')!;
+  if (changedCount.textContent !== '3' || getComputedStyle(changedCount).animationName !== 'trace-text-in') throw new Error(`Counts did not animate only the changed number: ${changedCount.textContent}, ${getComputedStyle(changedCount).animationName}`);
+  document.body.classList.add('reduce-motion');
+  polishItems = [...polishItems, readTool(4)]; renderPolish();
+  assertStaticMotion();
+  document.body.classList.remove('reduce-motion');
+
+  const messages = document.querySelector('.messages') as HTMLElement;
+  messages.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+  const spacer = document.createElement('div');
+  spacer.style.height = '2000px'; spacer.style.flex = '0 0 2000px';
+  messages.prepend(spacer);
+  messages.scrollTop = 0;
+  await waitForPolish(() => container.dataset.traceVisible === 'false');
+  if (getComputedStyle(title).animationPlayState !== 'paused') throw new Error('Offscreen shimmer did not pause');
+  container.scrollIntoView();
+  await waitForPolish(() => container.dataset.traceVisible === 'true');
+  spacer.remove();
+
+  openTrace();
+  renderPolish('polish-other');
+  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'false') throw new Error('Disclosure state leaked between messages');
+  renderPolish();
+  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Live disclosure did not restore after switching chats');
+  renderPolish('polish-live', false);
+  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'false') throw new Error('Persisted live state prevented the completion fold');
+  openTrace();
+  renderPolish('polish-other', false);
+  renderPolish('polish-live', false);
+  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Finished disclosure did not restore after switching chats');
+  return { labelMorph: true, animatedCounts: true, offscreenShimmerPaused: true, appReducedMotion: true, persistedLiveAndFinishedState: true };
+};
+(window as any).exerciseSystemTraceMotion = async () => {
+  polishItems = [readTool(1, 'running')]; renderPolish('polish-motion');
+  await waitForPolish(() => document.querySelector<HTMLElement>('.trace-card')?.dataset.traceVisible === 'true');
+  polishItems = [readTool(1)]; renderPolish('polish-motion');
+  assertStaticMotion();
+  return { systemReducedMotion: true };
+};
+(window as any).restoreTraceDisclosure = () => {
+  polishItems = [readTool(1)]; renderPolish('polish-live', false);
+  if (document.querySelector('.trace-card-toggle')?.getAttribute('aria-expanded') !== 'true') throw new Error('Disclosure preference did not survive a reload');
+  return { persistedAcrossReload: true };
+};
+
 let updateThought: (text: string, complete: boolean) => void;
 (window as any).setThought = (count: number, live = false) => {
   const text = Array.from({ length: count }, (_, i) => `### Investigation ${i}\n\nReviewing the **current implementation** and how it changes the user prompt, tool result and transcript state. Check \`src/renderer/react/ChatTranscript.tsx\` and preserve links to [the source](https://example.com/source).\n\n\`\`\`typescript\nconst item${i} = { content: 'some value', sequence: ${i} };\nconsole.log(item${i});\n\`\`\`\n`).join('\n');

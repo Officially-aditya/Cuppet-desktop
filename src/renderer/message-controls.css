@@ -50,6 +50,82 @@
   white-space: nowrap;
 }
 
+.trace-card.live .trace-card-title {
+  background: linear-gradient(110deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: trace-shimmer 2.2s linear infinite;
+  animation-play-state: paused;
+}
+
+.trace-card.live[data-trace-visible="true"] .trace-card-title {
+  animation-play-state: running;
+}
+
+@keyframes trace-shimmer {
+  to { background-position: -100% 0; }
+}
+
+.trace-text-change {
+  position: relative;
+  display: inline-block;
+}
+
+.trace-text-removed {
+  display: none;
+  position: absolute;
+  inset: 0 auto auto 0;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.trace-text-removed::before {
+  content: attr(data-previous);
+}
+
+.trace-text-added {
+  display: inline-block;
+  white-space: pre-wrap;
+}
+
+.trace-card[data-trace-visible="true"] .trace-text-added {
+  animation: trace-text-in .18s ease-out both;
+}
+
+.trace-card[data-trace-visible="true"] .trace-text-removed {
+  display: inline-block;
+  animation: trace-text-out .18s ease-out both;
+}
+
+@keyframes trace-text-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes trace-text-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-3px); }
+}
+
+.reduce-motion .trace-card.live .trace-card-title {
+  background: none;
+  color: var(--text-secondary);
+  animation: none;
+}
+
+.reduce-motion .trace-card .trace-text-removed {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace-card.live .trace-card-title {
+    background: none;
+    color: var(--text-secondary);
+    animation: none;
+  }
+  .trace-card[data-trace-visible] .trace-text-removed { display: none; }
+}
+
 .trace-card-indicator {
   width: 6px;
   height: 6px;

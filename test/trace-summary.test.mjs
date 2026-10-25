@@ -39,7 +39,9 @@ test('live status uses the latest thought, then running tool, then a safe fallba
   assert.equal(liveStatus([thought('**Not finished'), running]), 'Running npm test…');
   assert.equal(liveStatus([thought('Raw reasoning '.repeat(1000))]), 'Thinking…');
   assert.equal(liveStatus([]), 'Working…');
-  assert.equal(liveStatus([tool('done', 'bash')]), 'Working…');
+  assert.equal(liveStatus([tool('done', 'bash')]), 'Ran command');
+  assert.equal(liveStatus([tool('read', 'read_file', { path: 'app.ts' }, 'running')]), 'Reading app.ts…');
+  assert.equal(liveStatus([tool('read', 'read_file', { path: 'app.ts' })]), 'Read app.ts');
 });
 
 test('summary counts unique successful files, including batch targets', () => {

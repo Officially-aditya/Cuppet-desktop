@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as traceSummary from '../src/renderer/react/trace-summary.ts';
+import * as tracePresentation from '../src/renderer/react/trace-presentation.ts';
 import { formatWorkedDuration, orderedTranscriptItems } from '../src/renderer/react/chat-transcript.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
@@ -46,6 +47,7 @@ function fixture(component, { deferred = false } = {}) {
         jsxs: (type, props) => ({ type, props }),
       };
       if (name === './trace-summary') return { ...traceSummary, parseToolArguments(value) { parsed.push(value); return traceSummary.parseToolArguments(value); } };
+      if (name === './trace-presentation') return tracePresentation;
       if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { formatWorkedDuration, orderedTranscriptItems };
     },

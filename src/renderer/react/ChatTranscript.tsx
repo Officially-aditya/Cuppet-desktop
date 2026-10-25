@@ -14,6 +14,7 @@ import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
 import { classifyTool, compactActivityText, groupTrace, humanToolLabel, liveStatus, liveThoughtLine, parseToolArguments, summarizeTrace, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type ToolGroup } from './trace-summary';
+import { observeTraceVisibility, readTraceOpen, splitTraceText, writeTraceOpen } from './trace-presentation';
 
 type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -174,7 +175,8 @@ function MessageView({
 }) {
   const trace = useMemo(() => providedTrace ?? traceForItems(items ?? EMPTY_TRACE), [providedTrace, items]);
   const diffTrace = useDeferredValue(trace, EMPTY_TRACE);
-  const [traceOpen, setTraceOpen] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(() => readTraceOpen(message.id, live));
+  const traceCardRef = useRef<HTMLDivElement>(null);
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
   const prevLiveRef = useRef(live);
@@ -193,12 +195,23 @@ function MessageView({
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
+    if (live && hasTrace && traceCardRef.current) return observeTraceVisibility(traceCardRef.current);
+  }, [live, hasTrace]);
+
+  useEffect(() => {
     if (prevLiveRef.current && !live) {
       setTraceOpen(false);
+      writeTraceOpen(message.id, false, false);
       setCompletedAt(Date.now());
     }
     prevLiveRef.current = live;
-  }, [live, message.status]);
+  }, [live, message.status, message.id]);
+
+  const toggleTrace = () => {
+    const open = !traceOpen;
+    setTraceOpen(open);
+    writeTraceOpen(message.id, live, open);
+  };
 
   const workedDurationText = useMemo(() => {
     if (live || message.status === 'streaming') return null;
@@ -314,21 +327,21 @@ function MessageView({
         {pendingLabel && <span className="message-pending-label" role="status">{pendingLabel}</span>}
       </div>
       {hasTrace && (
-        <div className={`trace-card${live ? ' live' : ''}${traceOpen ? ' open' : ''}`}>
+        <div ref={traceCardRef} className={`trace-card${live ? ' live' : ''}${traceOpen ? ' open' : ''}`}>
           <button
             type="button"
             className="trace-card-toggle"
             aria-expanded={traceOpen}
             aria-controls={traceOpen ? `trace-${message.id}` : undefined}
-            onClick={() => setTraceOpen((current) => !current)}
+            onClick={toggleTrace}
           >
             <span className="trace-card-heading">
               {live && <span className="trace-card-indicator" aria-hidden="true" />}
-              <span className="trace-card-title">{live ? activityTitle : workedDurationText ?? (message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped' : 'Activity')}{!live && traceSummary.label ? ` · ${traceSummary.label}` : ''}</span>
+              <span className="trace-card-title"><TraceAnimatedText text={live ? activityTitle : `${workedDurationText ?? (message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped' : 'Activity')}${traceSummary.label ? ` · ${traceSummary.label}` : ''}`} /></span>
               <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </span>
             {(live || traceSummary.failed > 0) && <span className="trace-card-meta">
-              {live && traceSummary.label && <span>{traceSummary.label}</span>}
+              {live && traceSummary.label && <span><TraceAnimatedText text={traceSummary.label} /></span>}
               {live && <TraceElapsed startedAt={startedAtRef.current} />}
               {traceSummary.failed > 0 && <span className="trace-failure-count">{traceSummary.failed} failed</span>}
             </span>}
@@ -518,6 +531,16 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
   );
 }
 
+function TraceAnimatedText({ text }: { text: string }) {
+  const [transition, setTransition] = useState({ previous: text, current: text });
+  if (transition.current !== text) setTransition({ previous: transition.current, current: text });
+  const parts = useMemo(() => splitTraceText(transition.previous, text), [transition.previous, text]);
+  return <span className="trace-animated-text">{parts.prefix}{(parts.removed || parts.added) && <span key={text} className="trace-text-change">
+    {parts.removed && <span className="trace-text-removed" aria-hidden="true" data-previous={parts.removed} />}
+    <span className="trace-text-added">{parts.added}</span>
+  </span>}{parts.suffix}</span>;
+}
+
 function TraceElapsed({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -548,8 +571,8 @@ const ToolGroupRow = memo(function ToolGroupRow({ group, contentId, onInspectDif
   return (
     <div className={`trace-tool-group${open ? ' open' : ''}`}>
       <button type="button" className="trace-group-toggle" aria-expanded={open} aria-controls={open ? contentId : undefined} onClick={() => setOpen((current) => !current)}>
-        <span>{summary.label || `${summary.total} action${summary.total === 1 ? '' : 's'}`}</span>
-        {summary.running > 0 && <span className="trace-group-running">{summary.running} running</span>}
+        <TraceAnimatedText text={summary.label || `${summary.total} action${summary.total === 1 ? '' : 's'}`} />
+        {summary.running > 0 && <span className="trace-group-running"><TraceAnimatedText text={`${summary.running} running`} /></span>}
         {summary.failed > 0 && <span className="trace-failure-count">{summary.failed} failed</span>}
         <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>

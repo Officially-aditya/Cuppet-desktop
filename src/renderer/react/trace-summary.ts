@@ -36,14 +36,17 @@ export function liveThoughtLine(text: string): string {
 export function liveStatus(trace: readonly TranscriptItem[]): string {
   let thought: string | undefined;
   let running: TranscriptTool | undefined;
+  let latestTool: TranscriptTool | undefined;
   for (let index = trace.length - 1; index >= 0; index--) {
     const item = trace[index];
     if (thought === undefined && item.type === 'reasoning') thought = item.text;
+    if (!latestTool && item.type === 'tool') latestTool = item;
     if (!running && item.type === 'tool' && item.status === 'running') running = item;
     if (thought !== undefined && running) break;
   }
   return (thought && liveThoughtLine(thought))
     || (running && toolActivityLabel(running.tool, running.argumentsJson, running.status))
+    || (thought === undefined && latestTool && toolActivityLabel(latestTool.tool, latestTool.argumentsJson, latestTool.status))
     || (thought !== undefined ? 'Thinking…' : 'Working…');
 }
 

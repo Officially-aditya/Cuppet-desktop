@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as traceSummary from '../src/renderer/react/trace-summary.ts';
+import * as tracePresentation from '../src/renderer/react/trace-presentation.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source + '\nexport { MessageView };', {
@@ -37,6 +38,7 @@ function fixture() {
         jsxs: (type, props) => ({ type, props }),
       };
       if (name === './trace-summary') return traceSummary;
+      if (name === './trace-presentation') return tracePresentation;
       if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { renderMarkdown: (value) => value, formatWorkedDuration: () => '1s' };
     },
