@@ -47,6 +47,7 @@ export const IPC_METHODS = {
   'sessions.editedFiles': method('session:edited-files', [['sessionId', 'id']], 'Types.EditedFiles'),
   'sessions.create': method('session:create', [['projectId?', 'nullableId']], 'Types.Session'),
   'sessions.get': method('session:get', [['sessionId', 'id'], ['options?', 'sessionWindow']], 'Types.Session'),
+  'sessions.attachment': method('session:attachment', [['sessionId', 'id'], ['messageId', 'id'], ['index', 'attachmentIndex']], 'Types.Attachment | null'),
   'sessions.search': method('session:search', [['query', 'text'], ['options?', 'object']], 'Types.SearchResult[]'),
   'sessions.rename': method('session:rename', [['sessionId', 'id'], ['title', 'text']]),
   'sessions.archive': method('session:archive', [['sessionId', 'id']]),
@@ -105,6 +106,7 @@ export const IPC_ARGUMENT_TYPES = {
   object: 'Record<string, unknown>', dimension: 'number', paths: 'string[]', answers: 'string[][]',
   attachments: 'Types.Attachment[]', command: 'string | { id: string; input?: Record<string, unknown> }',
   sessionWindow: '{ limit?: number; beforeSequence?: number }',
+  attachmentIndex: 'number',
 };
 
 function plainObject(value) {
@@ -127,6 +129,7 @@ function valid(kind, value) {
     case 'path': return typeof value === 'string' && value.length > 0 && value.length <= 8192 && !value.includes('\0');
     case 'boolean': return typeof value === 'boolean';
     case 'dimension': return Number.isInteger(value) && value > 0 && value <= 2000;
+    case 'attachmentIndex': return Number.isSafeInteger(value) && value >= 0 && value < 16;
     case 'sessionWindow': return plainObject(value)
       && Object.keys(value).every(key => ['limit', 'beforeSequence'].includes(key))
       && (value.limit === undefined || (Number.isSafeInteger(value.limit) && value.limit > 0 && value.limit <= 10_000))

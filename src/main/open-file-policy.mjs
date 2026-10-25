@@ -31,7 +31,7 @@ export function decideProjectFileOpen({ requested, actual, mode = 0, platform = 
     const withoutDrive = path.replace(/^\\\\\?\\/, '').replace(/^[a-z]:[\\/]/i, '');
     if (windows && withoutDrive.includes(':')) return { allowed: false, reason: 'windows-alternate-stream' };
     const name = windows ? win32.basename(path).replace(/[. ]+$/, '') : posix.basename(path);
-    const extension = (windows ? win32 : posix).extname(name).slice(1).toLowerCase();
+    const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
     if (BLOCKED.has(extension)) return { allowed: false, reason: 'blocked-extension' };
     if (windows && WINDOWS_BLOCKED.has(extension)) return { allowed: false, reason: 'windows-script' };
     extensions.push(extension);

@@ -14,7 +14,7 @@ const blocked = 'exe com scr pif bat cmd msi lnk url hta cpl reg inf vbs wsf jar
 test('dangerous requested names and real targets are blocked on every platform, case-insensitively', () => {
   for (const platform of ['linux', 'darwin', 'win32']) {
     for (const extension of blocked) {
-      for (const name of [`run.${extension}`, `RUN.${extension.toUpperCase()}`]) {
+      for (const name of [`run.${extension}`, `RUN.${extension.toUpperCase()}`, `.${extension}`]) {
         assert.equal(decide(name, 'notes.txt', platform).allowed, false, `${platform}: ${name}`);
         assert.equal(decide('notes.txt', name, platform).allowed, false, `${platform}: target ${name}`);
       }

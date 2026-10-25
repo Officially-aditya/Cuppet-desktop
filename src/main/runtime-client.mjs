@@ -36,6 +36,7 @@ const SAFE_RETRY_METHODS = new Set([
   'remote.devices',
   'session.list',
   'session.get',
+  'session.attachment',
   'session.search',
   'session.undo.status',
   'project.list',

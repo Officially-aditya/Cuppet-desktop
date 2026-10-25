@@ -468,3 +468,4 @@
 .chat-loading-skeleton span:nth-child(2) { width: 85%; }
 .chat-loading-skeleton span:nth-child(3) { width: 60%; }
 .chat-history-controls { display: grid; justify-items: center; gap: 8px; margin-bottom: 20px; }
+.message-image-placeholder { display: grid; place-items: center; width: 160px; min-height: 100px; padding: 12px; color: var(--text-secondary); font-size: 12px; }

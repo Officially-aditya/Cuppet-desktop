@@ -21,6 +21,8 @@
     "start": "npm run build:renderer && electron .",
     "dev:renderer": "vite",
     "test": "node --test test/*.test.mjs",
+    "benchmark:chat-switch": "node benchmarks/chat-switch.mjs",
+    "benchmark:chat-switch:renderer": "npm run build:renderer && electron benchmarks/chat-switch.mjs",
     "mac:prepare-icon": "node scripts/prepare-macos-icon.mjs",
     "pack:dir": "npm run mac:prepare-icon && node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run browsercontrol:verify && npm run renderer:verify && electron-builder --dir --publish never",
     "release:verify": "node scripts/verify-release-security.mjs",

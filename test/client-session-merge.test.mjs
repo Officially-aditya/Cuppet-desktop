@@ -71,6 +71,19 @@ test('a summary without messages leaves the loaded messages alone', () => {
   assert.equal(session.messages[0].attachments[0].name, 'shot.png');
 });
 
+test('lightweight attachment metadata replaces a full image and participates in equality', () => {
+  const original = message('u1', 1, 'user', 'first', { attachments });
+  const store = seeded([original]);
+  const light = { ...original, attachments: [{ name: 'shot.png', mime: 'image/png', size: 8, hasData: true }] };
+  store.upsertClientSession({ id: 's1', messages: [light] });
+  const updated = store.clientSessionSnapshot('s1').messages[0];
+  assert.notEqual(updated, original);
+  assert.equal(updated.attachments[0].dataUrl, undefined);
+  assert.equal(updated.attachments[0].hasData, true);
+  store.upsertClientSession({ id: 's1', messages: [{ ...light, attachments: [{ ...light.attachments[0], hasData: false }] }] });
+  assert.equal(store.clientSessionSnapshot('s1').messages[0].attachments[0].hasData, false);
+});
+
 test('window pages preserve loaded messages and merge activities and tools by key', () => {
   const store = loadStore();
   const activity = (messageId, sequence, text) => ({ messageId, sequence, source: 'provider', activity: { text } });

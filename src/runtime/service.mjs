@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { ConversationDatabase } from './database.mjs';
+import { projectSessionPayload } from './session-payload.mjs';
 import { createChatProvider } from './provider-factory.mjs';
 import { ProjectManager } from './projects.mjs';
 import { TstBridge } from './tst-client.mjs';
@@ -163,7 +164,15 @@ export class RuntimeService {
       case 'session.create': return this.createSession(params.projectId ?? null);
       case 'session.get': {
         this.requireSession(params.sessionId);
-        return this.#db.getSessionWindow(params.sessionId, { limit: params.limit, beforeSequence: params.beforeSequence });
+        return projectSessionPayload(this.#db.getSessionWindow(params.sessionId, { limit: params.limit, beforeSequence: params.beforeSequence }));
+      }
+      case 'session.attachment': {
+        const session = this.requireSession(params.sessionId);
+        if (typeof params.messageId !== 'string' || !params.messageId) throw new Error('messageId is required');
+        if (!Number.isSafeInteger(params.index) || params.index < 0 || params.index > 15) throw new Error('invalid attachment index');
+        const message = this.#db.getMessage(params.messageId);
+        if (!message || message.sessionId !== session.id) throw new Error('Attachment does not belong to this session.');
+        return message.attachments?.[params.index] ?? null;
       }
       case 'session.send': return this.send(params);
       case 'session.steer': return this.#steer(params);

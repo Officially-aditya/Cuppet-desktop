@@ -64,3 +64,12 @@ test('failed sends and finished runs release pending prompts; routing only clear
   api.reduceClientSessionEvent({ type: 'run.finished', sessionId: 's1' });
   assert.equal(api.pendingUserMessagesSnapshot('s1').length, 0);
 });
+
+test('a lightweight image confirmation acknowledges its pending prompt', () => {
+  const api = fixture();
+  add(api);
+  api.upsertClientSession({ id: 's1', messages: [{ ...message('u1'), attachments: [
+    { name: 'shot.png', hasData: true }, attachments[1],
+  ] }] });
+  assert.equal(api.pendingUserMessagesSnapshot('s1').length, 0);
+});

@@ -69,6 +69,7 @@ export type CuppetApi = {
     editedFiles: (sessionId: string) => Promise<Types.EditedFiles>;
     create: (projectId?: string | null) => Promise<Types.Session>;
     get: (sessionId: string, options?: { limit?: number; beforeSequence?: number }) => Promise<Types.Session>;
+    attachment: (sessionId: string, messageId: string, index: number) => Promise<Types.Attachment | null>;
     search: (query: string, options?: Record<string, unknown>) => Promise<Types.SearchResult[]>;
     rename: (sessionId: string, title: string) => Promise<any>;
     archive: (sessionId: string) => Promise<any>;

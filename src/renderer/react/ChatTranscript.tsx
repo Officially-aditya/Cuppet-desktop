@@ -12,6 +12,7 @@ import { createReasoningRenderer, type ReasoningRenderResult, type ReasoningMark
 import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
+import { AttachmentImage } from './AttachmentImage';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
 import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolActivityLabel, toolCommand, toolExploreFocus, toolLineRange, toolTargets, workGroupTiming, type WorkGroup } from './trace-summary';
 import { readTraceOpen, workWords, writeTraceOpen } from './trace-presentation';
@@ -402,9 +403,9 @@ function MessageView({
               {messageExpanded ? 'Show less' : 'Show more'}
             </button>
           )}
-          {Array.isArray(message.attachments) && message.attachments.some((attachment) => !attachment.dataUrl) && (
+          {Array.isArray(message.attachments) && message.attachments.some((attachment) => !attachment.dataUrl && !attachment.hasData) && (
             <div className="message-attachments" role="list" aria-label="Attached files">
-              {message.attachments.filter((attachment) => !attachment.dataUrl).map((attachment, index) => (
+              {message.attachments.filter((attachment) => !attachment.dataUrl && !attachment.hasData).map((attachment, index) => (
                 <div className="message-attachment" role="listitem" key={index} title={attachment.name}>
                   <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
                     <path d="M11.5 2.5H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7l-4.5-4.5Z M11.5 2.5V7H16 M7 11h6M7 14h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -414,21 +415,12 @@ function MessageView({
               ))}
             </div>
           )}
-          {Array.isArray(message.attachments) && message.attachments.some((a) => a.dataUrl) && (
+          {Array.isArray(message.attachments) && message.attachments.some((a) => a.dataUrl || a.hasData) && (
             <div className="message-image-gallery">
-              {message.attachments
-                .filter((a) => a.dataUrl)
-                .map((attachment, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className="message-image-thumb-btn"
-                    title={`View ${attachment.name || 'image'}`}
-                    onClick={() => onOpenLightbox?.({ src: attachment.dataUrl!, name: attachment.name })}
-                  >
-                    <img src={attachment.dataUrl} alt={attachment.name || ''} loading="lazy" />
-                  </button>
-                ))}
+              {message.attachments.map((attachment, index) => attachment.dataUrl || attachment.hasData ? (
+                <AttachmentImage key={index} sessionId={message.sessionId} messageId={message.id} index={index}
+                  attachment={attachment} onOpenLightbox={onOpenLightbox} />
+              ) : null)}
             </div>
           )}
         </div>

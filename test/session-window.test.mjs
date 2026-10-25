@@ -91,7 +91,7 @@ test('remote history cursors reach pages older than the desktop initial window',
   db.transaction(() => { for (let sequence = 1; sequence <= 100; sequence++) append(db, sequence); });
   const runtime = new RuntimeService({ databasePath: path });
   const remote = new RemoteCommandAdapter({
-    call: (method, params) => runtime.handle(method, params),
+    call: (method, params) => method === 'session.run.latest' ? null : runtime.handle(method, params),
     identity: { hostId: 'window-host', deviceName: 'Test' }, providerConfig: {},
   });
   try {

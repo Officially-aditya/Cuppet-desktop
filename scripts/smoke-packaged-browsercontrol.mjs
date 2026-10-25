@@ -20,7 +20,8 @@ assert.equal(manifest.localPort, 8765);
 
 const priorResources = process.env.CUPPET_RESOURCES_PATH;
 process.env.CUPPET_RESOURCES_PATH = resources;
-const manager = new BrowserControlManager();
+const port = 18766;
+const manager = new BrowserControlManager({ port });
 try {
   const before = await manager.status();
   assert.equal(before.available, true, 'packaged browserControl runtime was not discovered');
@@ -28,7 +29,7 @@ try {
   assert.equal(running.available, true);
   assert.equal(running.running, true, running.message || 'browserControl did not start');
   assert.ok(running.toolCount > 0, 'browserControl MCP tool list is empty');
-  const health = await fetch('http://127.0.0.1:8765/health', { signal: AbortSignal.timeout(2_000) }).then((response) => response.json());
+  const health = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2_000) }).then((response) => response.json());
   assert.equal(health.service, 'browsercontrol-local');
   console.log(`Packaged browserControl smoke passed with ${running.toolCount} MCP tools: ${runtime}`);
 } finally {

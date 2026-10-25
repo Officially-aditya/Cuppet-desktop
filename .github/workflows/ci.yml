@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      benchmarks_only:
+        description: Run only the chat-switch benchmarks
+        type: boolean
+        default: false
   push:
     branches:
       - feat/e2-apple-silicon-test
@@ -20,6 +25,7 @@ concurrency:
 
 jobs:
   phase-gates:
+    if: ${{ !inputs.benchmarks_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -40,6 +46,8 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm audit --audit-level=high
       - run: npm run renderer:verify
+      - name: Verify security policies and windowed chat history
+        run: node --test test/open-file-policy.test.mjs test/project-file-path.test.mjs test/projects.test.mjs test/session-window.test.mjs test/session-attachment-payload.test.mjs test/attachment-image.test.mjs test/client-session-merge.test.mjs test/client-pending-messages.test.mjs test/chat-send.test.mjs test/chat-scroll.test.mjs test/chat-transcript-render.test.mjs
       - run: npm run phase0:verify
       - name: Verify Phase 1 and annotate failures
         shell: bash
@@ -71,7 +79,26 @@ jobs:
       - run: npm run f1:verify
       - run: npm run e2:verify
 
+  chat-switch-benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run renderer:verify
+      - run: npm run benchmark:chat-switch
+      - run: npx electron benchmarks/chat-switch.mjs
+
   packaged-runtime-smoke:
+    if: ${{ !inputs.benchmarks_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:

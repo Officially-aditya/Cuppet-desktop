@@ -61,6 +61,7 @@ export type Attachment = {
   size?: number;
   path?: string;
   dataUrl?: string;
+  hasData?: boolean;
 };
 
 export type QueuedTurn = {

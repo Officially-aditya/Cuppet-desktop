@@ -63,7 +63,8 @@ function reconcilePendingMessages(session: Session) {
       (message.sequence == null || message.sequence > item.afterSequence) && item.content === message.content &&
       item.attachments.length === (message.attachments?.length ?? 0) &&
       item.attachments.every((attachment, index) => attachment.name === message.attachments?.[index]?.name &&
-        attachment.dataUrl === message.attachments?.[index]?.dataUrl && attachment.path === message.attachments?.[index]?.path));
+        (attachment.dataUrl === message.attachments?.[index]?.dataUrl || (Boolean(attachment.dataUrl) && message.attachments?.[index]?.hasData))
+        && attachment.path === message.attachments?.[index]?.path));
     if (pending) {
       confirmedPendingMessages.add(message.id);
       removePendingUserMessage(pending.id);
@@ -330,7 +331,7 @@ function sameAttachments(a: Attachment[] | undefined, b: Attachment[] | undefine
   return (a ?? []).every((item, index) => {
     const other = (b ?? [])[index];
     return item.name === other.name && item.path === other.path && item.mime === other.mime
-      && item.size === other.size && item.dataUrl?.length === other.dataUrl?.length;
+      && item.size === other.size && item.hasData === other.hasData && item.dataUrl?.length === other.dataUrl?.length;
   });
 }
 

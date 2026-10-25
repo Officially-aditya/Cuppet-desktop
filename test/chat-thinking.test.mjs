@@ -76,7 +76,7 @@ test('sent user messages show files alongside image previews and retain the prom
   const image = { name: 'screen.png', dataUrl: 'data:image/png;base64,AQID' };
   let preview;
   const tree = fixture('MessageView')({
-    message: { id: 'user-files', role: 'user', content: 'Review these files', attachments: [
+    message: { id: 'user-files', sessionId: 's1', role: 'user', content: 'Review these files', attachments: [
       { name: 'notes.txt', mime: 'text/plain', size: 42 },
       { name: 'report.pdf', mime: 'application/pdf', size: 1024 },
       { name: 'unreadable.png', mime: 'image/png' },
@@ -90,8 +90,11 @@ test('sent user messages show files alongside image previews and retain the prom
     assert.ok(find(tree, (node) => node.props?.className === 'message-attachment-name' && node.props.children === name), name);
   }
   assert.equal(find(tree, (node) => node.props?.className === 'message-attachment-name' && node.props.children === image.name), undefined);
-  assert.equal(find(tree, (node) => node.type === 'img').props.src, image.dataUrl);
-  find(tree, (node) => node.props?.className === 'message-image-thumb-btn').props.onClick();
+  const thumbnail = find(tree, (node) => node.props?.attachment === image);
+  assert.equal(thumbnail.props.sessionId, 's1');
+  assert.equal(thumbnail.props.messageId, 'user-files');
+  assert.equal(thumbnail.props.index, 3, 'file chips must not change the persisted attachment index');
+  thumbnail.props.onOpenLightbox({ src: image.dataUrl, name: image.name });
   assert.equal(preview.src, image.dataUrl);
   assert.equal(preview.name, image.name);
 });

@@ -187,6 +187,10 @@ for (const [path, channel] of [
     "cuppet:session:get"
   ],
   [
+    "sessions.attachment",
+    "cuppet:session:attachment"
+  ],
+  [
     "sessions.search",
     "cuppet:session:search"
   ],
