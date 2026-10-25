@@ -555,6 +555,8 @@ const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
   const tools = group.items.filter((item) => item.type === 'tool');
+  const thinking = !tools.length;
+  const active = live && (!thinking || group.items.some((item) => item.type === 'reasoning' && !item.completedAt));
   const failed = tools.filter((item) => item.status === 'error').length;
   const activeTool = live ? [...tools].reverse().find((item) => item.status === 'running') : undefined;
   const failedTool = [...tools].reverse().find((item) => item.status === 'error');
@@ -572,7 +574,7 @@ const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false
     <div className={`message-work${open ? ' open' : ''}`}>
       <button type="button" className="message-work-toggle" title={detail} aria-expanded={open} aria-controls={opened ? contentId : undefined}
         onClick={() => { setOpened(true); setOpen((current) => !current); }}>
-        <WorkDuration id={contentId} active={live} startedAt={startedAt} completedAt={completedAt} thinking={!tools.length} />
+        <WorkDuration id={contentId} active={active} startedAt={startedAt} completedAt={completedAt} thinking={thinking} />
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
         {failed > 0 && <span className="trace-failure-count">{failed} failed</span>}
       </button>

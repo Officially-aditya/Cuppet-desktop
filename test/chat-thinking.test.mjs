@@ -178,9 +178,9 @@ test('diff extraction waits for background rendering and preserves modified file
 const thought = { id: 'reason-1', type: 'reasoning', text: 'Inspecting the code.', sequence: 1, startedAt: 1000 };
 const tool = { id: 'read-1', type: 'tool', tool: 'read', label: 'Read file', argumentsJson: '{}', sequence: 2, status: 'complete' };
 
-test('thinking opens its reasoning and tool calls in one disclosure and retains parsed content when closed', () => {
+test('thinking opens its reasoning in a disclosure and retains parsed content when closed', () => {
   const render = fixture('WorkTraceRow');
-  const props = { group: { id: thought.id, type: 'work-group', items: [thought, tool] }, contentId: 'work-content', live: true };
+  const props = { group: { id: thought.id, type: 'work-group', items: [thought] }, contentId: 'work-content', live: true };
   let tree = render(props);
   let button = find(tree, (node) => node.type === 'button');
   assert.equal(find(tree, node => node.type?.name === 'WorkDuration').props.active, true);
@@ -190,11 +190,22 @@ test('thinking opens its reasoning and tool calls in one disclosure and retains 
   tree = render(props);
   assert.equal(find(tree, (node) => node.type === 'button').props['aria-controls'], 'work-content');
   assert.equal(find(tree, (node) => node.props.content)?.props.content, thought.text);
-  assert.ok(find(tree, (node) => node.type?.name === 'ToolTraceRow'));
+  assert.equal(find(tree, (node) => node.type?.name === 'ToolTraceRow'), undefined);
   find(tree, (node) => node.type === 'button').props.onClick();
   tree = render(props);
   assert.equal(find(tree, (node) => node.props.content)?.props.open, false);
   assert.equal(find(tree, (node) => node.props.className === 'message-work-details').props.hidden, true);
+});
+
+test('finished provider thinking uses Thought while the overall turn is still live', () => {
+  const render = fixture('WorkTraceRow');
+  const props = { group: { id: thought.id, type: 'work-group', items: [thought] }, contentId: 'thought-content', live: true, startedAt: 1000, completedAt: 4000 };
+  const duration = tree => find(tree, node => node.type?.name === 'WorkDuration').props;
+  assert.equal(duration(render(props)).active, true);
+  const finished = duration(render({ ...props, group: { ...props.group, items: [{ ...thought, completedAt: 4000 }] } }));
+  assert.equal(finished.active, false);
+  assert.equal(finished.thinking, true);
+  assert.equal(fixture('WorkDuration', { now: 20000 })(finished).props.children.flat().join(''), 'Thought for 3s');
 });
 
 test('completed tools keep their activity live until the agent finishes, and stale tools cannot keep it live afterward', () => {

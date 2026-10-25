@@ -88,11 +88,12 @@ test('grouping preserves chronology, boundaries, item identity, and the first ac
   const warning = { id: 'status', type: 'status', text: 'Retrying', sequence: 6 };
   const trace = [warning, tool('third', 'bash', {}, 'error', 5), reasoning, commentary, second, first, tool('last', 'glob', {}, 'complete', 7)];
   const groups = groupTrace(trace);
-  assert.deepEqual(groups.map((entry) => entry.id), ['first', commentary.id, reasoning.id, 'status', 'last']);
+  assert.deepEqual(groups.map((entry) => entry.id), ['first', commentary.id, reasoning.id, 'third', 'status', 'last']);
   assert.equal(groups[0].items[0], first);
   assert.equal(groups[0].items[1], second);
   assert.equal(groups[0].id, groupTrace([first])[0].id);
-  assert.deepEqual(groups[2].items.map(item => item.id), [reasoning.id, 'third']);
+  assert.deepEqual(groups[2].items.map(item => item.id), [reasoning.id]);
+  assert.deepEqual(groups[3].items.map(item => item.id), ['third']);
   assert.equal(trace[0], warning, 'sorting must not mutate the store');
 });
 
@@ -102,4 +103,11 @@ test('work timing uses the actual first activity and freezes at the next output 
   assert.deepEqual(workGroupTiming(group, next, 1000, 20000), { startedAt: 2000, completedAt: 6000 });
   assert.deepEqual(workGroupTiming(group, undefined, 1000, 20000), { startedAt: 2000, completedAt: 20000 });
   assert.deepEqual(workGroupTiming({ ...group, items: [tool('legacy', 'read_file')] }, undefined, 1000, 13000), { startedAt: 1000, completedAt: 13000 });
+});
+
+test('thinking keeps its measured duration when tools and the answer continue afterward', () => {
+  const group = { id: 'thought', type: 'work-group', items: [{ ...thought('Provider reasoning.'), startedAt: 1000, completedAt: 4000 }] };
+  assert.deepEqual(workGroupTiming(group, undefined, 500, 20000), { startedAt: 1000, completedAt: 4000 });
+  const next = { ...thought('Progress text.'), kind: 'commentary', startedAt: 6000 };
+  assert.deepEqual(workGroupTiming(group, next, 500, 20000), { startedAt: 1000, completedAt: 4000 });
 });

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import { workWords } from '../src/renderer/react/trace-presentation.ts';
+import { reduceTranscriptEvent } from '../src/renderer/react/chat-transcript.ts';
+import { AcpActivityNormalizer } from '../src/runtime/providers/transports/acp/acp-activity.mjs';
 import { loadModule } from './helpers/load-tsx.mjs';
 
 const require = createRequire(import.meta.url);
@@ -64,7 +66,8 @@ test('a long tool loop does not parse any collapsed thinking content', () => {
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: { a1: { items } } });
   assert.equal((html.match(/message-reasoning-toggle/g) ?? []).length, 0);
   assert.match(html, /message-cuppet-toggle[^>]*aria-expanded="true"/);
-  assert.match(html, /Read 1 file/);
+  assert.match(html, /Thought for 1s/);
+  assert.match(html, /title="Read a.ts"/);
   assert.equal(parsed.some((value) => value.includes('Thought')), false);
   assert.doesNotMatch(html, /message-reasoning-content|trace-card/);
 });
@@ -120,4 +123,33 @@ test('the elapsed indicator also covers the gap before an assistant message exis
   assert.match(live, /message-run-status/);
   assert.ok(live.includes(workWords('u1').active + ' for 12s'));
   assert.doesNotMatch(render({ session, running: false }), /message-run-status/);
+});
+
+test('OpenCode ACP thoughts stay hidden and become timed thoughts before the turn finishes', () => {
+  const normalizer = new AcpActivityNormalizer();
+  let transcript = {};
+  let sequence = 0;
+  const emit = (update, createdAt) => {
+    transcript = reduceTranscriptEvent(transcript, { type: 'runtime.activity', source: 'provider', messageId: 'a1', sequence: ++sequence, createdAt, activity: normalizer.normalize(update) });
+  };
+  const props = () => ({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript });
+  emit({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Internal model reasoning ' } }, 1000);
+  emit({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'continues here.' } }, 2000);
+  parsed.length = 0;
+  let html = render(props());
+  assert.equal((html.match(/message-work-toggle/g) ?? []).length, 1);
+  assert.match(html, /Thinking for /);
+  assert.doesNotMatch(html, /Internal model reasoning|continues here|message-commentary|message-reasoning-content/);
+  assert.equal(parsed.length, 0, 'collapsed thoughts must not start parsing their content');
+
+  emit({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Here is the answer.' } }, 4000);
+  html = render(props());
+  assert.match(html, /Thought for 3s/);
+  assert.doesNotMatch(html, /Thinking for |Internal model reasoning/);
+
+  emit({ sessionUpdate: 'tool_call', toolCallId: 'read', title: 'read_file', status: 'in_progress', rawInput: { path: 'a.ts' } }, 6000);
+  html = render(props());
+  assert.equal((html.match(/message-work-toggle/g) ?? []).length, 2, 'tools cannot absorb the Thought disclosure');
+  assert.match(html, /Thought for 3s/);
+  assert.doesNotMatch(html, /Internal model reasoning|continues here/);
 });

@@ -101,7 +101,7 @@ export function groupTrace(trace: readonly TranscriptItem[]) {
   for (const item of [...trace].sort((a, b) => a.sequence - b.sequence)) {
     if (item.type === 'status' || (item.type === 'reasoning' && item.kind === 'commentary')) { groups.push(item); continue; }
     const previous = groups.at(-1);
-    if (previous?.type === 'work-group') previous.items.push(item);
+    if (previous?.type === 'work-group' && previous.items[0]?.type === item.type) previous.items.push(item);
     else groups.push({ id: item.id, type: 'work-group', items: [item] });
   }
   return groups;
@@ -112,6 +112,7 @@ export function workGroupTiming(group: WorkGroup, next: TranscriptItem | WorkGro
   const boundary = next?.type === 'work-group' ? next.items[0]?.startedAt
     : next && next.type !== 'status' ? next.startedAt ?? next.completedAt : undefined;
   const latest = group.items.reduce<number | undefined>((end, item) => item.completedAt === undefined ? end : Math.max(end ?? 0, item.completedAt), undefined);
+  if (group.items[0]?.type === 'reasoning') return { startedAt: first, completedAt: latest ?? boundary ?? completedAt };
   return { startedAt: first, completedAt: boundary ?? (next ? latest : completedAt ?? latest) };
 }
 

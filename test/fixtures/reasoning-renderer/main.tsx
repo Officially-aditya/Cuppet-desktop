@@ -6,6 +6,7 @@ import '../../../src/renderer/index.css';
 import { appendMarkdownText, updateMarkdownTail } from '../../../src/renderer/react/markdown-tail';
 import { renderMarkdown } from '../../../src/renderer/react/markdown';
 import { workWords } from '../../../src/renderer/react/trace-presentation';
+import { reduceTranscriptEvent, type TranscriptState } from '../../../src/renderer/react/chat-transcript';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
@@ -40,9 +41,10 @@ function renderInline(items: any[], live = true, id = 'inline-activity') {
   flushSync(() => first.click());
   const firstTool = rows[1].querySelector('.thread-tool-row');
   if (rows[1].querySelectorAll('.thread-tool-row').length !== 2 || rows[3].querySelector('.thread-tool-row')) throw new Error('Work expansion included another interval');
-  items = [...items, { id: 'next-tool', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'running', sequence: 6 }];
+  items = items.map(item => item.id === 'thought' ? { ...item, completedAt: inlineStartedAt + 6000 } : item);
+  items = [...items, { id: 'next-tool', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'running', sequence: 6, startedAt: inlineStartedAt + 6000 }];
   renderInline(items);
-  if (rows[1].querySelector('.thread-tool-row') !== firstTool || first.getAttribute('aria-expanded') !== 'true' || !rows[3].querySelector('button')?.textContent?.startsWith(workWords('work-inline-activity-thought').active + ' for ')) throw new Error('Streaming reset an interval or its label');
+  if (rows[1].querySelector('.thread-tool-row') !== firstTool || first.getAttribute('aria-expanded') !== 'true' || !rows[3].querySelector('button')?.textContent?.startsWith('Thought for 1s') || !document.querySelector('.message-work:last-child .work-duration')?.textContent?.startsWith(workWords('work-inline-activity-next-tool').active + ' for ')) throw new Error('Streaming reset an interval or its label');
   flushSync(() => first.click());
   items = items.map(item => item.id === 'test' ? { ...item, status: 'error', details: 'Test failure' } : item);
   renderInline(items);
@@ -99,16 +101,61 @@ function renderInline(items: any[], live = true, id = 'inline-activity') {
   renderInline(inlineItems(), true, 'inline-preview');
 };
 
+(window as any).exerciseProviderThought = async () => {
+  let transcript: TranscriptState = {};
+  let sequence = 0;
+  const start = Date.now() - 12000;
+  let live = true;
+  let answer = '';
+  const emit = (activity: any, offset: number) => {
+    transcript = reduceTranscriptEvent(transcript, { type: 'runtime.activity', source: 'provider', messageId: 'provider-thought', sequence: ++sequence, createdAt: start + offset, activity });
+  };
+  const render = () => flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key="provider-thought" session={{ id: 'provider-thought', messages: [{
+    id: 'provider-thought', role: 'assistant', content: answer, status: live ? 'streaming' : 'complete', createdAt: start, updatedAt: start + 12000,
+  }] } as any} project={null} running={live} transcript={transcript} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
+  const wait = async (predicate: () => boolean) => {
+    const deadline = performance.now() + 5000;
+    while (!predicate()) {
+      if (performance.now() > deadline) throw new Error('Provider thought disclosure timed out');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  };
+  emit({ type: 'activity.reasoning.delta', text: 'Internal reasoning with **formatting**.' }, 1000);
+  render();
+  const toggle = document.querySelector('.message-work-toggle') as HTMLButtonElement;
+  if (!toggle.textContent?.startsWith('Thinking for ') || document.querySelector('.message-reasoning-content') || document.querySelector('.message-commentary')) throw new Error('Provider reasoning was not collapsed');
+  flushSync(() => toggle.click());
+  await wait(() => Boolean(document.querySelector('.message-reasoning-content strong')));
+  emit({ type: 'activity.reasoning.delta', text: '\n\nNew streamed thought.' }, 2000);
+  render();
+  await wait(() => Boolean(document.querySelector('.message-reasoning-content')?.textContent?.includes('New streamed thought.')));
+  emit({ type: 'activity.tool.opened', callId: 'read', tool: 'read_file', argumentsJson: '{"path":"a.ts"}' }, 4000);
+  render();
+  if (document.querySelector('.message-work-toggle') !== toggle || !toggle.textContent?.startsWith('Thought for 3s') || toggle.getAttribute('aria-expanded') !== 'true') throw new Error('Tool activity replaced the thought disclosure or its duration');
+  const tools = document.querySelectorAll('.message-work-toggle');
+  if (tools.length !== 2 || tools[1].getAttribute('aria-expanded') !== 'false') throw new Error('Thoughts and tools were not kept in separate disclosures');
+  flushSync(() => toggle.click());
+  emit({ type: 'activity.tool.closed', callId: 'read', tool: 'read_file', status: 'success' }, 5000);
+  emit({ type: 'activity.text.delta', text: 'The answer is ready.' }, 7000);
+  answer = 'The answer is ready.';
+  render();
+  if (!toggle.textContent?.startsWith('Thought for 3s') || document.querySelector('.message-reasoning-content:not([hidden])')) throw new Error('The answer reopened or extended model thinking');
+  live = false; render(); openTrace();
+  if (!document.querySelector('.message-work-toggle')?.textContent?.startsWith('Thought for 3s') || !document.querySelector('.message-content')?.textContent?.includes(answer)) throw new Error('History lost the thought duration or answer');
+  return { providerThoughtsCollapsed: true, expandedThoughtStreams: true, separateThoughtAndTools: true, frozenThoughtDuration: true };
+};
+
 let updateThought: (text: string, complete: boolean) => void;
 (window as any).setThought = (count: number, live = false) => {
   const text = Array.from({ length: count }, (_, i) => `### Investigation ${i}\n\nReviewing the **current implementation** and how it changes the user prompt, tool result and transcript state. Check \`src/renderer/react/ChatTranscript.tsx\` and preserve links to [the source](https://example.com/source).\n\n\`\`\`typescript\nconst item${i} = { content: 'some value', sequence: ${i} };\nconsole.log(item${i});\n\`\`\`\n`).join('\n');
   let items: any[] = Array.from({ length: 100 }, (_, i) => i === 0
     ? { id: 'reasoning', type: 'reasoning', text, sequence: 1, startedAt: 1, completedAt: live ? undefined : 2 }
     : { id: `tool-${i}`, type: 'tool', tool: 'read_file', status: 'complete', argumentsJson: JSON.stringify({ path: `file${i}.ts` }), sequence: i + 1 });
+  if (live) items = [...items.slice(1), { ...items[0], sequence: 101 }];
   const session: any = { id: `chat-${count}-${live}`, messages: [{ id: 'answer', sessionId: 'chat', role: 'assistant', content: '', status: live ? 'streaming' : 'stopped', createdAt: 1, updatedAt: 2 }] };
   const render = () => flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key={session.id} session={session} project={null} running={live} transcript={{ answer: { items, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
   updateThought = (text, complete) => {
-    items = [{ ...items[0], text: items[0].text + text, completedAt: complete ? 2 : undefined }, ...items.slice(1)];
+    items = items.map(item => item.type === 'reasoning' ? { ...item, text: item.text + text, completedAt: complete ? 2 : undefined } : item);
     render();
   };
   render();
@@ -116,7 +163,7 @@ let updateThought: (text: string, complete: boolean) => void;
 };
 (window as any).runToggle = async () => {
   openTrace();
-  const button = document.querySelector('.message-work-toggle') as HTMLButtonElement;
+  const button = [...document.querySelectorAll<HTMLButtonElement>('.message-work-toggle')].find(button => /^(Thinking|Thought)/.test(button.textContent ?? ''))!;
   const longTasks: number[] = [];
   const observer = new PerformanceObserver((list) => longTasks.push(...list.getEntries().map(entry => entry.duration)));
   observer.observe({ type: 'longtask' });
@@ -155,7 +202,7 @@ let updateThought: (text: string, complete: boolean) => void;
   };
   (window as any).setThought(200, true);
   openTrace();
-  const toggle = document.querySelector('.message-work-toggle') as HTMLButtonElement;
+  const toggle = [...document.querySelectorAll<HTMLButtonElement>('.message-work-toggle')].find(button => /^(Thinking|Thought)/.test(button.textContent ?? ''))!;
   toggle.click();
   await new Promise(resolve => setTimeout(resolve, 0));
   toggle.click();
