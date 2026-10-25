@@ -63,7 +63,7 @@ test('a long tool loop does not parse any collapsed thinking content', () => {
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: { a1: { items } } });
   assert.equal((html.match(/message-reasoning-toggle/g) ?? []).length, 0);
   assert.match(html, /message-cuppet-toggle[^>]*aria-expanded="true"/);
-  assert.match(html, /Worked/);
+  assert.match(html, /Read 1 file/);
   assert.equal(parsed.some((value) => value.includes('Thought')), false);
   assert.doesNotMatch(html, /message-reasoning-content|trace-card/);
 });
@@ -77,7 +77,7 @@ test('live work disclosures hide reasoning and tools but expose failures', () =>
     ] },
   } });
   assert.doesNotMatch(html, /Checking the fix/);
-  assert.match(html, /Thinking…/);
+  assert.match(html, /Command failed: npm test/);
   assert.match(html, /trace-failure-count[^>]*>1<!-- --> failed|trace-failure-count[^>]*>1 failed/);
   assert.doesNotMatch(html, /Hidden detailed thought|thread-tool-row/);
 });
@@ -105,9 +105,10 @@ test('progress text and collapsed work intervals stay in chronological order', (
     { id: 'next', type: 'reasoning', kind: 'commentary', text: 'This should be done like this', sequence: 3, completedAt: 200 },
     { id: 'thinking', type: 'reasoning', text: 'Private reasoning', sequence: 4 },
   ] } } });
-  const positions = ['Some previous text', '>Worked<', 'This should be done like this', '>Thinking…<'].map(text => html.indexOf(text));
+  const positions = ['Some previous text', '>Read secret-tool-target.ts<', 'This should be done like this', '>Thinking…<'].map(text => html.indexOf(text));
   assert.ok(positions.every(index => index >= 0));
   assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
   assert.equal((html.match(/message-work-toggle/g) ?? []).length, 2);
-  assert.doesNotMatch(html, /Private reasoning|secret-tool-target|trace-card|thread-tool-row/);
+  assert.match(html, /Read secret-tool-target\.ts/);
+  assert.doesNotMatch(html, /Private reasoning|trace-card|thread-tool-row/);
 });

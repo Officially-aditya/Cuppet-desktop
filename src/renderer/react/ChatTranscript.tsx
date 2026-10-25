@@ -13,7 +13,7 @@ import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
-import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type WorkGroup } from './trace-summary';
+import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolActivityLabel, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type WorkGroup } from './trace-summary';
 import { readTraceOpen, writeTraceOpen } from './trace-presentation';
 
 type TraceReasoning = TranscriptReasoning;
@@ -535,9 +535,18 @@ const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false
   const [opened, setOpened] = useState(false);
   const tools = group.items.filter((item) => item.type === 'tool');
   const failed = tools.filter((item) => item.status === 'error').length;
-  const working = live && tools.some((item) => item.status === 'running');
+  const activeTool = [...tools].reverse().find((item) => item.status === 'running');
+  const failedTool = [...tools].reverse().find((item) => item.status === 'error');
+  const latestTool = tools.at(-1);
   const thinking = live && group.items.some((item) => item.type === 'reasoning' && !item.completedAt);
-  const label = working ? 'Working…' : thinking ? 'Thinking…' : tools.length ? 'Worked' : 'Thought';
+  const summary = summarizeTrace(tools).label;
+  const label = activeTool
+    ? toolActivityLabel(activeTool.tool, activeTool.argumentsJson, activeTool.status)
+    : failedTool
+      ? toolActivityLabel(failedTool.tool, failedTool.argumentsJson, failedTool.status)
+      : latestTool && (tools.length === 1 || !summary)
+        ? toolActivityLabel(latestTool.tool, latestTool.argumentsJson, latestTool.status)
+        : summary || (thinking ? 'Thinking…' : 'Thought');
   const immediateTools = new Set(tools.slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id));
   return (
     <div className={`message-work${open ? ' open' : ''}`}>
