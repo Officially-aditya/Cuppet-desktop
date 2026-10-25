@@ -126,7 +126,7 @@ export function ShellPanelControls({ project, state, onToggleLeft, onToggleRight
                       type="button"
                       onClick={() => {
                         setMenuOpen(false);
-                        void window.cuppet.projects.open(project.id).catch(() => undefined);
+                        void window.cuppet.projects.get(project.id).catch(() => undefined);
                       }}
                     >
                       <FolderIcon />
