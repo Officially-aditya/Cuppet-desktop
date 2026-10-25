@@ -47,7 +47,7 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run renderer:verify
       - name: Verify security policies and windowed chat history
-        run: node --test test/open-file-policy.test.mjs test/project-file-path.test.mjs test/projects.test.mjs test/session-window.test.mjs test/session-attachment-payload.test.mjs test/attachment-image.test.mjs test/client-session-merge.test.mjs test/client-pending-messages.test.mjs test/chat-send.test.mjs test/chat-scroll.test.mjs test/chat-transcript-render.test.mjs
+        run: node --test test/open-file-policy.test.mjs test/project-file-path.test.mjs test/projects.test.mjs test/session-window.test.mjs test/session-attachment-payload.test.mjs test/attachment-image.test.mjs test/client-session-merge.test.mjs test/client-pending-messages.test.mjs test/chat-send.test.mjs test/chat-scroll.test.mjs test/chat-transcript-render.test.mjs test/chat-thinking.test.mjs
       - run: npm run phase0:verify
       - name: Verify Phase 1 and annotate failures
         shell: bash

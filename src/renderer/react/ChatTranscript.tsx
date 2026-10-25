@@ -176,13 +176,24 @@ const TranscriptMessage = memo(function TranscriptMessage({ message, items, defe
   onOpenLightbox: Props['onOpenLightbox'];
   projectId: string | null;
 }) {
+  const slotRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(!deferred || typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    const node = slotRef.current;
+    if (!deferred || visible || !node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); setVisible(true); }
+    }, { root: node.closest('.react-messages'), rootMargin: '200px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [deferred, visible]);
   // Reuse the element so streaming another turn does not render unchanged history.
   const view = useMemo(() => (
     <MessageView message={message} items={items} onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={projectId} />
   ), [message, items, onInspectDiff, onOpenLightbox, projectId]);
-  const deferredView = useDeferredValue(view, deferred ? null : view);
+  const deferredView = useDeferredValue(visible || !deferred ? view : null, deferred ? null : view);
   return (
-    <div className="transcript-message-slot">
+    <div ref={slotRef} className="transcript-message-slot">
       {(deferred ? deferredView : view) ?? (
         <article className={`message ${message.role}`} data-message-id={message.id} aria-busy="true">
           <div className="message-role">{message.role === 'assistant' ? 'Cuppet' : 'You'}</div>

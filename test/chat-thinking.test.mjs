@@ -12,14 +12,16 @@ const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, Mess
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
-function fixture(component, { deferred = false, now = Date.now() } = {}) {
+function fixture(component, { deferred = false, now = Date.now(), observer } = {}) {
   const states = [], refs = [], memos = [], parsed = [];
+  const effects = [];
   let stateIndex = 0, refIndex = 0, memoIndex = 0;
   let deferredReady = !deferred;
   const exports = {};
   vm.runInNewContext(compiled, {
     exports,
     Date: class extends Date { static now() { return now; } },
+    IntersectionObserver: observer,
     JSON: { parse(value) { parsed.push(value); return JSON.parse(value); }, stringify: JSON.stringify },
     require(name) {
       if (name === 'react') return {
@@ -40,7 +42,7 @@ function fixture(component, { deferred = false, now = Date.now() } = {}) {
           return memos[slot].value;
         },
         useDeferredValue: (value, initial) => deferredReady ? value : initial,
-        useEffect: () => {},
+        useEffect: (effect) => effects.push(effect),
         useLayoutEffect: () => {},
         useImperativeHandle: () => {},
       };
@@ -60,6 +62,7 @@ function fixture(component, { deferred = false, now = Date.now() } = {}) {
   };
   render.flushDeferred = () => { deferredReady = true; };
   render.parsed = parsed;
+  render.effects = effects;
   return render;
 }
 
@@ -133,6 +136,26 @@ test('historical content is deferred without losing attachments, tool activity, 
   assert.equal(view.props.message.attachments, message.attachments);
   assert.equal(view.props.items, items);
   assert.equal(find(render(props), (node) => node.type?.name === 'MessageView'), view, 'unchanged history reuses the rendered element');
+});
+
+test('offscreen history stays unrendered until its row approaches the viewport', () => {
+  let observer;
+  const render = fixture('TranscriptMessage', { observer: class {
+    constructor(callback) { this.callback = callback; observer = this; }
+    observe() {}
+    disconnect() {}
+  } });
+  const props = { message: { id: 'old', role: 'assistant', content: 'Older answer' }, deferred: true };
+  const first = render(props);
+  first.props.ref.current = { closest: () => ({}) };
+  const cleanup = render.effects.shift()();
+  assert.equal(find(render(props), node => node.type?.name === 'MessageView'), undefined);
+  observer.callback([{ isIntersecting: false }]);
+  assert.equal(find(render(props), node => node.type?.name === 'MessageView'), undefined);
+  observer.callback([{ isIntersecting: true }]);
+  assert.equal(find(render(props), node => node.type?.name === 'MessageView').props.message, props.message);
+  assert.equal(find(render(props), node => node.type?.name === 'MessageView').props.message.content, 'Older answer');
+  cleanup();
 });
 
 test('expanded activity defers tools older than the newest five and keeps running tools immediate', () => {
