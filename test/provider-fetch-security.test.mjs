@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { fetchProvider } from '../src/runtime/provider-fetch.mjs';
 import { AnthropicMessagesProvider, GeminiInteractionsProvider } from '../src/runtime/native-provider.mjs';
 import { discoverApiCapabilities } from '../src/runtime/providers/backends/api.mjs';
+import { createUntrackedChatProvider } from '../src/runtime/provider-factory.mjs';
 
 const KEY = 'cuppet_redirect_canary_97deed165a0f';
 
@@ -39,6 +40,24 @@ test('safe redirects preserve Fetch method rewriting and stop redirect loops', a
   let loops = 0;
   await assert.rejects(fetchProvider(async () => { loops++; return new Response(null, { status: 307, headers: { location: '/loop' } }); }, 'https://api.example/loop'), /redirect limit/);
   assert.equal(loops, 21);
+});
+
+test('Vertex authentication stays in headers through same-origin redirects', async () => {
+  const requests = [];
+  const provider = createUntrackedChatProvider({ providerID: 'google-vertex', model: 'gemini-test', apiKey: KEY,
+    baseUrl: 'https://vertex.example/v1', requestHeaders: {}, requestBody: {},
+    fetchImpl: async (url, init) => {
+      requests.push(url);
+      assert.ok(!url.includes(KEY));
+      assert.equal(init.headers['x-goog-api-key'], KEY);
+      return requests.length === 1
+        ? new Response(null, { status: 307, headers: { location: '/v1/canonical' } })
+        : new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'OK' }] }, finishReason: 'STOP' }] }), { headers: { 'content-type': 'application/json' } });
+    },
+  });
+  const result = await provider.stream([{ role: 'user', content: 'hello' }], { onDelta() {} });
+  assert.equal(result.text, 'OK');
+  assert.equal(requests.length, 2);
 });
 
 test('provider generation and discovery never forward API keys across origins', async (t) => {

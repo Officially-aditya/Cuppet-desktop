@@ -167,11 +167,12 @@ export class VertexGeminiProvider {
 
     const modelResource = vertexModelResource(this.#config.model);
     const separator = this.#config.baseUrl.includes('?') ? '&' : '?';
-    const url = `${this.#config.baseUrl}/${modelResource}:streamGenerateContent${separator}alt=sse&key=${encodeURIComponent(this.#config.apiKey)}`;
+    const url = `${this.#config.baseUrl}/${modelResource}:streamGenerateContent${separator}alt=sse`;
     const response = await fetchProvider(this.#fetch, url, {
       method: 'POST',
       headers: {
         ...this.#config.requestHeaders,
+        'x-goog-api-key': this.#config.apiKey,
         'content-type': 'application/json',
         accept: 'text/event-stream, application/json',
       },

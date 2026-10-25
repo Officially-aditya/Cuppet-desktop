@@ -27,7 +27,7 @@ expect(contract.phase === 'D3' && contract.status === 'implemented-candidate', '
 for (const [key, value] of Object.entries(contract.requirements ?? {})) expect(value === true, `D3 contract requirement missing: ${key}`);
 
 const factory = text['src/runtime/provider-factory.mjs'];
-expect(factory.includes("import { createProviderRuntime, nativeProviderKind } from './providers/default-registry.mjs'") && factory.includes('return createProviderRuntime(configuration)'), 'shared provider factory must delegate runtime selection to Provider V2 registry');
+expect(factory.includes("import { createProviderRuntime, nativeProviderKind } from './providers/default-registry.mjs'") && factory.includes('const provider = createProviderRuntime(configuration)') && factory.includes('sanitizeProviderError(error, configuration)'), 'shared provider factory must delegate runtime selection to Provider V2 registry and sanitize execution errors');
 expect(!factory.includes('createNativeProvider(') && !factory.includes('new OpenAICompatibleChatProvider('), 'provider factory must not duplicate backend dispatch outside the Provider V2 registry');
 
 const registry = text['src/runtime/providers/default-registry.mjs'];
@@ -69,6 +69,8 @@ const tests = [
   'test/d-provider-policy.test.mjs',
   'test/background-enricher.test.mjs',
   'test/provider-driver-registry.test.mjs',
+  'test/credential-sanitization.test.mjs',
+  'test/provider-fetch-security.test.mjs',
 ];
 const testRun = spawnSync(process.execPath, ['--test', ...tests], { cwd: root, stdio: 'inherit' });
 if (testRun.status !== 0) process.exit(testRun.status ?? 1);

@@ -75,7 +75,7 @@ test('secret sanitizer recursively strips common credential keys while retaining
 test('credential headers and token fields are excluded without losing sampling settings or output schemas', () => {
   const schema = { type: 'object', properties: { token: { type: 'string' }, secret: { type: 'string' }, password: { type: 'string' } }, required: ['token'] };
   assert.deepEqual(sanitizeVariantOptions({
-    'x-api-key': 'canary', 'x-goog-api-key': 'canary', 'Proxy-Authorization': 'canary', cookie: 'canary', token: 'canary', secret: 'canary',
+    'x-api-key': 'canary', 'x-goog-api-key': 'canary', 'x-api-secret': 'canary', 'Proxy-Authorization': 'canary', cookie: 'canary', token: 'canary', secret: 'canary',
     properties: { token: { value: 'canary' }, safe: true },
     max_tokens: 1024, temperature: 0.5, reasoning: { effort: 'high' },
     response_format: { type: 'json_schema', json_schema: { schema } },

@@ -3,15 +3,17 @@ const CREDENTIAL_KEYS = new Set([
   'accesstoken', 'refreshtoken', 'idtoken', 'sessiontoken', 'clientsecret',
   'password', 'passwd', 'credential', 'credentials', 'token', 'secret',
   'cookie', 'setcookie', 'privatekey', 'signingkey', 'accesskey',
-  'secretaccesskey', 'awsaccesskeyid', 'awssecretaccesskey',
+  'secretaccesskey', 'accesskeyid', 'awsaccesskeyid', 'awssecretaccesskey',
+  'auth', 'bearer', 'clientkey', 'secretkey', 'passphrase', 'clienttoken',
+  'securitytoken', 'xauth', 'xkey', 'xtoken',
 ]);
-const FIELD = String.raw`(?:[\w.-]{0,64}(?:api[_. -]?key|api[_. -]?token|access[_. -]?token|refresh[_. -]?token|auth[_. -]?token|client[_. -]?secret|private[_. -]?key|signing[_. -]?key|access[_. -]?key|password|passwd|credentials?|cookie)|authorization|proxy[_.-]?authorization|id[_.-]?token|session[_.-]?token|token|secret|key)`;
+const FIELD = String.raw`[\w.-]{0,64}(?:key|token|secret|password|passwd|passphrase|credential|cookie|auth)[\w.-]{0,64}`;
 const VALUE = String.raw`(?:(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;&}\]"']+)`;
 const ASSIGNMENT = new RegExp(String.raw`\b(${FIELD})(["']?\s*(?:(?:provided|supplied)\s*)?[:=]\s*)(${VALUE})`, 'gi');
 
 export function isCredentialKey(key) {
   const normalized = String(key).replace(/[-_.\s]/g, '').toLowerCase();
-  return CREDENTIAL_KEYS.has(normalized) || /(?:apikey|apitoken|accesstoken|refreshtoken|authtoken|clientsecret|privatekey|secretaccesskey)$/.test(normalized);
+  return CREDENTIAL_KEYS.has(normalized) || /(?:apikey|apitoken|accesstoken|refreshtoken|authtoken|idtoken|sessiontoken|securitytoken|authorizationtoken|clienttoken|clientsecret|clientkey|privatekey|secretkey|signingkey|secretaccesskey|secret|password|passwd|passphrase|credentials?|cookie)$/.test(normalized);
 }
 
 export function redactCredentials(value, context = {}) {
@@ -35,19 +37,58 @@ export function redactCredentials(value, context = {}) {
   };
   collect(context);
   collect(process.env);
-  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+  const forms = new Set();
+  for (const secret of secrets) {
     if (secret === '[redacted]') continue;
-    const forms = new Set([secret, JSON.stringify(secret).slice(1, -1)]);
+    forms.add(secret);
+    forms.add(JSON.stringify(secret).slice(1, -1));
     try { forms.add(encodeURIComponent(secret)); } catch {}
-    for (const form of forms) {
-      if (form.length >= 8) text = text.split(form).join('[redacted]');
-      else {
-        const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        text = text.replace(new RegExp(`(?<![\\w])${escaped}(?![\\w])`, 'g'), '[redacted]');
+  }
+  for (const form of [...forms].sort((a, b) => b.length - a.length)) {
+    if (form.length >= 8) text = text.split(form).join('[redacted]');
+    else {
+      const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(`(?<![\\w])${escaped}(?![\\w])`, 'g'), '[redacted]');
+    }
+  }
+  // Providers may truncate stderr before returning it. Also mask recognizable
+  // leading/trailing fragments, merging overlaps before changing the text.
+  const fragments = [];
+  for (const form of forms) {
+    if (form.length < 16) continue;
+    for (const trailing of [false, true]) {
+      const fragment = trailing ? form.slice(-16) : form.slice(0, 16);
+      let offset = 0;
+      let index;
+      while ((index = text.indexOf(fragment, offset)) !== -1) {
+        let from = index;
+        let to = index + 16;
+        if (trailing) {
+          let position = form.length - 17;
+          while (from > 0 && position >= 0 && text[from - 1] === form[position]) { from--; position--; }
+        } else {
+          while (to - from < form.length && text[to] === form[to - from]) to++;
+        }
+        fragments.push([from, to]);
+        offset = index + 16;
       }
     }
   }
+  const merged = [];
+  for (const [from, to] of fragments.sort((a, b) => a[0] - b[0])) {
+    const previous = merged.at(-1);
+    if (previous && from <= previous[1]) previous[1] = Math.max(previous[1], to);
+    else merged.push([from, to]);
+  }
+  let position = 0;
+  const parts = merged.map(([from, to]) => {
+    const part = text.slice(position, from) + '[redacted]';
+    position = to;
+    return part;
+  });
+  text = parts.join('') + text.slice(position);
   text = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [redacted]');
+  text = text.replace(/(\b(?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi, '$1[redacted]');
   text = text.replace(/([?&])([^=\s&#]+)=([^&\s#]*)/g, (match, prefix, key) => {
     let decoded;
     try { decoded = decodeURIComponent(key); } catch { return match; }
@@ -65,6 +106,7 @@ export function redactCredentials(value, context = {}) {
     .replace(/\b(?:sk-(?:ant-api\d{2}-|proj-|or-v1-)?|gsk_|xai-|nvapi-|hf_|github_pat_|gh[pousr]_|AIza)[A-Za-z0-9_-]{12,}/g, '[redacted]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted]')
     .replace(/\bya29\.[A-Za-z0-9._~-]+/g, '[redacted]')
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[redacted]')
     .replace(/(https?:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, '$1[redacted]@');
 }
 

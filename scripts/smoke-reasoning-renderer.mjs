@@ -31,6 +31,11 @@ app.whenReady().then(async () => {
       if (event.level === 'error') { errors.push(event.message); console.error(event.message); }
     });
     await window.loadFile(join(workspace, 'app.asar/index.html'));
+    // Windows suspends animation frames for hidden windows even with timer
+    // throttling disabled; progressive rendering needs a visible test surface.
+    window.show();
+    window.focus();
+    assert.equal(await window.webContents.executeJavaScript('document.visibilityState'), 'visible');
     window.webContents.setBackgroundThrottling(false);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });

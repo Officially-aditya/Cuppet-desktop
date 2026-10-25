@@ -22,10 +22,13 @@ test('credentials are removed from JSON, headers, URLs and echoed error text', (
     `{"access\\u005ftoken":"${SECRET}"}`,
     `{"message":"provider failed", "token":"${SECRET}`,
     `x-api-key: ${SECRET}`, `X-Goog-Api-Key=${SECRET}`,
+    `AWS_SESSION_TOKEN=${SECRET}`, `X-Secret-Key: ${SECRET}`, `X-Token: ${SECRET}`,
     `private_key="${SECRET}"`, JSON.stringify({ private_key: SECRET }),
     `-----BEGIN PRIVATE KEY-----\n${SECRET}\n-----END PRIVATE KEY-----`,
     `Invalid credential supplied: ${SECRET}`, `API key provided: ${SECRET}`,
     `Authorization: Bearer ${SECRET}`, `Basic ${SECRET}`,
+    `Cookie: first=${SECRET}; second=${SECRET}; third=${SECRET}`,
+    `Set-Cookie: first=${SECRET}; HttpOnly; Path=/`,
     `https://provider.example/v1?key=${SECRET}&model=valid`,
     `https://provider.example/?access%5Ftoken=${SECRET}`,
     `https://user:${SECRET}@provider.example/v1`,
@@ -45,6 +48,8 @@ test('opaque known credentials and their encoded forms are removed without hidin
     assert.equal(redactCredentials(`upstream returned ${value}`, context), 'upstream returned [redacted]');
   }
   assert.equal(redactCredentials('max_tokens=1000 input_tokens=32 model=test-model'), 'max_tokens=1000 input_tokens=32 model=test-model');
+  const shared = 'shared-credential-prefix-';
+  assert.equal(redactCredentials(shared + 'second', { apiKey: shared + 'first1', cliEnv: { OTHER_API_KEY: shared + 'second' } }), '[redacted]');
   assert.equal(classifyProviderError(new Error('401 unauthorized'), { provider: { apiKey: '401', providerID: 'openai' } }).category, 'authentication');
 });
 
@@ -59,6 +64,20 @@ test('sanitized errors retain abort, retry and transport metadata without retain
   for (const value of [result.message, result.stack, result.providerFailure.diagnostic, result.cause.message, result.cause.stack]) assert.ok(!value.includes(SECRET));
   assert.ok(error.providerFailure.diagnostic.includes(SECRET), 'the caller-owned error is not mutated');
   assert.equal(sanitizeProviderError(Object.assign(new Error('stopped'), { name: 'AbortError' })).name, 'AbortError');
+});
+
+test('known credentials stay redacted when provider diagnostics were already truncated', () => {
+  const key = 'opaque-' + '0123456789abcdef'.repeat(500);
+  const error = providerFailureError('provider exited', { category: 'process_exited', diagnostic: `subprocess echoed ${key}` });
+  const failure = classifyProviderError(error, { provider: { providerID: 'openai-compatible', apiKey: key } });
+  assert.ok(!JSON.stringify(failure).includes(key.slice(0, 80)));
+  assert.ok(failure.diagnostic.includes('[redacted]'));
+  const tail = redactCredentials(key.slice(-100), { apiKey: key });
+  assert.ok(!tail.includes('0123456789abcdef'));
+  const escapedKey = 'opaque-12345678901234567890"\\' + 'sensitive-content'.repeat(40);
+  const partialJson = JSON.stringify({ message: `upstream echoed ${escapedKey}` }).slice(0, 200);
+  const redacted = redactCredentials(partialJson, { apiKey: escapedKey });
+  assert.ok(!redacted.includes('sensitive-content'));
 });
 
 test('provider errors cannot persist or reach desktop/remote events with an echoed execution key', async (t) => {
