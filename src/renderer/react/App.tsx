@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   Attachment,
   CognitiveStatus,
@@ -54,6 +54,13 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>({ projectId: null, mode: 'build' });
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const switchRequest = useRef(0);
+  const modeRequest = useRef(0);
+  const loadedSessionIds = useRef(new Set<string>());
+  const previousSelection = useRef<{ sessionId: string | null; draft: Draft | null; mode: 'plan' | 'build' }>({
+    sessionId: null, draft: { projectId: null, mode: 'build' }, mode: 'build',
+  });
   const [cognitive, setCognitive] = useState<CognitiveStatus>({ orchestratorEnabled: false, backgroundPaused: false, tst: {} });
   const [mode, setMode] = useState<'plan' | 'build'>('build');
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
@@ -81,6 +88,16 @@ export function App() {
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
   const activeRunning = Boolean(activeSessionId && running.has(activeSessionId));
   const activeComposerMode: ComposerMode = cognitive.orchestratorEnabled ? 'orchestrate' : mode;
+
+  useLayoutEffect(() => {
+    const start = `chat-switch:${switchRequest.current}:start`;
+    if (activeSessionId && !sessionLoading && globalThis.performance?.getEntriesByName(start).length) {
+      performance.mark(`chat-switch:${switchRequest.current}:ready`);
+      performance.measure('chat-switch', start, `chat-switch:${switchRequest.current}:ready`);
+      performance.clearMarks(start);
+      performance.clearMarks(`chat-switch:${switchRequest.current}:ready`);
+    }
+  }, [activeSessionId, sessionLoading]);
 
   useEffect(() => {
     if (activeProjectId) void window.cuppet.projects.open(activeProjectId).catch(() => undefined);
@@ -117,21 +134,51 @@ export function App() {
   }, []);
 
   const openSession = useCallback(async (sessionId: string) => {
-    const [session, modeState] = await Promise.all([
-      refreshClientSession(sessionId),
-      window.cuppet.cognitive.modeGet(sessionId),
-    ]);
-    setActiveSessionId(session.id);
+    const token = ++switchRequest.current;
+    const modeToken = ++modeRequest.current;
+    const previous = previousSelection.current;
+    globalThis.performance?.mark(`chat-switch:${token}:start`);
+    setActiveSessionId(sessionId);
     setDraft(null);
-    setMode(modeState.mode === 'plan' ? 'plan' : 'build');
-    localStorage.setItem(LAST_SESSION_KEY, session.id);
-    hydrateClientRunSession(session);
-  }, []);
+    setMode('build');
+    setSessionLoading(!loadedSessionIds.current.has(sessionId));
+    let nextMode: 'plan' | 'build' = 'build';
+    void window.cuppet.cognitive.modeGet(sessionId).then((state) => {
+      if (token !== switchRequest.current || modeToken !== modeRequest.current) return;
+      nextMode = state.mode === 'plan' ? 'plan' : 'build';
+      setMode(nextMode);
+      if (previousSelection.current.sessionId === sessionId) previousSelection.current.mode = nextMode;
+    }).catch((error) => { if (token === switchRequest.current) showToast(error); });
+    try {
+      const session = await refreshClientSession(sessionId);
+      loadedSessionIds.current.add(sessionId);
+      if (token !== switchRequest.current) return;
+      previousSelection.current = { sessionId: session.id, draft: null, mode: nextMode };
+      setSessionLoading(false);
+      localStorage.setItem(LAST_SESSION_KEY, session.id);
+      hydrateClientRunSession(session);
+    } catch (error) {
+      if (token !== switchRequest.current) return;
+      ++modeRequest.current;
+      setActiveSessionId(previous.sessionId);
+      setDraft(previous.draft);
+      setMode(previous.mode);
+      setSessionLoading(false);
+      showToast(error);
+      globalThis.performance?.clearMarks(`chat-switch:${token}:start`);
+    } finally {
+      if (token !== switchRequest.current) globalThis.performance?.clearMarks(`chat-switch:${token}:start`);
+    }
+  }, [showToast]);
 
   const startDraft = useCallback((projectId: string | null = null) => {
+    ++switchRequest.current;
+    ++modeRequest.current;
+    previousSelection.current = { sessionId: null, draft: { projectId, mode: 'build' }, mode: 'build' };
     setActiveSessionId(null);
     setDraft({ projectId, mode: 'build' });
     setMode('build');
+    setSessionLoading(false);
   }, []);
 
   const ensureActiveSession = useCallback(async (activate = true) => {
@@ -142,9 +189,14 @@ export function App() {
     const session = { ...created, messages: created.messages ?? [] };
     upsertClientSession(session);
     if (activate) {
+      ++switchRequest.current;
+      ++modeRequest.current;
+      loadedSessionIds.current.add(session.id);
+      previousSelection.current = { sessionId: session.id, draft: null, mode: draft?.mode ?? 'build' };
       setActiveSessionId(session.id);
       setDraft(null);
       setMode(draft?.mode ?? 'build');
+      setSessionLoading(false);
       localStorage.setItem(LAST_SESSION_KEY, session.id);
     }
     hydrateClientRunSession(session);
@@ -313,6 +365,7 @@ export function App() {
   }, [activeSessionId, showToast]);
 
   const send = useCallback(async (text: string, deliveryMode: DeliveryMode = 'queue', attachments: Attachment[] = []) => {
+    if (sessionLoading) return { clear: false };
     const trimmed = text.trim();
     const value = trimmed || (attachments.length ? `Attached: ${attachments.map((item) => item.name).join(', ')}` : '');
     if (!value) return { clear: false };
@@ -377,7 +430,7 @@ export function App() {
       showToast(error);
       return { clear: false };
     }
-  }, [activeSessionId, commands, ensureActiveSession, executeCommand, openSession, projects, provider, running, showToast]);
+  }, [activeSessionId, commands, ensureActiveSession, executeCommand, openSession, projects, provider, running, sessionLoading, showToast]);
 
   const stop = useCallback(async () => {
     if (!activeSessionId || !running.has(activeSessionId)) return;
@@ -439,12 +492,14 @@ export function App() {
   }, [activeSessionId, refreshClientSessions, showToast, startDraft]);
 
   const changeMode = useCallback(async (next: ComposerMode) => {
+    ++modeRequest.current;
     const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';
     const orchestratorEnabled = next === 'orchestrate';
     try {
       if (activeSessionId) await window.cuppet.cognitive.modeSet(activeSessionId, sessionMode);
       else setDraft((current) => current ? { ...current, mode: sessionMode } : current);
       setMode(sessionMode);
+      previousSelection.current = { ...previousSelection.current, mode: sessionMode };
       await window.cuppet.cognitive.orchestratorSet(orchestratorEnabled);
       setCognitive((current) => ({ ...current, orchestratorEnabled }));
     } catch (error) { showToast(error); }
@@ -513,6 +568,7 @@ export function App() {
       />
       <ChatPane
         session={active}
+        loading={sessionLoading}
         draft={draft}
         project={activeProject}
         mode={mode}

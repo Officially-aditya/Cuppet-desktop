@@ -15,10 +15,12 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function fixture({ activeSession = null, running = false, executeError = null } = {}) {
+async function fixture({ activeSession = null, running = false, executeError = null, sessionLoads = new Map(), modeLoads = new Map() } = {}) {
   const created = deferred(), sent = deferred(), loaded = deferred(), deleted = deferred();
   const states = [], effects = [], saved = new Map(), sends = [], deletions = [], executions = [], pendingAdded = [], pendingRemoved = [];
   let stateIndex = 0, sessions = activeSession ? [activeSession] : [];
+  const refs = [];
+  let refIndex = 0;
   if (activeSession) saved.set('cuppet.desktop.last-session', activeSession.id);
   const ChatPane = () => null;
   const react = {
@@ -30,6 +32,8 @@ async function fixture({ activeSession = null, running = false, executeError = n
     useMemo: (compute) => compute(),
     useCallback: (callback) => callback,
     useEffect: (effect) => effects.push(effect),
+    useLayoutEffect: (effect) => effects.push(effect),
+    useRef: (initial) => refs[refIndex++] ??= { current: initial },
   };
   const upsertClientSession = (session) => {
     sessions = [...sessions.filter((item) => item.id !== session.id), session];
@@ -46,8 +50,8 @@ async function fixture({ activeSession = null, running = false, executeError = n
         useClientSessions: () => sessions,
         useClientUnreadSessions: () => new Set(),
         refreshClientSessions: async () => sessions,
-        refreshClientSession: async () => {
-          const session = await loaded.promise;
+        refreshClientSession: async (id) => {
+          const session = await (sessionLoads.get(id)?.promise ?? loaded.promise);
           upsertClientSession(session);
           return session;
         },
@@ -74,7 +78,7 @@ async function fixture({ activeSession = null, running = false, executeError = n
         delete: (id) => { deletions.push(id); return deleted.promise; },
         send: (...args) => { sends.push(args); return sent.promise; },
       },
-      cognitive: { status: async () => ({}), modeGet: async () => ({ mode: 'build' }) },
+      cognitive: { status: async () => ({}), modeGet: (id) => modeLoads.get(id)?.promise ?? Promise.resolve({ mode: 'build' }) },
       commands: { list: async () => [], execute: async (...args) => { executions.push(args); if (executeError) throw executeError; return { result: { accepted: true } }; } },
       permissions: { list: async () => [] },
       questions: { list: async () => [] },
@@ -82,6 +86,7 @@ async function fixture({ activeSession = null, running = false, executeError = n
   });
   const render = () => {
     stateIndex = 0;
+    refIndex = 0;
     effects.length = 0;
     return exports.App();
   };
@@ -122,8 +127,8 @@ for (const target of ['created-chat', 'routed-chat']) {
     chat.sent.resolve({ accepted: true, sessionId: target });
     await chat.settle();
     assert.equal(finished, false, 'do not clear the composer before the saved prompt is loaded');
-    assert.equal(chat.pane().draft, originalDraft);
-    assert.equal(chat.pane().session, null);
+    assert.equal(chat.pane().draft, null, 'the submitted conversation is selected immediately');
+    assert.equal(chat.pane().loading, true, 'a skeleton covers the initial history fetch');
 
     chat.loaded.resolve({
       id: target,
@@ -219,4 +224,53 @@ test('deleting a different chat does not change the current conversation', async
   chat.deleted.resolve({ deleted: true });
   await chat.settle();
   assert.equal(chat.pane().session.id, 'keep-open');
+});
+
+test('rapid A to B to C switches stay on C despite late session and mode responses', async () => {
+  const sessionLoads = new Map(['A', 'B', 'C'].map(id => [id, deferred()]));
+  const modeLoads = new Map(['A', 'B', 'C'].map(id => [id, deferred()]));
+  const chat = await fixture({ sessionLoads, modeLoads });
+  const requests = ['A', 'B', 'C'].map(id => chat.sidebar().onSession(id));
+  assert.equal(chat.sidebar().activeSessionId, 'C');
+  assert.equal(chat.pane().loading, true);
+  sessionLoads.get('C').resolve({ id: 'C', messages: [] });
+  await requests[2];
+  assert.equal(chat.pane().session.id, 'C');
+  assert.equal(chat.pane().loading, false, 'modeGet does not delay loading the conversation');
+  modeLoads.get('C').resolve({ mode: 'plan' });
+  for (const id of ['B', 'A']) {
+    sessionLoads.get(id).resolve({ id, messages: [] });
+    modeLoads.get(id).resolve({ mode: 'build' });
+  }
+  await Promise.all(requests);
+  await chat.settle();
+  assert.equal(chat.sidebar().activeSessionId, 'C');
+  assert.equal(chat.pane().mode, 'plan');
+  assert.equal(chat.saved.get('cuppet.desktop.last-session'), 'C');
+});
+
+test('a failed switch restores the loaded chat and reports the error', async () => {
+  const failure = deferred();
+  const chat = await fixture({ activeSession: { id: 'A', messages: [] }, sessionLoads: new Map([['B', failure]]) });
+  const switching = chat.sidebar().onSession('B');
+  assert.equal(chat.sidebar().activeSessionId, 'B');
+  failure.reject(new Error('history unavailable'));
+  await switching;
+  assert.equal(chat.sidebar().activeSessionId, 'A');
+  assert.equal(chat.pane().session.id, 'A');
+  assert.equal(chat.pane().loading, false);
+  assert.match(chat.toast(), /history unavailable/);
+  assert.equal(chat.saved.get('cuppet.desktop.last-session'), 'A');
+});
+
+test('starting a draft cancels an outstanding switch without reopening its chat', async () => {
+  const pending = deferred();
+  const chat = await fixture({ sessionLoads: new Map([['B', pending]]) });
+  const switching = chat.sidebar().onSession('B');
+  chat.sidebar().onNewProjectChat('project');
+  pending.resolve({ id: 'B', messages: [] });
+  await switching;
+  assert.equal(chat.sidebar().activeSessionId, null);
+  assert.equal(chat.pane().draft.projectId, 'project');
+  assert.equal(chat.pane().loading, false);
 });

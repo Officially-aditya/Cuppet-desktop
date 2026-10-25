@@ -462,3 +462,8 @@
   pointer-events: auto;
   color: var(--muted);
 }
+
+.chat-loading-skeleton { display: grid; gap: 14px; max-width: 640px; padding: 28px 0; }
+.chat-loading-skeleton span { height: 16px; border-radius: 6px; background: var(--border-color, rgba(128, 128, 128, .15)); }
+.chat-loading-skeleton span:nth-child(2) { width: 85%; }
+.chat-loading-skeleton span:nth-child(3) { width: 60%; }

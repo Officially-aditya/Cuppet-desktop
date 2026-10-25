@@ -40,6 +40,7 @@ export type ChatTranscriptHandle = { followLatest: () => void };
 type Props = {
   ref?: Ref<ChatTranscriptHandle>;
   session: Session | null;
+  loading?: boolean;
   project: Project | null;
   running: boolean;
   transcript: TranscriptState;
@@ -51,7 +52,7 @@ type Props = {
   onConfigureProvider?: () => void;
 };
 
-export function ChatTranscript({ ref, session, project, running, transcript, pending = EMPTY_PENDING, onInspectDiff, onOpenLightbox, onOpenFolder, onCloneRepository, onConfigureProvider }: Props) {
+export function ChatTranscript({ ref, session, loading = false, project, running, transcript, pending = EMPTY_PENDING, onInspectDiff, onOpenLightbox, onOpenFolder, onCloneRepository, onConfigureProvider }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
   const followerRef = useRef<ScrollFollower | null>(null);
 
@@ -99,7 +100,11 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
   return (
     <>
       <section ref={messagesRef} className="messages react-messages" role="log" aria-label="Conversation" aria-live="off" aria-busy={running} tabIndex={0}>
-        {!messages.length && !pending.length ? (
+        {loading ? (
+          <div className="chat-loading-skeleton" role="status" aria-label="Loading conversation">
+            <span /><span /><span />
+          </div>
+        ) : !messages.length && !pending.length ? (
           <div className="empty-state">
             <img className="empty-logo" src={CUPPET_LOGO_URL} alt="" aria-hidden="true" />
             <h1>{emptyTitle}</h1><p>{emptyDescription}</p>

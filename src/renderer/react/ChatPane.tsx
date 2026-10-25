@@ -23,6 +23,7 @@ type Draft = { projectId: string | null; mode: 'plan' | 'build' } | null;
 
 export type ChatPaneProps = {
   session: Session | null;
+  loading?: boolean;
   draft: Draft;
   project: Project | null;
   mode: 'plan' | 'build';
@@ -79,7 +80,7 @@ export function ChatPane(props: ChatPaneProps) {
         void composerRef.current?.ingestFiles(Array.from(event.dataTransfer.files));
       }}>
       {isDraggingOver && <div className="chat-dropzone-overlay" aria-hidden="true"><div className="chat-dropzone-indicator">Drop images or files to attach</div></div>}
-      <ChatTranscript ref={transcriptRef} session={session} project={project} running={running} transcript={transcript} pending={pending}
+      <ChatTranscript ref={transcriptRef} session={session} loading={props.loading} project={project} running={running} transcript={transcript} pending={pending}
         onInspectDiff={onInspectDiff} onOpenLightbox={setLightboxImage}
         onOpenFolder={props.onOpenFolder} onCloneRepository={props.onCloneRepository} onConfigureProvider={props.onConfigureProvider} />
       <ChatComposer {...props} ref={composerRef} paneRef={paneRef} contextUsage={contextUsage}

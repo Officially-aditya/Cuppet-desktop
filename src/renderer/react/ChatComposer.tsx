@@ -21,7 +21,7 @@ type Props = ChatPaneProps & {
 };
 
 export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSubmitStart, onOpenLightbox,
-  session, draft, mode, activeMode, running, commands, queuedTurns = [], onCancelQueued, onSteerQueued,
+  session, draft, loading, mode, activeMode, running, commands, queuedTurns = [], onCancelQueued, onSteerQueued,
   onSend, onStop, onModeChange, question, onAnswerQuestion, permission, onResolvePermission }: Props) {
   const composerKey = session?.id ? `session:${session.id}` : `draft:${draft?.projectId ?? 'general'}`;
   const [composerDrafts, setComposerDrafts] = useState<Record<string, { text: string; attachments: Attachment[] }>>({});
@@ -422,7 +422,7 @@ function imageMimeFromName(name: string): string | null {
                 <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
               </svg>
             </button>
-            <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running} />
+            <ModePicker value={activeMode} onChange={(next) => void onModeChange(next)} disabled={running || loading} />
             {!online && (
               <span className="composer-connection-status" role="status" title="Check your connection. Messages may be interrupted while offline.">
                 <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -461,7 +461,7 @@ function imageMimeFromName(name: string): string | null {
                 </svg>
               </button>
             ) : (
-              <button type="submit" className="send-button" aria-label="Send" title="Send" disabled={!value.trim() && !attachments.length}>
+              <button type="submit" className="send-button" aria-label="Send" title="Send" disabled={loading || (!value.trim() && !attachments.length)}>
                 <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                   <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
