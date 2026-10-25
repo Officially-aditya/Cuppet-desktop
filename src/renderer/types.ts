@@ -32,6 +32,8 @@ export type MessageActivity = {
 
 export type ToolExecution = {
   id: string;
+  messageId?: string;
+  updatedAt?: number;
   toolName?: string;
   status?: string;
   argumentsJson?: string;
@@ -50,6 +52,7 @@ export type Session = {
   messages: Message[];
   activities?: MessageActivity[];
   toolExecutions?: ToolExecution[];
+  history?: { hasMore: boolean; beforeSequence: number | null };
 };
 
 export type Attachment = {

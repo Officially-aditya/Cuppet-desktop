@@ -161,7 +161,10 @@ export class RuntimeService {
       }
       case 'session.list': return this.#db.listSessions(params.projectId === undefined ? {} : { projectId: params.projectId });
       case 'session.create': return this.createSession(params.projectId ?? null);
-      case 'session.get': return this.requireSession(params.sessionId, { full: true });
+      case 'session.get': {
+        this.requireSession(params.sessionId);
+        return this.#db.getSessionWindow(params.sessionId, { limit: params.limit, beforeSequence: params.beforeSequence });
+      }
       case 'session.send': return this.send(params);
       case 'session.steer': return this.#steer(params);
       case 'session.stop': return this.stop(params.sessionId);

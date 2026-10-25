@@ -19,7 +19,7 @@ test('App consumes shared session collection without owning a mutable session li
 test('App owns only active session selection while shared store owns active server projection', () => {
   assert.match(app, /const \[activeSessionId, setActiveSessionId\] = useState<string \| null>\(null\)/);
   assert.match(app, /const active = useMemo\(\(\) => activeSessionId \? sessions\.find/);
-  assert.match(app, /refreshClientSession\(sessionId\)/);
+  assert.match(app, /refreshClientSession\(sessionId, \{ limit: 60 \}\)/);
   assert.doesNotMatch(app, /useState<Session \| null>/);
   assert.doesNotMatch(app, /setActive\(/);
   assert.doesNotMatch(app, /window\.cuppet\.sessions\.get\(/);
@@ -31,7 +31,7 @@ test('App owns only active session selection while shared store owns active serv
 test('client session store owns list refresh, event upserts, lifecycle reconciliation, and detailed active state', () => {
   assert.match(sessionState, /useSyncExternalStore/);
   assert.match(sessionState, /window\.cuppet\.sessions\.list\(\)/);
-  assert.match(sessionState, /window\.cuppet\.sessions\.get\(id\)/);
+  assert.match(sessionState, /window\.cuppet\.sessions\.get\(id,/);
   assert.match(sessionState, /window\.cuppet\.onEvent/);
   assert.match(sessionState, /event\?\.session\?\.id/);
   assert.match(sessionState, /upsertClientSession\(event\.session\)/);
@@ -51,6 +51,6 @@ test('client session store owns list refresh, event upserts, lifecycle reconcili
   assert.match(sessionState, /current\?\.messages \?\? \[\]/);
   assert.match(sessionState, /const previous = sessions;[\s\S]*return sessions !== previous/);
   assert.match(sessionState, /if \(refreshPromise\) return refreshPromise/);
-  assert.match(sessionState, /detailRefreshes\.get\(id\)/);
+  assert.match(sessionState, /detailRefreshes\.get\(key\)/);
   assert.match(sessionState, /if \(!listeners\.size\) releaseRuntimeSubscription\(\)/);
 });

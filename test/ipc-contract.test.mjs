@@ -9,6 +9,7 @@ const sample = {
   id: 'id', nullableId: null, text: 'text', path: 'src/app.js', boolean: true,
   mode: 'build', autoMode: 'full', permissionReply: 'once', role: 'trusted', appearance: 'system',
   object: {}, dimension: 80, paths: ['src/app.js'], answers: [['answer']],
+  sessionWindow: { limit: 60, beforeSequence: 100 },
   attachments: [{ name: 'file.txt', path: 'file.txt' }], command: { id: 'status' },
 };
 const at = (object, path) => path.split('.').reduce((item, key) => item[key], object);

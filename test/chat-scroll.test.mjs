@@ -58,6 +58,9 @@ function fixture(savedValue = null) {
   const listeners = new Map();
   const node = {
     clientHeight: 500, scrollHeight: 2000, children: [],
+    contains: element => node.children.includes(element),
+    querySelectorAll: () => node.children,
+    getBoundingClientRect: () => ({ top: 0, bottom: 500 }),
     get scrollTop() { return scrollTop; },
     set scrollTop(value) { scrollTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
     addEventListener: (name, listener) => listeners.set(name, listener),
@@ -72,6 +75,7 @@ function fixture(savedValue = null) {
     flush,
     resize: () => { observers.resize.callback(); flush(); },
     scrollTo: (top) => { node.scrollTop = top; listeners.get('scroll')(); },
+    preserve: () => refs[1].current.preserveReadingPosition(),
   };
 }
 
@@ -171,4 +175,24 @@ test('deferred historical rendering keeps the latest message in view until the u
   chat.node.scrollHeight += 5000;
   chat.resize();
   assert.equal(chat.node.scrollTop, 22000, 'new historical layout must not override reading intent');
+});
+
+test('prepending history keeps the visible message anchored through deferred layout changes', () => {
+  const chat = fixture();
+  chat.scrollTo(200);
+  let position = 240;
+  const row = { getBoundingClientRect: () => ({ top: position - chat.node.scrollTop, bottom: position - chat.node.scrollTop + 100 }) };
+  chat.node.children.push(row);
+  chat.preserve();
+  for (const growth of [500, 800]) {
+    position += growth;
+    chat.node.scrollHeight += growth;
+    chat.resize();
+    assert.equal(row.getBoundingClientRect().top, 40, 'the same message stays at the same viewport offset');
+  }
+  chat.scrollTo(1000);
+  position += 400;
+  chat.node.scrollHeight += 400;
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 1000, 'user scrolling releases the saved anchor');
 });

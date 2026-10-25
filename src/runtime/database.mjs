@@ -153,6 +153,23 @@ export class ConversationDatabase {
   getSessionSummary(id){ return this.#db.prepare(`SELECT s.id,s.title,s.project_id AS projectId,s.archived_at AS archivedAt,s.deleted_at AS deletedAt,s.created_at AS createdAt,s.updated_at AS updatedAt,COALESCE((SELECT status FROM messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'complete') AS lastStatus FROM sessions s WHERE s.id=?`).get(id) ?? null; }
   getSessionMessages(id){ return this.#sessionMessages.all(id).map((row) => this.#pendingContent.get(row.id)?.message ?? hydrateMessage(row)); }
   getSession(id){ const session=this.getSessionSummary(id); if(!session) return null; return {...session,messages:this.getSessionMessages(id),activities:this.listMessageActivities(id),toolExecutions:this.listToolExecutions(id)}; }
+  getSessionWindow(id, { limit = 60, beforeSequence } = {}) {
+    const session = this.getSessionSummary(id);
+    if (!session) return null;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new Error('invalid session window limit');
+    if (beforeSequence !== undefined && (!Number.isSafeInteger(beforeSequence) || beforeSequence < 1)) throw new Error('invalid session history cursor');
+    const rows = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE session_id=?${beforeSequence === undefined ? '' : ' AND sequence<?'} ORDER BY sequence DESC LIMIT ?`)
+      .all(id, ...(beforeSequence === undefined ? [] : [beforeSequence]), limit + 1);
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).reverse().map(row => this.#pendingContent.get(row.id)?.message ?? hydrateMessage(row));
+    const messageIds = messages.map(message => message.id);
+    return {
+      ...session, messages,
+      activities: this.listMessageActivities(id, { messageIds }),
+      toolExecutions: this.listToolExecutions(id, { messageIds }),
+      history: { hasMore, beforeSequence: messages[0]?.sequence ?? null },
+    };
+  }
   appendMessage({id,sessionId,role,content='',attachments=[],status='complete',now=Date.now()}){ if(!MESSAGE_STATUSES.has(status)) throw new Error(`invalid message status: ${status}`); const next=this.#db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM messages WHERE session_id=?').get(sessionId)?.sequence ?? 1; const attachmentsJson = Array.isArray(attachments) && attachments.length ? JSON.stringify(attachments) : null; this.#db.prepare(`INSERT INTO messages (id,session_id,sequence,role,content,attachments_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,sessionId,next,role,content,attachmentsJson,status,now,now); this.touchSession(sessionId,now); this.#upsertSearchMessage(id); return this.getMessage(id); }
   getMessage(id){ if (this.#pendingContent.has(id)) return { ...this.#pendingContent.get(id).message }; const row = this.#db.prepare(`SELECT id,session_id AS sessionId,sequence,role,content,attachments_json AS attachmentsJson,status,created_at AS createdAt,updated_at AS updatedAt FROM messages WHERE id=?`).get(id) ?? null; return row ? hydrateMessage(row) : null; }
   getLatestStreamingAssistantMessageId(sessionId){ return this.#db.prepare("SELECT id FROM messages WHERE session_id=? AND role='assistant' AND status='streaming' ORDER BY sequence DESC LIMIT 1").get(sessionId)?.id ?? ''; }
@@ -259,7 +276,11 @@ export class ConversationDatabase {
     return this.getToolExecution(id);
   }
   getToolExecution(id){ return this.#db.prepare(`SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE id=?`).get(id) ?? null; }
-  listToolExecutions(sessionId){ return this.#db.prepare(`SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=? ORDER BY created_at ASC,id ASC`).all(sessionId); }
+  listToolExecutions(sessionId, { messageIds } = {}) {
+    if (Array.isArray(messageIds) && !messageIds.length) return [];
+    const filter = Array.isArray(messageIds) ? ` AND message_id IN (${messageIds.map(() => '?').join(',')})` : '';
+    return this.#db.prepare(`SELECT id,session_id AS sessionId,message_id AS messageId,call_id AS callId,tool_name AS toolName,arguments_json AS argumentsJson,output,status,permission_source AS permissionSource,created_at AS createdAt,updated_at AS updatedAt FROM tool_executions WHERE session_id=?${filter} ORDER BY created_at ASC,id ASC`).all(sessionId, ...(messageIds ?? []));
+  }
   listMessageToolExecutions(sessionId, messageId) {
     const message = this.getMessage(messageId);
     if (!message || message.sessionId !== sessionId) return [];

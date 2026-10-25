@@ -24,6 +24,15 @@ const render = (props) => renderToStaticMarkup(React.createElement(ChatTranscrip
 const attachments = [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }, { name: 'notes.txt' }];
 const message = (id, role, content, status = 'complete') => ({ id, sessionId: 's1', role, content, status, attachments: role === 'user' ? attachments : [] });
 
+test('history exposes earlier messages while unloaded conversations show a skeleton', () => {
+  const session = { id: 's1', messages: [message('u1', 'user', 'hello')], history: { hasMore: true, beforeSequence: 50 } };
+  assert.match(render({ session }), /Show earlier messages/);
+  const loading = render({ session, loading: true });
+  assert.match(loading, /Loading conversation/);
+  assert.doesNotMatch(loading, /Show earlier messages|empty-state/);
+  assert.doesNotMatch(render({ session: { ...session, history: { hasMore: false, beforeSequence: 1 } } }), /Show earlier messages/);
+});
+
 test('confirmed and pending prompts show file chips and image previews in history', () => {
   for (const pending of [false, true]) {
     const html = render(pending ? {

@@ -93,14 +93,14 @@ export class RemoteCommandAdapter {
   async #sessionSnapshot(state,explicit,params={}){
     const sessionId=this.#requireSession(state,explicit);
     const [session,mode,auto,run]=await Promise.all([
-      this.#call('session.get',{sessionId}),
+      this.#call('session.get',{sessionId,limit:80,beforeSequence:Number.isSafeInteger(params.beforeSequence)&&params.beforeSequence>0?params.beforeSequence:undefined}),
       this.#call('session.mode.get',{sessionId}),
       this.#call('session.auto.get',{sessionId}),
       this.#call('session.run.latest',{sessionId}),
     ]);
     return {projectionVersion:1,...sessionProjection(session,params),run:run??null,mode:mode.mode,autoMode:auto.enabled,provider:this.#providerStatus(state)};
   }
-  async #sessionMessages(state,explicit,params={}){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit)});return sessionProjection(session,params).session.messages;}
+  async #sessionMessages(state,explicit,params={}){const session=await this.#call('session.get',{sessionId:this.#requireSession(state,explicit),limit:80,beforeSequence:Number.isSafeInteger(params.beforeSequence)&&params.beforeSequence>0?params.beforeSequence:undefined});return sessionProjection(session,params).session.messages;}
   async #sessionNew(actor,state,params,envelope){
     const projectId=stringOr(params.projectId)??state.projectId??null; const session=await this.#call('session.create',{projectId},remoteCommandContext(actor,envelope)); state.sessionId=session.id; state.projectId=session.projectId??projectId; return session;
   }

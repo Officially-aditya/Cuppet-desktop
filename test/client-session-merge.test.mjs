@@ -70,3 +70,43 @@ test('a summary without messages leaves the loaded messages alone', () => {
   assert.equal(session.messages.length, 1);
   assert.equal(session.messages[0].attachments[0].name, 'shot.png');
 });
+
+test('window pages preserve loaded messages and merge activities and tools by key', () => {
+  const store = loadStore();
+  const activity = (messageId, sequence, text) => ({ messageId, sequence, source: 'provider', activity: { text } });
+  const latest = {
+    id: 's1', messages: [message('m3', 3, 'assistant', 'three'), message('m4', 4, 'assistant', 'four')],
+    activities: [activity('m3', 1, 'three')], toolExecutions: [{ id: 't3', status: 'running' }],
+    history: { hasMore: true, beforeSequence: 3 },
+  };
+  store.upsertClientSession(latest);
+  store.upsertClientSession({
+    id: 's1', messages: [message('m1', 1, 'user', 'one'), message('m2', 2, 'assistant', 'two')],
+    activities: [activity('m2', 1, 'two')], toolExecutions: [{ id: 't2', status: 'complete' }],
+    history: { hasMore: false, beforeSequence: 1 },
+  });
+  store.upsertClientSession({ ...latest, toolExecutions: [{ id: 't3', status: 'complete' }] });
+  const session = store.clientSessionSnapshot('s1');
+  assert.deepEqual(plain(session.messages.map(row => row.id)), ['m1', 'm2', 'm3', 'm4']);
+  assert.equal(session.activities.length, 2, 'refreshes do not duplicate or drop earlier activity');
+  assert.deepEqual(plain(session.toolExecutions.map(row => [row.id, row.status])), [['t3', 'complete'], ['t2', 'complete']]);
+  assert.deepEqual(plain(session.history), { hasMore: false, beforeSequence: 1 });
+});
+
+test('event refreshes request enough messages to retain the expanded window', async t => {
+  const previous = globalThis.window;
+  t.after(() => { globalThis.window = previous; });
+  const store = loadStore();
+  const messages = Array.from({ length: 120 }, (_, i) => message(`m${i}`, i + 1, 'assistant', 'text'));
+  store.upsertClientSession({ id: 's1', messages, history: { hasMore: true, beforeSequence: 1 } });
+  const calls = [];
+  globalThis.window = { cuppet: { sessions: { get: async (id, options) => {
+    calls.push(options);
+    return { id, messages, history: { hasMore: true, beforeSequence: 1 } };
+  } } } };
+  store.reduceClientSessionEvent({ type: 'run.finished', sessionId: 's1' });
+  await store.refreshClientSession('s1');
+  assert.equal(calls[0].limit, 140);
+  await store.refreshClientSession('s1', { limit: 60, beforeSequence: 80 });
+  assert.deepEqual(plain(calls[1]), { limit: 60, beforeSequence: 80 });
+});

@@ -46,7 +46,7 @@ export function sessionProjection(session, { beforeSequence, limit } = {}) {
   let toolExecutions = (session.toolExecutions ?? []).filter((item) => !item.messageId || ids.has(item.messageId)).slice(-80)
     .map((item) => ({ callId: item.callId, messageId: item.messageId, tool: item.tool, status: item.status }));
   const result = () => ({ session: { ...sessionSummary(session), messages, activities, toolExecutions },
-    history: { hasMore: eligible.length > messages.length, beforeSequence: messages[0]?.sequence ?? null, truncated } });
+    history: { hasMore: Boolean(session.history?.hasMore) || eligible.length > messages.length, beforeSequence: messages[0]?.sequence ?? null, truncated } });
   while (Buffer.byteLength(JSON.stringify(result()), 'utf8') > PROJECTION_BUDGET) {
     if (messages.length > 1) {
       messages.shift();

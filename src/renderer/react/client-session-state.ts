@@ -146,18 +146,20 @@ export async function refreshClientSessions() {
   return refreshPromise;
 }
 
-export async function refreshClientSession(sessionId: string) {
+export async function refreshClientSession(sessionId: string, options: { limit?: number; beforeSequence?: number } = {}) {
   const id = text(sessionId);
   if (!id) throw new Error('sessionId is required');
-  const existing = detailRefreshes.get(id);
+  const key = options.beforeSequence === undefined ? id : `${id}:${options.beforeSequence}`;
+  const existing = detailRefreshes.get(key);
   if (existing) return existing;
-  const refresh = window.cuppet.sessions.get(id).then((session) => {
+  const limit = options.limit ?? Math.min(10_000, Math.max(60, (clientSessionSnapshot(id)?.messages.length ?? 0) + 20));
+  const refresh = window.cuppet.sessions.get(id, { ...options, limit }).then((session) => {
     upsertClientSession(session);
     return session;
   }).finally(() => {
-    detailRefreshes.delete(id);
+    detailRefreshes.delete(key);
   });
-  detailRefreshes.set(id, refresh);
+  detailRefreshes.set(key, refresh);
   return refresh;
 }
 
@@ -263,10 +265,20 @@ function mergeSession(current: Session | undefined, incoming: Session) {
     : { ...current, ...incoming };
   return normalizeSession({
     ...base,
-    messages: Object.prototype.hasOwnProperty.call(value, 'messages') ? mergeMessages(current?.messages, incoming.messages) : current?.messages ?? [],
-    activities: Object.prototype.hasOwnProperty.call(value, 'activities') ? incoming.activities : current?.activities,
-    toolExecutions: Object.prototype.hasOwnProperty.call(value, 'toolExecutions') ? incoming.toolExecutions : current?.toolExecutions,
+    messages: Object.prototype.hasOwnProperty.call(value, 'messages') ? mergeMessages(current?.messages, incoming.messages, Boolean(incoming.history)) : current?.messages ?? [],
+    activities: mergeByKey(current?.activities, incoming.activities, row => `${row.messageId}:${row.sequence}`),
+    toolExecutions: mergeByKey(current?.toolExecutions, incoming.toolExecutions, row => row.id),
+    history: incoming.history && (!current?.history || (incoming.history.beforeSequence ?? Infinity) <= (current.history.beforeSequence ?? Infinity))
+      ? incoming.history : current?.history,
   });
+}
+
+function mergeByKey<T>(current: T[] | undefined, incoming: T[] | undefined, key: (row: T) => string): T[] | undefined {
+  if (!incoming?.length) return current ?? incoming;
+  if (!current?.length) return incoming;
+  const rows = new Map(current.map(row => [key(row), row]));
+  for (const row of incoming) rows.set(key(row), row);
+  return [...rows.values()];
 }
 
 const TERMINAL_MESSAGE_STATUSES = new Set(['complete', 'error', 'stopped']);
@@ -275,21 +287,23 @@ const TERMINAL_MESSAGE_STATUSES = new Set(['complete', 'error', 'stopped']);
 // instead of replacing the list so it can never drop a message created after the read (a sent or
 // steered prompt) or roll a message back to an earlier streaming state. Unchanged messages keep
 // their identity so memoized transcript rows are not re-rendered by every refresh.
-function mergeMessages(current: Message[] | undefined, incoming: Message[] | undefined): Message[] {
+function mergeMessages(current: Message[] | undefined, incoming: Message[] | undefined, windowed = false): Message[] {
   if (!Array.isArray(incoming)) return current ?? [];
   if (!current?.length) return incoming;
   const known = new Map(current.map((message) => [message.id, message]));
   const incomingIds = new Set<string>();
   let incomingLatest = 0;
+  let incomingFirst = Infinity;
   const merged = incoming.map((message) => {
     incomingIds.add(message.id);
     incomingLatest = Math.max(incomingLatest, message.sequence ?? 0);
+    incomingFirst = Math.min(incomingFirst, message.sequence ?? 0);
     const previous = known.get(message.id);
     return previous ? reconcileMessage(previous, message) : message;
   });
   for (const message of current) {
     // Created after the snapshot was read, so the snapshot cannot know about it.
-    if (!incomingIds.has(message.id) && (message.sequence ?? 0) > incomingLatest) merged.push(message);
+    if (!incomingIds.has(message.id) && ((message.sequence ?? 0) > incomingLatest || (windowed && (message.sequence ?? 0) < incomingFirst))) merged.push(message);
   }
   merged.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
   return merged.length === current.length && merged.every((message, index) => message === current[index]) ? current : merged;

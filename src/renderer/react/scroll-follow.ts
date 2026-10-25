@@ -4,6 +4,17 @@ export function createScrollFollower(node: HTMLElement) {
   let programmaticTop: number | null = null;
   let lastTop = node.scrollTop;
   let lastHeight = node.scrollHeight;
+  let anchor: { element: HTMLElement; top: number } | null = null;
+  const restoreAnchor = () => {
+    if (!anchor || !node.contains(anchor.element)) { anchor = null; return; }
+    const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+    if (delta) {
+      node.scrollTop += delta;
+      programmaticTop = node.scrollTop;
+    }
+    lastTop = node.scrollTop;
+    lastHeight = node.scrollHeight;
+  };
   const pin = () => {
     if (!following) return;
     const bottom = Math.max(0, node.scrollHeight - node.clientHeight);
@@ -15,8 +26,8 @@ export function createScrollFollower(node: HTMLElement) {
     lastHeight = node.scrollHeight;
   };
   const schedule = () => {
-    if (!following || frame !== null) return;
-    frame = requestAnimationFrame(() => { frame = null; pin(); });
+    if ((!following && !anchor) || frame !== null) return;
+    frame = requestAnimationFrame(() => { frame = null; if (anchor) restoreAnchor(); else pin(); });
   };
 
   // Pixel offsets go stale as deferred history changes height. Each visit starts
@@ -29,6 +40,7 @@ export function createScrollFollower(node: HTMLElement) {
     // A delayed event from our own pin can arrive after the next tool row grew.
     // Its distance from the bottom says nothing about the user's intent.
     if (top !== programmaticTop) {
+      anchor = null;
       if (top < lastTop && height >= lastHeight) following = false;
       else if (height - node.clientHeight - top < 60) following = true;
     }
@@ -37,12 +49,13 @@ export function createScrollFollower(node: HTMLElement) {
     lastHeight = height;
     schedule();
   };
-  const onWheel = (event: WheelEvent) => { if (event.deltaY < 0) following = false; };
+  const onWheel = (event: WheelEvent) => { anchor = null; if (event.deltaY < 0) following = false; };
   const onKeyDown = (event: KeyboardEvent) => {
+    anchor = null;
     if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)) following = false;
   };
   let touchY = 0;
-  const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+  const onTouchStart = (event: TouchEvent) => { anchor = null; touchY = event.touches[0]?.clientY ?? 0; };
   const onTouchMove = (event: TouchEvent) => {
     const nextY = event.touches[0]?.clientY ?? touchY;
     if (nextY > touchY) following = false;
@@ -73,7 +86,13 @@ export function createScrollFollower(node: HTMLElement) {
 
   return {
     schedule,
-    followLatest() { following = true; pin(); },
+    followLatest() { anchor = null; following = true; pin(); },
+    preserveReadingPosition() {
+      following = false;
+      const top = node.getBoundingClientRect().top;
+      const element = Array.from(node.querySelectorAll<HTMLElement>('[data-message-id]')).find(row => row.getBoundingClientRect().bottom > top);
+      anchor = element ? { element, top: element.getBoundingClientRect().top } : null;
+    },
     dispose() {
       if (frame !== null) cancelAnimationFrame(frame);
       resize?.disconnect();

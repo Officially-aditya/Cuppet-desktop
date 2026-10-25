@@ -117,7 +117,7 @@ function registerIpc() {
   handle('sessions.list', (_event, projectId) => request('session.list', projectId === undefined ? {} : { projectId }));
   handle('sessions.deleted', () => request('session.deleted.list'));
   handle('sessions.create', (_event, projectId) => request('session.create', { projectId: projectId ?? null }));
-  handle('sessions.get', (_event, sessionId) => request('session.get', { sessionId }));
+  handle('sessions.get', (_event, sessionId, options) => request('session.get', { sessionId, limit: options?.limit, beforeSequence: options?.beforeSequence }));
   handle('sessions.editedFiles', (_event, sessionId) => request('session.edited-files', { sessionId: boundedId(sessionId) }));
   handle('sessions.search', (_event, query, options) => request('session.search', { query: typeof query === 'string' ? query.slice(0, 512) : '', limit: clampLimit(options?.limit), includeArchived: options?.includeArchived === true }));
   handle('sessions.rename', (_event, sessionId, title) => request('session.rename', { sessionId: boundedId(sessionId), title: typeof title === 'string' ? title.trim().slice(0, 160) : '' }));

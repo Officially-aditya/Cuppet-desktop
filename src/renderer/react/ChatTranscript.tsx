@@ -1,7 +1,7 @@
 import { memo, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { Project, Session } from '../types';
-import type { PendingUserMessage } from './client-session-state';
+import { refreshClientSession, type PendingUserMessage } from './client-session-state';
 import type { ActivityEntry } from './ChatPane';
 import { CopyIcon, CheckIcon, type DiffFile } from './DiffViewerModal';
 import { renderMarkdown } from './markdown';
@@ -55,6 +55,30 @@ type Props = {
 export function ChatTranscript({ ref, session, loading = false, project, running, transcript, pending = EMPTY_PENDING, onInspectDiff, onOpenLightbox, onOpenFolder, onCloneRepository, onConfigureProvider }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
   const followerRef = useRef<ScrollFollower | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const historyRequest = useRef(0);
+
+  useEffect(() => {
+    setLoadingEarlier(false);
+    setHistoryError('');
+    return () => { ++historyRequest.current; };
+  }, [session?.id]);
+
+  const showEarlier = async () => {
+    if (!session?.history?.hasMore || !session.history.beforeSequence || loadingEarlier) return;
+    const request = ++historyRequest.current;
+    setLoadingEarlier(true);
+    setHistoryError('');
+    followerRef.current?.preserveReadingPosition();
+    try {
+      await refreshClientSession(session.id, { limit: 60, beforeSequence: session.history.beforeSequence });
+    } catch (error) {
+      if (request === historyRequest.current) setHistoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (request === historyRequest.current) setLoadingEarlier(false);
+    }
+  };
 
   useLayoutEffect(() => {
     const node = messagesRef.current;
@@ -100,6 +124,12 @@ export function ChatTranscript({ ref, session, loading = false, project, running
   return (
     <>
       <section ref={messagesRef} className="messages react-messages" role="log" aria-label="Conversation" aria-live="off" aria-busy={running} tabIndex={0}>
+        {!loading && session?.history?.hasMore && <div className="chat-history-controls">
+          <button type="button" className="ghost-button" disabled={loadingEarlier} onClick={() => void showEarlier()}>
+            {loadingEarlier ? 'Loading earlier messages…' : 'Show earlier messages'}
+          </button>
+          {historyError && <p role="alert">{historyError}</p>}
+        </div>}
         {loading ? (
           <div className="chat-loading-skeleton" role="status" aria-label="Loading conversation">
             <span /><span /><span />
