@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readTraceOpen, writeTraceOpen } from '../src/renderer/react/trace-presentation.ts';
+import { readTraceOpen, workWords, writeTraceOpen } from '../src/renderer/react/trace-presentation.ts';
 import { installSessionRetentionCleanup } from '../src/renderer/react/session-retention.ts';
 
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -58,4 +58,19 @@ test('deleted-chat cleanup removes the persisted disclosure preference', () => {
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
   }
+});
+
+test('architecture words vary between activities but retain the same active/past pair across rerenders', () => {
+  const selected = new Map();
+  for (let index = 0; index < 100; index++) {
+    const id = `message-${index}:work`;
+    const words = workWords(id);
+    assert.deepEqual(workWords(id), words);
+    assert.ok(words.active.endsWith('ing'));
+    assert.ok(words.done && words.done !== words.active);
+    selected.set(words.active, words.done);
+  }
+  assert.ok(selected.size >= 8);
+  assert.equal(selected.get('Forging'), 'Forged');
+  assert.equal(selected.get('Smithering'), 'Smithered');
 });

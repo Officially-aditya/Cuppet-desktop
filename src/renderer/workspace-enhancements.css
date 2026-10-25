@@ -195,44 +195,6 @@
   outline-offset: -3px;
 }
 
-.react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
-.react-main-pane:has(.composer-pause-button) .message-preview::after {
-  content: 'Working…';
-  box-sizing: border-box;
-  display: block;
-  width: min(820px,100%);
-  margin: 3px auto 0;
-  padding: 3px 0 3px 16px;
-  background: radial-gradient(circle at 5px 50%,currentColor 0 2px,transparent 2.5px);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 18px;
-  animation: cuppet-working-pulse 1.15s ease-in-out infinite;
-}
-
-.react-main-pane:has(.composer-pause-button) .message-preview::after {
-  width: 100%;
-  margin-top: 6px;
-}
-
-@keyframes cuppet-working-pulse {
-  0%,100% {
-    opacity: .48;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-@media(prefers-reduced-motion:reduce) {
-  .react-main-pane:has(.composer-pause-button) .react-messages:not(:has(.message-preview))::after,
-  .react-main-pane:has(.composer-pause-button) .message-preview::after {
-    animation: none;
-    opacity: .8;
-  }
-}
-
 @media(max-width:700px) {
   .message.user .message-content {
     max-width: 92%;

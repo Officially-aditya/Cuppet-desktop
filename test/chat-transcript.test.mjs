@@ -254,3 +254,17 @@ test('progress narration stays separate from provider reasoning and retains its 
   assert.equal(items[1].completedAt, 5000);
 });
 
+test('tool timing survives updates and hydration so work durations do not restart on each event', () => {
+  const rows = [
+    { messageId: 'timed-tool', source: 'provider', sequence: 1, createdAt: 1000, activity: { type: 'activity.tool.opened', callId: 'read', tool: 'read' } },
+    { messageId: 'timed-tool', source: 'provider', sequence: 2, createdAt: 5000, activity: { type: 'activity.tool.updated', callId: 'read', tool: 'read', argumentsJson: '{"path":"a.ts"}' } },
+    { messageId: 'timed-tool', source: 'provider', sequence: 3, createdAt: 9000, activity: { type: 'activity.tool.closed', callId: 'read', tool: 'read', status: 'success' } },
+  ];
+  const pending = hydrateTranscript(rows.slice(0, 2))['timed-tool'].items[0];
+  assert.equal(pending.startedAt, 1000);
+  assert.equal(pending.completedAt, undefined);
+  const completed = hydrateTranscript(rows)['timed-tool'].items[0];
+  assert.equal(completed.startedAt, 1000);
+  assert.equal(completed.completedAt, 9000);
+});
+

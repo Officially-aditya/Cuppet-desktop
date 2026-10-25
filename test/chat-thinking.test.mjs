@@ -8,17 +8,18 @@ import * as tracePresentation from '../src/renderer/react/trace-presentation.ts'
 import { formatWorkedDuration, orderedTranscriptItems } from '../src/renderer/react/chat-transcript.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, MessageView, TraceView, WorkTraceRow, ToolTraceRow, ToolTraceDetails };', {
+const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, MessageView, TraceView, WorkTraceRow, WorkDuration, ToolTraceRow, ToolTraceDetails };', {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
-function fixture(component, { deferred = false } = {}) {
+function fixture(component, { deferred = false, now = Date.now() } = {}) {
   const states = [], refs = [], memos = [], parsed = [];
   let stateIndex = 0, refIndex = 0, memoIndex = 0;
   let deferredReady = !deferred;
   const exports = {};
   vm.runInNewContext(compiled, {
     exports,
+    Date: class extends Date { static now() { return now; } },
     JSON: { parse(value) { parsed.push(value); return JSON.parse(value); }, stringify: JSON.stringify },
     require(name) {
       if (name === 'react') return {
@@ -182,7 +183,7 @@ test('thinking opens its reasoning and tool calls in one disclosure and retains 
   const props = { group: { id: thought.id, type: 'work-group', items: [thought, tool] }, contentId: 'work-content', live: true };
   let tree = render(props);
   let button = find(tree, (node) => node.type === 'button');
-  assert.equal(button.props.children[0].props.children, 'Thinking…');
+  assert.equal(find(tree, node => node.type?.name === 'WorkDuration').props.active, true);
   assert.equal(button.props['aria-expanded'], false);
   assert.equal(find(tree, (node) => node.props.content), undefined);
   button.props.onClick();
@@ -196,13 +197,35 @@ test('thinking opens its reasoning and tool calls in one disclosure and retains 
   assert.equal(find(tree, (node) => node.props.className === 'message-work-details').props.hidden, true);
 });
 
-test('working changes to worked without changing the disclosure or exposing tool details', () => {
+test('completed tools keep their activity live until the agent finishes, and stale tools cannot keep it live afterward', () => {
   const render = fixture('WorkTraceRow');
   const props = { group: { id: tool.id, type: 'work-group', items: [{ ...tool, status: 'running' }] }, contentId: 'work', live: true };
-  assert.equal(find(render(props), (node) => node.type === 'button').props.children[0].props.children, 'Working…');
-  const tree = render({ ...props, group: { ...props.group, items: [tool] } });
-  assert.equal(find(tree, (node) => node.type === 'button').props.children[0].props.children, 'Worked');
+  const duration = tree => find(tree, node => node.type?.name === 'WorkDuration').props;
+  assert.equal(duration(render(props)).active, true);
+  assert.equal(duration(render({ ...props, group: { ...props.group, items: [tool] } })).active, true);
+  const tree = render({ ...props, live: false });
+  assert.equal(duration(tree).active, false);
+  assert.doesNotMatch(find(tree, node => node.type === 'button').props.title, /Reading|Running/);
   assert.equal(find(tree, (node) => node.type?.name === 'ToolTraceRow'), undefined);
+});
+
+test('only the latest work interval is active while the agent continues', () => {
+  const trace = [{ ...tool, status: 'running' }, { ...thought, id: 'progress', kind: 'commentary', sequence: 3, startedAt: 5000, completedAt: 6000 }, { ...tool, id: 'latest', sequence: 4 }];
+  const props = { trace, messageId: 'm', live: true, startedAt: 1000 };
+  const render = fixture('TraceView');
+  const rows = tree => Array.from(tree.props.children).filter(node => node.type?.name === 'WorkTraceRow');
+  assert.deepEqual(rows(render(props)).map(node => node.props.live), [false, true]);
+  assert.deepEqual(rows(render({ ...props, live: false })).map(node => node.props.live), [false, false]);
+});
+
+test('elapsed work labels use seconds, minutes and hours and retain the matching past tense', () => {
+  const words = tracePresentation.workWords('timed');
+  const text = tree => tree.props.children.flat().join('');
+  for (const [duration, expected] of [[12000, '12s'], [85000, '1m 25s'], [7200000, '2h 0m']]) {
+    const props = { id: 'timed', active: true, startedAt: 1000, completedAt: 1000 + duration };
+    assert.equal(text(fixture('WorkDuration', { now: 1000 + duration })(props)), `${words.active} for ${expected}`);
+    assert.equal(text(fixture('WorkDuration', { now: 99999999 })({ ...props, active: false })), `${words.done} for ${expected}`);
+  }
 });
 
 test('progress is rendered inline and work controls keep unique IDs per message', () => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { workWords } from '../src/renderer/react/trace-presentation.ts';
 import { loadModule } from './helpers/load-tsx.mjs';
 
 const require = createRequire(import.meta.url);
@@ -82,14 +83,14 @@ test('live work disclosures hide reasoning and tools but expose failures', () =>
   assert.doesNotMatch(html, /Hidden detailed thought|thread-tool-row/);
 });
 
-test('a response waiting for its first event shows Thinking', () => {
+test('a response waiting for its first event shows the live elapsed indicator', () => {
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] } });
-  assert.match(html, /Thinking…/);
+  assert.ok(html.includes(workWords('a1').active + ' for '));
   assert.match(html, /message-cuppet-toggle[^>]*aria-expanded="true"/);
 });
 
 test('finished cards show stable duration and stopped turns say Stopped after', () => {
-  for (const [status, label] of [['complete', 'Worked for 12s'], ['stopped', 'Stopped after 12s'], ['interrupted', 'Stopped after 12s']]) {
+  for (const [status, label] of [['complete', workWords('a1').done + ' for 12s'], ['stopped', 'Stopped after 12s'], ['interrupted', 'Stopped after 12s']]) {
     const html = render({ session: { id: 's1', messages: [{ ...message('a1', 'assistant', 'Final answer', status), createdAt: 1000, updatedAt: 13000 }] },
       transcript: { a1: { items: [{ id: 'r', type: 'reasoning', text: 'Detailed thought.', sequence: 1 }] } } });
     assert.ok(html.includes(label));
@@ -105,10 +106,18 @@ test('progress text and collapsed work intervals stay in chronological order', (
     { id: 'next', type: 'reasoning', kind: 'commentary', text: 'This should be done like this', sequence: 3, completedAt: 200 },
     { id: 'thinking', type: 'reasoning', text: 'Private reasoning', sequence: 4 },
   ] } } });
-  const positions = ['Some previous text', '>Read secret-tool-target.ts<', 'This should be done like this', '>Thinking…<'].map(text => html.indexOf(text));
+  const positions = ['Some previous text', '>' + workWords('work-a1-read').done + ' for ', 'This should be done like this', '>Thinking for '].map(text => html.indexOf(text));
   assert.ok(positions.every(index => index >= 0));
   assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
   assert.equal((html.match(/message-work-toggle/g) ?? []).length, 2);
   assert.match(html, /Read secret-tool-target\.ts/);
   assert.doesNotMatch(html, /Private reasoning|trace-card|thread-tool-row/);
+});
+
+test('the elapsed indicator also covers the gap before an assistant message exists and clears when idle', () => {
+  const session = { id: 's1', messages: [{ ...message('u1', 'user', 'Start'), createdAt: Date.now() - 12000 }] };
+  const live = render({ session, running: true });
+  assert.match(live, /message-run-status/);
+  assert.ok(live.includes(workWords('u1').active + ' for 12s'));
+  assert.doesNotMatch(render({ session, running: false }), /message-run-status/);
 });

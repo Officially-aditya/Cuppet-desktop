@@ -92,8 +92,10 @@ test('workspace links, edited files, working state, and reasoning stay on canoni
   assert.match(chatView, /items=\{transcript\[message\.id\]\?\.items\}/);
   assert.match(chatView, /return orderedTranscriptItems\(items\)/);
   assert.match(styles, /\.message\.user \.message-content\{[\s\S]*width:fit-content/);
-  assert.match(styles, /content:'Working…'/);
-  assert.match(styles, /:has\(\.composer-pause-button\)/);
+  assert.doesNotMatch(styles, /content:'Working…'/);
+  assert.doesNotMatch(styles, /:has\(\.composer-pause-button\)/);
+  assert.match(chatView, /message-run-status/);
+  assert.match(chatView, /<WorkDuration/);
   assert.match(styles, /\.message-trace-reasoning\{/);
   assert.doesNotMatch(styles, /message-trace-reasoning\{display:none|message-visible-reasoning/);
   assert.doesNotMatch(styles, /workspace-edited-files-mount/);

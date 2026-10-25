@@ -40,6 +40,7 @@ app.whenReady().then(async () => {
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
     const inline = await window.webContents.executeJavaScript('window.exerciseInlineActivity()');
+    const workClock = await window.webContents.executeJavaScript('window.exerciseWorkClock()');
     await new Promise(resolveLoad => { window.webContents.once('did-finish-load', resolveLoad); window.webContents.reload(); });
     const persisted = await window.webContents.executeJavaScript('window.restoreInlineDisclosure()');
     if (process.env.CUPPET_ACTIVITY_SCREENSHOT) {
@@ -57,7 +58,7 @@ app.whenReady().then(async () => {
     const streamed = await window.webContents.executeJavaScript('window.exerciseStreaming()');
     const tail = await window.webContents.executeJavaScript('window.exerciseMarkdownTail()');
     assert.deepEqual(errors, [], 'Renderer or worker reported an error');
-    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...inline, ...persisted, ...streamed, ...tail })}`);
+    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...inline, ...workClock, ...persisted, ...streamed, ...tail })}`);
     clearTimeout(timeout);
     window.destroy();
     await originalFs.rm(workspace, { recursive: true, force: true, maxRetries: 3 });

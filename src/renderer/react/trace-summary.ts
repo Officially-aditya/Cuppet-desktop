@@ -107,6 +107,14 @@ export function groupTrace(trace: readonly TranscriptItem[]) {
   return groups;
 }
 
+export function workGroupTiming(group: WorkGroup, next: TranscriptItem | WorkGroup | undefined, startedAt?: number, completedAt?: number | null) {
+  const first = group.items.find((item) => item.startedAt !== undefined)?.startedAt ?? startedAt;
+  const boundary = next?.type === 'work-group' ? next.items[0]?.startedAt
+    : next && next.type !== 'status' ? next.startedAt ?? next.completedAt : undefined;
+  const latest = group.items.reduce<number | undefined>((end, item) => item.completedAt === undefined ? end : Math.max(end ?? 0, item.completedAt), undefined);
+  return { startedAt: first, completedAt: boundary ?? (next ? latest : completedAt ?? latest) };
+}
+
 export function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TranscriptTool['status']) {
   const args = parseToolArguments(argumentsJson);
   const normalizedTool = toolName.toLowerCase();

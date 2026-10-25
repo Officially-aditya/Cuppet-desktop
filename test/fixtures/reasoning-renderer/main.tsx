@@ -5,6 +5,7 @@ import { ChatTranscript } from '../../../src/renderer/react/ChatTranscript';
 import '../../../src/renderer/index.css';
 import { appendMarkdownText, updateMarkdownTail } from '../../../src/renderer/react/markdown-tail';
 import { renderMarkdown } from '../../../src/renderer/react/markdown';
+import { workWords } from '../../../src/renderer/react/trace-presentation';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
@@ -13,16 +14,17 @@ function openTrace() {
   if (toggle.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
 }
 
+const inlineStartedAt = Date.now() - 12000;
 const inlineItems = () => [
-  { id: 'commentary-1', type: 'reasoning', kind: 'commentary', text: 'I’ll check the transcript renderer and how activity is grouped.', sequence: 1, completedAt: 2000 },
-  { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/renderer/react/ChatTranscript.tsx"}', status: 'complete', sequence: 2 },
-  { id: 'test', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'complete', sequence: 3 },
-  { id: 'commentary-2', type: 'reasoning', kind: 'commentary', text: 'The output can stay inline, with tool calls tucked under each work step.', sequence: 4, completedAt: 4000 },
-  { id: 'thought', type: 'reasoning', text: 'Private reasoning with **formatting** and `src/app.ts`.', sequence: 5 },
+  { id: 'commentary-1', type: 'reasoning', kind: 'commentary', text: 'I’ll check the transcript renderer and how activity is grouped.', sequence: 1, startedAt: inlineStartedAt, completedAt: inlineStartedAt + 2000 },
+  { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/renderer/react/ChatTranscript.tsx"}', status: 'complete', sequence: 2, startedAt: inlineStartedAt + 2000, completedAt: inlineStartedAt + 3000 },
+  { id: 'test', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'complete', sequence: 3, startedAt: inlineStartedAt + 3000, completedAt: inlineStartedAt + 3500 },
+  { id: 'commentary-2', type: 'reasoning', kind: 'commentary', text: 'The output can stay inline, with tool calls tucked under each work step.', sequence: 4, startedAt: inlineStartedAt + 4000, completedAt: inlineStartedAt + 5000 },
+  { id: 'thought', type: 'reasoning', text: 'Private reasoning with **formatting** and `src/app.ts`.', sequence: 5, startedAt: inlineStartedAt + 5000 },
 ];
 function renderInline(items: any[], live = true, id = 'inline-activity') {
   flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key={id} session={{ id, messages: [{
-    id, role: 'assistant', content: live ? '' : 'The transcript layout is updated.', status: live ? 'streaming' : 'complete', createdAt: 1000, updatedAt: 13000,
+    id, role: 'assistant', content: live ? '' : 'The transcript layout is updated.', status: live ? 'streaming' : 'complete', createdAt: inlineStartedAt, updatedAt: inlineStartedAt + 12000,
   }] } as any} project={null} running={live} transcript={{ [id]: { items, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
 }
 (window as any).exerciseInlineActivity = () => {
@@ -32,7 +34,7 @@ function renderInline(items: any[], live = true, id = 'inline-activity') {
   const cuppet = () => document.querySelector('.message-cuppet-toggle') as HTMLButtonElement;
   if (document.querySelector('.trace-card') || cuppet().getAttribute('aria-expanded') !== 'true') throw new Error('The original Cuppet disclosure was not restored');
   const rows = [...document.querySelector('.message-trace')!.children];
-  if (rows.length !== 4 || !rows[0].textContent?.includes('I’ll check') || rows[1].textContent !== 'Worked' || !rows[2].textContent?.includes('The output can stay inline') || rows[3].textContent !== 'Thinking…') throw new Error('Text and work intervals are out of order');
+  if (rows.length !== 4 || !rows[0].textContent?.includes('I’ll check') || rows[1].querySelector('.work-duration')?.textContent !== workWords('work-inline-activity-read').done + ' for 2s' || !rows[2].textContent?.includes('The output can stay inline') || !rows[3].textContent?.startsWith('Thinking for ')) throw new Error('Text and work intervals are out of order');
   if (document.querySelector('.thread-tool-row') || document.querySelector('.message-reasoning-content')) throw new Error('A collapsed work step exposed its internals');
   const first = rows[1].querySelector('button') as HTMLButtonElement;
   flushSync(() => first.click());
@@ -40,7 +42,7 @@ function renderInline(items: any[], live = true, id = 'inline-activity') {
   if (rows[1].querySelectorAll('.thread-tool-row').length !== 2 || rows[3].querySelector('.thread-tool-row')) throw new Error('Work expansion included another interval');
   items = [...items, { id: 'next-tool', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'running', sequence: 6 }];
   renderInline(items);
-  if (rows[1].querySelector('.thread-tool-row') !== firstTool || first.getAttribute('aria-expanded') !== 'true' || rows[3].querySelector('button')?.textContent !== 'Working…') throw new Error('Streaming reset an interval or its label');
+  if (rows[1].querySelector('.thread-tool-row') !== firstTool || first.getAttribute('aria-expanded') !== 'true' || !rows[3].querySelector('button')?.textContent?.startsWith(workWords('work-inline-activity-thought').active + ' for ')) throw new Error('Streaming reset an interval or its label');
   flushSync(() => first.click());
   items = items.map(item => item.id === 'test' ? { ...item, status: 'error', details: 'Test failure' } : item);
   renderInline(items);
@@ -53,12 +55,39 @@ function renderInline(items: any[], live = true, id = 'inline-activity') {
   if (cuppet().getAttribute('aria-expanded') !== 'false') throw new Error('A manually closed live trace did not stay closed');
   openTrace();
   renderInline(items, false);
-  if (cuppet().getAttribute('aria-expanded') !== 'false' || !cuppet().textContent?.includes('Worked for 12s') || !document.querySelector('.message-content')?.textContent?.includes('The transcript layout is updated')) throw new Error('Completion changed the Cuppet summary behavior');
+  if (cuppet().getAttribute('aria-expanded') !== 'false' || !cuppet().textContent?.includes(workWords('inline-activity').done + ' for 12s') || !document.querySelector('.message-content')?.textContent?.includes('The transcript layout is updated')) throw new Error('Completion changed the Cuppet summary behavior');
   openTrace();
   renderInline(items, false, 'another-message');
   renderInline(items, false);
   if (cuppet().getAttribute('aria-expanded') !== 'true') throw new Error('Finished Cuppet disclosure did not restore');
   return { originalCuppetToggle: true, inlineProgress: true, orderedIntervals: true, toolsHiddenByDefault: true, independentExpansion: true, stableStreaming: true, visibleFailures: true, persistedDisclosure: true };
+};
+(window as any).exerciseWorkClock = async () => {
+  let items: any[] = [{ id: 'clock-tool', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'complete', sequence: 1, startedAt: inlineStartedAt + 1000, completedAt: inlineStartedAt + 2000 }];
+  renderInline(items, true, 'timed-activity');
+  const clock = document.querySelector('.message-run-status .work-duration')!;
+  const interval = document.querySelector('.message-work-toggle .work-duration')!;
+  const words = workWords('timed-activity');
+  if (!clock.textContent?.startsWith(words.active + ' for ') || interval.getAttribute('data-active') !== 'true') throw new Error('A finished tool incorrectly ended live agent work');
+  const pause = document.createElement('button');
+  pause.className = 'composer-pause-button';
+  document.querySelector('main')!.appendChild(pause);
+  if (getComputedStyle(document.querySelector('.message-preview')!, '::after').content.includes('Working')) throw new Error('Static working indicator remains');
+  pause.remove();
+  const before = clock.textContent;
+  const intervalBefore = interval.textContent;
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  if (clock.textContent === before || interval.textContent === intervalBefore || !clock.textContent?.startsWith(words.active + ' for ')) throw new Error('Elapsed work time did not tick or changed its word');
+  items = [{ ...items[0], status: 'running' }];
+  renderInline(items, false, 'timed-activity');
+  openTrace();
+  if (document.querySelector('.message-run-status')) throw new Error('Live work indicator remained after completion');
+  const done = document.querySelector('.message-work-toggle .work-duration')!;
+  if (done.getAttribute('data-active') !== 'false' || !done.textContent?.startsWith(workWords('work-timed-activity-clock-tool').done + ' for ')) throw new Error('Stale tool status kept an ended turn active');
+  const finished = done.textContent;
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  if (done.textContent !== finished) throw new Error('Finished work duration kept ticking');
+  return { liveElapsedTimer: true, stableArchitectureWord: true, completedToolsRemainLive: true, stoppedClock: true, noStaleIndicator: true };
 };
 (window as any).restoreInlineDisclosure = () => {
   renderInline(inlineItems(), false);

@@ -45,7 +45,10 @@
   margin: 4px 0 8px;
 }
 
-.message-work-waiting {
+.message-run-status {
+  width: min(820px, 100%);
+  margin: 6px auto 0;
+  line-height: 18px;
   color: var(--muted);
   font-size: 12px;
 }

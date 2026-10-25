@@ -13,8 +13,8 @@ import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
-import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolActivityLabel, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type WorkGroup } from './trace-summary';
-import { readTraceOpen, writeTraceOpen } from './trace-presentation';
+import { classifyTool, compactActivityText, groupTrace, humanToolLabel, parseToolArguments, summarizeTrace, toolActivityLabel, toolCommand, toolExploreFocus, toolLineRange, toolTargets, workGroupTiming, type WorkGroup } from './trace-summary';
+import { readTraceOpen, workWords, writeTraceOpen } from './trace-presentation';
 
 type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -118,6 +118,9 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
           <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningState?.content || runningAssistant.content }}
             items={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         )}
+        {running && !runningAssistant && <div className="message-run-status" key={lastMessage?.id ?? session?.id}>
+          <WorkDuration id={lastMessage?.id ?? session?.id ?? 'pending'} active startedAt={Number(lastMessage?.createdAt) || undefined} />
+        </div>}
         {pending.map((item) => (
           <MessageView key={item.id} message={{ ...item, role: 'user', status: 'complete' }}
             pendingLabel={item.kind === 'steer' ? 'Adding to the current turn…' : 'Sending…'}
@@ -218,8 +221,8 @@ function MessageView({
     if (!start || !end || end < start) return null;
     const durationMs = end - start;
     if (durationMs <= 0) return null;
-    return `${message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped after' : 'Worked for'} ${formatWorkedDuration(durationMs)}`;
-  }, [live, message.status, message.createdAt, message.updatedAt, completedAt]);
+    return `${message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped after' : `${workWords(message.id).done} for`} ${formatWorkedDuration(durationMs)}`;
+  }, [live, message.id, message.status, message.createdAt, message.updatedAt, completedAt]);
 
   const { editedFiles, rawDiff } = useMemo(() => {
     if (!assistant) return { editedFiles: [] as DiffFile[], rawDiff: '' };
@@ -330,7 +333,7 @@ function MessageView({
         {!traceOpen && traceSummary.failed > 0 && <span className="trace-failure-count">{traceSummary.failed} failed</span>}
         {pendingLabel && <span className="message-pending-label" role="status">{pendingLabel}</span>}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
+      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} startedAt={startedAtRef.current} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
       {assistant ? (
         content ? (
           <MarkdownContent
@@ -395,6 +398,7 @@ function MessageView({
           )}
         </div>
       )}
+      {live && <div className="message-run-status"><WorkDuration id={message.id} active startedAt={startedAtRef.current} /></div>}
       {editedFiles.length > 0 && (
         <div
           role="button"
@@ -513,46 +517,62 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
   );
 }
 
-function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
+function WorkDuration({ id, active, startedAt, completedAt, thinking = false }: { id: string; active: boolean; startedAt?: number; completedAt?: number | null; thinking?: boolean }) {
+  const [now, setNow] = useState(Date.now);
+  const mountedAt = useRef(now);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  const words = thinking ? { active: 'Thinking', done: 'Thought' } : workWords(id);
+  const label = active ? words.active : words.done;
+  const start = startedAt ?? (active ? mountedAt.current : undefined);
+  const end = active ? now : completedAt;
+  return <span className="work-duration" data-active={active}>{label}{start !== undefined && end != null ? ` for ${formatWorkedDuration(Math.max(0, end - start))}` : ''}</span>;
+}
+
+function TraceView({ trace, messageId, live = false, startedAt, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; startedAt?: number; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const groups = useMemo(() => groupTrace(trace), [trace]);
+  const latest = [...groups].reverse().find((item) => item.type !== 'status');
   return (
     <div id={`trace-${messageId}`} className="message-trace thread-activity" aria-label="Cuppet activity">
-      {groups.map((item) => item.type === 'reasoning' ? (
+      {groups.map((item, index) => item.type === 'reasoning' ? (
         <MarkdownContent key={item.id} className="message-content message-commentary markdown-rendered" content={item.text}
           streaming={live && !item.completedAt} projectId={projectId} />
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
-        <WorkTraceRow key={item.id} group={item} contentId={`work-${messageId}-${item.id}`} live={live} onInspectDiff={onInspectDiff} projectId={projectId} />
+        <WorkTraceRow key={item.id} group={item} contentId={`work-${messageId}-${item.id}`} live={live && item === latest}
+          {...workGroupTiming(item, groups[index + 1], startedAt, completedAt)} onInspectDiff={onInspectDiff} projectId={projectId} />
       ))}
-      {live && !groups.length && <div className="message-work-waiting">Thinking…</div>}
     </div>
   );
 }
 
-const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false, onInspectDiff, projectId = null }: { group: WorkGroup; contentId: string; live?: boolean; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
+const WorkTraceRow = memo(function WorkTraceRow({ group, contentId, live = false, startedAt, completedAt, onInspectDiff, projectId = null }: { group: WorkGroup; contentId: string; live?: boolean; startedAt?: number; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
   const tools = group.items.filter((item) => item.type === 'tool');
   const failed = tools.filter((item) => item.status === 'error').length;
-  const activeTool = [...tools].reverse().find((item) => item.status === 'running');
+  const activeTool = live ? [...tools].reverse().find((item) => item.status === 'running') : undefined;
   const failedTool = [...tools].reverse().find((item) => item.status === 'error');
   const latestTool = tools.at(-1);
-  const thinking = live && group.items.some((item) => item.type === 'reasoning' && !item.completedAt);
   const summary = summarizeTrace(tools).label;
-  const label = activeTool
+  const detail = activeTool
     ? toolActivityLabel(activeTool.tool, activeTool.argumentsJson, activeTool.status)
     : failedTool
       ? toolActivityLabel(failedTool.tool, failedTool.argumentsJson, failedTool.status)
       : latestTool && (tools.length === 1 || !summary)
-        ? toolActivityLabel(latestTool.tool, latestTool.argumentsJson, latestTool.status)
-        : summary || (thinking ? 'Thinking…' : 'Thought');
+        ? !live && latestTool.status === 'running' ? humanToolLabel(latestTool.tool) : toolActivityLabel(latestTool.tool, latestTool.argumentsJson, latestTool.status)
+        : summary || undefined;
   const immediateTools = new Set(tools.slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id));
   return (
     <div className={`message-work${open ? ' open' : ''}`}>
-      <button type="button" className="message-work-toggle" aria-expanded={open} aria-controls={opened ? contentId : undefined}
+      <button type="button" className="message-work-toggle" title={detail} aria-expanded={open} aria-controls={opened ? contentId : undefined}
         onClick={() => { setOpened(true); setOpen((current) => !current); }}>
-        <span>{label}</span>
+        <WorkDuration id={contentId} active={live} startedAt={startedAt} completedAt={completedAt} thinking={!tools.length} />
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
         {failed > 0 && <span className="trace-failure-count">{failed} failed</span>}
       </button>

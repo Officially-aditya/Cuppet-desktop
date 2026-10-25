@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyTool, groupTrace, liveStatus, liveThoughtLine, summarizeTrace, toolActivityLabel } from '../src/renderer/react/trace-summary.ts';
+import { classifyTool, groupTrace, liveStatus, liveThoughtLine, summarizeTrace, toolActivityLabel, workGroupTiming } from '../src/renderer/react/trace-summary.ts';
 
 const tool = (id, name, args = {}, status = 'complete', sequence = 1) => ({ id, type: 'tool', tool: name, argumentsJson: JSON.stringify(args), status, sequence });
 const thought = (text, sequence = 1) => ({ id: `thought-${sequence}`, type: 'reasoning', text, sequence });
@@ -94,4 +94,12 @@ test('grouping preserves chronology, boundaries, item identity, and the first ac
   assert.equal(groups[0].id, groupTrace([first])[0].id);
   assert.deepEqual(groups[2].items.map(item => item.id), [reasoning.id, 'third']);
   assert.equal(trace[0], warning, 'sorting must not mutate the store');
+});
+
+test('work timing uses the actual first activity and freezes at the next output or turn completion', () => {
+  const group = { id: 'a', type: 'work-group', items: [{ ...tool('a', 'read_file'), startedAt: 2000, completedAt: 4000 }] };
+  const next = { ...thought('Here is the next step.'), kind: 'commentary', startedAt: 6000, completedAt: 7000 };
+  assert.deepEqual(workGroupTiming(group, next, 1000, 20000), { startedAt: 2000, completedAt: 6000 });
+  assert.deepEqual(workGroupTiming(group, undefined, 1000, 20000), { startedAt: 2000, completedAt: 20000 });
+  assert.deepEqual(workGroupTiming({ ...group, items: [tool('legacy', 'read_file')] }, undefined, 1000, 13000), { startedAt: 1000, completedAt: 13000 });
 });

@@ -21,6 +21,8 @@ export type TranscriptTool = {
   argumentsJson: string;
   details?: string;
   sequence: number;
+  startedAt?: number;
+  completedAt?: number;
 };
 
 export type TranscriptStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -184,7 +186,7 @@ export function reduceTranscriptEvent(state: TranscriptState, event: RuntimeEven
   if ((event.source === 'execution' && activityType.startsWith('activity.tool.')) || (event.source === 'provider' && activityType.startsWith('activity.tool.'))) {
     return updateMessageState(state, messageId, (current) => ({
       ...current,
-      items: updateTool(completeReasoning(current.items, createdAt), activity, sequence),
+      items: updateTool(completeReasoning(current.items, createdAt), activity, sequence, createdAt),
     }));
   }
 
@@ -239,7 +241,7 @@ function reasoningCanMerge(last: TranscriptReasoning, sequence: number | null) {
   return end === null || sequence >= end;
 }
 
-function updateTool(items: TranscriptItem[], activity: Record<string, any>, sequence: number | null): TranscriptItem[] {
+function updateTool(items: TranscriptItem[], activity: Record<string, any>, sequence: number | null, createdAt: number): TranscriptItem[] {
   const id = text(activity.executionId) || text(activity.callId) || `tool-${sequence ?? nextSequence(items)}`;
   const toolName = text(activity.tool) || 'agent-tool';
   const existingIndex = items.findIndex((item) => item.type === 'tool' && (
@@ -259,6 +261,8 @@ function updateTool(items: TranscriptItem[], activity: Record<string, any>, sequ
     tool,
     argumentsJson,
     sequence: existing?.sequence ?? sequence ?? nextSequence(items),
+    startedAt: existing?.startedAt ?? (Number(activity.startedAt) || createdAt),
+    ...(closed ? { completedAt: Number(activity.completedAt) || createdAt } : {}),
     ...(typeof activity.details === 'string' && activity.details ? { details: activity.details } : existing?.details ? { details: existing.details } : {}),
   };
   if (existingIndex < 0) return boundItems([...items, patch]);
