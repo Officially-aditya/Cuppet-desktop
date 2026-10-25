@@ -27,7 +27,7 @@
     "release:mac": "npm run mac:prepare-icon && npm run f1:verify-staged-tst && npm run e2:verify-staged-codex && npm run browsercontrol:verify && npm run renderer:verify && npm run release:verify && electron-builder --config build/electron-builder.release.json --mac --arm64 --publish never",
     "release:win": "npm run mac:prepare-icon && node scripts/verify-staged-tst.mjs && node scripts/verify-staged-codex.mjs && npm run browsercontrol:verify && npm run renderer:verify && electron-builder --config build/electron-builder.win.json --win --x64 --publish never",
     "release:feed": "node scripts/build-macos-update-feed.mjs",
-    "e1:audit-runtime": "npm audit --omit=dev --audit-level=high",
+    "e1:audit-runtime": "npm audit --audit-level=high",
     "e1:package-smoke": "node scripts/smoke-packaged-runtime.mjs",
     "f1:stage-tst": "node scripts/stage-tst-runtime.mjs",
     "f1:verify-staged-tst": "node scripts/verify-staged-tst.mjs",
@@ -70,14 +70,14 @@
     "@vitejs/plugin-react": "5.0.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "44.3.0",
+    "electron": "44.9.3",
     "electron-builder": "26.15.3",
     "highlight.js": "11.11.1",
     "qrcode": "1.5.4",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "typescript": "5.9.2",
-    "vite": "7.1.5"
+    "vite": "7.3.7"
   },
   "engines": {
     "node": ">=22"

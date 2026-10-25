@@ -38,6 +38,7 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
       - run: npm install --ignore-scripts
+      - run: npm audit --audit-level=high
       - run: npm run renderer:verify
       - run: npm run phase0:verify
       - name: Verify Phase 1 and annotate failures

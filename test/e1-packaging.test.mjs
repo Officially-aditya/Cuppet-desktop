@@ -65,10 +65,10 @@ test('package metadata makes bootstrap security, audit, and ASAR packaging autho
     ['src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs', 'node_modules/node-pty/**/*'],
     'the external ACP entrypoint and native terminal helpers must be available outside ASAR',
   );
-  assert.equal(pkg.devDependencies.electron, '44.3.0');
+  assert.equal(pkg.devDependencies.electron, '44.9.3');
   assert.equal(pkg.devDependencies['electron-builder'], '26.15.3');
   assert.match(pkg.scripts['pack:dir'], /electron-builder --dir --publish never$/);
-  assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --omit=dev --audit-level=high');
+  assert.equal(pkg.scripts['e1:audit-runtime'], 'npm audit --audit-level=high');
   assert.equal(pkg.scripts['e1:package-smoke'], 'node scripts/smoke-packaged-runtime.mjs');
 
   const bootstrap = await readFile(join(root, 'src/main/bootstrap.mjs'), 'utf8');
