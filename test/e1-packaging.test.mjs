@@ -94,3 +94,25 @@ test('Windows release packages native terminal helpers and smoke tests the insta
   const publish = workflow.indexOf('- name: Publish or update GitHub release assets');
   assert.ok(build >= 0 && smoke > build && publish > smoke, 'packaged terminal verification must pass before publishing Windows assets');
 });
+
+test('every build config uses the same runtime-compatible Electron fuses', async () => {
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  const configs = [pkg.build, ...await Promise.all(['release', 'win'].map(async name =>
+    JSON.parse(await readFile(join(root, `build/electron-builder.${name}.json`), 'utf8'))))];
+  const expected = {
+    runAsNode: true,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    onlyLoadAppFromAsar: true,
+    resetAdHocDarwinSignature: true,
+  };
+  for (const config of configs) {
+    assert.equal(config.asar, true);
+    assert.deepEqual(config.electronFuses, expected);
+    assert.notEqual(config.electronFuses.runAsNode, false, 'runtime and MCP children need ELECTRON_RUN_AS_NODE');
+  }
+  for (const name of ['build-desktop', 'release-windows', 'release']) {
+    const workflow = await readFile(join(root, `.github/workflows/${name}.yml`), 'utf8');
+    for (const script of ['runtime', 'codex', 'browsercontrol']) assert.ok(workflow.includes(`scripts/smoke-packaged-${script}.mjs`));
+  }
+});

@@ -107,6 +107,13 @@ jobs:
       - name: Verify packaged interactive terminal
         run: node scripts/smoke-packaged-terminal.mjs
 
+      - name: Verify packaged runtime and helpers with Electron fuses
+        shell: bash
+        run: |
+          node scripts/smoke-packaged-runtime.mjs dist/win-unpacked/cuppet.exe
+          node scripts/smoke-packaged-codex.mjs dist/win-unpacked/cuppet.exe
+          node scripts/smoke-packaged-browsercontrol.mjs dist/win-unpacked/cuppet.exe
+
       - name: Generate SHA-256 checksums
         shell: bash
         run: |

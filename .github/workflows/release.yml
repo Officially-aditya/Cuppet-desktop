@@ -152,6 +152,10 @@ jobs:
             exit 1
           fi
           node scripts/smoke-packaged-terminal.mjs "$APP_PATH/Contents/MacOS/cuppet"
+          node scripts/smoke-packaged-runtime.mjs "$APP_PATH/Contents/MacOS/cuppet"
+          node scripts/smoke-packaged-codex.mjs "$APP_PATH/Contents/MacOS/cuppet"
+          node scripts/smoke-packaged-browsercontrol.mjs "$APP_PATH/Contents/MacOS/cuppet"
+          node scripts/smoke-packaged-tst.mjs "$APP_PATH/Contents/MacOS/cuppet"
 
       - name: Generate SHA-256 checksums
         shell: bash

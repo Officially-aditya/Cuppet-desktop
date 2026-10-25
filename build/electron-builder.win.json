@@ -5,6 +5,13 @@
   "artifactName": "${productName}-${version}-${arch}.${ext}",
   "npmRebuild": false,
   "asar": true,
+  "electronFuses": {
+    "runAsNode": true,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "onlyLoadAppFromAsar": true,
+    "resetAdHocDarwinSignature": true
+  },
   "asarUnpack": [
     "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs",
     "node_modules/node-pty/**/*"

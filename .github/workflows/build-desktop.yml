@@ -116,6 +116,20 @@ jobs:
       - name: Verify packaged interactive terminal
         run: node scripts/smoke-packaged-terminal.mjs
 
+      - name: Verify packaged runtime and helpers with Electron fuses
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            APP_EXEC="dist/mac-arm64/Cuppet.app/Contents/MacOS/cuppet"
+          else
+            APP_EXEC="dist/win-unpacked/cuppet.exe"
+          fi
+          node scripts/smoke-packaged-runtime.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-codex.mjs "$APP_EXEC"
+          node scripts/smoke-packaged-browsercontrol.mjs "$APP_EXEC"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            node scripts/smoke-packaged-tst.mjs "$APP_EXEC"
+          fi
+
       - name: Generate SHA-256 checksums
         env:
           BUILD_ARCH: ${{ matrix.arch }}
