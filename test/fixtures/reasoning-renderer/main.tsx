@@ -47,7 +47,8 @@ let updateThought: (text: string, complete: boolean) => void;
   observer.disconnect();
   const elements = document.querySelectorAll('*').length;
   button.click();
-  await new Promise(resolve => setTimeout(resolve, 30));
+  // Finish this collapse before a separate profile starts timing the next open.
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   return { dispatchMs, shownMs, maxGap: Math.max(...gaps), longTasks, elements };
 };
 

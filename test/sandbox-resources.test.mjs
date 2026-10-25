@@ -135,7 +135,7 @@ test('Mac protects broker storage from agent commands while a fixed broker expor
 test('provider credential locations are protected without blocking provider installations or project files', async (t) => {
   const { root } = await fixture(t);
   const profile = await buildMacSeatbeltProfile({ projectRoot: root });
-  for (const name of PROVIDER_CREDENTIAL_PATHS) assert.ok(profile.includes(join(homedir(), name)), name);
+  for (const name of PROVIDER_CREDENTIAL_PATHS) assert.ok(profile.includes(JSON.stringify(join(homedir(), name))), name);
   assert.ok(!PROVIDER_CREDENTIAL_PATHS.includes('.codex'), 'the CLI installation/cache directory stays available');
   const custom = join(root, 'custom-profile');
   assert.ok(providerCredentialPaths({ CODEX_HOME: custom }).includes(join(custom, 'auth.json')));

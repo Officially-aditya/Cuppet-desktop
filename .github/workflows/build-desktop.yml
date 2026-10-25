@@ -99,6 +99,11 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
 
+      - name: Verify provider credential boundaries
+        env:
+          CUPPET_DATA_DIR: ${{ runner.temp }}/cuppet-credential-tests
+        run: node --test --test-concurrency=1 test/provider-credential-boundary.test.mjs test/credential-sanitization.test.mjs test/provider-fetch-security.test.mjs test/provider-settings-state.test.mjs test/d-provider-variants.test.mjs test/c1-permissions.test.mjs test/sandbox-resources.test.mjs
+
       - name: Verify responsive reasoning in Electron
         run: npm run renderer:reasoning-smoke
 
