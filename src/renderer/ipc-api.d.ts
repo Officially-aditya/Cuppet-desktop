@@ -105,7 +105,7 @@ export type CuppetApi = {
   native: {
     setAppearance: (preference: 'system' | 'dark' | 'light') => Promise<{ preference: string }>;
     chooseFolder: (options?: Record<string, unknown>) => Promise<string | null>;
-    openProjectFile: (projectId: string, path: string) => Promise<{ opened: boolean; path: string }>;
+    openProjectFile: (projectId: string, path: string) => Promise<{ opened: boolean; revealed?: boolean; path: string }>;
     projectFileEditor: (projectId: string, path: string) => Promise<{ path: string; name: string; icon: string | null }>;
     linkPreview: (url: string) => Promise<{ url: string; hostname: string; title: string; description: string; siteName: string; image: string | null; icon: string | null }>;
     openExternal: (url: string) => Promise<{ opened: boolean }>;

@@ -10,7 +10,8 @@ import { executeCommand, listCommands, parseSlashCommand } from '../runtime/comm
 import { isLocalCliProvider } from '../runtime/local-cli-descriptors.mjs';
 import { SandboxManager } from '../runtime/sandbox/sandbox-manager.mjs';
 import { createLinkPreviewLoader } from './link-preview.mjs';
-import { resolveProjectFilePath } from './project-file-path.mjs';
+import { resolveProjectFileDetails, resolveProjectFilePath } from './project-file-path.mjs';
+import { decideProjectFileOpen } from './open-file-policy.mjs';
 import { createApprovalAttention } from './approval-attention.mjs';
 import { createWindowAppearance } from './window-appearance.mjs';
 import { createIpcRegistrar } from './ipc-boundary.mjs';
@@ -356,14 +357,14 @@ async function chooseFolder(options) {
   return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
-async function resolveProjectFile(request, projectId, value) {
+async function resolveProjectFile(request, projectId, value, details = false) {
   const id = boundedId(projectId);
   const path = typeof value === 'string' ? value.trim().slice(0, 1024) : '';
   if (!id || !path || path.includes('\0')) throw new Error('A project and file path are required.');
   const project = await request('project.get', { projectId: id });
   if (!project?.canonicalPath || project.missing) throw new Error('The project folder is unavailable.');
   const root = await realpath(project.canonicalPath);
-  return resolveProjectFilePath(root, path);
+  return details ? resolveProjectFileDetails(root, path) : resolveProjectFilePath(root, path);
 }
 
 async function projectFileEditor(request, projectId, value) {
@@ -373,10 +374,15 @@ async function projectFileEditor(request, projectId, value) {
 }
 
 async function openProjectFile(request, projectId, value) {
-  const { actual, child } = await resolveProjectFile(request, projectId, value);
+  const { actual, child, requested, mode } = await resolveProjectFile(request, projectId, value, true);
+  const path = child.replaceAll('\\', '/');
+  if (!decideProjectFileOpen({ requested, actual, mode, platform: process.platform }).allowed) {
+    shell.showItemInFolder(actual);
+    return { opened: false, revealed: true, path };
+  }
   const message = await shell.openPath(actual);
   if (message) throw new Error(`Could not open ${child}: ${message}`);
-  return { opened: true, path: child.replaceAll('\\', '/') };
+  return { opened: true, path };
 }
 
 async function openExternal(value) {

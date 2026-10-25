@@ -76,7 +76,7 @@ export const IPC_METHODS = {
   'terminal.stop': method('terminal:stop', [['sessionId', 'id']], '{ stopped: boolean }'),
   'native.setAppearance': method('native:appearance', [['preference', 'appearance']], '{ preference: string }'),
   'native.chooseFolder': method('native:choose-folder', [['options?', 'object']], 'string | null'),
-  'native.openProjectFile': method('native:open-project-file', [['projectId', 'id'], ['path', 'path']], '{ opened: boolean; path: string }'),
+  'native.openProjectFile': method('native:open-project-file', [['projectId', 'id'], ['path', 'path']], '{ opened: boolean; revealed?: boolean; path: string }'),
   'native.projectFileEditor': method('native:project-file-editor', [['projectId', 'id'], ['path', 'path']], '{ path: string; name: string; icon: string | null }'),
   'native.linkPreview': method('native:link-preview', [['url', 'text']], '{ url: string; hostname: string; title: string; description: string; siteName: string; image: string | null; icon: string | null }'),
   'native.openExternal': method('native:open-external', [['url', 'text']], '{ opened: boolean }'),
