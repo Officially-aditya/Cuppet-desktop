@@ -79,7 +79,11 @@ async function rendererBenchmark() {
     window.webContents.once('did-finish-load', async () => {
       try {
         window.show();
+        if (process.platform === 'darwin') app.focus({ steal: true });
         window.focus();
+        window.webContents.debugger.attach('1.3');
+        await window.webContents.debugger.sendCommand('Performance.enable');
+        const before = await window.webContents.debugger.sendCommand('Performance.getMetrics');
         const result = await window.webContents.executeJavaScript(`(${async function () {
           const startupStart = performance.now();
           const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -111,12 +115,19 @@ async function rendererBenchmark() {
             warm.push(await select('Benchmark history', 'benchmark-history-m1000'));
           }
           const payload = await window.cuppet.sessions.get('benchmark-history', { limit: 60 });
-          return { startupPaintMs, coldSwitchMs: cold.paintMs, coldDomMs: cold.domMs,
+          return { visibility: document.visibilityState, focused: document.hasFocus(),
+            startupPaintMs, coldSwitchMs: cold.paintMs, coldDomMs: cold.domMs,
             warmSwitchMaxMs: Math.max(...warm.map(item => item.paintMs)), warmSwitchMs: warm,
             payloadBytes: new TextEncoder().encode(JSON.stringify(payload)).length,
             appMeasuresMs: performance.getEntriesByName('chat-switch').map(entry => entry.duration) };
         }.toString()})()`);
-        console.log('Chat-switch renderer benchmark: ' + JSON.stringify({ platform: process.platform, arch: process.arch, ...result }));
+        const after = await window.webContents.debugger.sendCommand('Performance.getMetrics');
+        const workMs = Object.fromEntries(['ScriptDuration', 'RecalcStyleDuration', 'LayoutDuration', 'TaskDuration'].map(name =>
+          [name, +(((after.metrics.find(metric => metric.name === name)?.value ?? 0)
+            - (before.metrics.find(metric => metric.name === name)?.value ?? 0)) * 1000).toFixed(2)]));
+        console.log('Chat-switch renderer benchmark: ' + JSON.stringify({ platform: process.platform, arch: process.arch, ...result, workMs }));
+        assert.equal(result.visibility, 'visible', 'Benchmark window must be visible');
+        assert.equal(result.focused, true, 'Benchmark window must be focused');
         assert.ok(result.payloadBytes < 250 * 1024, 'Initial session payload exceeds 250 KB');
         assert.ok(result.coldSwitchMs < 250, 'Cold chat switch exceeds 250 ms');
         assert.ok(result.warmSwitchMaxMs < 100, 'Warm chat switch exceeds 100 ms');
