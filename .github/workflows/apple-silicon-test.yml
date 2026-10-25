@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 50
     env:
       TST_SOURCE_REVISION: 9f2a8ae63555b7534ee1ccfe211efce1ad46f630
-      BROWSERCONTROL_SOURCE_REVISION: 9586272ee9b56d11057ce38177e0b9c92114e478
+      BROWSERCONTROL_SOURCE_REVISION: 4b7e03d18174b90003ffd3327fe2e27fe2994c08
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       CUPPET_AUTHENTICATED_OPENCODE_COMMIT: ${{ inputs.authenticated_opencode_commit }}
       CUPPET_AUTHENTICATED_OPENCODE_PASSED: ${{ inputs.authenticated_opencode_passed }}
@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: Officially-aditya/browserControl
-          ref: 9586272ee9b56d11057ce38177e0b9c92114e478
+          ref: 4b7e03d18174b90003ffd3327fe2e27fe2994c08
           path: .e2/browsercontrol
           persist-credentials: false
 
