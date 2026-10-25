@@ -10,6 +10,44 @@ import { reduceTranscriptEvent, type TranscriptState } from '../../../src/render
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
+
+(window as any).exerciseHistoryScroll = async () => {
+  const messages = Array.from({ length: 120 }, (_, index) => ({
+    id: `history-${index}`, sessionId: 'scroll-long', role: index % 2 ? 'assistant' : 'user', status: 'complete',
+    content: index % 2 ? `## Answer ${index}\n\n${'Historical content with **formatting** and a file reference.\n\n'.repeat(12)}` : `Prompt ${index}`,
+  }));
+  const long = { id: 'scroll-long', messages };
+  const render = (session: any) => flushSync(() => root.render(<div className="app-shell react-app"><main className="main-pane react-main-pane">
+    <ChatTranscript session={session} project={null} running={false} transcript={{}} onInspectDiff={noop} onOpenLightbox={noop} />
+  </main></div>));
+  const settle = async () => {
+    const deadline = performance.now() + 10000;
+    while (document.querySelector('article[aria-busy="true"]')) {
+      if (performance.now() > deadline) throw new Error('Deferred history did not finish loading');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  };
+  const gap = (node: HTMLElement) => node.scrollHeight - node.clientHeight - node.scrollTop;
+  localStorage.setItem('cuppet.desktop.scroll.scroll-long', '0');
+  render(long);
+  await settle();
+  const node = document.querySelector('.messages') as HTMLElement;
+  if (node.scrollHeight < node.clientHeight * 10 || gap(node) > 2) throw new Error(`Long history did not open at the latest message: ${gap(node)}px from the bottom`);
+  node.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+  node.scrollTop = Math.floor(node.scrollHeight / 2);
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  render({ ...long, messages: [...messages, { id: 'new-history', role: 'assistant', content: 'New response.', status: 'complete' }] });
+  await settle();
+  if (gap(node) < node.clientHeight) throw new Error('New content pulled the reader away from older messages');
+  render({ id: 'scroll-short', messages: [{ id: 'short', role: 'user', content: 'Short chat', status: 'complete' }] });
+  await settle();
+  render(long);
+  await settle();
+  if (gap(node) > 2) throw new Error(`Reopening history restored an old position: ${gap(node)}px from the bottom`);
+  return { latestOnOpen: true, followsDeferredHistory: true, preservesManualScroll: true, latestOnReopen: true };
+};
+
 function openTrace() {
   const toggle = document.querySelector('.message-cuppet-toggle') as HTMLButtonElement;
   if (toggle.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());

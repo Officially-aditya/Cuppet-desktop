@@ -11,7 +11,7 @@ const transcriptCode = await compile('../src/renderer/react/ChatTranscript.tsx')
 const followerCode = await compile('../src/renderer/react/scroll-follow.ts');
 
 function fixture(savedValue = null) {
-  const effects = [], refs = [], frames = new Map(), timers = new Map(), saved = new Map();
+  const effects = [], refs = [], frames = new Map(), saved = new Map();
   const observers = {}, handle = {}, exports = {};
   let nextId = 0;
   if (savedValue !== null) saved.set('cuppet.desktop.scroll.chat', savedValue);
@@ -22,6 +22,7 @@ function fixture(savedValue = null) {
     useImperativeHandle: (_ref, factory) => { handle.current = factory(); },
     useRef: (current) => { const ref = { current }; refs.push(ref); return ref; },
     useEffect: (effect) => effects.push(effect),
+    useLayoutEffect: (effect) => effects.push(effect),
   };
   const context = vm.createContext({
     exports,
@@ -39,8 +40,6 @@ function fixture(savedValue = null) {
     localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
     requestAnimationFrame: (frame) => { frames.set(++nextId, frame); return nextId; },
     cancelAnimationFrame: (id) => frames.delete(id),
-    setTimeout: (callback) => { timers.set(++nextId, callback); return nextId; },
-    clearTimeout: (id) => timers.delete(id),
     ResizeObserver: class {
       constructor(callback) { this.callback = callback; this.targets = new Set(); observers.resize = this; }
       observe(node) { this.targets.add(node); }
@@ -72,7 +71,6 @@ function fixture(savedValue = null) {
     update: effects.find((effect) => effect.toString().includes('.schedule()')),
     flush,
     resize: () => { observers.resize.callback(); flush(); },
-    flushTimers: () => { for (const [id, callback] of [...timers]) { timers.delete(id); callback(); } },
     scrollTo: (top) => { node.scrollTop = top; listeners.get('scroll')(); },
   };
 }
@@ -87,9 +85,7 @@ test('small upward scroll survives pending frames and streaming updates', () => 
   chat.update();
   chat.flush();
   assert.equal(chat.node.scrollTop, 1470);
-  assert.equal(chat.saved.has('cuppet.desktop.scroll.chat'), false, 'storage writes stay off the scroll path');
-  chat.flushTimers();
-  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1470');
+  assert.equal(chat.saved.has('cuppet.desktop.scroll.chat'), false, 'scrolling does not save stale pixel offsets');
 });
 
 test('scrolling down to the latest messages resumes auto-follow', () => {
@@ -149,40 +145,30 @@ test('content shrinking is not interpreted as the user scrolling upward', () => 
   assert.equal(chat.node.scrollTop, 800);
 });
 
-test('a saved top position is restored and leaving a chat releases all work', () => {
+test('opening a chat ignores an old saved position and leaving it releases all work', () => {
   const chat = fixture('0');
-  assert.equal(chat.node.scrollTop, 0);
+  assert.equal(chat.node.scrollTop, 1500);
   chat.node.scrollHeight += 300;
   chat.update();
   chat.flush();
-  assert.equal(chat.node.scrollTop, 0);
-  chat.handle.current.followLatest();
+  assert.equal(chat.node.scrollTop, 1800);
   chat.cleanup();
-  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1800');
   assert.equal(chat.listeners.size, 0);
   assert.equal(chat.frames.size, 0);
   assert.equal(chat.observers.resize.targets.size, 0);
   assert.equal(chat.observers.mutation.disconnected, true);
 });
 
-test('leaving a chat saves the position the user was at, not the next chat\'s layout', () => {
-  // React commits the next chat into the same scroll node before it runs this chat's cleanup, so
-  // reading node.scrollTop at cleanup time would store the wrong number under this chat's key.
-  const chat = fixture();
-  chat.scrollTo(900);
-  chat.node.scrollHeight = 600; // the next chat is much shorter...
-  chat.node.scrollTop = 100; // ...and the browser has already clamped the scroll position
-  chat.cleanup();
-  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '900');
-});
-
-test('a pin that follows new content is what gets saved while the user is at the bottom', () => {
-  const chat = fixture();
-  chat.node.scrollHeight += 400;
-  chat.update();
-  chat.flush();
-  chat.node.scrollHeight = 300; // next chat committed before cleanup...
-  chat.node.scrollTop = 0; // ...and the browser clamped the position
-  chat.cleanup();
-  assert.equal(chat.saved.get('cuppet.desktop.scroll.chat'), '1900');
+test('deferred historical rendering keeps the latest message in view until the user scrolls up', () => {
+  const chat = fixture('700');
+  for (const height of [4000, 8000, 12000, 10000, 24000]) {
+    chat.node.scrollHeight = height;
+    chat.resize();
+    assert.equal(chat.node.scrollTop, height - chat.node.clientHeight);
+  }
+  chat.listeners.get('wheel')({ deltaY: -100 });
+  chat.scrollTo(22000);
+  chat.node.scrollHeight += 5000;
+  chat.resize();
+  assert.equal(chat.node.scrollTop, 22000, 'new historical layout must not override reading intent');
 });

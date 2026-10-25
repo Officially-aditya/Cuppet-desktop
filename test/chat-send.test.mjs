@@ -16,8 +16,8 @@ function deferred() {
 }
 
 async function fixture({ activeSession = null, running = false, executeError = null } = {}) {
-  const created = deferred(), sent = deferred(), loaded = deferred();
-  const states = [], effects = [], saved = new Map(), sends = [], executions = [], pendingAdded = [], pendingRemoved = [];
+  const created = deferred(), sent = deferred(), loaded = deferred(), deleted = deferred();
+  const states = [], effects = [], saved = new Map(), sends = [], deletions = [], executions = [], pendingAdded = [], pendingRemoved = [];
   let stateIndex = 0, sessions = activeSession ? [activeSession] : [];
   if (activeSession) saved.set('cuppet.desktop.last-session', activeSession.id);
   const ChatPane = () => null;
@@ -68,9 +68,10 @@ async function fixture({ activeSession = null, running = false, executeError = n
     localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
     window: { cuppet: {
       health: async () => ({ ok: true }),
-      projects: { list: async () => [] },
+      projects: { list: async () => [], open: async () => {} },
       sessions: {
         create: () => created.promise,
+        delete: (id) => { deletions.push(id); return deleted.promise; },
         send: (...args) => { sends.push(args); return sent.promise; },
       },
       cognitive: { status: async () => ({}), modeGet: async () => ({ mode: 'build' }) },
@@ -85,12 +86,14 @@ async function fixture({ activeSession = null, running = false, executeError = n
     return exports.App();
   };
   const pane = () => render().props.children.find((node) => node?.type === ChatPane).props;
+  const sidebar = () => render().props.children.find(node => node?.props?.onDeleteSession).props;
+  const toast = () => render().props.children.find(node => node?.props?.onClear).props.message;
   const settle = () => new Promise(setImmediate);
   if (activeSession) loaded.resolve(activeSession);
   render();
   effects.find((effect) => effect.toString().includes('Runtime unavailable'))();
   await settle();
-  return { pane, created, sent, loaded, sends, executions, pendingAdded, pendingRemoved, saved, settle };
+  return { pane, sidebar, toast, created, sent, loaded, deleted, deletions, sends, executions, pendingAdded, pendingRemoved, saved, settle };
 }
 
 for (const target of ['created-chat', 'routed-chat']) {
@@ -179,4 +182,41 @@ test('queue mode still queues attachments without a pending history bubble', asy
   assert.equal(chat.sends[0][2], attachments);
   assert.equal(chat.pendingAdded.length, 0);
   assert.equal(chat.pane().queuedTurns[0].params.attachments, attachments);
+});
+
+test('deleting the open chat immediately opens a fresh draft in the same project', async () => {
+  const session = { id: 'delete-me', projectId: 'project-a', title: 'Old chat', messages: [] };
+  const chat = await fixture({ activeSession: session });
+  assert.equal(chat.sidebar().onDeleteSession(session), undefined, 'confirmation must not await backend deletion');
+  assert.deepEqual(chat.deletions, ['delete-me']);
+  assert.equal(chat.pane().session, null);
+  assert.equal(chat.pane().draft.projectId, 'project-a');
+  await chat.settle();
+  assert.equal(chat.pane().session, null, 'the new-chat view is available while deletion is unresolved');
+  chat.sidebar().onNewProjectChat('project-b');
+  chat.deleted.resolve({ deleted: true });
+  await chat.settle();
+  assert.equal(chat.pane().draft.projectId, 'project-b', 'late deletion must not navigate away from newer work');
+  assert.match(chat.toast(), /Deleted.*Old chat/);
+});
+
+test('a failed background deletion reports the error without discarding the fresh draft', async () => {
+  const session = { id: 'delete-fails', projectId: 'project-a', messages: [] };
+  const chat = await fixture({ activeSession: session });
+  chat.sidebar().onDeleteSession(session);
+  chat.deleted.reject(new Error('Cannot delete this chat'));
+  await chat.settle();
+  assert.equal(chat.pane().session, null);
+  assert.equal(chat.pane().draft.projectId, 'project-a');
+  assert.match(chat.toast(), /Cannot delete this chat/);
+});
+
+test('deleting a different chat does not change the current conversation', async () => {
+  const session = { id: 'keep-open', projectId: 'project-a', messages: [] };
+  const chat = await fixture({ activeSession: session });
+  chat.sidebar().onDeleteSession({ id: 'other-chat', projectId: 'project-b' });
+  assert.equal(chat.pane().session.id, 'keep-open');
+  chat.deleted.resolve({ deleted: true });
+  await chat.settle();
+  assert.equal(chat.pane().session.id, 'keep-open');
 });

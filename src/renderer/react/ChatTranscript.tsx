@@ -55,10 +55,10 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
   const messagesRef = useRef<HTMLDivElement>(null);
   const followerRef = useRef<ScrollFollower | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
-    const follower = createScrollFollower(node, session?.id ? `cuppet.desktop.scroll.${session.id}` : null);
+    const follower = createScrollFollower(node);
     followerRef.current = follower;
     return () => {
       follower.dispose();

@@ -1,15 +1,9 @@
-export function createScrollFollower(node: HTMLElement, key: string | null) {
+export function createScrollFollower(node: HTMLElement) {
   let following = true;
   let frame: number | null = null;
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let programmaticTop: number | null = null;
   let lastTop = node.scrollTop;
   let lastHeight = node.scrollHeight;
-  let savedTop = lastTop;
-
-  const persist = () => {
-    if (key) try { localStorage.setItem(key, String(Math.round(savedTop))); } catch {}
-  };
   const pin = () => {
     if (!following) return;
     const bottom = Math.max(0, node.scrollHeight - node.clientHeight);
@@ -17,7 +11,7 @@ export function createScrollFollower(node: HTMLElement, key: string | null) {
       node.scrollTop = bottom;
       programmaticTop = node.scrollTop;
     }
-    lastTop = savedTop = node.scrollTop;
+    lastTop = node.scrollTop;
     lastHeight = node.scrollHeight;
   };
   const schedule = () => {
@@ -25,13 +19,9 @@ export function createScrollFollower(node: HTMLElement, key: string | null) {
     frame = requestAnimationFrame(() => { frame = null; pin(); });
   };
 
-  let saved: string | null = null;
-  if (key) try { saved = localStorage.getItem(key); } catch {}
-  if (saved !== null && Number.isFinite(Number(saved))) {
-    node.scrollTop = Math.max(0, Number(saved));
-    programmaticTop = lastTop = savedTop = node.scrollTop;
-    following = node.scrollHeight - node.clientHeight - node.scrollTop < 60;
-  } else pin();
+  // Pixel offsets go stale as deferred history changes height. Each visit starts
+  // at the latest message and follows layout growth until the user scrolls away.
+  pin();
 
   const onScroll = () => {
     const top = node.scrollTop;
@@ -43,10 +33,8 @@ export function createScrollFollower(node: HTMLElement, key: string | null) {
       else if (height - node.clientHeight - top < 60) following = true;
     }
     programmaticTop = null;
-    lastTop = savedTop = top;
+    lastTop = top;
     lastHeight = height;
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(persist, 150);
     schedule();
   };
   const onWheel = (event: WheelEvent) => { if (event.deltaY < 0) following = false; };
@@ -88,10 +76,6 @@ export function createScrollFollower(node: HTMLElement, key: string | null) {
     followLatest() { following = true; pin(); },
     dispose() {
       if (frame !== null) cancelAnimationFrame(frame);
-      clearTimeout(saveTimer);
-      // Not node.scrollTop: the next chat is already committed into this node when cleanup runs,
-      // so it would be the wrong chat's position. savedTop was captured at the last scroll or pin.
-      persist();
       resize?.disconnect();
       mutation?.disconnect();
       node.removeEventListener('scroll', onScroll);

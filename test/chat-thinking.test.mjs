@@ -41,6 +41,7 @@ function fixture(component, { deferred = false, now = Date.now() } = {}) {
         },
         useDeferredValue: (value, initial) => deferredReady ? value : initial,
         useEffect: () => {},
+        useLayoutEffect: () => {},
         useImperativeHandle: () => {},
       };
       if (name === 'react/jsx-runtime') return {

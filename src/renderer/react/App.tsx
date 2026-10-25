@@ -422,20 +422,19 @@ export function App() {
     } catch (error) { showToast(error); }
   }, [activeSessionId, openSession, showToast, startDraft]);
 
-  const deleteSession = useCallback(async (session: Session) => {
-    try {
-      await window.cuppet.sessions.delete(session.id);
-      const nextSessions = await refreshClientSessions();
-      if (activeSessionId === session.id) {
-        const next = nextSessions.find((item) => item.id !== session.id);
-        if (next) await openSession(next.id); else startDraft(session.projectId ?? null);
+  const deleteSession = useCallback((session: Session) => {
+    if (activeSessionId === session.id) startDraft(session.projectId ?? null);
+    // Let the confirmation close and the draft render while deletion finishes.
+    void (async () => {
+      try {
+        await window.cuppet.sessions.delete(session.id);
+        await refreshClientSessions();
+        showToast(`Deleted “${session.title || 'New chat'}”.`);
+      } catch (error) {
+        showToast(error);
       }
-      showToast(`Deleted “${session.title || 'New chat'}”.`);
-    } catch (error) {
-      showToast(error);
-      throw error;
-    }
-  }, [activeSessionId, openSession, refreshClientSessions, showToast, startDraft]);
+    })();
+  }, [activeSessionId, refreshClientSessions, showToast, startDraft]);
 
   const changeMode = useCallback(async (next: ComposerMode) => {
     const sessionMode: 'plan' | 'build' = next === 'plan' ? 'plan' : 'build';
