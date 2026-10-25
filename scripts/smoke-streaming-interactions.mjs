@@ -177,6 +177,10 @@ app.on('browser-window-created', (_event, window) => {
           const messages = document.querySelector('.messages');
           messages.dispatchEvent(new WheelEvent('wheel', { deltaY: -80 }));
           const results = [];
+          const activity = document.querySelector('.message-preview .trace-card-toggle');
+          if (activity?.getAttribute('aria-expanded') !== 'false') throw new Error('Live activity must start collapsed');
+          activity.click();
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const buttons = [...document.querySelectorAll('.message-preview .message-reasoning-toggle')];
           if (buttons.length !== 2) throw new Error('Missing thought/worked disclosure fixtures');
           for (const [index, button] of buttons.entries()) {

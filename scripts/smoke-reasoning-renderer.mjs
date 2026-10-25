@@ -39,6 +39,7 @@ app.whenReady().then(async () => {
     window.webContents.setBackgroundThrottling(false);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const traceCard = await window.webContents.executeJavaScript('window.exerciseTraceCard()');
     await window.webContents.executeJavaScript('window.setThought(800)');
     await new Promise(resolveWait => setTimeout(resolveWait, 150));
     const first = await window.webContents.executeJavaScript('window.runToggle()');
@@ -49,7 +50,7 @@ app.whenReady().then(async () => {
     const streamed = await window.webContents.executeJavaScript('window.exerciseStreaming()');
     const tail = await window.webContents.executeJavaScript('window.exerciseMarkdownTail()');
     assert.deepEqual(errors, [], 'Renderer or worker reported an error');
-    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...streamed, ...tail })}`);
+    console.log(`Reasoning renderer smoke passed on ${process.platform}: ${JSON.stringify({ cpuThrottle: 4, first, reopen, ...traceCard, ...streamed, ...tail })}`);
     clearTimeout(timeout);
     window.destroy();
     await originalFs.rm(workspace, { recursive: true, force: true, maxRetries: 3 });

@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as traceSummary from '../src/renderer/react/trace-summary.ts';
 import { formatWorkedDuration, orderedTranscriptItems } from '../src/renderer/react/chat-transcript.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, MessageView, TraceView, ReasoningTraceRow, ToolTraceRow, ToolTraceDetails };', {
+const compiled = ts.transpileModule(source + '\nexport { TranscriptMessage, MessageView, TraceView, ToolGroupRow, ReasoningTraceRow, ToolTraceRow, ToolTraceDetails };', {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 
@@ -44,6 +45,7 @@ function fixture(component, { deferred = false } = {}) {
         jsx: (type, props) => ({ type, props }),
         jsxs: (type, props) => ({ type, props }),
       };
+      if (name === './trace-summary') return { ...traceSummary, parseToolArguments(value) { parsed.push(value); return traceSummary.parseToolArguments(value); } };
       if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { formatWorkedDuration, orderedTranscriptItems };
     },
@@ -131,8 +133,12 @@ test('expanded activity defers tools older than the newest five and keeps runnin
     id: `call-${index}`, type: 'tool', tool: 'tst_read', argumentsJson: '{}',
     sequence: index + 1, status: index === 0 ? 'running' : 'complete',
   }));
-  const tree = fixture('TraceView')({ trace, messageId: 'message', live: true });
-  const rows = tree.props.children;
+  const groups = fixture('TraceView')({ trace, messageId: 'message', live: true });
+  const groupProps = find(groups, (node) => node.type?.name === 'ToolGroupRow').props;
+  const render = fixture('ToolGroupRow');
+  assert.equal(find(render(groupProps), (node) => node.type?.name === 'ToolTraceRow'), undefined);
+  find(render(groupProps), (node) => node.type === 'button').props.onClick();
+  const rows = find(render(groupProps), (node) => node.props.className === 'trace-group-tools').props.children;
   assert.ok(rows.every((node) => node.type?.name === 'ToolTraceRow'), 'tool rows keep their component type as they age');
   assert.deepEqual(rows.filter((node) => !node.props.deferred).map((node) => node.props.item.id), ['call-0', 'call-4', 'call-5', 'call-6', 'call-7', 'call-8']);
   assert.deepEqual(rows.filter((node) => node.props.deferred).map((node) => node.props.item.id), ['call-1', 'call-2', 'call-3']);
@@ -159,7 +165,7 @@ test('diff extraction waits for background rendering and preserves modified file
     items: [{ id: 'edit', type: 'tool', tool: 'workspace_edit', argumentsJson: '{"path":"notes.txt","old_text":"old","new_text":"new"}', sequence: 1, status: 'complete' }],
   };
   assert.equal(find(render(props), (node) => node.props.className === 'turn-diff-card'), undefined);
-  assert.equal(render.parsed.length, 0, 'collapsed history must not parse old tool arguments on the urgent render');
+  assert.equal(render.parsed.length, 0, 'diff extraction must not parse old tool arguments on the urgent render');
   render.flushDeferred();
   const tree = render(props);
   assert.ok(find(tree, (node) => node.props.className === 'turn-diff-card'));
@@ -174,7 +180,7 @@ test('thinking is collapsed while streaming, expands on click, and becomes a tim
   const props = { item: thought, contentId: 'thought-content', live: true };
   let tree = render(props);
   let button = find(tree, (node) => node.type === 'button');
-  assert.equal(button.props.children[0].props.children, 'Thinking…');
+  assert.equal(button.props.children[0].props.children, 'Inspecting the code.');
   assert.equal(button.props['aria-expanded'], false);
   assert.equal(find(tree, (node) => node.props.content), undefined);
 
@@ -187,7 +193,7 @@ test('thinking is collapsed while streaming, expands on click, and becomes a tim
 
   tree = render({ ...props, item: { ...thought, text: `${thought.text} Found it.`, completedAt: 86000 } });
   button = find(tree, (node) => node.type === 'button');
-  assert.equal(button.props.children[0].props.children, 'Thought for 1m 25s');
+  assert.equal(button.props.children[1].props.children, 'Thought for 1m 25s');
   assert.equal(find(tree, (node) => node.props.content)?.props.content, 'Inspecting the code. Found it.');
   button.props.onClick();
   assert.equal(find(render(props), (node) => node.props.content).props.open, false, 'collapsed thoughts retain their rendered content');
@@ -196,8 +202,8 @@ test('thinking is collapsed while streaming, expands on click, and becomes a tim
 test('history and interrupted thoughts use a stable end time; missing timestamps show no invented duration', () => {
   const render = fixture('ReasoningTraceRow');
   const props = { item: thought, contentId: 'thought-content', live: false, completedAt: 13000 };
-  assert.equal(find(render(props), (node) => node.type === 'button').props.children[0].props.children, 'Thought for 12s');
-  assert.equal(find(render({ ...props, item: { ...thought, startedAt: undefined } }), (node) => node.type === 'button').props.children[0].props.children, 'Thoughts');
+  assert.equal(find(render(props), (node) => node.type === 'button').props.children[1].props.children, 'Thought for 12s');
+  assert.equal(find(render({ ...props, item: { ...thought, startedAt: undefined } }), (node) => node.type === 'button').props.children[1].props.children, 'Thoughts');
 });
 
 test('thinking delegates parsing to async content and retains that component when collapsed', () => {
@@ -220,7 +226,7 @@ test('pre-tool narration is labelled as progress rather than provider thinking',
   const tree = fixture('ReasoningTraceRow')({
     item: { ...thought, kind: 'commentary', completedAt: 4000 }, contentId: 'progress-content', live: true,
   });
-  assert.equal(find(tree, (node) => node.type === 'button').props.children[0].props.children, 'Worked for 3s');
+  assert.equal(find(tree, (node) => node.type === 'button').props.children[1].props.children, 'Worked for 3s');
 });
 
 test('expanded activity includes thoughts and tools with unique thought controls per message', () => {
@@ -228,7 +234,7 @@ test('expanded activity includes thoughts and tools with unique thought controls
   const props = { trace: [thought, tool], messageId: 'message-1', live: false };
   let tree = render(props);
   assert.ok(find(tree, (node) => node.type?.name === 'ReasoningTraceRow'));
-  assert.ok(find(tree, (node) => node.type?.name === 'ToolTraceRow'));
+  assert.ok(find(tree, (node) => node.type?.name === 'ToolGroupRow'));
   const firstId = find(tree, (node) => node.type?.name === 'ReasoningTraceRow').props.contentId;
   tree = render({ ...props, messageId: 'message-2' });
   assert.notEqual(find(tree, (node) => node.type?.name === 'ReasoningTraceRow').props.contentId, firstId);
@@ -242,7 +248,7 @@ test('collapsing a completed turn hides every thought and tool while keeping its
   };
   let tree = render(props);
   const summary = (node) => node.props.className === 'message-content markdown-rendered';
-  const toggle = (node) => node.props.className?.startsWith('message-cuppet-toggle');
+  const toggle = (node) => node.props.className?.startsWith('trace-card-toggle');
   assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
   assert.equal(find(tree, summary).props.content, 'The final summary.');
   assert.equal(find(tree, toggle).props['aria-expanded'], false);
@@ -267,13 +273,39 @@ test('reasoning-only turns can collapse their whole trace', () => {
     trace: [thought],
   };
   let tree = render(props);
-  const toggle = (node) => node.props.className?.startsWith('message-cuppet-toggle');
+  const toggle = (node) => node.props.className?.startsWith('trace-card-toggle');
   assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
   find(tree, toggle).props.onClick();
   tree = render(props);
   assert.ok(find(tree, (node) => node.type?.name === 'TraceView'));
   find(tree, toggle).props.onClick();
   assert.equal(find(render(props), (node) => node.type?.name === 'TraceView'), undefined);
+});
+
+test('streamed reasoning preserves a manually opened or closed activity card', () => {
+  const render = fixture('MessageView');
+  const props = { message: { id: 'live', role: 'assistant', status: 'streaming', content: '' }, live: true, trace: [thought] };
+  const toggle = (tree) => find(tree, (node) => node.props.className === 'trace-card-toggle');
+  assert.equal(toggle(render(props)).props['aria-expanded'], false);
+  toggle(render(props)).props.onClick();
+  const updated = { ...props, trace: [{ ...thought, text: '**Checking tests**\nMore detail.' }, tool] };
+  assert.equal(toggle(render(updated)).props['aria-expanded'], true);
+  toggle(render(updated)).props.onClick();
+  assert.equal(toggle(render({ ...updated, trace: [...updated.trace, { ...tool, id: 'another' }] })).props['aria-expanded'], false);
+});
+
+test('growing tool groups preserve the open state and show failures while folded', () => {
+  const render = fixture('ToolGroupRow');
+  const props = { group: { id: tool.id, type: 'tool-group', tools: [tool] }, contentId: 'group-content' };
+  find(render(props), (node) => node.type === 'button').props.onClick();
+  const updated = { ...props, group: { ...props.group, tools: [tool, { ...tool, id: 'failed', status: 'error' }] } };
+  let tree = render(updated);
+  assert.equal(find(tree, (node) => node.type === 'button').props['aria-expanded'], true);
+  assert.equal(find(tree, (node) => node.props.className === 'trace-group-tools').props.children.length, 2);
+  find(tree, (node) => node.type === 'button').props.onClick();
+  tree = render(updated);
+  assert.equal(find(tree, (node) => node.props.className === 'trace-group-tools'), undefined);
+  assert.ok(find(tree, (node) => node.props.className === 'trace-failure-count'));
 });
 
 test('providers without thoughts retain their answer and tool activity without an empty thinking control', () => {
@@ -285,12 +317,12 @@ test('providers without thoughts retain their answer and tool activity without a
   let tree = render(props);
   assert.equal(find(tree, (node) => node.props.className === 'message-content markdown-rendered').props.content, 'The final answer.');
   assert.equal(find(tree, (node) => node.type?.name === 'TraceView'), undefined);
-  find(tree, (node) => node.props.className?.startsWith('message-cuppet-toggle')).props.onClick();
+  find(tree, (node) => node.props.className?.startsWith('trace-card-toggle')).props.onClick();
   tree = render(props);
   const traceProps = find(tree, (node) => node.type?.name === 'TraceView').props;
   const traceTree = fixture('TraceView')(traceProps);
   assert.equal(find(traceTree, (node) => node.type?.name === 'ReasoningTraceRow'), undefined);
-  assert.ok(find(traceTree, (node) => node.type?.name === 'ToolTraceRow'));
+  assert.ok(find(traceTree, (node) => node.type?.name === 'ToolGroupRow'));
   const plain = fixture('MessageView')({ message: { id: 'plain', role: 'assistant', status: 'complete', content: 'Answer.' } });
   assert.equal(find(plain, (node) => node.type?.name === 'TraceView'), undefined);
 });

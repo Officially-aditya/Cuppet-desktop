@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as traceSummary from '../src/renderer/react/trace-summary.ts';
 
 const source = await readFile(new URL('../src/renderer/react/ChatTranscript.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source + '\nexport { MessageView };', {
@@ -35,6 +36,7 @@ function fixture() {
         jsx: (type, props) => ({ type, props }),
         jsxs: (type, props) => ({ type, props }),
       };
+      if (name === './trace-summary') return traceSummary;
       if (name === './markdown-cache') return { createMarkdownCache: (render) => render };
       return { renderMarkdown: (value) => value, formatWorkedDuration: () => '1s' };
     },
@@ -54,15 +56,15 @@ function fixture() {
   };
 }
 
-test('steering keeps the previous response activity expanded after stopping', () => {
+test('steering leaves the previous response activity collapsed after stopping', () => {
   const view = fixture();
-  assert.equal(view.render('streaming', true).traceOpen, true);
-  assert.equal(view.render('stopped').traceOpen, true);
-  assert.equal(view.render('stopped').traceOpen, true);
+  assert.equal(view.render('streaming', true).traceOpen, false);
+  assert.equal(view.render('stopped').traceOpen, false);
+  assert.equal(view.render('stopped').traceOpen, false);
 });
 
-test('stopped response activity remains visible when mounted from history', () => {
-  assert.equal(fixture().render('stopped').traceOpen, true);
+test('stopped response activity starts collapsed when mounted from history', () => {
+  assert.equal(fixture().render('stopped').traceOpen, false);
 });
 
 test('successful completion still collapses the activity trace', () => {

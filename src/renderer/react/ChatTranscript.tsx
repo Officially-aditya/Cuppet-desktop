@@ -13,6 +13,7 @@ import { copyCodeBlock } from './code-copy';
 import { isProjectFileTarget, openChatLink } from './project-links';
 import { CUPPET_LOGO_URL } from './brand';
 import { formatWorkedDuration, orderedTranscriptItems, type TranscriptItem, type TranscriptReasoning, type TranscriptState } from './chat-transcript';
+import { classifyTool, compactActivityText, groupTrace, humanToolLabel, liveStatus, liveThoughtLine, parseToolArguments, summarizeTrace, toolCommand, toolExploreFocus, toolLineRange, toolTargets, type ToolGroup } from './trace-summary';
 
 type TraceReasoning = TranscriptReasoning;
 type TraceStatus = { id: string; type: 'status'; text: string; sequence: number };
@@ -112,7 +113,7 @@ export function ChatTranscript({ ref, session, project, running, transcript, pen
             deferred={index < stableMessages.length - IMMEDIATE_HISTORY_ITEMS}
             onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         ))}
-        {runningAssistant && (runningPreview || runningState?.content || runningAssistant.content || runningTrace.length > 0) && (
+        {runningAssistant && (
           <MessageView key={runningAssistant.id} message={{ ...runningAssistant, content: runningPreview || runningState?.content || runningAssistant.content }}
             items={runningTrace} live onInspectDiff={onInspectDiff} onOpenLightbox={onOpenLightbox} projectId={project?.id ?? session?.projectId ?? null} />
         )}
@@ -173,7 +174,7 @@ function MessageView({
 }) {
   const trace = useMemo(() => providedTrace ?? traceForItems(items ?? EMPTY_TRACE), [providedTrace, items]);
   const diffTrace = useDeferredValue(trace, EMPTY_TRACE);
-  const [traceOpen, setTraceOpen] = useState(live || message.status === 'stopped');
+  const [traceOpen, setTraceOpen] = useState(false);
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Number(message.createdAt) || Date.now());
   const prevLiveRef = useRef(live);
@@ -186,12 +187,14 @@ function MessageView({
   const userLines = message.role === 'user' ? content.split(/\r\n|\r|\n/) : [];
   const canExpand = userLines.length > MAX_VISIBLE_USER_LINES;
   const visibleContent = canExpand && !messageExpanded ? userLines.slice(0, MAX_VISIBLE_USER_LINES).join('\n') : content;
-  const hasTrace = assistant && trace.length > 0;
+  const hasTrace = assistant && (live || trace.length > 0);
+  const traceSummary = useMemo(() => summarizeTrace(trace), [trace]);
+  const activityTitle = useMemo(() => liveStatus(trace), [trace]);
   const canCopy = !live && message.status !== 'streaming' && Boolean(content.trim());
 
   useEffect(() => {
     if (prevLiveRef.current && !live) {
-      if (message.status !== 'stopped') setTraceOpen(false);
+      setTraceOpen(false);
       setCompletedAt(Date.now());
     }
     prevLiveRef.current = live;
@@ -206,7 +209,7 @@ function MessageView({
     if (!start || !end || end < start) return null;
     const durationMs = end - start;
     if (durationMs <= 0) return null;
-    return `Worked for ${formatWorkedDuration(durationMs)}`;
+    return `${message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped after' : 'Worked for'} ${formatWorkedDuration(durationMs)}`;
   }, [live, message.status, message.createdAt, message.updatedAt, completedAt]);
 
   const { editedFiles, rawDiff } = useMemo(() => {
@@ -217,12 +220,9 @@ function MessageView({
     for (const item of diffTrace) {
       if (item.type !== 'tool') continue;
       const normalized = item.tool.toLowerCase();
+      const kind = classifyTool(item.tool);
       const itemDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
-      const isEdit = normalized === 'tst_edit_batch' ||
-                     normalized === 'workspace_edit' ||
-                     normalized === 'workspace_write' ||
-                     /(^|[_-])(edit|patch|write|diff)($|[_-])/.test(normalized) ||
-                     Boolean(itemDiff);
+      const isEdit = kind === 'edit' || kind === 'write' || Boolean(itemDiff);
       if (!isEdit) continue;
 
       const args = parseToolArguments(item.argumentsJson);
@@ -231,7 +231,7 @@ function MessageView({
         if (!filesMap.has(target)) {
           filesMap.set(target, {
             path: target,
-            status: normalized.includes('write') ? 'added' : 'modified',
+            status: kind === 'write' ? 'added' : 'modified',
           });
         }
       }
@@ -310,25 +310,32 @@ function MessageView({
   return (
     <article className={`message ${message.role}${live ? ' message-preview' : ''}${pendingLabel ? ' message-pending' : ''}`} data-message-id={message.id} aria-busy={pendingLabel ? true : undefined}>
       <div className="message-role">
-        {hasTrace ? (
-          <button
-            type="button"
-            className={`message-cuppet-toggle${traceOpen ? ' open' : ''}`}
-            aria-expanded={traceOpen}
-            aria-label={traceOpen
-              ? (workedDurationText ? `Hide Cuppet activity (${workedDurationText})` : 'Hide Cuppet activity')
-              : (workedDurationText ? `Show Cuppet activity (${workedDurationText})` : 'Show Cuppet activity')
-            }
-            onClick={() => setTraceOpen((current) => !current)}
-          >
-            <span>Cuppet</span>
-            {workedDurationText && <span className="message-worked-time">({workedDurationText})</span>}
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-        ) : assistant ? 'Cuppet' : 'You'}
+        {assistant ? 'Cuppet' : 'You'}
         {pendingLabel && <span className="message-pending-label" role="status">{pendingLabel}</span>}
       </div>
-      {hasTrace && traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
+      {hasTrace && (
+        <div className={`trace-card${live ? ' live' : ''}${traceOpen ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="trace-card-toggle"
+            aria-expanded={traceOpen}
+            aria-controls={traceOpen ? `trace-${message.id}` : undefined}
+            onClick={() => setTraceOpen((current) => !current)}
+          >
+            <span className="trace-card-heading">
+              {live && <span className="trace-card-indicator" aria-hidden="true" />}
+              <span className="trace-card-title">{live ? activityTitle : workedDurationText ?? (message.status === 'stopped' || message.status === 'interrupted' ? 'Stopped' : 'Activity')}{!live && traceSummary.label ? ` · ${traceSummary.label}` : ''}</span>
+              <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </span>
+            {(live || traceSummary.failed > 0) && <span className="trace-card-meta">
+              {live && traceSummary.label && <span>{traceSummary.label}</span>}
+              {live && <TraceElapsed startedAt={startedAtRef.current} />}
+              {traceSummary.failed > 0 && <span className="trace-failure-count">{traceSummary.failed} failed</span>}
+            </span>}
+          </button>
+          {traceOpen && <TraceView trace={trace} messageId={message.id} live={live} completedAt={Number(message.updatedAt) || completedAt} onInspectDiff={onInspectDiff} projectId={projectId} />}
+        </div>
+      )}
       {assistant ? (
         content ? (
           <MarkdownContent
@@ -511,21 +518,47 @@ function MarkdownContent({ content, streaming = false, rendered: providedRendere
   );
 }
 
+function TraceElapsed({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <span>{formatWorkedDuration(Math.max(0, now - startedAt))}</span>;
+}
+
 function TraceView({ trace, messageId, live = false, completedAt, onInspectDiff, projectId = null }: { trace: TraceItem[]; messageId: string; live?: boolean; completedAt?: number | null; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void; projectId?: string | null }) {
-  const ordered = useMemo(() => orderedTrace(trace), [trace]);
-  const immediateTools = useMemo(() => new Set(ordered.filter((item) => item.type === 'tool').slice(-IMMEDIATE_HISTORY_ITEMS).map((item) => item.id)), [ordered]);
+  const groups = useMemo(() => groupTrace(trace), [trace]);
   return (
-    <div className="message-trace thread-activity" aria-label="Cuppet activity">
-      {ordered.map((item) => item.type === 'reasoning' ? (
+    <div id={`trace-${messageId}`} className="message-trace thread-activity" aria-label="Cuppet activity">
+      {groups.map((item) => item.type === 'reasoning' ? (
         <ReasoningTraceRow key={item.id} item={item} contentId={`reasoning-${messageId}-${item.id}`} live={live} completedAt={live ? undefined : completedAt} projectId={projectId} />
       ) : item.type === 'status' ? (
         <div key={item.id} className="message-trace-reasoning" role="status">{item.text}</div>
       ) : (
-        <ToolTraceRow key={item.id} item={item} deferred={!immediateTools.has(item.id) && item.status !== 'running'} onInspectDiff={onInspectDiff} />
+        <ToolGroupRow key={item.id} group={item} contentId={`tools-${messageId}-${item.id}`} onInspectDiff={onInspectDiff} />
       ))}
     </div>
   );
 }
+
+const ToolGroupRow = memo(function ToolGroupRow({ group, contentId, onInspectDiff }: { group: ToolGroup; contentId: string; onInspectDiff?: (files: DiffFile[], rawDiff?: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const summary = useMemo(() => summarizeTrace(group.tools), [group.tools]);
+  return (
+    <div className={`trace-tool-group${open ? ' open' : ''}`}>
+      <button type="button" className="trace-group-toggle" aria-expanded={open} aria-controls={open ? contentId : undefined} onClick={() => setOpen((current) => !current)}>
+        <span>{summary.label || `${summary.total} action${summary.total === 1 ? '' : 's'}`}</span>
+        {summary.running > 0 && <span className="trace-group-running">{summary.running} running</span>}
+        {summary.failed > 0 && <span className="trace-failure-count">{summary.failed} failed</span>}
+        <svg className="trace-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && <div id={contentId} className="trace-group-tools">
+        {group.tools.map((item, index) => <ToolTraceRow key={item.id} item={item} deferred={index < group.tools.length - IMMEDIATE_HISTORY_ITEMS && item.status === 'complete'} onInspectDiff={onInspectDiff} />)}
+      </div>}
+    </div>
+  );
+});
 
 const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, live, completedAt, projectId = null }: { item: TraceReasoning; contentId: string; live: boolean; completedAt?: number | null; projectId?: string | null }) {
   const [open, setOpen] = useState(false);
@@ -537,6 +570,7 @@ const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, liv
   const label = active
     ? (commentary ? 'Working…' : 'Thinking…')
     : duration ? `${commentary ? 'Worked' : 'Thought'} for ${duration}` : (commentary ? 'Progress' : 'Thoughts');
+  const preview = useMemo(() => liveThoughtLine(item.text), [item.text]);
   return (
     <div className={`message-reasoning${open ? ' open' : ''}`}>
       <button
@@ -546,7 +580,8 @@ const ReasoningTraceRow = memo(function ReasoningTraceRow({ item, contentId, liv
         aria-controls={opened ? contentId : undefined}
         onClick={() => { setOpened(true); setOpen((current) => !current); }}
       >
-        <span>{label}</span>
+        <span className="message-reasoning-preview">{preview || label}</span>
+        {preview && <span className="message-reasoning-duration">{label}</span>}
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
       {opened && <ReasoningContent id={contentId} content={item.text} streaming={active} open={open} projectId={projectId} />}
@@ -627,11 +662,8 @@ function ToolTraceDetails({ item, onInspectDiff, initialOpen = false }: { item: 
   const command = toolCommand(args, false);
   const detail = toolActivityDetail(item.tool, item.argumentsJson, item.details, item.status);
   const rawDiff = item.details && item.details.includes('--- ') && item.details.includes('+++ ') ? item.details : '';
-  const isEdit = item.tool === 'tst_edit_batch' ||
-                 item.tool === 'workspace_edit' ||
-                 item.tool === 'workspace_write' ||
-                 /(^|[_-])(edit|patch|write|diff)($|[_-])/.test(item.tool.toLowerCase()) ||
-                 Boolean(rawDiff);
+  const kind = classifyTool(item.tool);
+  const isEdit = kind === 'edit' || kind === 'write' || Boolean(rawDiff);
   const hasInlineResult = detail.split('\n').some((line) => line.startsWith('Result: '));
   const showCodeBlock = Boolean(item.details) && !isFailed && (!hasInlineResult || Boolean(rawDiff));
 
@@ -789,56 +821,8 @@ function traceForItems(items: TranscriptItem[]): TraceItem[] {
   return orderedTranscriptItems(items);
 }
 
-function orderedTrace(trace: TraceItem[]) {
-  return trace
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => a.item.sequence - b.item.sequence || a.index - b.index)
-    .map(({ item }) => item);
-}
-
 function friendlyActivityLabel(entry: ActivityEntry) {
   return entry.label;
-}
-
-function toolActivityLabel(toolName = '', argumentsJson = '{}', status: TraceTool['status']) {
-  const args = parseToolArguments(argumentsJson);
-  const normalizedTool = toolName.toLowerCase();
-  const failed = status === 'error';
-  const complete = status === 'complete';
-  const phrase = (active: string, done: string, error: string) => failed ? error : complete ? done : active;
-  const targets = toolTargets(toolName, args);
-  const target = describeTargets(targets, args);
-  const focus = toolExploreFocus(args);
-  const command = toolCommand(args);
-
-  if (normalizedTool === 'workspace_read' || normalizedTool === 'tst_read' || /(^|[_-])read($|[_-])/.test(normalizedTool)) return target
-    ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
-    : phrase('Reading file…', 'Read file', 'Couldn’t read file');
-  if (normalizedTool === 'tst_explore' || /search|grep|find|explore|locate/.test(normalizedTool)) return focus
-    ? phrase(`Searching ${focus}…`, `Searched ${focus}`, `Search failed for ${focus}`)
-    : phrase('Searching workspace…', 'Searched workspace', 'Workspace search failed');
-  if (normalizedTool === 'tst_edit_batch') {
-    if (String(args.action ?? '') === 'apply' && !target) return phrase('Applying edit batch…', 'Applied edit batch', 'Edit batch failed');
-    return target ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`) : phrase('Editing files…', 'Edited files', 'Couldn’t edit files');
-  }
-  if (normalizedTool === 'workspace_edit' || /(^|[_-])(edit|patch)($|[_-])/.test(normalizedTool)) return target
-    ? phrase(`Editing ${target}…`, `Edited ${target}`, `Couldn’t edit ${target}`)
-    : phrase('Editing file…', 'Edited file', 'Couldn’t edit file');
-  if (normalizedTool === 'workspace_write' || /(^|[_-])(write|create)($|[_-])/.test(normalizedTool)) return target
-    ? phrase(`Writing ${target}…`, `Wrote ${target}`, `Couldn’t write ${target}`)
-    : phrase('Writing file…', 'Wrote file', 'Couldn’t write file');
-  if (normalizedTool === 'tst_validate' || /test|verify|validate|lint|check/.test(normalizedTool)) return target
-    ? phrase(`Validating ${target}…`, `Validated ${target}`, `Validation failed for ${target}`)
-    : phrase('Running validation…', `${humanToolLabel(toolName)} passed`, `${humanToolLabel(toolName)} failed`);
-  if (normalizedTool === 'cuppet_memory_search') return phrase('Searching memory…', 'Searched memory', 'Memory search failed');
-  if (normalizedTool === 'cuppet_plan') return phrase('Reviewing plan…', 'Reviewed plan', 'Couldn’t review plan');
-  if (normalizedTool === 'bash' || /shell|terminal|command|exec/.test(normalizedTool)) return command
-    ? phrase(`Running ${command}…`, `Ran ${command}`, `Command failed: ${command}`)
-    : phrase('Running command…', 'Ran command', 'Command failed');
-  if (normalizedTool === 'question') return phrase('Waiting for input…', 'Received input', 'Input request failed');
-
-  const name = humanToolLabel(toolName);
-  return phrase(`${name}…`, `${name} completed`, `${name} failed`);
 }
 
 function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDetails?: string, status?: string) {
@@ -864,117 +848,6 @@ function toolActivityDetail(toolName: string, argumentsJson: string, runtimeDeta
   }
   if (!lines.length && toolName) lines.push(`Tool: ${humanToolLabel(toolName)}`);
   return lines.join('\n');
-}
-
-function describeTargets(targets: string[], args: Record<string, unknown>) {
-  if (!targets.length) return '';
-  if (targets.length > 1) {
-    const names = targets.slice(0, 3).map(targetName);
-    if (targets.length <= 3) return names.join(', ');
-    return `${targets.length} files · ${names.slice(0, 2).join(', ')} +${targets.length - 2}`;
-  }
-  const base = targetName(targets[0]);
-  const range = toolLineRange(args);
-  return range ? `${base} · ${range}` : base;
-}
-
-function toolLineRange(args: Record<string, unknown>) {
-  const start = Number(args.start_line ?? args.startLine ?? args.line_start ?? args.offset);
-  const end = Number(args.end_line ?? args.endLine ?? args.line_end);
-  if (Number.isFinite(start) && Number.isFinite(end) && start > 0 && end >= start) return `lines ${start}–${end}`;
-  if (Number.isFinite(start) && start > 0) return `from line ${start}`;
-  const limit = Number(args.limit);
-  if (Number.isFinite(limit) && limit > 0 && (args.path || args.file)) return `up to ${limit} lines`;
-  return '';
-}
-
-function toolCommand(args: Record<string, unknown>, compact = true) {
-  const value = [args.command, args.cmd, args.script].find((item) => (typeof item === 'string' && item.trim()) || (Array.isArray(item) && item.length));
-  if (value === undefined) return '';
-  const raw = Array.isArray(value) ? value.map(String).join(' ') : String(value);
-  const normalized = raw.replace(/[\r\n\t]+/g, ' ').trim();
-  if (!compact) return normalized.length > 180 ? `${normalized.slice(0, 177)}…` : normalized;
-  return normalized.length > 54 ? `${normalized.slice(0, 51)}…` : normalized;
-}
-
-function humanToolLabel(value: string) {
-  const normalized = String(value || 'tool')
-    .replace(/^cuppet[_-]runtime[_-]/, '')
-    .replace(/^cuppet[_-]/, '')
-    .replace(/^tst[_-]/, 'TST ')
-    .replace(/^workspace[_-]/, '')
-    .replace(/[_-]+/g, ' ')
-    .trim();
-  return normalized ? normalized.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Tool';
-}
-
-function toolTargets(toolName: string, args: Record<string, unknown>) {
-  const values: string[] = [];
-  const add = (value: unknown) => {
-    if (typeof value !== 'string') return;
-    const path = value.trim();
-    if (path && !values.includes(path)) values.push(path);
-  };
-
-  add(args.path);
-  add(args.file);
-  add(args.filename);
-  add(args.file_path);
-  add(args.filePath);
-  add(args.filepath);
-  add(args.target);
-  if (Array.isArray(args.paths)) for (const value of args.paths) add(value);
-  if (Array.isArray(args.files)) for (const value of args.files) add(typeof value === 'string' ? value : (value as Record<string, unknown>)?.path);
-  if (Array.isArray(args.targets)) for (const value of args.targets) add(typeof value === 'string' ? value : (value as Record<string, unknown>)?.path);
-
-  if (toolName === 'tst_read' || toolName === 'workspace_read') {
-    add(args.path);
-    for (const item of arrayRecords(args.reads)) add(item.path);
-    for (const item of arrayRecords(args.targets)) add(item.path);
-  } else if (toolName === 'tst_edit_batch') {
-    for (const item of arrayRecords(args.operations)) {
-      add(item.path);
-      if (item.target && typeof item.target === 'object' && !Array.isArray(item.target)) add((item.target as Record<string, unknown>).path);
-    }
-  } else if (toolName === 'tst_validate') {
-    for (const value of Array.isArray(args.paths) ? args.paths : []) add(value);
-  } else if (toolName === 'workspace_edit' || toolName === 'workspace_write') {
-    add(args.path);
-  }
-  return values.slice(0, 64);
-}
-
-function toolExploreFocus(args: Record<string, unknown>) {
-  const prefix = typeof args.prefix === 'string' ? args.prefix.trim() : '';
-  if (prefix) return targetName(prefix);
-  const query = [args.query, args.pattern, args.search, args.needle].find((value) => typeof value === 'string' && value.trim());
-  if (typeof query === 'string') return compactActivityText(query);
-  return '';
-}
-
-function parseToolArguments(value: string) {
-  try {
-    const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-function arrayRecords(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)));
-}
-
-function targetName(path: string) {
-  const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');
-  const name = normalized.split('/').filter(Boolean).at(-1) || normalized;
-  return compactActivityText(name);
-}
-
-function compactActivityText(value: string) {
-  const text = value.replace(/[\r\n\t]+/g, ' ').trim();
-  return text.length > 72 ? `${text.slice(0, 69)}…` : text;
 }
 
 function statusLabel(status: string) {

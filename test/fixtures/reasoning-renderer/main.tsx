@@ -8,6 +8,50 @@ import { renderMarkdown } from '../../../src/renderer/react/markdown';
 
 const root = createRoot(document.getElementById('root')!);
 const noop = () => {};
+function openTrace() {
+  const toggle = document.querySelector('.trace-card-toggle') as HTMLButtonElement;
+  if (toggle.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
+}
+
+(window as any).exerciseTraceCard = () => {
+  const startedAt = Date.now() - 12000;
+  let live = true;
+  let items: any[] = [
+    { id: 'thought', type: 'reasoning', text: '**Checking the implementation**\nDetailed reasoning stays available on demand.', sequence: 1, startedAt },
+    { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/app.ts"}', status: 'complete', sequence: 2 },
+    { id: 'cmd', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'running', sequence: 3 },
+  ];
+  const render = () => flushSync(() => root.render(<main className="main-pane react-main-pane"><ChatTranscript key="trace-card" session={{ id: 'trace-card', messages: [{
+    id: 'card-answer', role: 'assistant', content: live ? '' : 'The implementation and tests are ready.', status: live ? 'streaming' : 'stopped', createdAt: startedAt, updatedAt: startedAt + 12000,
+  }] } as any} project={null} running={live} transcript={{ 'card-answer': { items, preview: '' } }} onInspectDiff={noop} onOpenLightbox={noop} /></main>));
+  const card = () => document.querySelector('.trace-card-toggle') as HTMLButtonElement;
+  render();
+  if (card().getAttribute('aria-expanded') !== 'false' || document.querySelector('.message-trace')) throw new Error('Live card was not collapsed');
+  if (!card().textContent?.includes('Checking the implementation') || !card().textContent?.includes('Read 1 file')) throw new Error('Live summary is missing');
+  openTrace();
+  if (!document.querySelector('.message-reasoning-preview')?.textContent?.includes('Checking the implementation')) throw new Error('Thought preview is missing');
+  const group = document.querySelector('.trace-group-toggle') as HTMLButtonElement;
+  if (group.getAttribute('aria-expanded') !== 'false' || document.querySelector('.thread-tool-row')) throw new Error('Tool group was not collapsed');
+  flushSync(() => group.click());
+  const firstTool = document.querySelector('.thread-tool-row');
+  items = [...items, { id: 'read-2', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"src/tests.ts"}', status: 'complete', sequence: 4 }];
+  render();
+  if (card().getAttribute('aria-expanded') !== 'true' || document.querySelector('.trace-group-toggle') !== group || group.getAttribute('aria-expanded') !== 'true') throw new Error('Streaming reset an open disclosure');
+  if (firstTool !== document.querySelector('.thread-tool-row')) throw new Error('Growing a group remounted its tools');
+  if (!card().textContent?.includes('Read 2 files')) throw new Error('Live counts did not update');
+  flushSync(() => card().click());
+  items = items.map(item => item.id === 'cmd' ? { ...item, status: 'error', details: 'Test command failed' } : item);
+  render();
+  if (card().getAttribute('aria-expanded') !== 'false' || !document.querySelector('.trace-failure-count')?.textContent?.includes('1 failed')) throw new Error('A collapsed card hid a failure or reopened');
+  openTrace();
+  if (!document.querySelector('.trace-group-toggle .trace-failure-count')) throw new Error('A collapsed tool group hid its failure');
+  live = false;
+  render();
+  if (card().getAttribute('aria-expanded') !== 'false' || !card().textContent?.includes('Stopped after 12s')) throw new Error('A stopped turn did not fold with a stable duration');
+  if (!document.querySelector('.message-content')?.textContent?.includes('The implementation and tests are ready.')) throw new Error('Folding hid the answer');
+  return { collapsedLiveCard: true, liveCounts: true, stableGroups: true, manualToggle: true, visibleFailures: true, stoppedDuration: true };
+};
+
 let updateThought: (text: string, complete: boolean) => void;
 (window as any).setThought = (count: number, live = false) => {
   const text = Array.from({ length: count }, (_, i) => `### Investigation ${i}\n\nReviewing the **current implementation** and how it changes the user prompt, tool result and transcript state. Check \`src/renderer/react/ChatTranscript.tsx\` and preserve links to [the source](https://example.com/source).\n\n\`\`\`typescript\nconst item${i} = { content: 'some value', sequence: ${i} };\nconsole.log(item${i});\n\`\`\`\n`).join('\n');
@@ -24,6 +68,7 @@ let updateThought: (text: string, complete: boolean) => void;
   return text.length;
 };
 (window as any).runToggle = async () => {
+  openTrace();
   const button = document.querySelector('.message-reasoning-toggle') as HTMLButtonElement;
   const longTasks: number[] = [];
   const observer = new PerformanceObserver((list) => longTasks.push(...list.getEntries().map(entry => entry.duration)));
@@ -62,6 +107,7 @@ let updateThought: (text: string, complete: boolean) => void;
     }
   };
   (window as any).setThought(200, true);
+  openTrace();
   const toggle = document.querySelector('.message-reasoning-toggle') as HTMLButtonElement;
   toggle.click();
   await new Promise(resolve => setTimeout(resolve, 0));

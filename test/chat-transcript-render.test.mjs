@@ -61,7 +61,39 @@ test('a long tool loop does not parse any collapsed thinking content', () => {
     ? { id: `r${i}`, type: 'reasoning', text: `Thought ${i} `.repeat(500), sequence: i, startedAt: 1, completedAt: 2 }
     : { id: `t${i}`, type: 'tool', tool: 'read_file', status: 'complete', argumentsJson: '{"path":"a.ts"}', sequence: i });
   const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: { a1: { items } } });
-  assert.equal((html.match(/message-reasoning-toggle/g) ?? []).length, 50);
+  assert.equal((html.match(/message-reasoning-toggle/g) ?? []).length, 0);
+  assert.match(html, /trace-card-toggle[^>]*aria-expanded="false"/);
+  assert.match(html, /Read 1 file/);
   assert.equal(parsed.some((value) => value.includes('Thought')), false);
   assert.doesNotMatch(html, /message-reasoning-content/);
+});
+
+test('the collapsed live card reads the current transcript and exposes failures', () => {
+  const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] }, transcript: {
+    a1: { items: [
+      { id: 'r', type: 'reasoning', text: '**Checking the fix**\nHidden detailed thought.', sequence: 1 },
+      { id: 'read', type: 'tool', tool: 'read_file', argumentsJson: '{"path":"a.ts"}', status: 'complete', sequence: 2 },
+      { id: 'cmd', type: 'tool', tool: 'bash', argumentsJson: '{"command":"npm test"}', status: 'error', sequence: 3 },
+    ] },
+  } });
+  assert.match(html, /Checking the fix/);
+  assert.match(html, /Read 1 file/);
+  assert.match(html, /trace-failure-count[^>]*>1<!-- --> failed|trace-failure-count[^>]*>1 failed/);
+  assert.doesNotMatch(html, /Hidden detailed thought|thread-tool-row/);
+});
+
+test('a response waiting for its first event shows Working', () => {
+  const html = render({ running: true, session: { id: 's1', messages: [message('a1', 'assistant', '', 'streaming')] } });
+  assert.match(html, /Working…/);
+  assert.match(html, /trace-card-toggle[^>]*aria-expanded="false"/);
+});
+
+test('finished cards show stable duration and stopped turns say Stopped after', () => {
+  for (const [status, label] of [['complete', 'Worked for 12s'], ['stopped', 'Stopped after 12s'], ['interrupted', 'Stopped after 12s']]) {
+    const html = render({ session: { id: 's1', messages: [{ ...message('a1', 'assistant', 'Final answer', status), createdAt: 1000, updatedAt: 13000 }] },
+      transcript: { a1: { items: [{ id: 'r', type: 'reasoning', text: 'Detailed thought.', sequence: 1 }] } } });
+    assert.ok(html.includes(label));
+    assert.match(html, /Final answer/);
+    assert.doesNotMatch(html, /Detailed thought/);
+  }
 });
