@@ -17,6 +17,7 @@ import { TstBatchEditManager } from './tst-edit-batches.mjs';
 import { ProjectWriter } from './project-writer.mjs';
 import { parseSlashCommand } from './commands.mjs';
 import { classifyProviderError } from './provider-error.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 import { generateChatTitle } from './title-generator.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
@@ -740,7 +741,7 @@ function injectPe3Context(messages, refreshPaths, attachments) {
   output.splice(Math.max(0, index), 0, { role: 'system', content: blocks.join('\n\n') }); return output;
 }
 function titleFromMessage(value) { const oneLine = value.replace(/\s+/g, ' ').trim(); return oneLine.length <= 56 ? oneLine : `${oneLine.slice(0, 53).trimEnd()}…`; }
-function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }
+function cleanError(error) { return redactCredentials(error).slice(0, 500); }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
 function contextWindow(provider) { const value = Number(provider?.contextWindow ?? process.env.CUPPET_CONTEXT_WINDOW_TOKENS ?? 128000); return Number.isFinite(value) ? Math.min(Math.max(Math.floor(value), 4096), 2_000_000) : 128000; }
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }

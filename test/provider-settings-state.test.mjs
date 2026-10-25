@@ -59,6 +59,27 @@ test('provider model, effort, and secondary choices survive switching and restar
   assert.equal(disk.providerStates['claude-code'].primaryEffort, 'max');
 });
 
+test('API-key save and reload keep authentication working while all renderer values remain credential-free', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-credential-roundtrip-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'settings.json');
+  const key = 'settings-roundtrip-canary';
+  const options = {
+    safeStorageImpl: { encryptString: value => Buffer.from(`encrypted:${value}`), decryptString: value => value.toString().slice('encrypted:'.length) },
+    credentialStorageStatusImpl: () => ({ available: true, backend: 'test', reason: null }),
+  };
+  const store = new ProviderSettingsStore(path, options);
+  await store.load();
+  const saved = await store.save({ providerID: 'openai', model: 'test-model', apiKey: key });
+  assert.equal(saved.apiKeyConfigured, true);
+  assert.ok(!JSON.stringify(saved).includes(key));
+  assert.ok(!(await readFile(path, 'utf8')).includes(key));
+  const reloaded = new ProviderSettingsStore(path, options);
+  await reloaded.load();
+  assert.equal(reloaded.runtimeValue().apiKey, key);
+  assert.ok(!JSON.stringify(reloaded.rendererValue()).includes(key));
+});
+
 test('legacy active settings are retained when first switching providers', async (t) => {
   const { store, load } = await fixture(t, {
     providerID: 'github-copilot', baseUrl: 'cli://github-copilot',

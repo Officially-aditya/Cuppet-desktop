@@ -1,4 +1,6 @@
 import { providerRequest } from './provider-policy.mjs';
+import { fetchProvider } from './provider-fetch.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -25,7 +27,7 @@ export class OpenAIResponsesProvider {
       delete request.tools;
       delete request.tool_choice;
     }
-    const response = await this.#fetch(`${this.#config.baseUrl}/responses`, {
+    const response = await fetchProvider(this.#fetch, `${this.#config.baseUrl}/responses`, {
       method: 'POST',
       headers: {
         ...this.#config.requestHeaders,
@@ -36,8 +38,8 @@ export class OpenAIResponsesProvider {
       body: JSON.stringify(request),
       signal,
     });
-    await assertOk(response);
-    if (isSse(response) && response.body) return consumeOpenAIResponsesSse(response.body, onDelta, signal);
+    await assertOk(response, this.#config);
+    if (isSse(response) && response.body) return consumeOpenAIResponsesSse(response.body, onDelta, signal, this.#config);
     const payload = await response.json();
     const result = openAIResponseResult(payload);
     if (!result.text && !result.toolCalls.length) throw new Error('OpenAI returned an empty response.');
@@ -68,7 +70,7 @@ export class AnthropicMessagesProvider {
     if (translatedTools.length) request.tools = translatedTools;
     else delete request.tools;
 
-    const response = await this.#fetch(`${this.#config.baseUrl}/messages`, {
+    const response = await fetchProvider(this.#fetch, `${this.#config.baseUrl}/messages`, {
       method: 'POST',
       headers: {
         ...this.#config.requestHeaders,
@@ -80,8 +82,8 @@ export class AnthropicMessagesProvider {
       body: JSON.stringify(request),
       signal,
     });
-    await assertOk(response);
-    if (isSse(response) && response.body) return consumeAnthropicSse(response.body, onDelta, signal);
+    await assertOk(response, this.#config);
+    if (isSse(response) && response.body) return consumeAnthropicSse(response.body, onDelta, signal, this.#config);
     const payload = await response.json();
     const result = anthropicResult(payload);
     if (!result.text && !result.toolCalls.length) throw new Error('Anthropic returned an empty response.');
@@ -116,7 +118,7 @@ export class GeminiInteractionsProvider {
     const translatedTools = interactionTools(tools);
     if (translatedTools.length) request.tools = translatedTools;
 
-    const response = await this.#fetch(`${this.#config.baseUrl}/interactions`, {
+    const response = await fetchProvider(this.#fetch, `${this.#config.baseUrl}/interactions`, {
       method: 'POST',
       headers: {
         ...this.#config.requestHeaders,
@@ -127,9 +129,9 @@ export class GeminiInteractionsProvider {
       body: JSON.stringify(request),
       signal,
     });
-    await assertOk(response);
+    await assertOk(response, this.#config);
     let result;
-    if (isSse(response) && response.body) result = await consumeGeminiInteractionSse(response.body, onDelta, signal);
+    if (isSse(response) && response.body) result = await consumeGeminiInteractionSse(response.body, onDelta, signal, this.#config);
     else {
       const payload = await response.json();
       result = geminiInteractionResult(payload);
@@ -166,7 +168,7 @@ export class VertexGeminiProvider {
     const modelResource = vertexModelResource(this.#config.model);
     const separator = this.#config.baseUrl.includes('?') ? '&' : '?';
     const url = `${this.#config.baseUrl}/${modelResource}:streamGenerateContent${separator}alt=sse&key=${encodeURIComponent(this.#config.apiKey)}`;
-    const response = await this.#fetch(url, {
+    const response = await fetchProvider(this.#fetch, url, {
       method: 'POST',
       headers: {
         ...this.#config.requestHeaders,
@@ -176,9 +178,9 @@ export class VertexGeminiProvider {
       body: JSON.stringify(request),
       signal,
     });
-    await assertOk(response);
+    await assertOk(response, this.#config);
     let result;
-    if (isSse(response) && response.body) result = await consumeVertexSse(response.body, onDelta, signal);
+    if (isSse(response) && response.body) result = await consumeVertexSse(response.body, onDelta, signal, this.#config);
     else {
       const payload = await response.json();
       result = vertexChunkResult(payload);
@@ -212,7 +214,7 @@ export function nativeProviderKind(providerID) {
   }
 }
 
-export async function consumeOpenAIResponsesSse(body, onDelta = async () => {}, signal) {
+export async function consumeOpenAIResponsesSse(body, onDelta = async () => {}, signal, credentials = {}) {
   let text = '';
   let usage = null;
   let completed = false;
@@ -253,16 +255,16 @@ export async function consumeOpenAIResponsesSse(body, onDelta = async () => {}, 
     } else if (type === 'response.incomplete') {
       throw new Error(`OpenAI response incomplete (${payload.response?.incomplete_details?.reason ?? 'unknown reason'}).`);
     } else if (type === 'response.failed') {
-      throw new Error(providerFailure(payload.response?.error ?? payload.error, 'OpenAI response failed'));
+      throw new Error(providerFailure(payload.response?.error ?? payload.error, 'OpenAI response failed', credentials));
     } else if (type === 'error') {
-      throw new Error(providerFailure(payload.error ?? payload, 'OpenAI stream failed'));
+      throw new Error(providerFailure(payload.error ?? payload, 'OpenAI stream failed', credentials));
     }
   }
   if (!completed) throw new Error('OpenAI stream ended before response.completed.');
   return { text, toolCalls: callsToArray(calls), usage };
 }
 
-export async function consumeAnthropicSse(body, onDelta = async () => {}, signal) {
+export async function consumeAnthropicSse(body, onDelta = async () => {}, signal, credentials = {}) {
   let text = '';
   let usage = null;
   let completed = false;
@@ -296,7 +298,7 @@ export async function consumeAnthropicSse(body, onDelta = async () => {}, signal
     } else if (type === 'message_stop') {
       completed = true;
     } else if (type === 'error') {
-      throw new Error(providerFailure(payload.error, 'Anthropic stream failed'));
+      throw new Error(providerFailure(payload.error, 'Anthropic stream failed', credentials));
     }
   }
   if (!completed) throw new Error('Anthropic stream ended before message_stop.');
@@ -307,7 +309,7 @@ export async function consumeAnthropicSse(body, onDelta = async () => {}, signal
   return { text, toolCalls, usage };
 }
 
-export async function consumeGeminiInteractionSse(body, onDelta = async () => {}, signal) {
+export async function consumeGeminiInteractionSse(body, onDelta = async () => {}, signal, credentials = {}) {
   let text = '';
   let usage = null;
   let completed = false;
@@ -351,9 +353,9 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
       usage = interaction.usage ?? usage;
       if (Array.isArray(interaction.steps) && interaction.steps.length) completeSteps = structuredClone(interaction.steps);
     } else if (type === 'interaction.failed') {
-      throw new Error(providerFailure(payload.interaction?.errors?.[0] ?? payload.error, 'Gemini interaction failed'));
+      throw new Error(providerFailure(payload.interaction?.errors?.[0] ?? payload.error, 'Gemini interaction failed', credentials));
     } else if (type === 'error') {
-      throw new Error(providerFailure(payload.error ?? payload, 'Gemini stream failed'));
+      throw new Error(providerFailure(payload.error ?? payload, 'Gemini stream failed', credentials));
     }
   }
   if (!completed) throw new Error('Gemini stream ended before interaction completion.');
@@ -366,14 +368,14 @@ export async function consumeGeminiInteractionSse(body, onDelta = async () => {}
   return { ...result, text: text || result.text, usage, interactionId, consumedToolResultIds };
 }
 
-export async function consumeVertexSse(body, onDelta = async () => {}, signal) {
+export async function consumeVertexSse(body, onDelta = async () => {}, signal, credentials = {}) {
   let text = '';
   let usage = null;
   let completed = false;
   const calls = new Map();
   const modelParts = [];
   for await (const payload of ssePayloads(body, signal)) {
-    if (payload?.error) throw new Error(providerFailure(payload.error, 'Vertex Gemini stream failed'));
+    if (payload?.error) throw new Error(providerFailure(payload.error, 'Vertex Gemini stream failed', credentials));
     const chunk = vertexChunkResult(payload);
     if (chunk.text) {
       text += chunk.text;
@@ -789,7 +791,7 @@ function parseObject(value) {
   }
 }
 
-async function assertOk(response) {
+async function assertOk(response, credentials) {
   if (response?.ok) return;
   const status = Number(response?.status) || 0;
   let detail = '';
@@ -798,19 +800,19 @@ async function assertOk(response) {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        detail = providerFailure(parsed?.error ?? parsed, '');
+        detail = providerFailure(parsed?.error ?? parsed, '', credentials);
       } catch {
-        detail = raw.slice(0, 500);
+        detail = redactCredentials(raw, credentials).slice(0, 500);
       }
     }
   } catch {}
   throw new Error(`Provider request failed (${status})${detail ? `: ${detail}` : ''}`);
 }
 
-function providerFailure(value, fallback) {
-  if (typeof value === 'string') return value.slice(0, 500);
+function providerFailure(value, fallback, credentials) {
+  if (typeof value === 'string') return redactCredentials(value, credentials).slice(0, 500);
   const source = record(value);
-  return String(source.message ?? source.detail ?? source.code ?? fallback).slice(0, 500);
+  return redactCredentials(source.message ?? source.detail ?? source.code ?? fallback, credentials).slice(0, 500);
 }
 
 function isSse(response) {

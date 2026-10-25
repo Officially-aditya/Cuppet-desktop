@@ -1,4 +1,5 @@
 import { providerActivity } from '../../activity.mjs';
+import { redactCredentials } from '../../../credential-sanitization.mjs';
 
 const TERMINAL_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'canceled']);
 const FAILED_STATUSES = new Set(['failed', 'error']);
@@ -15,10 +16,7 @@ export class AcpActivityNormalizer {
       const attempt = Number(retry.attempt);
       if (!Number.isInteger(attempt) || attempt < 1) return null;
       const error = record(retry.error);
-      const detail = text(error.message)
-        .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-        .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
-        .slice(0, 300);
+      const detail = redactCredentials(error.message).slice(0, 300);
       return providerActivity('activity.warning', {
         code: 'provider_retry', attempt, detail,
         message: `OpenCode is retrying the request (attempt ${attempt}).${detail ? ` ${detail}` : ''}`,

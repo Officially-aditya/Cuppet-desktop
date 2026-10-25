@@ -1,3 +1,4 @@
+import { redactCredentials } from '../runtime/credential-sanitization.mjs';
 import { shell } from 'electron';
 import { CodexAppServerClient, resolveCodexAppServerCommand } from '../runtime/codex-app-server.mjs';
 import { parseCodexAccount } from '../runtime/codex-account.mjs';
@@ -76,7 +77,7 @@ async function startCodexLogin() {
       const params = record(message.params);
       if (params.loginId && String(params.loginId) !== loginId) return;
       const success = params.success !== false && !params.error;
-      lastMessage = success ? 'ChatGPT sign-in completed through Codex.' : safeText(params.error?.message ?? params.error, 1000) || 'ChatGPT sign-in did not complete.';
+      lastMessage = success ? 'ChatGPT sign-in completed through Codex.' : redactCredentials(params.error?.message ?? params.error).slice(0, 1000) || 'ChatGPT sign-in did not complete.';
       void closeActiveLogin(client);
     };
     client.on('notification', finish);
@@ -135,4 +136,4 @@ function safeUrl(value) {
   try { const url = new URL(String(value ?? '')); return url.protocol === 'https:' ? url.toString() : ''; }
   catch { return ''; }
 }
-function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 2000); }
+function cleanError(error) { return redactCredentials(error).slice(0, 2000); }

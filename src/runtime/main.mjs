@@ -1,3 +1,4 @@
+import { redactCredentials } from './credential-sanitization.mjs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -459,5 +460,5 @@ function boundedProviderID(value) {
 }
 function boundedId(value) { return typeof value === 'string' ? value.slice(0, 256) : ''; }
 function cleanError(error) {
-  return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500);
+  return redactCredentials(error).slice(0, 500);
 }

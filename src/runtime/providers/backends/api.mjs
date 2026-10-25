@@ -1,3 +1,6 @@
+import { fetchProvider } from '../../provider-fetch.mjs';
+import { redactCredentials } from '../../credential-sanitization.mjs';
+
 const ANTHROPIC_VERSION = '2023-06-01';
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -10,7 +13,7 @@ export async function discoverApiCapabilities({ configuration = {}, options = {}
   if (typeof fetchImpl !== 'function') throw new Error('Model discovery fetch is unavailable.');
 
   const request = apiCatalogRequest(providerID, configuration.baseUrl, apiKey);
-  const payload = await requestJson(fetchImpl, request.url, request.headers);
+  const payload = await requestJson(fetchImpl, request.url, request.headers, configuration);
   const parsed = parseApiCatalog(providerID, payload);
   return {
     providerID,
@@ -85,16 +88,16 @@ function apiCatalogRequest(providerID, baseUrlValue, apiKey) {
   return { url: `${baseUrl}${suffix}`, headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' } };
 }
 
-async function requestJson(fetchImpl, url, headers) {
+async function requestJson(fetchImpl, url, headers, configuration) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(url, { method: 'GET', headers, signal: controller.signal, cache: 'no-store' });
+    const response = await fetchProvider(fetchImpl, url, { method: 'GET', headers, signal: controller.signal, cache: 'no-store' });
     if (!response?.ok) {
       let detail = '';
       try {
         const payload = await response.json();
-        detail = text(payload?.error?.message || payload?.message || payload?.error);
+        detail = text(redactCredentials(payload?.error?.message || payload?.message || (typeof payload?.error === 'string' ? payload.error : ''), configuration));
       } catch {}
       throw new Error(`Model catalog request failed (${Number(response?.status) || 0})${detail ? `: ${detail}` : ''}`);
     }

@@ -1,3 +1,4 @@
+import { redactCredentials } from '../credential-sanitization.mjs';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
@@ -710,4 +711,4 @@ function siblingCommand(command, sibling) {
 }
 async function exists(path) { try { await access(path, fsConstants.F_OK); return true; } catch { return false; } }
 async function nonEmpty(path) { try { return (await readFile(path, 'utf8')).trim().length > 0; } catch { return false; } }
-function cleanError(error) { return String(error instanceof Error ? error.message : error ?? '').replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 500); }
+function cleanError(error) { return redactCredentials(error).slice(0, 500); }

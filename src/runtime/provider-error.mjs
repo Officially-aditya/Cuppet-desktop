@@ -1,4 +1,5 @@
 import { providerFailureMetadata } from './providers/provider-failure.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 
 const ACCOUNT_PROVIDERS = new Set(['codex', 'opencode', 'claude-code', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity']);
 
@@ -21,17 +22,21 @@ const LABELS = Object.freeze({
 });
 
 export function classifyProviderError(error, context = {}) {
-  const raw = cleanError(error);
+  const credentials = context.provider ?? context;
+  const raw = cleanError(error, credentials);
   const providerID = providerId(context);
   const provider = providerLabel(providerID, context.providerLabel);
   const structured = providerFailureMetadata(error);
   if (structured) {
-    const projected = structuredProviderFailure(structured, raw, providerID, provider);
+    const projected = structuredProviderFailure({ ...structured, diagnostic: redactCredentials(structured.diagnostic, credentials) }, raw, providerID, provider);
     if (projected) return projected;
   }
 
-  const lower = raw.toLowerCase();
-  const status = statusCode(error, raw);
+  // Classification uses the original text; redaction must not change retry/auth
+  // decisions when a short configured key happens to match an error keyword.
+  const original = `${error?.name ?? ''}: ${error instanceof Error ? error.message : String(error ?? '')}`;
+  const lower = original.toLowerCase();
+  const status = statusCode(error, original);
 
   if (matches(lower, [
     'context length', 'context_length', 'maximum context', 'max context', 'prompt is too long',
@@ -154,10 +159,7 @@ function providerProcessMessage(provider, diagnostic) {
 }
 
 function displayDiagnostic(value) {
-  return String(value ?? '')
-    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
-    .replace(/("(?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|secret)"\s*:\s*")[^"]+("\s*)/gi, '$1[redacted]$2')
-    .replace(/((?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
+  return redactCredentials(value)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(-320);
@@ -181,10 +183,7 @@ function statusCode(error, raw) {
 function matches(value, needles) { return needles.some((needle) => value.includes(needle)); }
 function titleCase(value) { return String(value).split(/[-_\s]+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' '); }
 function text(value) { return typeof value === 'string' ? value.trim().slice(0, 160) : ''; }
-function cleanError(error) {
+function cleanError(error, credentials) {
   const value = error instanceof Error ? `${error.name && error.name !== 'Error' ? `${error.name}: ` : ''}${error.message}` : String(error ?? '');
-  return value
-    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
-    .replace(/(?:api[_-]?key|token|secret)\s*[=:]\s*[A-Za-z0-9._~+/=-]{12,}/gi, '$1=[redacted]')
-    .slice(0, 4000);
+  return redactCredentials(value, credentials).slice(0, 4000);
 }

@@ -1,7 +1,4 @@
-const SECRET_KEYS = new Set([
-  'apikey', 'authtoken', 'accesstoken', 'refreshtoken', 'authorization',
-  'password', 'clientsecret', 'credential', 'headers',
-]);
+import { isCredentialKey } from './credential-sanitization.mjs';
 
 const OPENAI_COMPATIBLE_PACKAGES = new Set([
   '@ai-sdk/openai-compatible', '@ai-sdk/cerebras', '@ai-sdk/deepinfra', '@ai-sdk/groq',
@@ -32,12 +29,19 @@ export function buildVariantBridge(models = [], providers = []) {
 }
 
 export function sanitizeVariantOptions(value) {
-  if (Array.isArray(value)) return value.map((entry) => isRecord(entry) || Array.isArray(entry) ? sanitizeVariantOptions(entry) : entry);
+  return sanitizeOptions(value, false, false);
+}
+
+function sanitizeOptions(value, schemaProperties, schema) {
+  if (Array.isArray(value)) return value.map((entry) => sanitizeOptions(entry, false, schema));
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
-    const normalized = key.replaceAll(/[-_]/g, '').toLowerCase();
-    if (SECRET_KEYS.has(normalized)) return [];
-    if (Array.isArray(item) || isRecord(item)) return [[key, sanitizeVariantOptions(item)]];
+    // JSON Schema property names describe model output, not authentication.
+    const definition = schemaProperties && (isRecord(item) || typeof item === 'boolean');
+    if (!definition && (isCredentialKey(key) || key.toLowerCase() === 'headers')) return [];
+    if (Array.isArray(item) || isRecord(item)) return [[key, sanitizeOptions(item,
+      schema && ['properties', '$defs', 'definitions'].includes(key),
+      schema || ['schema', 'input_schema', 'parameters', 'response_schema', 'responseJsonSchema'].includes(key))]];
     return [[key, item]];
   }));
 }

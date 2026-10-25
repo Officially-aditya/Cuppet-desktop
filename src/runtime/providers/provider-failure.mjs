@@ -1,3 +1,5 @@
+import { redactCredentials, sanitizeProviderError } from '../credential-sanitization.mjs';
+
 const ACTIONS = new Set(['retry', 'retry_later', 'reconnect_provider', 'reauthenticate', 'change_model', 'open_settings']);
 
 export function providerFailureError(message, {
@@ -9,14 +11,14 @@ export function providerFailureError(message, {
   cause,
   diagnostic = null,
 } = {}) {
-  const error = new Error(String(message || 'Provider failed.'), cause ? { cause } : undefined);
+  const error = new Error(redactCredentials(message || 'Provider failed.'), cause ? { cause: sanitizeProviderError(cause) } : undefined);
   error.code = String(code || 'PROVIDER_FAILURE');
   error.providerFailure = Object.freeze({
     category: String(category || 'unknown'),
     retryable: retryable === true,
     action: ACTIONS.has(String(action || '')) ? String(action) : null,
     providerID: text(providerID) || null,
-    diagnostic: text(diagnostic, 4000) || null,
+    diagnostic: redactCredentials(diagnostic).trim().slice(0, 4000) || null,
   });
   return error;
 }
@@ -29,7 +31,7 @@ export function providerFailureMetadata(error) {
     retryable: source.retryable === true,
     action: ACTIONS.has(String(source.action || '')) ? String(source.action) : null,
     providerID: text(source.providerID) || null,
-    diagnostic: text(source.diagnostic, 4000) || null,
+    diagnostic: redactCredentials(source.diagnostic).trim().slice(0, 4000) || null,
   };
 }
 

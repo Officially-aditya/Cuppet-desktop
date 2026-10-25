@@ -1,7 +1,6 @@
 import { realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { SENSITIVE_HOST_PATHS } from './types.mjs';
+import { resolve } from 'node:path';
+import { sensitiveHostPaths } from './types.mjs';
 
 /**
  * Builds a hardened macOS Seatbelt Scheme profile.
@@ -46,14 +45,14 @@ export async function buildMacSeatbeltProfile(policy) {
 
   const sensitiveDenyClauses = [];
   {
-    const userHome = homedir();
-    for (const relPath of SENSITIVE_HOST_PATHS) {
-      const fullPath = join(userHome, relPath);
-      const literal = JSON.stringify(fullPath);
-      sensitiveDenyClauses.push(
-        `(deny file-read* (literal ${literal}))`,
-        `(deny file-read* (subpath ${literal}))`
-      );
+    for (const fullPath of sensitiveHostPaths(process.env, undefined, root)) {
+      for (const path of new Set([fullPath, await realpath(fullPath).catch(() => fullPath)])) {
+        const literal = JSON.stringify(path);
+        sensitiveDenyClauses.push(
+          `(deny file-read* (literal ${literal}))`,
+          `(deny file-read* (subpath ${literal}))`
+        );
+      }
     }
     for (const path of policy.protectedPaths ?? []) {
       const literal = JSON.stringify(await realpath(path).catch(() => resolve(path)));

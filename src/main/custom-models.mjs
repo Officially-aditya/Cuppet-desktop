@@ -1,5 +1,6 @@
 import { createUntrackedChatProvider } from '../runtime/provider-factory.mjs';
 import { normalizeProviderConfiguration } from '../runtime/provider-policy.mjs';
+import { redactCredentials } from '../runtime/credential-sanitization.mjs';
 
 export const CUSTOM_MODEL_PROBE_PROMPT = 'Reply only with OK.';
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -51,10 +52,10 @@ export async function probeCustomModel(configuration, modelID, { providerFactory
     ]);
     const reply = String(result?.text || streamed || '').trim();
     if (!reply) throw new Error('The model returned no text to the validation request.');
-    return { ok: true, providerID, modelID: id, reply: reply.slice(0, 120) };
+    return { ok: true, providerID, modelID: id, reply: redactCredentials(reply, normalized).slice(0, 120) };
   } catch (error) {
-    if (controller.signal.aborted && !/timed out/i.test(cleanError(error))) throw new Error('Model test timed out.');
-    throw new Error(`Custom model test failed: ${cleanError(error)}`);
+    if (controller.signal.aborted && !/timed out/i.test(cleanError(error, normalized))) throw new Error('Model test timed out.');
+    throw new Error(`Custom model test failed: ${cleanError(error, normalized)}`);
   } finally {
     clearTimeout(timer);
   }
@@ -109,10 +110,8 @@ function normalizeProviderID(value) {
   if (!id || id.length > MAX_ID_LENGTH || /\s|[\u0000-\u001f\u007f]/.test(id) || ['__proto__', 'prototype', 'constructor'].includes(id)) return '';
   return id;
 }
-function cleanError(error) {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
-    .slice(0, 600);
+function cleanError(error, configuration) {
+  return redactCredentials(error, configuration).slice(0, 600);
 }
 function text(value) { return typeof value === 'string' ? value.trim().slice(0, MAX_ID_LENGTH) : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }

@@ -1,3 +1,4 @@
+import { redactCredentials } from './credential-sanitization.mjs';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -479,7 +480,7 @@ function optionalText(value) {
 
 function cleanError(error) {
   const value = error instanceof Error ? error.message : String(error ?? 'Queue dispatch failed.');
-  return value.replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 1000);
+  return redactCredentials(value).slice(0, 1000);
 }
 
 function requireSqlRepository(value) {

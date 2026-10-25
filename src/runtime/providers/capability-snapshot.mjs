@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { redactCredentials } from '../credential-sanitization.mjs';
 
 export class ProviderCapabilitySnapshotStore {
   #snapshots = new Map();
@@ -57,14 +58,14 @@ export class ProviderCapabilitySnapshotStore {
     const key = snapshotKey(configuration);
     try {
       const discovered = await registry.operation(backend.id, 'discoverCapabilities', { configuration, options });
-      const snapshot = normalizeCapabilitySnapshot(providerID, backend.transport, discovered);
+      const snapshot = normalizeCapabilitySnapshot(providerID, backend.transport, discovered, configuration);
       // A successful discovery is authoritative even when it advertises zero models.
       // This is what distinguishes a real empty/logout state from a transient probe failure.
       this.#snapshots.set(key, snapshot);
       this.#saveDiskCache();
       return snapshot;
     } catch (error) {
-      const message = cleanError(error);
+      const message = cleanError(error, configuration);
       const previous = this.#snapshots.get(key);
       if (previous) {
         return Object.freeze({
@@ -79,7 +80,7 @@ export class ProviderCapabilitySnapshotStore {
   }
 }
 
-export function normalizeCapabilitySnapshot(providerID, transport, discovered = {}) {
+export function normalizeCapabilitySnapshot(providerID, transport, discovered = {}, configuration = {}) {
   const source = record(discovered);
   const models = uniqueModels(source.models);
   const settings = Array.isArray(source.settings) ? source.settings.map(cloneRecord) : [];
@@ -99,7 +100,7 @@ export function normalizeCapabilitySnapshot(providerID, transport, discovered = 
     fetchedAt: Date.now(),
     stale: false,
     ...(reasoning ? { reasoning } : {}),
-    ...(text(source.error) ? { error: text(source.error) } : {}),
+    ...(source.error ? { error: cleanError(source.error, configuration) } : {}),
   });
 }
 
@@ -197,6 +198,6 @@ function exactModel(value, models) {
 }
 function cloneRecord(value) { return structuredClone(record(value)); }
 function positiveInt(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0; }
-function cleanError(error) { return text(error instanceof Error ? error.message : String(error ?? '')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]'); }
+function cleanError(error, configuration) { return text(redactCredentials(error, configuration)); }
 function text(value) { return typeof value === 'string' ? value.trim().slice(0, 1000) : ''; }
 function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }

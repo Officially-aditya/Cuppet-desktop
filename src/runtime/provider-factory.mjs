@@ -1,13 +1,25 @@
 import { providerRequest } from './provider-policy.mjs';
 import { createProviderRuntime, nativeProviderKind } from './providers/default-registry.mjs';
 import { recordProviderUsage } from './usage-ledger.mjs';
+import { sanitizeProviderError } from './credential-sanitization.mjs';
 
 export function createChatProvider(configuration = {}) {
   return trackUsage(createUntrackedChatProvider(configuration), providerIdentity(configuration));
 }
 
 export function createUntrackedChatProvider(configuration = {}) {
-  return createProviderRuntime(configuration);
+  try {
+    const provider = createProviderRuntime(configuration);
+    if (!provider || typeof provider.stream !== 'function') return provider;
+    const stream = provider.stream.bind(provider);
+    provider.stream = async (...args) => {
+      try { return await stream(...args); }
+      catch (error) { throw sanitizeProviderError(error, configuration); }
+    };
+    return provider;
+  } catch (error) {
+    throw sanitizeProviderError(error, configuration);
+  }
 }
 
 function trackUsage(provider, identity) {

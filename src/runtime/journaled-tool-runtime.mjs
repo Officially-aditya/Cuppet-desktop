@@ -1,4 +1,5 @@
 import { ToolRuntime } from './tool-runtime.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
 import { executionCapabilities } from './execution/execution-capabilities.mjs';
@@ -496,4 +497,4 @@ function parseArguments(value) {
   try { const decoded = JSON.parse(typeof value === 'string' ? value : '{}'); return decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}; }
   catch { return {}; }
 }
-function cleanError(error) { return (error instanceof Error ? error.message : String(error ?? 'Unknown error')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 1000); }
+function cleanError(error) { return redactCredentials(error ?? 'Unknown error').slice(0, 1000); }

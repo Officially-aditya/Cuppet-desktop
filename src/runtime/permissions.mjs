@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { providerCredentialPaths } from './sandbox/types.mjs';
 
 const MAX_COMMAND_LENGTH = 256;
 const PLAIN_COMMAND = /^[A-Za-z0-9._:=+-]+(?: [A-Za-z0-9._:=+-]+)*$/;
@@ -173,6 +174,16 @@ export class PermissionBroker {
 
 /** @param {{action: string, resources: string[], projectRoot: string | null, planMode: boolean, auto: boolean, fullAccess: boolean}} input @returns {Promise<PermissionDecision>} */
 async function immediateDecision({ action, resources, projectRoot, planMode, auto, fullAccess }) {
+  if ((WORKSPACE_ACTIONS.has(action) || action === 'delete') && projectRoot) {
+    const protectedPaths = await Promise.all(providerCredentialPaths(process.env, undefined, projectRoot).map(async (path) => realpath(path).catch(() => resolve(path))));
+    for (const resource of resources) {
+      const path = resolve(projectRoot, resource);
+      const canonical = await realpath(path).catch(() => path);
+      if (protectedPaths.some((protectedPath) => protectedPath === canonical || (action === 'delete' && protectedPath.startsWith(canonical + sep)))) {
+        return { effect: 'deny', code: 'protected_resource', reason: 'Provider credentials cannot be accessed by the coding model.' };
+      }
+    }
+  }
   if (['tst_explore', 'cuppet_plan', 'cuppet_memory_search'].includes(action)) return { effect: 'allow', source: 'read-only-tool' };
   if (action === 'browser-read') return { effect: 'allow', source: 'explicit-browser-read' };
   if (action === 'bash' && resources.length === 1 && isSafeAutoBashCommand(resources[0] ?? '')) return { effect: 'allow', source: 'safe-bash' };

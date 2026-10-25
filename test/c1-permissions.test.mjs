@@ -77,6 +77,28 @@ test('ordinary reads remain automatic while sensitive reads prompt and protected
   } finally { broker.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('direct provider credential access is denied in Default, Auto and Full Access while ordinary files remain usable', async (t) => {
+  const { dir, root } = await fixture();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = join(root, 'provider-profile');
+  t.after(() => { if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; });
+  await mkdir(process.env.CODEX_HOME);
+  await writeFile(join(process.env.CODEX_HOME, 'auth.json'), 'canary');
+  await symlink(process.env.CODEX_HOME, join(root, 'credential-alias'), process.platform === 'win32' ? 'junction' : 'dir');
+  const broker = new PermissionBroker();
+  t.after(() => broker.close());
+  for (const mode of [false, true, 'full']) {
+    broker.setAuto('credential-test', mode);
+    for (const action of ['read', 'edit', 'write', 'delete']) {
+      for (const resource of ['provider-profile/auth.json', 'credential-alias/auth.json']) {
+        await assert.rejects(broker.authorize({ sessionId: 'credential-test', action, resources: [resource], projectRoot: root }), error => error.code === 'protected_resource');
+      }
+    }
+    assert.equal((await broker.authorize({ sessionId: 'credential-test', action: 'read', resources: ['src/app.js'], projectRoot: root })).allowed, true);
+  }
+});
+
 test('guarded auto approves active-project actions but still guards symlink escapes', async () => {
   const { dir, root } = await fixture();
   const broker = new PermissionBroker();

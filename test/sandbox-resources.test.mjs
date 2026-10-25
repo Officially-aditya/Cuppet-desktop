@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { SandboxManager } from '../src/runtime/sandbox/sandbox-manager.mjs';
 import { getLinuxBwrapSpawnSpec } from '../src/runtime/sandbox/linux-bwrap-driver.mjs';
+import { buildMacSeatbeltProfile } from '../src/runtime/sandbox/mac-seatbelt-driver.mjs';
+import { PROVIDER_CREDENTIAL_PATHS, providerCredentialPaths } from '../src/runtime/sandbox/types.mjs';
 
 async function fixture(t) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'cuppet-resources-')));
@@ -128,4 +130,70 @@ test('Mac protects broker storage from agent commands while a fixed broker expor
   assert.equal(await readFile(join(job, 'export'), 'utf8'), 'export');
   const readAgain = await manager.execute(`cat '${job}/export'`, root, { projectRoot: root });
   assert.notEqual(readAgain.code, 0);
+});
+
+test('provider credential locations are protected without blocking provider installations or project files', async (t) => {
+  const { root } = await fixture(t);
+  const profile = await buildMacSeatbeltProfile({ projectRoot: root });
+  for (const name of PROVIDER_CREDENTIAL_PATHS) assert.ok(profile.includes(join(homedir(), name)), name);
+  assert.ok(!PROVIDER_CREDENTIAL_PATHS.includes('.codex'), 'the CLI installation/cache directory stays available');
+  const custom = join(root, 'custom-profile');
+  assert.ok(providerCredentialPaths({ CODEX_HOME: custom }).includes(join(custom, 'auth.json')));
+  assert.ok(providerCredentialPaths({ CODEX_HOME: 'local-profile' }, homedir(), root).includes(join(root, 'local-profile', 'auth.json')));
+  assert.ok(providerCredentialPaths({ XDG_DATA_HOME: custom }).includes(join(custom, 'opencode', 'auth.json')));
+});
+
+test('Mac denies credential-file reads from commands while provider-owned host reads and normal commands work', mac, async (t) => {
+  const { dir, root, cacheRoot } = await fixture(t);
+  const records = [];
+  for (const [variable, filename] of [['CODEX_HOME', 'auth.json'], ['CLAUDE_CONFIG_DIR', '.credentials.json'], ['GROK_HOME', 'auth.json'], ['VIBE_HOME', '.env'], ['XDG_DATA_HOME', 'opencode/auth.json']]) {
+    const directory = join(dir, variable);
+    const path = join(directory, filename);
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, 'provider-credential-canary');
+    const previous = process.env[variable];
+    process.env[variable] = directory;
+    t.after(() => { if (previous === undefined) delete process.env[variable]; else process.env[variable] = previous; });
+    records.push(path);
+  }
+  const manager = new SandboxManager({ cacheRoot });
+  for (const path of records) {
+    const result = await manager.execute(`cat '${path}'`, root, { projectRoot: root });
+    assert.notEqual(result.code, 0, 'protected commands read a provider credential');
+    assert.ok(!result.stdout.includes('provider-credential-canary'));
+    assert.equal(await readFile(path, 'utf8'), 'provider-credential-canary', 'provider authentication still has host access');
+  }
+  const ordinary = await manager.execute('printf project-command-ok', root, { projectRoot: root });
+  assert.equal(ordinary.code, 0, ordinary.stderr);
+  assert.equal(ordinary.stdout, 'project-command-ok');
+});
+
+test('Linux masks configured provider credentials when a toolchain or workspace exposes them', async (t) => {
+  const { root } = await fixture(t);
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  t.after(() => { if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; });
+  const auth = join(root, 'auth.json');
+  await writeFile(auth, 'credential-canary');
+  const { args } = await getLinuxBwrapSpawnSpec('npm test', { projectRoot: root });
+  assert.ok(args.some((value, index) => value === '--ro-bind' && args[index + 1] === '/dev/null' && args[index + 2] === auth));
+});
+
+test('Linux protected commands run normally with configured credentials outside the workspace', { skip: process.platform !== 'linux' }, async (t) => {
+  const { dir, root, cacheRoot } = await fixture(t);
+  const directory = join(dir, 'provider-profile');
+  await mkdir(directory);
+  const auth = join(directory, 'auth.json');
+  await writeFile(auth, 'provider-credential-canary');
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = directory;
+  t.after(() => { if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; });
+  const manager = new SandboxManager({ cacheRoot });
+  if (!(await manager.isAvailable())) return t.skip('bubblewrap is not installed');
+  const ordinary = await manager.execute('printf command-ok', root, { projectRoot: root });
+  assert.equal(ordinary.code, 0, ordinary.stderr);
+  assert.equal(ordinary.stdout, 'command-ok');
+  const read = await manager.execute(`cat '${auth}'`, root, { projectRoot: root });
+  assert.ok(!read.stdout.includes('provider-credential-canary'));
+  assert.equal(await readFile(auth, 'utf8'), 'provider-credential-canary');
 });

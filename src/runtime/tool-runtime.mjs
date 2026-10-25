@@ -7,6 +7,7 @@ import { MAX_PERMISSION_RESOURCE_CHARS, isSafeAutoBashCommand } from './permissi
 import { BackgroundProcessManager } from './background-process-manager.mjs';
 import { SandboxManager } from './sandbox/sandbox-manager.mjs';
 import { sanitizeEnvironment } from './sandbox/env-sanitizer.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 import { buildMacSeatbeltProfile } from './sandbox/mac-seatbelt-driver.mjs';
 import { OperationBroker } from './sandbox/operation-broker.mjs';
 
@@ -786,7 +787,7 @@ function agentPermissionCommand(rawInput, depth = 0) {
 function cleanPrefix(value) { const text = typeof value === 'string' ? value.trim().slice(0, 512) : ''; return text || undefined; }
 function clamp(value, min, max) { const number = Number.isFinite(value) ? Math.floor(value) : min; return Math.min(Math.max(number, min), max); }
 function capText(value, max) { const text = String(value); return Buffer.byteLength(text) <= max ? text : `${Buffer.from(text).subarray(0, Math.max(0, max - 64)).toString('utf8')}\n… Results truncated; narrow the query or scope.`; }
-function cleanError(error) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]').slice(0, 2000); }
+function cleanError(error) { return redactCredentials(error).slice(0, 2000); }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
 function stableJson(value) { if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`; if (!value || typeof value !== 'object') return JSON.stringify(value); return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`; }
 

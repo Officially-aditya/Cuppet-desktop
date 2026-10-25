@@ -1,4 +1,6 @@
 import { providerRequest } from './provider-policy.mjs';
+import { fetchProvider } from './provider-fetch.mjs';
+import { redactCredentials } from './credential-sanitization.mjs';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
@@ -56,7 +58,7 @@ export class OpenAICompatibleChatProvider {
       delete request.tools;
       delete request.tool_choice;
     }
-    const response = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
+    const response = await fetchProvider(this.#fetch, `${this.#baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         ...this.#requestHeaders,
@@ -69,12 +71,12 @@ export class OpenAICompatibleChatProvider {
     });
 
     if (!response.ok) {
-      const detail = await safeResponseText(response);
+      const detail = await safeResponseText(response, { apiKey: this.#apiKey });
       throw new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : ''}`);
     }
 
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('text/event-stream') && response.body) return consumeSseBody(response.body, onDelta, signal);
+    if (contentType.includes('text/event-stream') && response.body) return consumeSseBody(response.body, onDelta, signal, { apiKey: this.#apiKey });
 
     const payload = await response.json();
     const text = completionText(payload);
@@ -85,7 +87,7 @@ export class OpenAICompatibleChatProvider {
   }
 }
 
-export async function consumeSseBody(body, onDelta, signal) {
+export async function consumeSseBody(body, onDelta, signal, credentials = {}) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -103,7 +105,7 @@ export async function consumeSseBody(body, onDelta, signal) {
       const parsed = splitSseEvents(buffer);
       buffer = parsed.rest;
       for (const event of parsed.events) {
-        const result = await consumeSseEvent(event, onDelta);
+        const result = await consumeSseEvent(event, onDelta, credentials);
         mergeToolCallDeltas(toolCalls, result.toolCallDeltas);
         if (result.done) return finalizeStream(text, usage, toolCalls);
         if (result.delta) text += result.delta;
@@ -114,7 +116,7 @@ export async function consumeSseBody(body, onDelta, signal) {
 
     buffer += decoder.decode();
     if (buffer.trim()) {
-      const result = await consumeSseEvent(buffer, onDelta);
+      const result = await consumeSseEvent(buffer, onDelta, credentials);
       mergeToolCallDeltas(toolCalls, result.toolCallDeltas);
       if (result.delta) text += result.delta;
       if (result.usage) usage = result.usage;
@@ -135,7 +137,7 @@ export function splitSseEvents(value) {
   return { events: parts.slice(0, -1), rest: parts.at(-1) ?? '' };
 }
 
-async function consumeSseEvent(event, onDelta) {
+async function consumeSseEvent(event, onDelta, credentials) {
   const data = event.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n').trim();
   if (!data) return { done: false, delta: '', toolCallDeltas: [] };
   if (data === '[DONE]') return { done: true, delta: '', toolCallDeltas: [] };
@@ -144,7 +146,7 @@ async function consumeSseEvent(event, onDelta) {
   if (payload?.error || payload?.type === 'error') {
     const failure = payload.error ?? payload;
     const detail = typeof failure === 'string' ? failure : failure.message ?? failure.code ?? 'Unknown provider error';
-    throw new Error(`Provider stream failed: ${String(detail).slice(0, 500)}`);
+    throw new Error(`Provider stream failed: ${redactCredentials(detail, credentials).slice(0, 500)}`);
   }
   const choice = payload?.choices?.[0] ?? {};
   const delta = choice?.delta?.content;
@@ -172,7 +174,7 @@ function finalizeStream(text, usage, toolCalls) {
 }
 function completionText(payload) { const content = payload?.choices?.[0]?.message?.content; if (typeof content === 'string') return content; if (Array.isArray(content)) return content.map((part) => typeof part?.text === 'string' ? part.text : '').join(''); return ''; }
 function completionToolCalls(payload) { const calls = payload?.choices?.[0]?.message?.tool_calls; if (!Array.isArray(calls)) return []; return calls.flatMap((call, index) => { const name = typeof call?.function?.name === 'string' ? call.function.name : ''; if (!name) return []; return [{ id: typeof call?.id === 'string' ? call.id : `tool_call_${index}`, name, arguments: typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}' }]; }); }
-async function safeResponseText(response) { try { const raw = (await response.text()).trim(); if (!raw) return ''; try { const parsed = JSON.parse(raw); return String(parsed?.error?.message ?? parsed?.message ?? raw).slice(0, 500); } catch { return raw.slice(0, 500); } } catch { return ''; } }
+async function safeResponseText(response, credentials) { try { const raw = (await response.text()).trim(); if (!raw) return ''; try { const parsed = JSON.parse(raw); return redactCredentials(parsed?.error?.message ?? parsed?.message ?? raw, credentials).slice(0, 500); } catch { return redactCredentials(raw, credentials).slice(0, 500); } } catch { return ''; } }
 function sanitizeHeaders(value) { const source = record(value); return Object.fromEntries(Object.entries(source).flatMap(([key, item]) => typeof item === 'string' && !['authorization','proxy-authorization','cookie','set-cookie'].includes(key.toLowerCase()) ? [[key, item.slice(0, 4000)]] : [])); }
 function sanitizeRequestBody(value) { return structuredClone(record(value)); }
 function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }

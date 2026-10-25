@@ -1,3 +1,4 @@
+import { redactCredentials } from '../credential-sanitization.mjs';
 import { join } from 'node:path';
 import { localProviderOperations } from './local-provider-operations.mjs';
 import { discoverProviderCapabilitySnapshot, providerCapabilitySnapshots } from './default-registry.mjs';
@@ -409,7 +410,7 @@ function nonnegativeInteger(value) {
   return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 function cleanError(error) {
-  return text(error instanceof Error ? error.message : String(error ?? '')).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]');
+  return text(redactCredentials(error));
 }
 function text(value) {
   return typeof value === 'string' ? value.trim().slice(0, 1000) : '';

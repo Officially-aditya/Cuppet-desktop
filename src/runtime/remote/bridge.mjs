@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { redactCredentials } from '../credential-sanitization.mjs';
 import { encodeFrame, eventFrame, parseCommandFrame, publicEventFor, scopeForCommand, PROTOCOL_VERSION, MINIMUM_CLIENT_VERSION } from './protocol.mjs';
 
 const DEDUPE_CAPACITY=512;
@@ -121,4 +122,4 @@ export class RemoteBridge {
   #resultError(replyTo,message,deviceId,code){this.#send(this.#errorFrame(replyTo,message,deviceId,code));}
 }
 function errorCode(error){const code=typeof error?.code==='string'?error.code.trim().slice(0,120):'';return code||undefined;}
-function cleanError(error){return (error instanceof Error?error.message:String(error)).replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [redacted]').slice(0,1000);}
+function cleanError(error){return redactCredentials(error).slice(0,1000);}

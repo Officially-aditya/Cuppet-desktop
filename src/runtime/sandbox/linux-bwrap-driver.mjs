@@ -1,7 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { SENSITIVE_HOST_PATHS } from './types.mjs';
+import { sensitiveHostPaths } from './types.mjs';
 
 /**
  * Builds the bubblewrap argument list for Linux.
@@ -63,11 +63,12 @@ export async function getLinuxBwrapSpawnSpec(command, policy) {
 
   // Hide sensitive credentials by masking them with empty tmpfs
   {
-    for (const relPath of SENSITIVE_HOST_PATHS) {
-      const fullPath = join(userHome, relPath);
-      const metadata = await stat(fullPath).catch(() => null);
-      if (metadata?.isDirectory()) args.push('--tmpfs', fullPath);
-      else if (metadata) args.push('--ro-bind', '/dev/null', fullPath);
+    for (const fullPath of sensitiveHostPaths(process.env, undefined, root)) {
+      for (const path of new Set([fullPath, await realpath(fullPath).catch(() => fullPath)])) {
+        const metadata = await stat(path).catch(() => null);
+        if (metadata?.isDirectory()) args.push('--tmpfs', path);
+        else if (metadata) args.push('--ro-bind', '/dev/null', path);
+      }
     }
     for (const path of policy.protectedPaths ?? []) args.push('--tmpfs', path);
     for (const dir of policy.brokerJobDirs ?? []) args.push('--bind', dir, dir);
