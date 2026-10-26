@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,68 @@ test('connecting an already installed provider does not run its installer or log
   const status = await operations.connect();
   assert.equal(status.connected, true);
   assert.ok(calls.every((args) => args.includes('--version') || args.includes('status')));
+});
+
+test('Connect still installs a missing Claude ACP adapter automatically', async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cuppet-missing-adapter-')));
+  const command = join(root, 'claude-agent-acp');
+  const previous = process.env.CUPPET_CLAUDE_ACP_BIN;
+  process.env.CUPPET_CLAUDE_ACP_BIN = command;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.CUPPET_CLAUDE_ACP_BIN;
+    else process.env.CUPPET_CLAUDE_ACP_BIN = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  let installed = false;
+  let installs = 0;
+  const operations = localProviderOperations('claude-code', {
+    userData: join(root, 'state'), platform: 'darwin',
+    runImpl: async (actual, args) => {
+      if (actual === '/bin/bash') {
+        assert.match(args[1], /npm install -g @agentclientprotocol\/claude-agent-acp/);
+        installs += 1;
+        await writeFile(command, '#!/bin/sh\nexit 0\n');
+        await chmod(command, 0o755);
+        installed = true;
+      } else {
+        assert.equal(actual, command);
+        if (!installed) throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return { stdout: '1.0.0', stderr: '' };
+    },
+  });
+  const missing = await operations.status();
+  assert.equal(missing.installed, false);
+  assert.equal(missing.missingAdapter, 'claude-agent-acp');
+  assert.match(missing.message, /install the adapter automatically/);
+  const connected = await operations.connect();
+  assert.equal(connected.installed, true);
+  assert.equal(connected.connected, true);
+  assert.equal(connected.missingAdapter, undefined);
+  assert.equal(installs, 1);
+  await operations.connect();
+  assert.equal(installs, 1);
+});
+
+test('an existing CLI with an unavailable interpreter remains installed', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-cli-interpreter-'));
+  const command = join(root, 'claude-agent-acp');
+  await writeFile(command, '#!/missing/interpreter\n');
+  await chmod(command, 0o755);
+  const previous = process.env.CUPPET_CLAUDE_ACP_BIN;
+  process.env.CUPPET_CLAUDE_ACP_BIN = command;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.CUPPET_CLAUDE_ACP_BIN;
+    else process.env.CUPPET_CLAUDE_ACP_BIN = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const operations = localProviderOperations('claude-code', {
+    runImpl: async () => { throw Object.assign(new Error('interpreter not found'), { code: 'ENOENT' }); },
+  });
+  const detected = await operations.detect();
+  assert.equal(detected.installed, true);
+  assert.match(detected.error, /interpreter not found/);
+  assert.equal(detected.missingAdapter, undefined);
 });
 
 test('Antigravity detection is read-only and Connect verifies the same ACP runtime used for chat', async () => {
@@ -116,13 +178,22 @@ test('detect and probe remain read-only and never launch provider login', async 
   assert.ok(!calls.some(([command]) => command === '/bin/bash'));
 });
 
-test('Cuppet records ownership only after its explicit installer succeeds', async () => {
+test('Cuppet records ownership only after its explicit installer succeeds', async (t) => {
   const userData = await mkdtemp(join(tmpdir(), 'cuppet-provider-ops-'));
+  const executable = join(userData, 'opencode');
+  const previous = process.env.CUPPET_OPENCODE_BIN;
+  process.env.CUPPET_OPENCODE_BIN = executable;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CUPPET_OPENCODE_BIN;
+    else process.env.CUPPET_OPENCODE_BIN = previous;
+  });
   let installed = false;
   const calls = [];
   const runImpl = async (command, args) => {
     calls.push([command, [...args]]);
     if (command === '/bin/bash') {
+      await writeFile(executable, '#!/bin/sh\nexit 0\n');
+      await chmod(executable, 0o755);
       installed = true;
       return { stdout: '', stderr: '' };
     }
@@ -150,8 +221,14 @@ test('Cuppet records ownership only after its explicit installer succeeds', asyn
   }
 });
 
-test('Cuppet revokes ownership when PATH resolves to a different executable identity', async () => {
+test('Cuppet revokes ownership when PATH resolves to a different executable identity', async (t) => {
   const userData = await mkdtemp(join(tmpdir(), 'cuppet-provider-identity-'));
+  const previous = process.env.CUPPET_OPENCODE_BIN;
+  process.env.CUPPET_OPENCODE_BIN = join(userData, 'opencode');
+  t.after(() => {
+    if (previous === undefined) delete process.env.CUPPET_OPENCODE_BIN;
+    else process.env.CUPPET_OPENCODE_BIN = previous;
+  });
   let installed = false;
   let identity = {
     resolvedPath: '/managed/opencode',

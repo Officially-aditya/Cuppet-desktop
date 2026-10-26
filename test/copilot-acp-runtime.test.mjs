@@ -157,6 +157,42 @@ test('ACP verification rejects incompatible responses and hung runtimes', unix, 
   assert.equal(await verifyCopilotAcpExecutable(hung, options.environment, { timeoutMs: 100 }), false);
 });
 
+test('a timed-out Copilot runtime stays installed and Connect does not reinstall it', unix, async (t) => {
+  const { root, options } = await setup(t);
+  const command = await executable(join(root, 'copilot'), '#!/bin/sh\nread request\nread another\n');
+  const copilotRuntimeOptions = {
+    ...options,
+    verifyImpl: (candidate, env, verification) => candidate === command
+      && verifyCopilotAcpExecutable(candidate, env, { ...verification, timeoutMs: 50 }),
+  };
+  const calls = [];
+  const operations = localProviderOperations('github-copilot', {
+    userData: join(root, 'user-data'), copilotRuntimeOptions,
+    runImpl: async (actual, args) => {
+      calls.push([actual, args]);
+      assert.notEqual(actual, '/bin/bash', 'an installed executable must not trigger installation');
+      return { stdout: 'Copilot 1.0.95', stderr: '' };
+    },
+  });
+  const detected = await operations.detect();
+  assert.equal(detected.installed, true);
+  assert.equal(detected.installation.executable, command);
+  assert.match(detected.error, /initialize timed out/);
+  const status = await operations.connect();
+  assert.equal(status.installed, true);
+  assert.match(status.message, /is installed, but its startup check failed/);
+  assert.match(status.error, /initialize timed out/);
+  assert.equal(await resolveCopilotAcpRuntime({}, copilotRuntimeOptions), null, 'chat still requires a verified runtime');
+  assert.ok(calls.length > 0);
+});
+
+test('detection prefers a verified app runtime to an installed but incompatible CLI', unix, async (t) => {
+  const { root, options, bundled } = await setup(t);
+  await executable(join(root, 'copilot'), '#!/bin/sh\nprintf "Copilot 1.0.95\\n"\n');
+  const command = await executable(bundled());
+  assert.deepEqual(await resolveCopilotAcpRuntime({}, { ...options, allowUnverified: true }), { command, source: 'native' });
+});
+
 test('an unstarted Copilot session can be closed without spawning discovery', async () => {
   let calls = 0;
   const runtime = new AcpSessionRuntime({

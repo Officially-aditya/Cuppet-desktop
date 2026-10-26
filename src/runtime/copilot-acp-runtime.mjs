@@ -11,7 +11,7 @@ import { AcpRpcChannel } from './providers/transports/acp/acp-rpc.mjs';
 const verifiedExecutables = new Map();
 const VERIFICATION_FRESH_MS = 30_000;
 
-/** Resolve only runtimes that answer ACP initialize; app/SDK presence alone is insufficient. */
+/** Chat requires a verified runtime; detection may retain an executable with a startup error. */
 export async function resolveCopilotAcpRuntime(configuration = {}, options = {}) {
   const platform = options.platform || process.platform;
   const arch = options.arch || process.arch;
@@ -22,18 +22,27 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
   const verify = options.verifyImpl || verifyCopilotAcpExecutable;
   const candidates = [];
   const seen = new Set();
+  let unverified = null;
   const add = (command, source) => {
     if (command && !seen.has(command)) { seen.add(command); candidates.push({ command, source }); }
   };
   const usable = async () => {
     for (const candidate of candidates.splice(0)) {
-      try { if (await verify(candidate.command, environment)) return candidate; } catch {}
+      let failure;
+      try { if (await verify(candidate.command, environment, { throwOnError: true })) return candidate; }
+      catch (error) { failure = error; }
+      if (options.allowUnverified && !unverified) {
+        try {
+          await access(candidate.command, platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+          unverified = { ...candidate, error: String(failure?.message || 'ACP initialization did not succeed.') };
+        } catch {}
+      }
     }
     return null;
   };
   if (explicit) {
     add(resolveLocalCliExecutable(explicit, environment, { platform, environment }), 'unknown');
-    return usable();
+    return await usable() ?? unverified;
   }
   add(resolveLocalCliExecutable('copilot', environment, { platform, environment }), 'unknown');
   for (const command of options.additionalCommands ?? []) add(command, 'unknown');
@@ -81,11 +90,11 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
     pathJoin(home, '.vscode-insiders', 'extensions'),
   ];
   for (const root of new Set(extensionRoots.filter(Boolean))) await addExtensions(root);
-  return usable();
+  return await usable() ?? unverified;
 }
 
 /** Read-only handshake: do not authenticate or create a provider session during detection. */
-export async function verifyCopilotAcpExecutable(command, environment, { timeoutMs = 8_000 } = {}) {
+export async function verifyCopilotAcpExecutable(command, environment, { timeoutMs = 20_000, throwOnError = false } = {}) {
   const descriptor = localCliDescriptor('github-copilot');
   const identity = await stat(command).catch(() => null);
   const key = createHash('sha256').update(JSON.stringify([command, environment])).digest('hex');
@@ -108,10 +117,12 @@ export async function verifyCopilotAcpExecutable(command, environment, { timeout
       && typeof initialized.agentCapabilities === 'object'
       && !Array.isArray(initialized.agentCapabilities);
     if (verified && signature) verifiedExecutables.set(key, { signature, checkedAt: Date.now() });
+    if (!verified && throwOnError) throw new Error('GitHub Copilot returned an incompatible ACP initialization response.');
     return verified;
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error;
     return false;
   } finally {
-    rpc?.close();
+    await rpc?.close().catch(() => undefined);
   }
 }

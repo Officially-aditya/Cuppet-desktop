@@ -24,6 +24,31 @@ test('unknown provider observation remains checking rather than missing', () => 
   assert.equal(value.canConnect, false);
 });
 
+test('a missing Claude adapter is distinct from a missing provider CLI', () => {
+  const value = project({
+    installed: false,
+    missingAdapter: 'claude-agent-acp',
+    message: 'Cuppet will install the connection adapter automatically when you connect.',
+  }, 'Claude Code');
+  assert.equal(value.badge, 'Adapter needed');
+  assert.equal(value.canConnect, true);
+  assert.match(value.detail, /install the connection adapter automatically/);
+});
+
+test('installed providers with failed startup checks retain authentication and offer retry', () => {
+  const value = project({
+    installed: true,
+    connected: true,
+    error: 'initialize timed out.',
+    message: 'GitHub Copilot is installed, but its startup check failed. Reconnect to retry.',
+  }, 'GitHub Copilot');
+  assert.equal(value.credentialReady, true);
+  assert.equal(value.badge, 'Needs retry');
+  assert.equal(value.tone, 'warning');
+  assert.equal(value.canConnect, true);
+  assert.match(value.detail, /is installed/);
+});
+
 test('authenticated stopped provider is connected and idle, not broken', () => {
   const value = project({
     installed: true,

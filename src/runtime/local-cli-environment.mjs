@@ -1,12 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { isAbsolute, join, posix as posixPath, win32 as win32Path } from 'node:path';
 
-const DARWIN_PATH_PROBE_TIMEOUT_MS = 3_000;
-const DARWIN_PATH_MARKER = '__CUPPET_LOGIN_SHELL_PATH__=';
-let cachedDarwinLoginPath = null;
-let cachedDarwinLoginPathKey = '';
+const SHELL_PROBE_TIMEOUT_MS = 5_000;
+const SHELL_CACHE_MS = 30_000;
+const ENV_MARKER = '__CUPPET_CLI_ENV_';
+const SHELL_ENV_KEYS = ['PATH', '__MISE_DIFF', 'FNM_DIR', 'FNM_MULTISHELL_PATH'];
+let cachedShellEnvironment = null;
 
 export function getEnv(env, ...keys) {
   if (!env || typeof env !== 'object') return '';
@@ -25,9 +26,8 @@ export function getEnv(env, ...keys) {
 /**
  * Build the environment Cuppet should use when resolving user-installed CLIs.
  *
- * Finder/Dock-launched macOS apps inherit launchd's small PATH rather than the
- * PATH the user gets in an interactive Terminal. Recover only PATH from the
- * user's login shell; do not import arbitrary shell variables or credentials.
+ * Desktop apps may inherit a smaller PATH than an interactive terminal. Recover
+ * PATH and the version-manager state needed to use it, never arbitrary secrets.
  */
 export function localCliEnvironment(inherited = process.env, options = {}) {
   const environment = inherited && typeof inherited === 'object' ? { ...inherited } : {};
@@ -39,9 +39,11 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
   const explicit = splitPath(getEnv(environment, 'CUPPET_CLI_PATH'), pathDelimiter);
   const npmPrefix = getEnv(environment, 'NPM_CONFIG_PREFIX', 'npm_config_prefix');
   const explicitNpm = npmPrefix ? [platform === 'win32' ? npmPrefix : posixPath.join(npmPrefix, 'bin')] : [];
-  const recovered = platform === 'darwin'
-    ? splitPath(recoverDarwinLoginPath(environment, options), pathDelimiter)
-    : [];
+  const shellEnvironment = recoverShellEnvironment(environment, { ...options, platform, home });
+  const recovered = splitPath(shellEnvironment.PATH, pathDelimiter);
+  for (const key of SHELL_ENV_KEYS.slice(1)) {
+    if (shellEnvironment[key]) environment[key] = shellEnvironment[key];
+  }
   const candidates = fallbackCliPaths(environment, home, platform);
 
   const merged = dedupePath([
@@ -52,6 +54,9 @@ export function localCliEnvironment(inherited = process.env, options = {}) {
     ...candidates,
   ]);
   if (merged.length) {
+    if (platform === 'win32') {
+      for (const key of Object.keys(environment)) if (key.toLowerCase() === 'path') delete environment[key];
+    }
     environment.PATH = merged.join(pathDelimiter);
     if (platform === 'win32') environment.Path = environment.PATH;
   }
@@ -110,62 +115,101 @@ export function resolveLocalCliExecutable(command, inherited = process.env, opti
 /** Apply the local-CLI PATH to the current process for main-process probes. */
 export function applyLocalCliEnvironment(options = {}) {
   const environment = localCliEnvironment(process.env, options);
-  if (environment.PATH) process.env.PATH = environment.PATH;
+  for (const key of SHELL_ENV_KEYS) {
+    if (environment[key]) process.env[key] = environment[key];
+  }
   if (process.platform === 'win32' && environment.Path) process.env.Path = environment.Path;
   return environment;
 }
 
-function recoverDarwinLoginPath(environment, options) {
+function recoverShellEnvironment(environment, options) {
   const injectedProbe = typeof options.loginPathProbe === 'function' ? options.loginPathProbe : null;
   if (injectedProbe) {
-    try { return cleanPath(injectedProbe({ ...environment })); }
-    catch { return ''; }
+    try { return { PATH: cleanPath(injectedProbe({ ...environment })) }; }
+    catch { return {}; }
   }
-
-  const shell = loginShell(environment.SHELL);
-  const home = typeof environment.HOME === 'string' ? environment.HOME : '';
-  const key = `${shell}\u0000${home}`;
-  if (cachedDarwinLoginPath !== null && cachedDarwinLoginPathKey === key) return cachedDarwinLoginPath;
-
-  let recovered = '';
-  try {
-    const result = spawnSync(shell, ['-l', '-i', '-c', `printf '${DARWIN_PATH_MARKER}%s\\n' "$PATH"`], {
+  const { platform, home } = options;
+  if (!['darwin', 'linux', 'win32'].includes(platform)) return {};
+  // Cross-platform callers/tests must not recover a different host's environment.
+  if (platform !== process.platform && !options.spawnSyncImpl) return {};
+  const spawn = options.spawnSyncImpl ?? spawnSync;
+  let accountShell = options.userShell;
+  if (accountShell === undefined && platform !== 'win32') {
+    try { accountShell = userInfo().shell; } catch {}
+  }
+  const shells = platform === 'win32'
+    ? [...new Set([
+      win32Path.join(getEnv(environment, 'ProgramFiles') || 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe'),
+      'pwsh.exe', resolveWindowsPowerShell(platform, environment),
+    ])]
+    : [...new Set([environment.SHELL, accountShell, platform === 'darwin' ? '/bin/zsh' : '/bin/bash'])]
+      .filter((shell) => typeof shell === 'string' && isAbsolute(shell) && !shell.includes('\0'));
+  const key = JSON.stringify([platform, home, shells]);
+  if (!options.refresh && cachedShellEnvironment?.key === key && cachedShellEnvironment.expiresAt > Date.now()) {
+    return cachedShellEnvironment.value;
+  }
+  const runProbe = (command, args, timeout = SHELL_PROBE_TIMEOUT_MS) => {
+    try { return spawn(command, args, {
       env: {
         ...environment,
         TERM: environment.TERM || 'dumb',
         CUPPET_SHELL_PATH_PROBE: '1',
       },
       encoding: 'utf8',
-      timeout: DARWIN_PATH_PROBE_TIMEOUT_MS,
+      timeout,
       maxBuffer: 64 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-    });
-    recovered = markerPath(result?.stdout);
-  } catch {
-    recovered = '';
+      detached: platform !== 'win32',
+    }); } catch { return null; }
+  };
+  let recovered = {};
+  if (platform === 'win32') {
+    const names = ['PATH', 'FNM_DIR', 'FNM_MULTISHELL_PATH'];
+    const command = names.map((name) => `Write-Output ('${ENV_MARKER}${name}=' + [Environment]::GetEnvironmentVariable('${name}'))`).join('; ');
+    for (const shell of shells) {
+      let shellRecovered = {};
+      for (const profile of [false, true]) {
+        const result = runProbe(shell, ['-NoLogo', ...(profile ? [] : ['-NoProfile']), '-NonInteractive', '-Command', command]);
+        if (result?.error || result?.status !== 0) continue;
+        const next = markerEnvironment(result.stdout, names);
+        shellRecovered = { ...shellRecovered, ...next, PATH: dedupePath([
+          ...splitPath(next.PATH, ';'), ...splitPath(shellRecovered.PATH, ';'),
+        ]).join(';') };
+      }
+      if (shellRecovered.PATH) { recovered = shellRecovered; break; }
+    }
+  } else {
+    const names = ['PATH', '__MISE_DIFF'];
+    const command = names.map((name) => `printf '${ENV_MARKER}${name}='; printenv ${name}; printf '\\n'`).join('; ');
+    for (const shell of shells) {
+      const result = runProbe(shell, ['-l', '-i', '-c', command]);
+      if (result?.error || result?.status !== 0) continue;
+      recovered = markerEnvironment(result.stdout, names);
+      if (recovered.PATH) break;
+    }
+    if (!recovered.PATH && platform === 'darwin') {
+      const result = runProbe('/bin/launchctl', ['getenv', 'PATH'], 2_000);
+      if (!result?.error && result?.status === 0) recovered = { PATH: cleanPath(result.stdout) };
+    }
   }
-
-  cachedDarwinLoginPathKey = key;
-  cachedDarwinLoginPath = recovered;
+  // Never retain a failed lookup; successful snapshots expire and Connect can refresh them.
+  cachedShellEnvironment = recovered.PATH ? { key, value: recovered, expiresAt: Date.now() + SHELL_CACHE_MS } : null;
   return recovered;
 }
 
-function loginShell(value) {
-  const shell = typeof value === 'string' ? value.trim() : '';
-  if (shell && isAbsolute(shell) && !shell.includes('\u0000')) return shell;
-  return '/bin/zsh';
-}
-
-function markerPath(stdout) {
+function markerEnvironment(stdout, names) {
+  const environment = {};
   const lines = String(stdout ?? '').split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    const marker = line.indexOf(DARWIN_PATH_MARKER);
-    if (marker < 0) continue;
-    return cleanPath(line.slice(marker + DARWIN_PATH_MARKER.length));
+  for (const line of lines) {
+    for (const name of names) {
+      const marker = `${ENV_MARKER}${name}=`;
+      if (!line.startsWith(marker)) continue;
+      const value = cleanPath(line.slice(marker.length));
+      if (value) environment[name] = value;
+    }
   }
-  return '';
+  return environment;
 }
 
 function fallbackCliPaths(environment, home, platform) {
@@ -210,6 +254,9 @@ function fallbackCliPaths(environment, home, platform) {
       pathJoin(programFiles, 'Git', 'bin'),
       localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'cmd') : '',
       localAppData ? pathJoin(localAppData, 'Programs', 'Git', 'bin') : '',
+      localAppData ? pathJoin(localAppData, 'Programs', 'nodejs') : '',
+      localAppData ? pathJoin(localAppData, 'Volta', 'bin') : '',
+      localAppData ? pathJoin(localAppData, 'pnpm') : '',
       localAppData ? pathJoin(localAppData, 'Microsoft', 'WinGet', 'Links') : '',
       pathJoin(programFiles, 'WinGet', 'Links'),
       localAppData ? pathJoin(localAppData, 'Microsoft', 'WindowsApps') : '',

@@ -57,7 +57,7 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
   if (overall === 'needs_install' || !installed) {
     return {
       credentialReady: false,
-      badge: 'Not installed',
+      badge: source.missingAdapter ? 'Adapter needed' : 'Not installed',
       tone: 'muted',
       detail: fallback || `${providerLabel} is not installed yet. Cuppet can install it when you connect.`,
       runtimeState,
@@ -79,6 +79,18 @@ export function providerStatusPresentation(status: unknown, providerLabel = 'Pro
       runtimeState,
       capabilityState,
       canConnect: controlInstallation.canUpdate === true,
+    };
+  }
+
+  if (source.error) {
+    return {
+      credentialReady,
+      badge: 'Needs retry',
+      tone: 'warning',
+      detail: fallback || `${providerLabel} is installed, but its startup check failed. Reconnect to retry.`,
+      runtimeState,
+      capabilityState,
+      canConnect: true,
     };
   }
 

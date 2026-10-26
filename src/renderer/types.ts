@@ -231,6 +231,8 @@ export type CliAgentStatus = {
   canAutoInstall?: boolean;
   loginHint?: string;
   message?: string;
+  error?: string | null;
+  missingAdapter?: string;
 };
 
 export type BrowserControlStatus = {

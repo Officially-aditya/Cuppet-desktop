@@ -96,17 +96,109 @@ test('failed login-shell PATH recovery falls back without breaking CLI lookup', 
   assert.ok(entries.includes('/opt/homebrew/bin'));
 });
 
-test('non-macOS environments never invoke login-shell recovery', () => {
+test('Linux environments recover the login-shell PATH too', () => {
   let probes = 0;
   const environment = localCliEnvironment({ HOME: '/home/cuppet', PATH: '/usr/bin:/bin' }, {
     platform: 'linux',
     home: '/home/cuppet',
-    loginPathProbe: () => { probes += 1; return '/should/not/be/used'; },
+    loginPathProbe: () => { probes += 1; return '/home/cuppet/.nvm/versions/node/v22/bin'; },
   });
 
-  assert.equal(probes, 0);
-  assert.ok(!environment.PATH.includes('/should/not/be/used'));
+  assert.equal(probes, 1);
+  assert.equal(environment.PATH.split(':')[0], '/home/cuppet/.nvm/versions/node/v22/bin');
   assert.ok(environment.PATH.includes('/home/cuppet/.local/bin'));
+});
+
+test('login-shell recovery tries the account shell after the inherited shell fails', () => {
+  const calls = [];
+  const environment = localCliEnvironment({ SHELL: '/missing/shell', PATH: '/usr/bin' }, {
+    platform: 'linux', home: '/home/shell-fallback', userShell: '/bin/account-shell',
+    spawnSyncImpl: (command, args, options) => {
+      calls.push(command);
+      assert.deepEqual(args.slice(0, 3), ['-l', '-i', '-c']);
+      assert.equal(options.timeout, 5_000);
+      assert.equal(options.detached, true);
+      return command === '/missing/shell'
+        ? { error: { code: 'ENOENT' }, status: null }
+        : { status: 0, stdout: '__CUPPET_CLI_ENV_PATH=/custom/bin:/usr/bin\n__CUPPET_CLI_ENV___MISE_DIFF=version-manager-state\n__CUPPET_CLI_ENV_SECRET=do-not-import\n' };
+    },
+  });
+  assert.deepEqual(calls, ['/missing/shell', '/bin/account-shell']);
+  assert.equal(environment.PATH.split(':')[0], '/custom/bin');
+  assert.equal(environment.__MISE_DIFF, 'version-manager-state');
+  assert.equal(environment.SECRET, undefined);
+});
+
+test('failed PATH recovery is retried and successful recovery can be explicitly refreshed', () => {
+  let calls = 0;
+  let recoveredPath = '';
+  const options = {
+    platform: 'darwin', home: '/Users/path-retry', userShell: '/bin/zsh',
+    spawnSyncImpl: () => {
+      calls += 1;
+      return recoveredPath
+        ? { status: 0, stdout: `__CUPPET_CLI_ENV_PATH=${recoveredPath}\n` }
+        : { status: null, error: { code: 'ETIMEDOUT' } };
+    },
+  };
+  const inherited = { SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' };
+  assert.equal(localCliEnvironment(inherited, options).PATH.split(':')[0], '/usr/bin');
+  const failedCalls = calls;
+  recoveredPath = '/new/node/bin';
+  assert.equal(localCliEnvironment(inherited, options).PATH.split(':')[0], recoveredPath);
+  assert.ok(calls > failedCalls, 'a failed probe must not be cached');
+  const successfulCalls = calls;
+  recoveredPath = '/new/provider/bin';
+  assert.equal(localCliEnvironment(inherited, options).PATH.split(':')[0], '/new/node/bin');
+  assert.equal(calls, successfulCalls);
+  assert.equal(localCliEnvironment(inherited, { ...options, refresh: true }).PATH.split(':')[0], recoveredPath);
+  assert.ok(calls > successfulCalls);
+});
+
+test('macOS PATH recovery falls back to launchctl when login shells fail', () => {
+  const environment = localCliEnvironment({ PATH: '/usr/bin' }, {
+    platform: 'darwin', home: '/Users/launchctl-path', userShell: '/bin/zsh',
+    spawnSyncImpl: (command, args) => {
+      if (command !== '/bin/launchctl') return { status: 1 };
+      assert.deepEqual(args, ['getenv', 'PATH']);
+      return { status: 0, stdout: '/custom/launchctl/bin:/usr/bin\n' };
+    },
+  });
+  assert.equal(environment.PATH.split(':')[0], '/custom/launchctl/bin');
+});
+
+test('Windows discovery combines profiled PowerShell PATH and version-manager environment', () => {
+  const calls = [];
+  const environment = localCliEnvironment({ Path: 'C:\\inherited', path: 'C:\\stale' }, {
+    platform: 'win32', home: 'C:\\Users\\profile-path',
+    spawnSyncImpl: (_command, args) => {
+      const noProfile = args.includes('-NoProfile');
+      calls.push(noProfile);
+      return { status: 0, stdout: noProfile
+        ? '__CUPPET_CLI_ENV_PATH=C:\\system\r\n'
+        : '__CUPPET_CLI_ENV_PATH=C:\\fnm\\node;C:\\system\r\n__CUPPET_CLI_ENV_FNM_DIR=C:\\fnm\r\n__CUPPET_CLI_ENV_FNM_MULTISHELL_PATH=C:\\fnm\\node\r\n__CUPPET_CLI_ENV_TOKEN=do-not-import\r\n' };
+    },
+  });
+  assert.deepEqual(calls, [true, false]);
+  assert.deepEqual(environment.PATH.split(';').slice(0, 3), ['C:\\fnm\\node', 'C:\\system', 'C:\\inherited']);
+  assert.equal(environment.Path, environment.PATH);
+  assert.equal(environment.path, undefined);
+  assert.equal(environment.FNM_DIR, 'C:\\fnm');
+  assert.equal(environment.FNM_MULTISHELL_PATH, 'C:\\fnm\\node');
+  assert.equal(environment.TOKEN, undefined);
+  assert.ok(environment.PATH.includes('C:\\Users\\profile-path\\AppData\\Local\\Volta\\bin'));
+});
+
+test('a CLI installed after a missing lookup is immediately discoverable', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'cuppet-new-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const environment = { PATH: root };
+  const options = { environment };
+  assert.equal(resolveLocalCliExecutable('new-provider', environment, options), 'new-provider');
+  const command = join(root, process.platform === 'win32' ? 'new-provider.exe' : 'new-provider');
+  await writeFile(command, 'new provider');
+  await chmod(command, 0o755);
+  assert.equal(resolveLocalCliExecutable('new-provider', environment, options).toLowerCase(), command.toLowerCase());
 });
 
 test('local CLI resolver returns an absolute executable from recovered GUI PATH', { skip: process.platform === 'win32' }, async () => {

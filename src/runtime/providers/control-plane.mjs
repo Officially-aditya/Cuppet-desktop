@@ -87,7 +87,7 @@ export class ProviderControlPlane {
     const id = requiredProviderID(providerID);
     this.#statusCache.delete(id);
     const operations = this.#operations(id);
-    let detected = withVersionCompatibility(id, await operations.detect());
+    let detected = withVersionCompatibility(id, await operations.detect({ refresh: true }));
     if (detected.installed !== true) detected = withVersionCompatibility(id, await operations.install());
     if (versionBlocked(detected) && detected.installation?.ownedByCuppet === true && detected.installation?.canUpdate === true) {
       detected = withVersionCompatibility(id, await operations.update());
@@ -116,7 +116,7 @@ export class ProviderControlPlane {
     const id = requiredProviderID(providerID);
     this.#statusCache.delete(id);
     const operations = this.#operations(id);
-    const detected = withVersionCompatibility(id, await operations.detect());
+    const detected = withVersionCompatibility(id, await operations.detect({ refresh: true }));
     const state = detected.installed === true && versionBlocked(detected)
       ? incompatibleLocalState(detected)
       : withVersionCompatibility(id, await operations.probe(detected));

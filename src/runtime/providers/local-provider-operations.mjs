@@ -5,7 +5,7 @@ import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, posix as posixPath, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
-import { detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
+import { applyLocalCliEnvironment, detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { localCliLaunch } from '../local-cli-launch.mjs';
 import { resolveCopilotAcpRuntime } from '../copilot-acp-runtime.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
@@ -106,7 +106,8 @@ export function localProviderOperations(providerID, {
     return String(process.env[descriptor.envOverride] || descriptor.command);
   };
 
-  const detect = async () => {
+  const detect = async ({ refresh = false } = {}) => {
+    applyLocalCliEnvironment({ refresh });
     const officialApp = detectLocalProviderApp(descriptor.id, process.env, { platform });
     if (descriptor.id === 'antigravity') {
       let runtimeInstallation;
@@ -130,13 +131,13 @@ export function localProviderOperations(providerID, {
       const state = await providerState(userData, descriptor.id);
       const recordedIdentity = normalizeStoredIdentity(state.executableIdentity);
       let runtimeInstallation = await resolveCopilotRuntimeImpl({}, {
-        ...copilotRuntimeOptions, platform,
+        ...copilotRuntimeOptions, platform, allowUnverified: true,
         additionalCommands: state.installedByCuppet && recordedIdentity?.resolvedPath ? [recordedIdentity.resolvedPath] : [],
       });
       if (!runtimeInstallation && platform === 'win32' && !process.env[descriptor.envOverride]) {
         const npmExecutable = await findNpmExecutable(descriptor, runImpl);
         if (npmExecutable) {
-          runtimeInstallation = await resolveCopilotRuntimeImpl({ cliCommand: npmExecutable }, { ...copilotRuntimeOptions, platform });
+          runtimeInstallation = await resolveCopilotRuntimeImpl({ cliCommand: npmExecutable }, { ...copilotRuntimeOptions, platform, allowUnverified: true });
           if (runtimeInstallation) extendCliSearchPath([dirname(npmExecutable)]);
         }
       }
@@ -144,13 +145,17 @@ export function localProviderOperations(providerID, {
       if (executable && executable === recordedIdentity?.resolvedPath) extendCliSearchPath([dirname(executable)]);
       const identity = executable ? await executableIdentityImpl(executable).catch(() => null) : null;
       const ownershipMatches = Boolean(runtimeInstallation) && state.installedByCuppet === true && executableIdentityMatches(recordedIdentity, identity);
+      let error = runtimeInstallation?.error ? cleanError(runtimeInstallation.error) : null;
       const result = executable
-        ? await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' }).catch(() => null)
+        ? await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' }).catch((failure) => {
+          error ||= cleanError(failure);
+          return null;
+        })
         : null;
       const version = result ? localProviderVersionLabel(descriptor.id, result) : null;
       return {
         providerID: descriptor.id, label: descriptor.label, officialApp,
-        installed: Boolean(runtimeInstallation), version, error: null,
+        installed: Boolean(runtimeInstallation), version, error,
         installation: normalizeProviderInstallation({
           detected: Boolean(runtimeInstallation), executable, version,
           source: ownershipMatches ? state.installSource : runtimeInstallation?.source,
@@ -185,7 +190,7 @@ export function localProviderOperations(providerID, {
         } catch (error) { probeError = error; }
       }
     }
-    const installed = Boolean(result || (resolved && probeError?.code !== 'ENOENT'));
+    const installed = Boolean(result || resolved);
     const version = result ? localProviderVersionLabel(descriptor.id, result) : null;
     if (!installed) {
       const errorMsg = String(probeError?.message ?? probeError ?? '');
@@ -195,6 +200,7 @@ export function localProviderOperations(providerID, {
         label: descriptor.label,
         officialApp,
         installed: false,
+        ...(descriptor.id === 'claude-code' ? { missingAdapter: descriptor.command } : {}),
         installation: normalizeProviderInstallation({ detected: false, executable, source: state.installSource }),
         error: missing ? null : cleanError(probeError),
       };
@@ -276,7 +282,7 @@ export function localProviderOperations(providerID, {
     const installed = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
     await applyInstallerExecutable(installed);
     extendCliSearchPath();
-    const detected = await detect();
+    const detected = await detect({ refresh: true });
     if (!detected.installed || detected.error) throw new Error(`${descriptor.label} installation could not be verified.${detected.error ? ` ${detected.error}` : ' The installer did not produce a usable CLI.'}`);
     await markInstalled(userData, descriptor.id, {
       source: spec.source,
@@ -298,7 +304,7 @@ export function localProviderOperations(providerID, {
     const updated = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
     await applyInstallerExecutable(updated);
     extendCliSearchPath();
-    const after = await detect();
+    const after = await detect({ refresh: true });
     if (!after.installed || after.error) throw new Error(`${descriptor.label} update could not be verified.${after.error ? ` ${after.error}` : ' The CLI could not be found.'}`);
     await markInstalled(userData, descriptor.id, {
       source: detected.installation.source,
@@ -376,12 +382,18 @@ function statusProjection(descriptor, state, platform) {
     canAutoInstall,
     installation: state.installation,
     officialApp: state.officialApp ?? null,
+    ...(state.error ? { error: state.error } : {}),
+    ...(state.missingAdapter ? { missingAdapter: state.missingAdapter } : {}),
     message: !installed
       ? state.error
         ? `${descriptor.label} could not be started: ${state.error}`
+        : state.missingAdapter
+          ? `${descriptor.label} needs the ${state.missingAdapter} connection adapter. Cuppet will install the adapter automatically when you connect.`
         : state.officialApp
           ? `${state.officialApp.label} was detected. Cuppet still needs ${descriptor.label === 'GitHub Copilot' ? 'a usable Copilot ACP runtime' : 'the Antigravity connection runtime'} to connect. It will install the missing runtime when you connect.`
           : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
+      : state.error
+        ? `${descriptor.label} is installed, but its startup check failed: ${state.error} Reconnect to retry.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
         : descriptor.id === 'opencode' && state.probeError

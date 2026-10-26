@@ -67,6 +67,23 @@ test('runtime control plane owns lifecycle operations and composes actual proces
   assert.equal(afterDiscovery.control.capabilities.fetchedAt, 1);
 });
 
+test('explicit connection and probing refresh executable discovery', async () => {
+  const observations = [];
+  const state = { providerID: 'claude-code', installed: true, connected: true, available: true };
+  const plane = new ProviderControlPlane({
+    dataDir: '/tmp/cuppet-control-plane-refresh',
+    operationsFactory: () => ({
+      async detect(options) { observations.push(options); return state; },
+      async connect() { return state; },
+      async probe() { return state; },
+    }),
+    runtimeHealth: () => null,
+  });
+  await plane.localConnect('claude-code');
+  await plane.localProbe('claude-code');
+  assert.deepEqual(observations, [{ refresh: true }, { refresh: true }]);
+});
+
 test('capability discovery failure is distinct from provider process failure', async () => {
   let fail = false;
   const plane = new ProviderControlPlane({
