@@ -290,6 +290,95 @@ test('a send completing in the same chat preserves edits made while it was pendi
   assert.equal(chat.value(), 'next prompt');
 });
 
+for (const [trigger, newChat] of [['Enter', false], ['form', false], ['Enter', true], ['form', true]]) {
+  test(`${trigger} clears the submitted text and attachments before the send resolves (${newChat ? 'new chat' : 'existing chat'})`, async () => {
+    const chat = fixture();
+    if (newChat) chat.startDraft();
+    let finishSend;
+    chat.props.onSend = () => new Promise(resolve => { finishSend = resolve; });
+    chat.type('first prompt');
+    chat.attach([{ name: 'notes.txt', type: 'text/plain', size: 4 }]);
+    await chat.settle();
+    if (trigger === 'Enter') chat.key('Enter');
+    else {
+      chat.nodes().find(item => item.type === 'form').props.onSubmit({ preventDefault() {} });
+      chat.render();
+    }
+    assert.equal(chat.value(), '');
+    assert.deepEqual(chat.attachmentNames(), []);
+    assert.equal(chat.sends[0].text, 'first prompt');
+    assert.equal(chat.sends[0].attachments[0].name, 'notes.txt');
+    chat.key('Enter');
+    assert.equal(chat.sends.length, 1, 'the cleared prompt cannot be sent twice');
+    finishSend({ clear: true });
+    await chat.settle();
+  });
+}
+
+test('a failed send restores its original text and attachments for retry', async () => {
+  const chat = fixture();
+  let finishSend;
+  chat.props.onSend = () => new Promise(resolve => { finishSend = resolve; });
+  chat.type('  keep this prompt  ');
+  chat.attach([{ name: 'notes.txt', type: 'text/plain', size: 4 }]);
+  await chat.settle();
+  chat.key('Enter');
+  assert.equal(chat.value(), '');
+  finishSend({ clear: false });
+  await chat.settle();
+  assert.equal(chat.value(), '  keep this prompt  ');
+  assert.deepEqual(chat.attachmentNames(), ['notes.txt']);
+});
+
+test('a rejected send restores the prompt and reports the error', async () => {
+  const chat = fixture();
+  let failSend;
+  chat.props.onSend = () => new Promise((_resolve, reject) => { failSend = reject; });
+  chat.type('retry me');
+  chat.key('Enter');
+  assert.equal(chat.value(), '');
+  failSend(new Error('send failed'));
+  await chat.settle();
+  assert.equal(chat.value(), 'retry me');
+  const result = chat.nodes().find(item => item.type?.name === 'CommandResultView').props.result;
+  assert.equal(result.error, true);
+  assert.match(result.presentation, /send failed/);
+});
+
+test('a failed send does not overwrite newer typing or another chat draft', async () => {
+  for (const switchChat of [false, true]) {
+    const chat = fixture();
+    let finishSend;
+    chat.props.onSend = () => new Promise(resolve => { finishSend = resolve; });
+    chat.type('submitted prompt');
+    chat.key('Enter');
+    if (switchChat) chat.resetSession('other');
+    chat.type('next prompt');
+    finishSend({ clear: false });
+    await chat.settle();
+    assert.equal(chat.value(), 'next prompt');
+    if (switchChat) {
+      chat.resetSession('chat');
+      assert.equal(chat.value(), 'submitted prompt');
+    }
+  }
+});
+
+test('an older failed send cannot restore over a newer submitted prompt', async () => {
+  const chat = fixture();
+  const pending = [];
+  chat.props.onSend = () => new Promise(resolve => pending.push(resolve));
+  chat.type('first prompt');
+  chat.key('Enter');
+  chat.type('second prompt');
+  chat.key('Enter');
+  pending[1]({ clear: true });
+  await chat.settle();
+  pending[0]({ clear: false });
+  await chat.settle();
+  assert.equal(chat.value(), '');
+});
+
 test('image reads that finish after switching chats attach only to their original draft', async () => {
   const chat = fixture();
   chat.type('image prompt');

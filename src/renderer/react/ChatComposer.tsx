@@ -155,30 +155,52 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
   }, [running]);
 
   const clearComposer = () => {
+    const cleared = { text: '', attachments: [] as Attachment[] };
     setComposerDrafts((current) => {
       const composer = current[composerKey];
       if (!composer || composer.text !== value || composer.attachments !== attachments) return current;
-      const next = { ...current };
-      delete next[composerKey];
-      return next;
+      return { ...current, [composerKey]: cleared };
     });
     const latest = composerRef.current;
-    if (latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
+    if (latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return cleared;
+    composerRef.current = { key: composerKey, value: '', attachments: cleared.attachments };
     historyRef.current = null;
     if (fileInput.current) fileInput.current.value = '';
     if (textarea.current) textarea.current.style.height = '54px';
     textarea.current?.focus();
+    return cleared;
   };
 
   const submit = async () => {
     const raw = value.trim();
-    if (!raw && !attachments.length) return;
+    const latest = composerRef.current;
+    if (loading || (!raw && !attachments.length) || latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
     onSubmitStart?.();
+    const cleared = clearComposer();
+    let restore = true;
     // The runtime owns queueing so queued work survives renderer reloads and there is
     // only one authority for ordering, capacity, dispatch, and failure semantics.
-    const result = await onSend(raw, deliveryMode, attachments);
-    if (result.commandResult && composerRef.current.key === composerKey) setCommandResult(result.commandResult);
-    if (result.clear) clearComposer();
+    try {
+      const result = await onSend(raw, deliveryMode, attachments);
+      restore = !result.clear;
+      if (result.commandResult && composerRef.current.key === composerKey) setCommandResult(result.commandResult);
+    } catch (error) {
+      if (composerRef.current.key === composerKey) setCommandResult({ id: 'send', error: true, presentation: error instanceof Error ? error.message : String(error) });
+    } finally {
+      // Restore only the untouched empty draft from this submission. A later edit
+      // or send owns a different entry and must survive this response.
+      setComposerDrafts((current) => {
+        if (current[composerKey] !== cleared) return current;
+        if (restore) return { ...current, [composerKey]: { text: value, attachments } };
+        const next = { ...current };
+        delete next[composerKey];
+        return next;
+      });
+      const current = composerRef.current;
+      if (restore && current.key === composerKey && current.value === '' && current.attachments === cleared.attachments) {
+        composerRef.current = { key: composerKey, value, attachments };
+      }
+    }
   };
 
 function imageMimeFromName(name: string): string | null {
