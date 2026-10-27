@@ -1,24 +1,26 @@
 import JSON5 from 'json5';
-import { realpathSync } from 'node:fs';
+import { opendirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { providerFailureError } from './provider-failure.mjs';
+import { providerProjectAccessError } from './provider-failure.mjs';
 import { parseSemanticVersion } from './version-policy.mjs';
 import { verifyLocalProviderExecutableVersion } from './local-provider-version-check.mjs';
 
 export function assertOpenCodeProjectAccess(projectRoot) {
   if (process.platform !== 'darwin') return;
-  const documents = join(homedir(), 'Documents');
-  if (projectRoot !== documents && !projectRoot.startsWith(`${documents}/`)) return;
+  const protectedDirectory = ['Documents', 'Downloads', 'Desktop'].map(name => join(homedir(), name))
+    .find(directory => projectRoot === directory || projectRoot.startsWith(`${directory}/`));
+  if (!protectedDirectory) return;
   // OpenCode discovers configuration through parent directories, even when an
   // Open panel granted Cuppet access to only the selected project.
-  try { realpathSync(documents); } catch (error) {
+  try {
+    realpathSync(protectedDirectory);
+    // Metadata resolution alone can succeed while macOS still denies directory access.
+    const directory = opendirSync(protectedDirectory);
+    directory.closeSync();
+  } catch (error) {
     if (!['EPERM', 'EACCES'].includes(error?.code)) throw error;
-    throw providerFailureError('Cuppet cannot access the Documents folder.', {
-      code: 'PROVIDER_PROJECT_ACCESS_DENIED', category: 'filesystem_access',
-      action: 'grant_project_access', providerID: 'opencode', cause: error,
-      diagnostic: `${error.code}: ${documents}`,
-    });
+    throw providerProjectAccessError('OpenCode', projectRoot, `${error.code}: ${protectedDirectory}`, error);
   }
 }
 

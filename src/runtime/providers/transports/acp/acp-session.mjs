@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../../../local-cli-environment.mjs';
 import { findRuntimeSetting, modelRuntimeSetting, reasoningRuntimeSetting, settingAdvertisesValue } from '../../capabilities.mjs';
 import { providerActivity } from '../../activity.mjs';
-import { providerFailureError, providerFailureMetadata } from '../../provider-failure.mjs';
+import { isWorkingDirectoryAccessFailure, providerFailureError, providerFailureMetadata, providerProjectAccessError } from '../../provider-failure.mjs';
 import { AcpProcess } from './acp-process.mjs';
 import { AcpRpcChannel } from './acp-rpc.mjs';
 import { AcpHostBridge } from './acp-host-bridge.mjs';
@@ -213,7 +213,7 @@ export class AcpSessionRuntime {
       return this.snapshot();
     } catch (error) {
       if (this.#state !== 'closed') this.#state = 'error';
-      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
+      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '', this.#projectRoot);
     }
   }
 
@@ -244,7 +244,7 @@ export class AcpSessionRuntime {
       return this.snapshot();
     } catch (error) {
       if (this.#state !== 'closed') this.#state = 'error';
-      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
+      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '', this.#projectRoot);
     }
   }
 
@@ -256,7 +256,7 @@ export class AcpSessionRuntime {
       await this.#applyConfiguredSettings(selection);
       return this.snapshot();
     } catch (error) {
-      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
+      throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '', this.#projectRoot);
     }
   }
 
@@ -356,7 +356,7 @@ export class AcpSessionRuntime {
       }
       if (turn.stalled) throw stalledError(this.#descriptor);
       if (signal?.aborted || turn.cancelled || error?.name === 'AbortError') throw abortError();
-      throw enrichProviderError(this.#descriptor, error, this.#rpc.stderr());
+      throw enrichProviderError(this.#descriptor, error, this.#rpc.stderr(), this.#projectRoot);
     } finally {
       signal?.removeEventListener?.('abort', onAbort);
       turn.completion.cancel();
@@ -782,7 +782,10 @@ function normalizeUsage(value){const s=record(value); if(!Object.keys(s).length)
 function supportsSessionClose(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.close !== undefined && sessions.close !== false;}
 function supportsSessionDelete(initialized){const capabilities=record(record(initialized).agentCapabilities); const sessions=record(capabilities.sessionCapabilities); return sessions.delete !== undefined && sessions.delete !== false;}
 async function notifyObserver(callback, ...args){if(typeof callback!=='function')return; try{await callback(...args);}catch{}}
-function enrichProviderError(descriptor, error, stderr) {
+function enrichProviderError(descriptor, error, stderr, cwd) {
+  if (isWorkingDirectoryAccessFailure(`${cleanError(error)}\n${stderr}`)) {
+    return providerProjectAccessError(descriptor.label, cwd, [cleanError(error), stderr].filter(Boolean).join('\n'), error);
+  }
   if (providerFailureMetadata(error)) return error;
   const message = cleanError(error);
   if (isAcpAuthenticationRequired(error)) {

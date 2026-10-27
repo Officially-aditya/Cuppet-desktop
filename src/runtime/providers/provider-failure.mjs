@@ -1,6 +1,20 @@
 import { redactCredentials, sanitizeProviderError } from '../credential-sanitization.mjs';
 
-const ACTIONS = new Set(['retry', 'retry_later', 'reconnect_provider', 'reauthenticate', 'change_model', 'open_settings']);
+const ACTIONS = new Set(['retry', 'retry_later', 'reconnect_provider', 'reauthenticate', 'change_model', 'open_settings', 'grant_project_access']);
+
+export function isWorkingDirectoryAccessFailure(value) {
+  const message = value instanceof Error ? `${value.code ?? ''} ${value.message}` : String(value ?? '');
+  return /\b(?:EPERM|EACCES)\b|permission denied|operation not permitted/i.test(message)
+    && /uv_cwd|process\.cwd|working directory|\b(?:getcwd|chdir|lstat|realpath|scandir|readdir|opendir)\b/i.test(message);
+}
+
+export function providerProjectAccessError(label, cwd, diagnostic, cause) {
+  return providerFailureError(`${label} cannot access its project folder.`, {
+    code: 'PROVIDER_PROJECT_ACCESS_DENIED', category: 'filesystem_access', retryable: false,
+    action: 'grant_project_access', cause,
+    diagnostic: [diagnostic, cwd ? `Working directory: ${cwd}` : ''].filter(Boolean).join('\n'),
+  });
+}
 
 export function providerFailureError(message, {
   code = 'PROVIDER_FAILURE',

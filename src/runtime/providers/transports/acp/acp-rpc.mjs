@@ -1,4 +1,4 @@
-import { providerFailureError } from '../../provider-failure.mjs';
+import { isWorkingDirectoryAccessFailure, providerFailureError, providerProjectAccessError } from '../../provider-failure.mjs';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const SESSION_NEW_RETRY_DELAY_MS = 250;
@@ -27,6 +27,11 @@ export class AcpRpcChannel {
     processHandle.onExit(({ code, signal, expected }) => {
       if (expected || this.#closed) return;
       const stderr = this.#process.stderr();
+      if (isWorkingDirectoryAccessFailure(stderr)) {
+        this.#failure = providerProjectAccessError(this.#label, this.#process.cwd, stderr);
+        this.#failAll(this.#failure);
+        return;
+      }
       const isMissing = code === 9009 || /not recognized as an internal or external command|is not recognized|command not found|cannot find the path specified/i.test(stderr);
       this.#failAll(providerFailureError(
         isMissing

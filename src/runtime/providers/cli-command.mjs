@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { localCliLaunch } from '../local-cli-launch.mjs';
 import { resolveWindowsPowerShell } from '../local-cli-environment.mjs';
 import { redactCredentials } from '../credential-sanitization.mjs';
@@ -33,6 +34,7 @@ export function runProviderCommand(command, args, timeoutMs, options = {}) {
     try {
       const launch = localCliLaunch(executable, args, { shell: options.shell });
       child = spawn(launch.command, launch.args, {
+        cwd: options.cwd ?? tmpdir(),
         stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true, shell: launch.shell, detached: process.platform !== 'win32',
         env: providerProcessEnvironment(options.env ?? process.env),

@@ -44,6 +44,34 @@ test('local Documents permission denial points to macOS folder access instead of
   assert.doesNotMatch(value.message,/sign-in|retry in a moment/i);
 });
 
+test('uv_cwd permission denial inside an older process-exit error gets folder guidance', () => {
+  const error = providerFailureError('OpenCode ACP exited with code 1.', {
+    category: 'process_exited', retryable: true, action: 'retry',
+    diagnostic: 'Error: EPERM: process.cwd failed with error operation not permitted, uv_cwd at /Users/test/Documents/opencode.js\nWorking directory: /Users/test/Downloads/thequery',
+  });
+  const value = classifyProviderError(error, { providerID: 'opencode' });
+  assert.equal(value.category, 'filesystem_access');
+  assert.equal(value.title, 'Downloads access required');
+  assert.match(value.message, /enable Downloads Folder/);
+  assert.doesNotMatch(value.message, /fresh provider|automatically|sign-in|Documents/);
+});
+
+test('a raw uv_cwd error without a path does not invent a protected folder', () => {
+  const value = classify('Error: EPERM: process.cwd failed with error operation not permitted, uv_cwd at /$bunfs/root/chunk.js:2:450', 'opencode');
+  assert.equal(value.category, 'filesystem_access');
+  assert.equal(value.title, 'Project folder access required');
+  assert.equal(value.action, 'grant_project_access');
+  assert.doesNotMatch(value.message, /in Documents|in Downloads|fresh provider/);
+});
+
+test('unrelated permission and authentication errors are not reclassified as folder denial', () => {
+  assert.equal(classify('403 access denied', 'openai').category, 'authentication');
+  const value = classifyProviderError(providerFailureError('OpenCode ACP exited', {
+    category: 'process_exited', retryable: true, diagnostic: 'EPERM: operation not permitted, bind 127.0.0.1',
+  }), { providerID: 'opencode' });
+  assert.equal(value.category, 'streaming');
+});
+
 test('OpenCode ACP errors remain actionable instead of becoming unknown',()=>{
   const auth=classify('OpenCode: provider authentication required ({"providerId":"anthropic"})','opencode');
   assert.equal(auth.category,'authentication');

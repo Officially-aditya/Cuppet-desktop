@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { providerFailureError } from '../../provider-failure.mjs';
+import { opendirSync } from 'node:fs';
+import { providerFailureError, providerProjectAccessError } from '../../provider-failure.mjs';
 import { localCliLaunch } from '../../../local-cli-launch.mjs';
 import { providerProcessEnvironment } from '../../cli-command.mjs';
 
@@ -22,6 +23,7 @@ export class AcpProcess {
   constructor({ command, args = [], cwd, env = process.env, label = 'ACP provider' }) {
     this.label = label;
     this.command = command;
+    this.cwd = cwd;
     try {
       const launch = localCliLaunch(command, args);
       this.#child = spawn(launch.command, launch.args, {
@@ -33,7 +35,7 @@ export class AcpProcess {
       });
     } catch (error) {
       this.#state = 'crashed';
-      throw launchError(label, command, error);
+      throw launchError(label, command, error, cwd);
     }
 
     this.#child.stdin.on('error', (error) => {
@@ -63,7 +65,7 @@ export class AcpProcess {
         if (settled) return;
         settled = true;
         this.#state = 'crashed';
-        rejectReady(launchError(label, command, error));
+        rejectReady(launchError(label, command, error, cwd));
       };
       this.#child.once('spawn', resolveOnce);
       this.#child.once('error', rejectOnce);
@@ -170,7 +172,15 @@ export class AcpProcess {
   }
 }
 
-function launchError(label, command, error) {
+function launchError(label, command, error, cwd) {
+  if (cwd && ['EPERM', 'EACCES'].includes(error?.code)) {
+    try { const directory = opendirSync(cwd); directory.closeSync(); }
+    catch (directoryError) {
+      if (['EPERM', 'EACCES'].includes(directoryError?.code)) {
+        return providerProjectAccessError(label, cwd, `${directoryError.code}: ${cwd}`, error);
+      }
+    }
+  }
   if (error?.code === 'ENOENT') {
     return providerFailureError(`${label} CLI was not found (${command}).`, {
       code: 'PROVIDER_EXECUTABLE_MISSING',

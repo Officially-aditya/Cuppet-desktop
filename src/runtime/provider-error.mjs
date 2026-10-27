@@ -1,4 +1,4 @@
-import { providerFailureMetadata } from './providers/provider-failure.mjs';
+import { isWorkingDirectoryAccessFailure, providerFailureMetadata } from './providers/provider-failure.mjs';
 import { redactCredentials } from './credential-sanitization.mjs';
 
 const ACCOUNT_PROVIDERS = new Set(['codex', 'opencode', 'claude-code', 'grok-build', 'github-copilot', 'mistral-vibe', 'kiro', 'antigravity']);
@@ -27,6 +27,11 @@ export function classifyProviderError(error, context = {}) {
   const providerID = providerId(context);
   const provider = providerLabel(providerID, context.providerLabel);
   const structured = providerFailureMetadata(error);
+  // A filesystem denial can be wrapped as a process exit by an older runtime.
+  // Inspect its diagnostic before offering transport recovery or sign-in repair.
+  if (isWorkingDirectoryAccessFailure(`${error?.message ?? error}\n${structured?.diagnostic ?? ''}`)) {
+    return projectAccessFailure(redactCredentials(structured?.diagnostic || raw, credentials), providerID, provider);
+  }
   if (structured) {
     const projected = structuredProviderFailure({ ...structured, diagnostic: redactCredentials(structured.diagnostic, credentials) }, raw, providerID, provider);
     if (projected) return projected;
@@ -119,7 +124,7 @@ function structuredProviderFailure(metadata, raw, providerID, provider) {
     case 'provider_unavailable':
       return failure('provider_unavailable', 'Provider retries exhausted', `${provider} stopped after repeated unsuccessful requests. ${displayDiagnostic(diagnostic)} Retry later or choose another model.`, 'retry_later', diagnostic, providerID, provider);
     case 'filesystem_access':
-      return failure('filesystem_access', 'Documents access required', 'macOS is blocking Cuppet from accessing your project in Documents. Open System Settings → Privacy & Security → Files & Folders → Cuppet and enable Documents Folder, then retry.', 'grant_project_access', diagnostic, providerID, provider);
+      return projectAccessFailure(diagnostic, providerID, provider);
     case 'executable_missing':
       return failure('local_agent_unavailable', 'Provider connection needs repair', `${provider}'s local agent cannot be found. Reconnect ${provider} in Settings → Platform so Cuppet can repair the local setup.`, 'reconnect_provider', diagnostic, providerID, provider);
     case 'process_exited':
@@ -136,6 +141,15 @@ function structuredProviderFailure(metadata, raw, providerID, provider) {
     default:
       return null;
   }
+}
+
+function projectAccessFailure(diagnostic, providerID, provider) {
+  const workingDirectory = String(diagnostic).match(/Working directory: ([^\r\n]+)/)?.[1];
+  const folder = (workingDirectory || String(diagnostic)).match(/\/Users\/[^/\r\n]+\/(Documents|Downloads|Desktop)(?=\/|[\s'".:]|$)/)?.[1];
+  const message = folder
+    ? `macOS is blocking access to your project in ${folder}. Open System Settings → Privacy & Security → Files & Folders → Cuppet and enable ${folder} Folder. Reopen Cuppet and the project after allowing access.`
+    : `${provider} cannot access its working directory. Check that the project folder is accessible and Cuppet has permission to read it, then reopen the project.${process.platform === 'darwin' ? ' For protected folders, allow access in System Settings → Privacy & Security → Files & Folders → Cuppet.' : ''}`;
+  return failure('filesystem_access', folder ? `${folder} access required` : 'Project folder access required', message, 'grant_project_access', diagnostic, providerID, provider);
 }
 
 function failure(category, title, message, action, diagnostic, providerID, provider) {

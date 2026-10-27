@@ -32,9 +32,9 @@ test('OpenCode descriptor uses the official ACP command and Cuppet MCP bridge wi
   assert.equal(descriptor.requiredSessionSettings, undefined);
 });
 
-test('OpenCode rejects denied parent Documents access before launching its ACP process', { skip: process.platform !== 'darwin' }, (t) => {
+for (const folder of ['Documents', 'Downloads', 'Desktop']) test(`OpenCode rejects denied parent ${folder} access before launching its ACP process`, { skip: process.platform !== 'darwin' }, (t) => {
   const original = fs.realpathSync;
-  const documents = join(homedir(), 'Documents');
+  const documents = join(homedir(), folder);
   t.mock.method(fs, 'realpathSync', (path) => {
     if (path === documents) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
     return original(path);
@@ -50,8 +50,26 @@ test('OpenCode rejects denied parent Documents access before launching its ACP p
     const failure = classifyProviderError(error, { providerID: 'opencode' });
     assert.equal(failure.category, 'filesystem_access');
     assert.equal(failure.action, 'grant_project_access');
+    assert.equal(failure.title, `${folder} access required`);
     return true;
   });
+});
+
+test('OpenCode checks directory access even when protected-folder metadata resolves', { skip: process.platform !== 'darwin' }, (t) => {
+  const downloads = join(homedir(), 'Downloads');
+  const realpath = fs.realpathSync;
+  const openDirectory = fs.opendirSync;
+  t.mock.method(fs, 'realpathSync', path => path === downloads ? downloads : realpath(path));
+  t.mock.method(fs, 'opendirSync', path => {
+    if (path === downloads) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    return openDirectory(path);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  assert.throws(() => new AcpSessionRuntime({
+    descriptor: localCliDescriptor('opencode'), configuration: { cliCommand: '/not-launched/opencode' },
+    projectRoot: join(downloads, 'thequery'),
+  }), { code: 'PROVIDER_PROJECT_ACCESS_DENIED' });
 });
 
 test('OpenCode ACP preserves CLI-owned config and auth without injecting artificial permissions', () => {
