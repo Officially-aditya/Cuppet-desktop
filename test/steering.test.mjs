@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { RuntimeService } from '../src/runtime/service.mjs';
+import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
+import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 
 function waitFor(events, predicate, timeout = 3000) {
   return new Promise((resolve, reject) => {
@@ -29,6 +32,89 @@ function tstStub() {
     close() {},
   };
 }
+
+test('OpenCode receives steering through its live MCP tool reply before the ACP turn ends', { timeout: 15_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-steer-acp-'));
+  const events = [];
+  const firstToolStarted = Promise.withResolvers();
+  const releaseFirstTool = Promise.withResolvers();
+  const nextToolStarted = Promise.withResolvers();
+  const releaseNextTool = Promise.withResolvers();
+  const imageAttachment = { name: 'reference.png', mime: 'image/png', dataUrl: 'data:image/png;base64,aGVsbG8=' };
+  let planCalls = 0;
+  const runtime = new RuntimeService({
+    databasePath: join(dir, 'db.sqlite3'),
+    dataDir: dir,
+    emit: (event) => events.push(event),
+    providerFactory: () => new AcpProviderAdapter({
+      providerID: 'opencode',
+      cliCommand: process.execPath,
+      cliArgs: [fileURLToPath(new URL('./fixtures/fake-acp-mcp-agent.mjs', import.meta.url))],
+      cliEnv: { FAKE_ACP_STEERING: '1' },
+    }, { descriptor: { ...localCliDescriptor('opencode'), prepareEnvironment: undefined } }),
+    tst: tstStub(),
+    planStore: {
+      async capture() { return null; },
+      async setAgent() {},
+      async toolResult() {
+        planCalls += 1;
+        if (planCalls === 1) {
+          firstToolStarted.resolve();
+          await releaseFirstTool.promise;
+          return 'ORIGINAL TOOL RESULT';
+        }
+        nextToolStarted.resolve();
+        await releaseNextTool.promise;
+        return 'CONTINUED IN THE SAME TURN';
+      },
+    },
+    interactive: false,
+    backgroundFactory: backgroundStub,
+  });
+  try {
+    const project = await runtime.handle('project.add-local', { path: dir });
+    const session = await runtime.handle('session.create', { projectId: project.id });
+    await runtime.handle('session.send', { sessionId: session.id, text: 'Work on the task', provider: {} });
+    const started = await waitFor(events, (event) => event.type === 'tool.started' || event.type === 'runtime.error');
+    assert.equal(started.type, 'tool.started', JSON.stringify(started));
+    await firstToolStarted.promise;
+    await runtime.handle('session.steer', { sessionId: session.id, text: 'Focus on the failing test.', attachments: [imageAttachment] });
+    await runtime.handle('session.steer', { sessionId: session.id, text: 'Keep the existing API.' });
+    releaseFirstTool.resolve();
+    await nextToolStarted.promise;
+
+    assert.equal(events.filter((event) => event.type === 'steer.applied').length, 1, 'guidance must be delivered while session/prompt is still running');
+    assert.equal(events.some((event) => event.type === 'run.finished'), false);
+    const live = await runtime.handle('session.get', { sessionId: session.id });
+    assert.deepEqual(live.messages.filter((message) => message.role === 'user').map((message) => message.content), [
+      'Work on the task', 'Focus on the failing test.', 'Keep the existing API.',
+    ]);
+    assert.deepEqual(live.messages.find((message) => message.content === 'Focus on the failing test.').attachments, [imageAttachment]);
+    assert.equal(live.messages.at(-1).status, 'streaming');
+    assert.equal(live.toolExecutions[0].messageId, live.messages[1].id);
+    assert.equal(live.toolExecutions[1].messageId, live.messages.at(-1).id);
+    releaseNextTool.resolve();
+    await waitFor(events, (event) => event.type === 'run.finished');
+
+    const stored = await runtime.handle('session.get', { sessionId: session.id });
+    assert.equal(stored.messages.at(-1).status, 'complete');
+    const replies = JSON.parse(stored.messages.at(-1).content.slice('MCP:'.length));
+    const firstText = replies.first.content.filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+    assert.match(firstText, /ORIGINAL TOOL RESULT/);
+    assert.match(firstText, /<CUPPET_USER_STEERING>[\s\S]*Focus on the failing test\.[\s\S]*Keep the existing API\./);
+    assert.deepEqual(replies.first.content.find((item) => item.type === 'image'), { type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' });
+    assert.doesNotMatch(JSON.stringify(replies.second), /CUPPET_USER_STEERING/);
+    assert.equal(planCalls, 2, 'steering must not start another provider turn or repeat tool calls');
+    assert.equal(events.filter((event) => event.type === 'context.compiled').length, 1);
+    assert.equal(events.filter((event) => event.type === 'run.started').length, 1);
+    assert.equal(events.some((event) => event.type === 'runtime.error'), false);
+  } finally {
+    releaseFirstTool.resolve();
+    releaseNextTool.resolve();
+    await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('steer is appended to the running turn instead of stopping and restarting it', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-steer-'));

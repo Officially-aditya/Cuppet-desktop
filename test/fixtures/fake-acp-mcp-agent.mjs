@@ -6,7 +6,6 @@ const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let mcpChild = null;
 let mcp = null;
 let mcpStderr = '';
-let toolResult = '';
 
 acp.on('line', (line) => {
   if (!line.trim()) return;
@@ -42,13 +41,17 @@ async function handle(message) {
     for (const name of ['workspace_edit', 'workspace_write']) {
       if (listed?.tools?.some((tool) => tool.name === name)) throw new Error(`${name} should not be advertised before optimized mutation fallback`);
     }
-    const called = await mcp.request('tools/call', { name: 'cuppet_plan', arguments: { action: 'overview' } });
-    if (called?.isError) throw new Error(called?.content?.[0]?.text || 'cuppet_plan failed');
-    toolResult = called?.content?.map((item) => item?.text || '').join('') || '';
     write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'mcp-session', configOptions: [] } });
     return;
   }
   if (message.method === 'session/prompt') {
+    const called = await mcp.request('tools/call', { name: 'cuppet_plan', arguments: { action: 'overview' } });
+    if (called?.isError) throw new Error(called?.content?.[0]?.text || 'cuppet_plan failed');
+    let toolResult = called?.content?.map((item) => item?.text || '').join('') || '';
+    if (process.env.FAKE_ACP_STEERING === '1') {
+      const continued = await mcp.request('tools/call', { name: 'cuppet_plan', arguments: { action: 'overview' } });
+      toolResult = JSON.stringify({ first: called, second: continued });
+    }
     write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'mcp-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `MCP:${toolResult}` } } } });
     write({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 } } });
     return;

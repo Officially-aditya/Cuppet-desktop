@@ -304,7 +304,32 @@ class ToolMutationCapture {
           if (activity?.type?.startsWith('activity.tool.') && pendingText) await flushReasoning();
           await this.#onActivity(activity);
         },
-        ...(executeTool ? { executeTool } : {}),
+        ...(executeTool ? { executeTool: async (call) => {
+          const result = await executeTool(call);
+          if (options?.signal?.aborted) return result;
+          // ACP writes acknowledge success without returning content to the agent.
+          if (call.source === 'acp-host' && call.name === 'workspace_write' && result?.success) return result;
+          // Managed providers run their tool loop inside stream(). Deliver guidance
+          // with this reply, before the provider starts its next inference step.
+          const steering = this.#drainSteering();
+          if (!steering.length) return result;
+          await flushReasoning();
+          await this.#applySteering(steering);
+          const note = steeringNote(steering);
+          const images = steering.flatMap((item) => (item.attachments ?? []).flatMap((attachment) =>
+            typeof attachment?.dataUrl === 'string' && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(attachment.dataUrl)
+              ? [{ type: 'inputImage', imageUrl: attachment.dataUrl }]
+              : []));
+          return {
+            ...result,
+            output: `${note}\n\n${result?.output ?? ''}`,
+            contentItems: [
+              { type: 'inputText', text: note },
+              ...images,
+              ...(result?.contentItems?.length ? result.contentItems : [{ type: 'inputText', text: String(result?.output ?? '') }]),
+            ],
+          };
+        } } : {}),
       });
     } catch (error) {
       const stopped = options?.signal?.aborted || error?.name === 'AbortError';
