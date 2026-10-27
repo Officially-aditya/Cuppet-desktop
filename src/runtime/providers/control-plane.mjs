@@ -65,7 +65,9 @@ export class ProviderControlPlane {
         const detected = localProviderVersionPolicy(id)
           ? withVersionCompatibility(id, await operations.detect())
           : null;
-        const status = detected?.installed === true && versionBlocked(detected)
+        const status = detected?.error
+          ? failedStartupState(detected)
+          : detected?.installed === true && versionBlocked(detected)
           ? incompatibleLocalState(detected)
           : withVersionCompatibility(id, await operations.status(detected));
         if (this.#statusCache.get(id) === current) {
@@ -89,6 +91,7 @@ export class ProviderControlPlane {
     const operations = this.#operations(id);
     let detected = withVersionCompatibility(id, await operations.detect({ refresh: true }));
     if (detected.installed !== true) detected = withVersionCompatibility(id, await operations.install());
+    if (detected.error) throw new Error(failedStartupState(detected).message);
     if (versionBlocked(detected) && detected.installation?.ownedByCuppet === true && detected.installation?.canUpdate === true) {
       detected = withVersionCompatibility(id, await operations.update());
     }
@@ -117,7 +120,7 @@ export class ProviderControlPlane {
     this.#statusCache.delete(id);
     const operations = this.#operations(id);
     const detected = withVersionCompatibility(id, await operations.detect({ refresh: true }));
-    const state = detected.installed === true && versionBlocked(detected)
+    const state = detected.error ? failedStartupState(detected) : detected.installed === true && versionBlocked(detected)
       ? incompatibleLocalState(detected)
       : withVersionCompatibility(id, await operations.probe(detected));
     if (state.connected !== true && state.available !== true) this.#capabilityState.delete(id);
@@ -152,6 +155,7 @@ export class ProviderControlPlane {
 
     if (localProviderVersionPolicy(providerID)) {
       const detected = withVersionCompatibility(providerID, await this.#operations(providerID).detect());
+      if (detected.error) throw new Error(failedStartupState(detected).message);
       if (detected.installed !== true) {
         this.#capabilityState.delete(providerID);
         return unavailable(providerID, 'acp', detected.error || 'Connect OpenCode to install and verify its CLI before selecting a model.');
@@ -196,7 +200,7 @@ export class ProviderControlPlane {
 export function withControlState(status = {}, runtimeHealth = null, capabilityState = null) {
   const installed = status.installed === true || status.installation?.detected === true;
   const compatibility = normalizeVersionCompatibility(status.compatibility);
-  const compatibilityBlocked = installed && compatibility.required === true && compatibility.supported === false;
+  const compatibilityBlocked = installed && !status.error && compatibility.required === true && compatibility.supported === false;
   const runtime = normalizeRuntimeHealth(runtimeHealth);
   const authenticationRequired = runtime.lastFailure?.category === 'authentication';
   const connected = !compatibilityBlocked && !authenticationRequired && (status.connected === true || status.available === true);
@@ -205,7 +209,7 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
     : status.installation?.ownedByCuppet === true
       ? 'cuppet_managed'
       : 'external';
-  const authenticationState = compatibilityBlocked
+  const authenticationState = status.error && !connected ? 'unknown' : compatibilityBlocked
     ? 'blocked'
     : connected
       ? 'authenticated'
@@ -216,6 +220,8 @@ export function withControlState(status = {}, runtimeHealth = null, capabilitySt
   const runtimeNeedsRetry = runtime.state === 'crashed' || runtime.state === 'unhealthy';
   const overall = !installed
     ? 'needs_install'
+    : status.error
+      ? 'needs_retry'
     : compatibilityBlocked
       ? 'needs_update'
       : !connected
@@ -277,6 +283,11 @@ function incompatibleLocalState(state = {}) {
       { managed },
     ) + (state.error ? ` ${cleanError(state.error)}` : ''),
   };
+}
+
+function failedStartupState(state) {
+  return { ...state, connected: false, available: false, probe: 'startup-failed', action: 'connect',
+    message: `${state.label || state.providerID} is installed, but its startup check failed: ${cleanError(state.error)} Reconnect to retry.` };
 }
 
 function normalizeVersionCompatibility(value) {

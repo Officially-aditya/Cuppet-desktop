@@ -1,17 +1,13 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import {
   assertLocalProviderVersionSupported,
   localProviderVersionPolicy,
   localProviderVersionLabel,
 } from './version-policy.mjs';
 import { localCliEnvironment, resolveLocalCliExecutable } from '../local-cli-environment.mjs';
-import { localCliLaunch } from '../local-cli-launch.mjs';
 import { providerFailureError } from './provider-failure.mjs';
+import { probeProviderCommand, providerProcessEnvironment, runProviderCommand } from './cli-command.mjs';
 
-const execFileAsync = promisify(execFile);
 const VERSION_TIMEOUT_MS = 8_000;
-const MAX_VERSION_OUTPUT_BYTES = 64 * 1024;
 const VERSION_CACHE_TTL_MS = 30 * 60_000;
 const versionCache = new Map();
 
@@ -53,9 +49,9 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
 
   let result;
   try {
-    result = await runVersionImpl(command, args, {
-      timeoutMs: VERSION_TIMEOUT_MS,
-      env: environment,
+    result = await probeProviderCommand(command, args, {
+      runImpl: (executable, arguments_, timeoutMs, options) => runVersionImpl(executable, arguments_, { timeoutMs, env: providerProcessEnvironment(options.env) }),
+      timeoutMs: VERSION_TIMEOUT_MS, env: environment,
     });
   } catch (error) {
     const errorMsg = String(error?.message ?? error ?? '');
@@ -84,19 +80,7 @@ export async function verifyLocalProviderExecutableVersion(descriptor, configura
 }
 
 export async function readExecutableVersion(command, args = ['--version'], { timeoutMs = VERSION_TIMEOUT_MS, env = process.env } = {}) {
-  const isWindows = process.platform === 'win32';
-  const useShell = isWindows && (
-    /\.(cmd|bat)$/i.test(command) ||
-    !/\.exe$/i.test(command)
-  );
-  const launch = localCliLaunch(command, args, { shell: useShell });
-  return execFileAsync(launch.command, launch.args, {
-    timeout: timeoutMs,
-    maxBuffer: MAX_VERSION_OUTPUT_BYTES,
-    env,
-    windowsHide: true,
-    shell: launch.shell,
-  });
+  return runProviderCommand(command, args, timeoutMs, { env });
 }
 
 function text(value) {

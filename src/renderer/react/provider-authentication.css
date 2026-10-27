@@ -1,0 +1,5 @@
+.provider-sign-in { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border-color, #8884); border-radius: 12px; min-width: 0; }
+.provider-sign-in-heading, .provider-sign-in-browser { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.provider-sign-in-heading { justify-content: space-between; }
+.provider-sign-in p { margin: 0; font-size: 12px; }
+.provider-sign-in-terminal { height: 260px; min-width: 0; overflow: hidden; border-radius: 8px; padding: 8px; background: var(--bg, #181818); }

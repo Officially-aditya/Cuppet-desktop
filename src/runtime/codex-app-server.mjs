@@ -5,6 +5,7 @@ import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { localCliLaunch } from './local-cli-launch.mjs';
+import { providerProcessEnvironment } from './providers/cli-command.mjs';
 
 const STARTUP_TIMEOUT_MS = 12_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -25,7 +26,7 @@ export class CodexAppServerClient extends EventEmitter {
     if (!command) throw new Error('Codex app-server command is required');
     this.#command = command;
     this.#args = Array.isArray(args) ? [...args] : [];
-    this.#env = { ...env };
+    this.#env = providerProcessEnvironment(env);
   }
 
   async start() {
@@ -189,7 +190,7 @@ async function executableCommand(command, args) {
 function commandWorks(command, args, env) {
   return new Promise((resolve) => {
     const launch = localCliLaunch(command, args);
-    const child = spawn(launch.command, launch.args, { env, stdio: 'ignore', windowsHide: true, shell: launch.shell });
+    const child = spawn(launch.command, launch.args, { env: providerProcessEnvironment(env), stdio: 'ignore', windowsHide: true, shell: launch.shell });
     const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(false); }, 3_000);
     child.once('error', () => { clearTimeout(timer); resolve(false); });
     child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0); });

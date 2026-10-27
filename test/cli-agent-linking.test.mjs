@@ -11,6 +11,7 @@ test('connecting an already installed provider does not run its installer or log
   const calls = [];
   const operations = localProviderOperations('claude-code', {
     runImpl: async (command, args) => { calls.push(args); return { stdout: '1.0.0', stderr: '' }; },
+    acpRuntimeFactory: () => ({ async start() {}, async close() {} }),
   });
   const status = await operations.connect();
   assert.equal(status.connected, true);
@@ -31,7 +32,10 @@ test('Connect still installs a missing Claude ACP adapter automatically', async 
   let installs = 0;
   const operations = localProviderOperations('claude-code', {
     userData: join(root, 'state'), platform: 'darwin',
+    acpRuntimeFactory: () => ({ async start() {}, async close() {} }),
     runImpl: async (actual, args) => {
+      if (actual === 'node') return { stdout: 'v22.20.0', stderr: '' };
+      if (actual === 'npm') return { stdout: args[0] === 'root' ? root : '10.9.0', stderr: '' };
       if (actual === '/bin/bash') {
         assert.match(args[1], /npm install -g @agentclientprotocol\/claude-agent-acp/);
         installs += 1;
@@ -142,18 +146,15 @@ test('Antigravity uses the canonical installer without stale installer flags', (
 });
 
 test('provider-owned login flows need no copied Terminal command', () => {
-  assert.equal(loginSpec('opencode', 'opencode'), null);
+  assert.deepEqual(loginSpec('opencode', 'opencode').args, ['auth', 'login']);
   assert.deepEqual(loginSpec('claude-code', 'claude-agent-acp').args, ['--cli', 'auth', 'login']);
   assert.deepEqual(loginSpec('grok-build', 'grok').args, ['login']);
   assert.deepEqual(loginSpec('github-copilot', 'copilot').args, ['login', '--web-flow']);
-  assert.deepEqual(loginSpec('kiro', 'kiro-cli').args, ['login', '--license', 'free']);
+  assert.deepEqual(loginSpec('kiro', 'kiro-cli').args, ['login']);
   const vibe = loginSpec('mistral-vibe', '/tmp/vibe-acp');
   assert.equal(vibe.command, '/tmp/vibe');
   assert.deepEqual(vibe.args, ['--setup']);
-  const antigravity = loginSpec('antigravity', 'agy');
-  assert.ok(antigravity.args.includes('--mode=plan'));
-  assert.ok(antigravity.args.includes('--sandbox'));
-  assert.ok(!antigravity.args.includes('--dangerously-skip-permissions'));
+  assert.equal(loginSpec('antigravity', 'agy'), null);
 });
 
 test('detect and probe remain read-only and never launch provider login', async () => {

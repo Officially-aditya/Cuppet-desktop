@@ -9,7 +9,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export function runtimeRequestTimeoutMs(method) {
   if (method === 'provider.local.connect') return 15 * 60_000;
   if (method === 'provider.models') return 10 * 60_000;
-  if (method === 'provider.local.status' || method === 'provider.local.detect' || method === 'provider.local.probe') return 60_000;
+  if (method === 'provider.local.status' || method === 'provider.local.detect' || method === 'provider.local.probe') return 180_000;
   return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 const DEFAULT_IDLE_PROBE_AFTER_MS = 5 * 60_000;

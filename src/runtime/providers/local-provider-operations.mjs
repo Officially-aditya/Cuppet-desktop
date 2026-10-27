@@ -1,19 +1,19 @@
 import { redactCredentials } from '../credential-sanitization.mjs';
-import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join, posix as posixPath, win32 as win32Path } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, posix as posixPath, win32 as win32Path } from 'node:path';
 import { localCliDescriptor } from '../local-cli-descriptors.mjs';
-import { applyLocalCliEnvironment, detectLocalProviderApp, resolveLocalCliExecutable, resolveWindowsPowerShell } from '../local-cli-environment.mjs';
-import { localCliLaunch } from '../local-cli-launch.mjs';
+import { applyLocalCliEnvironment, detectLocalProviderApp, resolveLocalCliExecutable } from '../local-cli-environment.mjs';
+import { isProbeTimeout, probeProviderCommand, runProviderCommand, providerProcessEnvironment } from './cli-command.mjs';
 import { resolveCopilotAcpRuntime } from '../copilot-acp-runtime.mjs';
 import { normalizeProviderInstallation } from './operations.mjs';
 import { probeOpenCodeAuthentication } from './opencode-auth.mjs';
 import { localProviderVersionLabel } from './version-policy.mjs';
 import { antigravityReleaseAsset, resolveAntigravityAcpInstallation } from './backends/antigravity-install.mjs';
 import { antigravityAcpDescriptor } from './backends/antigravity.mjs';
-import { AcpSessionRuntime } from './transports/acp/acp-session.mjs';
+import { AcpSessionRuntime, isAcpAuthenticationRequired } from './transports/acp/acp-session.mjs';
+import { providerFailureMetadata } from './provider-failure.mjs';
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const STATUS_TIMEOUT_MS = 8_000;
@@ -23,8 +23,8 @@ const INSTALLED_CLI_MARKER = '__CUPPET_INSTALLED_CLI__=';
 const WINDOWS_CLAUDE_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
 $npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-& $npm install -g @agentclientprotocol/claude-agent-acp
-if ($LASTEXITCODE -ne 0) { & $npm install -g @agentclientprotocol/claude-agent-acp --force }
+& $npm install -g @agentclientprotocol/claude-agent-acp --include=optional
+if ($LASTEXITCODE -ne 0) { & $npm install -g @agentclientprotocol/claude-agent-acp --force --include=optional }
 if ($LASTEXITCODE -ne 0) { throw 'Claude Code ACP npm installation failed.' }
 $prefix = (& $npm prefix -g | Select-Object -Last 1).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the Claude Code ACP installation directory.' }
@@ -88,7 +88,7 @@ extendCliSearchPath();
  */
 export function localProviderOperations(providerID, {
   userData,
-  runImpl = run,
+  runImpl = runProviderCommand,
   platform = process.platform,
   now = () => Date.now(),
   executableIdentityImpl = executableIdentity,
@@ -97,7 +97,14 @@ export function localProviderOperations(providerID, {
   resolveCopilotRuntimeImpl = resolveCopilotAcpRuntime,
   copilotRuntimeOptions = {},
   onAuthenticationUrl,
+  onAuthenticationOutput,
+  onAuthenticationBrowserRequest,
+  runAuthTerminal,
+  signal,
+  acpRuntimeFactory = (options) => new AcpSessionRuntime(options),
 } = {}) {
+  const execute = runImpl;
+  runImpl = (command, args, timeoutMs, options = {}) => execute(command, args, timeoutMs, { ...options, ...(signal ? { signal } : {}) });
   const descriptor = localCliDescriptor(providerID);
   if (!descriptor) throw new Error('Unsupported local CLI provider.');
 
@@ -130,7 +137,7 @@ export function localProviderOperations(providerID, {
     if (descriptor.id === 'github-copilot') {
       const state = await providerState(userData, descriptor.id);
       const recordedIdentity = normalizeStoredIdentity(state.executableIdentity);
-      let runtimeInstallation = await resolveCopilotRuntimeImpl({}, {
+      let runtimeInstallation = await resolveCopilotRuntimeImpl({ signal }, {
         ...copilotRuntimeOptions, platform, allowUnverified: true,
         additionalCommands: state.installedByCuppet && recordedIdentity?.resolvedPath ? [recordedIdentity.resolvedPath] : [],
       });
@@ -147,7 +154,7 @@ export function localProviderOperations(providerID, {
       const ownershipMatches = Boolean(runtimeInstallation) && state.installedByCuppet === true && executableIdentityMatches(recordedIdentity, identity);
       let error = runtimeInstallation?.error ? cleanError(runtimeInstallation.error) : null;
       const result = executable
-        ? await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' }).catch((failure) => {
+        ? await probeProviderCommand(executable, descriptor.versionArgs, { runImpl }).catch((failure) => {
           error ||= cleanError(failure);
           return null;
         })
@@ -177,7 +184,7 @@ export function localProviderOperations(providerID, {
     let result;
     let probeError;
     try {
-      result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+      result = await probeProviderCommand(executable, descriptor.versionArgs, { runImpl });
     } catch (error) { probeError = error; }
     if (probeError && !resolved && platform === 'win32' && !process.env[descriptor.envOverride]) {
       const npmExecutable = await findNpmExecutable(descriptor, runImpl);
@@ -185,7 +192,7 @@ export function localProviderOperations(providerID, {
         resolved = executable = npmExecutable;
         extendCliSearchPath([dirname(executable)]);
         try {
-          result = await runImpl(executable, descriptor.versionArgs, STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+          result = await probeProviderCommand(executable, descriptor.versionArgs, { runImpl });
           probeError = null;
         } catch (error) { probeError = error; }
       }
@@ -229,41 +236,63 @@ export function localProviderOperations(providerID, {
     };
   };
 
+  const makeRuntime = async (detected, { interactive = false, startupMs = STATUS_TIMEOUT_MS } = {}) => {
+    let runtimeDescriptor = descriptor;
+    if (descriptor.id === 'antigravity') {
+      const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
+      if (!installation) throw new Error('Antigravity ACP must be installed before authentication.');
+      runtimeDescriptor = antigravityAcpDescriptor(installation);
+    }
+    return acpRuntimeFactory({
+      descriptor: runtimeDescriptor,
+      configuration: {
+        ...(descriptor.id !== 'antigravity' ? { cliCommand: detected.installation.executable } : {}),
+        signal,
+        ...(interactive ? { allowInteractiveAuth: true, runAuthTerminal, onAuthenticationOutput, onAuthenticationBrowserRequest, onAuthenticationUrl } : {}),
+      },
+      liveness: { startupMs, authenticationMs: interactive ? RUN_TIMEOUT_MS : 30_000 },
+    });
+  };
+
+  const verifyConnection = async (detected) => {
+    for (const startupMs of [STATUS_TIMEOUT_MS, 30_000]) {
+      const runtime = await makeRuntime(detected, { startupMs });
+      try { await runtime.start(); return; }
+      catch (error) {
+        if (signal?.aborted || startupMs === 30_000 || !isProbeTimeout(error)) throw error;
+      } finally { await runtime.close(); }
+    }
+  };
+
   const probe = async (detected = null) => {
     detected ??= await detect();
     if (!detected.installed) return { ...detected, connected: false, available: false, probe: 'not-installed' };
-    const marker = await providerState(userData, descriptor.id);
+    if (detected.error) return { ...detected, connected: false, available: false, probe: 'startup-failed' };
     let providerReady = false;
     let probeError = null;
     let authentication = null;
+    let needsAuthentication = false;
     try {
       if (descriptor.id === 'opencode') {
-        authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl, version: detected.version });
+        authentication = await probeOpenCodeAuthentication(detected.installation.executable, { runImpl, version: detected.version, signal });
         providerReady = authentication.connected === true;
-      } else if (descriptor.id === 'antigravity') {
-        const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
-        if (installation) {
-          const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), liveness: { startupMs: STATUS_TIMEOUT_MS, authenticationMs: 45_000 } });
-          try { await runtime.start({ authenticateOnly: true }); providerReady = true; }
-          finally { await runtime.close(); }
-        }
-      } else {
+      } else if (['claude-code', 'kiro'].includes(descriptor.id)) {
         providerReady = await probeConnection(descriptor, detected.installation.executable, runImpl);
+      } else {
+        await verifyConnection(detected);
+        providerReady = true;
       }
-    } catch (error) { probeError = cleanError(error); }
-    // OpenCode credentials and an Antigravity ACP session provide authoritative
-    // read-only auth probes; a historical link must not override their result.
-    const authoritativeProbe = descriptor.id === 'opencode' || descriptor.id === 'antigravity';
-    const connected = authoritativeProbe
-      ? Boolean(providerReady)
-      : Boolean(providerReady || marker.linkedAt);
+    } catch (error) {
+      probeError = cleanError(error);
+      needsAuthentication = isAcpAuthenticationRequired(error) || providerFailureMetadata(error)?.category === 'authentication';
+    }
     return {
       ...detected,
-      connected,
-      available: connected,
-      probe: providerReady ? 'provider' : marker.linkedAt && !authoritativeProbe ? 'linked-marker' : 'not-authenticated',
+      connected: providerReady,
+      available: providerReady,
+      probe: providerReady ? 'provider' : needsAuthentication || !probeError ? 'not-authenticated' : 'probe-failed',
       ...(authentication ? { authentication } : {}),
-      ...(probeError ? { probeError } : {}),
+      ...(probeError ? { probeError, ...(!needsAuthentication ? { error: probeError } : {}) } : {}),
     };
   };
 
@@ -272,13 +301,14 @@ export function localProviderOperations(providerID, {
     if (before.installed) return before;
     if (descriptor.id === 'antigravity') {
       if (before.error) throw new Error(before.error);
-      await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform });
+      await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, signal });
       const detected = await detect();
       if (!detected.installed || detected.error) throw new Error(detected.error || 'Antigravity ACP installation could not be verified.');
       return detected;
     }
     const spec = installSpec(descriptor.id, platform);
     if (!spec) throw new Error(`Automatic ${descriptor.label} installation is not available on this platform yet.`);
+    if (descriptor.id === 'claude-code') await preflightClaudeInstall(runImpl, platform);
     const installed = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
     await applyInstallerExecutable(installed);
     extendCliSearchPath();
@@ -301,6 +331,7 @@ export function localProviderOperations(providerID, {
     }
     const spec = updateSpec(descriptor.id, platform, detected.installation.source);
     if (!spec) throw new Error(`Automatic ${descriptor.label} updates are not available for this installation source.`);
+    if (descriptor.id === 'claude-code') await preflightClaudeInstall(runImpl, platform);
     const updated = await runImpl(spec.command, spec.args, RUN_TIMEOUT_MS, { stdin: 'ignore', env: spec.env });
     await applyInstallerExecutable(updated);
     extendCliSearchPath();
@@ -318,39 +349,70 @@ export function localProviderOperations(providerID, {
   const authenticate = async ({ forceAuthentication = false } = {}) => {
     const detected = await detect();
     if (!detected.installed) throw new Error(`${descriptor.label} must be installed before authentication.`);
+    if (detected.error) throw new Error(`${descriptor.label} startup check failed: ${detected.error}`);
     const current = await probe(detected);
-    if (descriptor.id === 'antigravity') {
-      if (current.connected && !forceAuthentication) return current;
-      const installation = await resolveAntigravityInstallationImpl({}, { ...antigravityInstallOptions, platform, allowInstall: false });
-      if (!installation) throw new Error('Antigravity ACP must be installed before authentication.');
-      const runtime = new AcpSessionRuntime({ descriptor: antigravityAcpDescriptor(installation), configuration: { allowInteractiveAuth: true, forceAuthentication, onAuthenticationUrl } });
-      try { await runtime.start(); }
-      finally { await runtime.close(); }
-      await markLinked(userData, descriptor.id, now());
-      return { ...await probe(), connected: true, available: true, probe: 'provider' };
+    if (current.connected && !forceAuthentication) {
+      try { await verifyConnection(detected); return current; }
+      catch (error) {
+        if (!isAcpAuthenticationRequired(error) && providerFailureMetadata(error)?.category !== 'authentication') throw error;
+      }
     }
-    if (current.connected && !forceAuthentication) return current;
-    const login = loginSpec(descriptor.id, detected.installation.executable);
-    if (!login) {
-      await markLinked(userData, descriptor.id, now());
-      return probe();
-    }
-    await runImpl(login.command, login.args, RUN_TIMEOUT_MS, {
-      stdin: login.stdin ?? 'pipe',
-      autoEnter: login.autoEnter === true,
-      env: login.env,
-    });
+    let runtime = await makeRuntime(detected, { interactive: true, startupMs: 30_000 });
+    try {
+      await runtime.start({ initializeOnly: true });
+      const methods = runtime.authenticationMethods();
+      const preferred = descriptor.authentication?.methods ?? [];
+      const preferredMethod = [...preferred].sort((a, b) => Number(b.interactive === true) - Number(a.interactive === true)).flatMap((choice) =>
+        choice.requiresEnv && !process.env[choice.requiresEnv] ? [] : methods.filter((method) => method.id === choice.id))[0];
+      const method = preferredMethod ?? methods.find((item) => item.type === 'terminal' && runAuthTerminal)
+        ?? methods.find((item) => !item.type || item.type === 'agent');
+      // Older OpenCode advertises a terminal instruction as an agent method.
+      const legacyTerminal = !method || method.id === 'opencode-login';
+      if (method?.type === 'terminal' || legacyTerminal) {
+        if (typeof runAuthTerminal !== 'function') throw new Error(`Open Settings to complete ${descriptor.label} sign-in in the interactive terminal.`);
+        const launch = runtime.authenticationLaunch();
+        let login;
+        if (method?.type === 'terminal') {
+          const args = Array.isArray(method.args) ? method.args : [];
+          if (args.length > 64 || args.some((arg) => typeof arg !== 'string' || arg.includes('\0') || arg.length > 4096)) throw new Error('Provider returned invalid terminal authentication arguments.');
+          const extraEnv = {};
+          for (const [key, value] of Object.entries(method.env ?? {})) {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0') || value.length > 32768) throw new Error('Provider returned invalid terminal authentication environment.');
+            extraEnv[key] = value;
+          }
+          login = { command: launch.command, args: [...launch.args, ...args], env: { ...launch.env, ...extraEnv }, cwd: launch.cwd };
+        } else {
+          login = loginSpec(descriptor.id, detected.installation.executable);
+          if (!login) throw new Error(`${descriptor.label} did not advertise a supported sign-in method.`);
+          login = { ...login, env: launch.env, cwd: launch.cwd };
+        }
+        await runtime.close();
+        runtime = null;
+        await runAuthTerminal(login.command, login.args, { env: providerProcessEnvironment(login.env), cwd: login.cwd });
+        await verifyConnection(detected);
+      } else {
+        await runtime.authenticate(method.id);
+        try { await runtime.start(); }
+        catch (error) {
+          // Some adapters acknowledge browser auth before credentials exist.
+          // Their official interactive setup remains available in the same UI.
+          const needsAuth = isAcpAuthenticationRequired(error) || providerFailureMetadata(error)?.category === 'authentication';
+          const login = needsAuth && !signal?.aborted && runAuthTerminal ? loginSpec(descriptor.id, detected.installation.executable) : null;
+          if (!login) throw error;
+          const launch = runtime.authenticationLaunch();
+          await runtime.close();
+          runtime = null;
+          await runAuthTerminal(login.command, login.args, { env: providerProcessEnvironment(launch.env), cwd: launch.cwd });
+          await verifyConnection(detected);
+        }
+      }
+    } finally { await runtime?.close(); }
+    // Recheck persisted credentials in a fresh process. A terminal's exit code or
+    // a model catalog alone cannot prove the provider is authenticated.
+    const next = await probe(detected);
+    if (!next.connected) throw new Error(next.probeError || `${descriptor.label} sign-in has not completed. Finish sign-in and reconnect.`);
     await markLinked(userData, descriptor.id, now());
-    const next = await probe();
-    // Some providers keep account sessions in the OS keyring and expose no
-    // zero-usage identity probe. Successful official auth remains provisional;
-    // first runtime use is still authoritative.
-    return next.connected ? next : {
-      ...next,
-      available: true,
-      connected: true,
-      probe: 'auth-flow-completed',
-    };
+    return next;
   };
 
   const status = async (detected = null) => statusProjection(descriptor, await probe(detected), platform);
@@ -393,7 +455,7 @@ function statusProjection(descriptor, state, platform) {
           ? `${state.officialApp.label} was detected. Cuppet still needs ${descriptor.label === 'GitHub Copilot' ? 'a usable Copilot ACP runtime' : 'the Antigravity connection runtime'} to connect. It will install the missing runtime when you connect.`
           : `${descriptor.label} is not installed yet. Cuppet will install it when you connect.`
       : state.error
-        ? `${descriptor.label} is installed, but its startup check failed: ${state.error} Reconnect to retry.`
+        ? `${descriptor.label} is installed, but its ${state.probeError ? 'authentication' : 'startup'} check failed: ${state.error} Reconnect to retry.`
       : connected
         ? `${descriptor.label} is connected and ready to use in Cuppet${version ? ` · ${version}` : ''}.`
         : descriptor.id === 'opencode' && state.probeError
@@ -409,7 +471,7 @@ export function installSpec(providerID, platform = process.platform) {
   if (platform === 'darwin' || platform === 'linux') {
     const specs = {
       opencode: { source: 'managed', script: 'curl -fsSL https://opencode.ai/install | bash' },
-      'claude-code': { source: 'npm', script: 'npm install -g @agentclientprotocol/claude-agent-acp' },
+      'claude-code': { source: 'npm', script: 'npm install -g @agentclientprotocol/claude-agent-acp --include=optional' },
       'grok-build': { source: 'managed', script: 'curl -fsSL https://x.ai/cli/install.sh | bash' },
       'github-copilot': { source: 'managed', script: 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" bash' },
       'mistral-vibe': { source: 'managed', script: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
@@ -453,44 +515,26 @@ export function loginSpec(providerID, commandOverride = '') {
   if (!descriptor) return null;
   const command = commandOverride || descriptor.command;
   switch (id) {
-    case 'opencode': return null;
+    case 'opencode': return { command, args: ['auth', 'login'] };
     case 'claude-code': return { command, args: ['--cli', 'auth', 'login'] };
     case 'grok-build': return { command, args: ['login'] };
     case 'github-copilot': return { command, args: ['login', '--web-flow'] };
-    case 'kiro': return { command, args: ['login', '--license', 'free'] };
-    case 'mistral-vibe': return { command: siblingCommand(command, 'vibe'), args: ['--setup'], autoEnter: true };
-    case 'antigravity': return { command, args: ['--mode=plan', '--sandbox', '--output-format', 'json', '--print-timeout', '5m', '-p', 'Reply only with READY. This is a Cuppet connection check; do not modify anything.'] };
+    case 'kiro': return { command, args: ['login'] };
+    case 'mistral-vibe': return { command: siblingCommand(command, 'vibe'), args: ['--setup'] };
+    case 'antigravity': return null;
     default: return null;
   }
 }
 
 async function probeConnection(descriptor, command, runImpl) {
   if (descriptor.id === 'claude-code') {
-    if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
-    await runImpl(command, ['--cli', 'auth', 'status', '--json'], STATUS_TIMEOUT_MS, { stdin: 'ignore', discardOutput: true });
+    await probeProviderCommand(command, ['--cli', 'auth', 'status', '--json'], { runImpl, discardOutput: true });
     return true;
   }
   if (descriptor.id === 'kiro') {
-    await runImpl(command, ['whoami', '--format', 'json'], STATUS_TIMEOUT_MS, { stdin: 'ignore' });
+    await probeProviderCommand(command, ['whoami', '--format', 'json'], { runImpl });
     return true;
   }
-  if (descriptor.id === 'grok-build') {
-    if (process.env.XAI_API_KEY) return true;
-    return exists(join(homedir(), '.grok', 'auth.json'));
-  }
-  if (descriptor.id === 'github-copilot') {
-    if (process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) return true;
-    if (process.platform === 'darwin') {
-      try { await runImpl('/usr/bin/security', ['find-generic-password', '-s', 'copilot-cli'], STATUS_TIMEOUT_MS, { stdin: 'ignore', discardOutput: true }); return true; } catch {}
-    }
-    try { await runImpl('gh', ['auth', 'token'], STATUS_TIMEOUT_MS, { stdin: 'ignore', discardOutput: true }); return true; } catch {}
-    return false;
-  }
-  if (descriptor.id === 'mistral-vibe') {
-    if (process.env.MISTRAL_API_KEY) return true;
-    return nonEmpty(join(homedir(), '.vibe', '.env'));
-  }
-  if (descriptor.id === 'antigravity') return false;
   return false;
 }
 
@@ -665,54 +709,6 @@ function normalizeStoredIdentity(value) {
   };
 }
 
-function run(command, args, timeoutMs, options = {}) {
-  let executable = command;
-  if (process.platform === 'win32') {
-    const lower = String(command || '').toLowerCase();
-    if (lower === 'powershell.exe' || lower === 'powershell') {
-      executable = resolveWindowsPowerShell();
-    }
-  }
-  return new Promise((resolveRun, rejectRun) => {
-    let stdout = '';
-    let stderr = '';
-    let child;
-    try {
-      const isWindows = process.platform === 'win32';
-      const useShell = typeof options.shell === 'boolean'
-        ? options.shell
-        : (isWindows && (
-            /\.(cmd|bat)$/i.test(executable) ||
-            (!/\.exe$/i.test(executable) && !executable.toLowerCase().includes('powershell'))
-          ));
-      const launch = localCliLaunch(executable, args, { shell: useShell });
-      child = spawn(launch.command, launch.args, {
-        stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        shell: launch.shell,
-        env: { ...process.env, ...(options.env ?? {}) },
-      });
-    } catch (error) { rejectRun(error); return; }
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
-      rejectRun(new Error(`${command} timed out.`));
-    }, timeoutMs);
-    const autoTimers = [];
-    if (options.autoEnter && child.stdin) {
-      for (const delay of [900, 2200]) autoTimers.push(setTimeout(() => { try { child.stdin.write('\n'); } catch {} }, delay));
-    }
-    child.stdout?.on('data', (chunk) => { if (!options.discardOutput) stdout = `${stdout}${String(chunk)}`.slice(-64_000); });
-    child.stderr?.on('data', (chunk) => { if (!options.discardOutput) stderr = `${stderr}${String(chunk)}`.slice(-64_000); });
-    child.once('error', (error) => { clearTimeout(timer); autoTimers.forEach(clearTimeout); rejectRun(error); });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      autoTimers.forEach(clearTimeout);
-      if (code === 0) resolveRun({ stdout, stderr });
-      else rejectRun(Object.assign(new Error((stderr || stdout || `${command} exited with code ${code}`).trim()), { code: code === null ? undefined : code }));
-    });
-  });
-}
-
 function siblingCommand(command, sibling) {
   const value = String(command || '');
   if (!value.includes('/') && !value.includes('\\')) return sibling;
@@ -721,6 +717,31 @@ function siblingCommand(command, sibling) {
   }
   return join(dirname(value), (process.platform === 'win32' || value.toLowerCase().endsWith('.exe')) ? `${sibling}.exe` : sibling);
 }
-async function exists(path) { try { await access(path, fsConstants.F_OK); return true; } catch { return false; } }
-async function nonEmpty(path) { try { return (await readFile(path, 'utf8')).trim().length > 0; } catch { return false; } }
+
+export async function preflightClaudeInstall(runImpl = runProviderCommand, platform = process.platform, accessImpl = access) {
+  let node;
+  try { node = await probeProviderCommand('node', ['--version'], { runImpl }); }
+  catch { throw new Error('Claude’s connection adapter requires Node.js 22 or newer. Install Node.js, then reconnect; Cuppet will install the adapter automatically.'); }
+  const major = Number(String(node.stdout ?? '').trim().match(/^v?(\d+)\./)?.[1]);
+  if (!Number.isInteger(major) || major < 22) throw new Error('Claude’s connection adapter requires Node.js 22 or newer. Upgrade Node.js, then reconnect.');
+  const npm = platform === 'win32' ? 'npm.cmd' : 'npm';
+  let root;
+  try {
+    await probeProviderCommand(npm, ['--version'], { runImpl });
+    const result = await probeProviderCommand(npm, ['root', '-g'], { runImpl });
+    root = String(result.stdout ?? '').trim().split(/\r?\n/).at(-1);
+  } catch { throw new Error('npm is required to install Claude’s connection adapter. Install npm with Node.js, then reconnect.'); }
+  if (!(platform === 'win32' ? win32Path.isAbsolute(root || '') : isAbsolute(root || ''))) throw new Error('npm did not report a usable global installation directory. Check the npm configuration, then reconnect.');
+  const parent = platform === 'win32' ? win32Path.dirname : dirname;
+  let directory = root;
+  while (directory) {
+    try { await accessImpl(directory, fsConstants.W_OK); return; }
+    catch (error) {
+      if (error?.code !== 'ENOENT' || parent(directory) === directory) {
+        throw new Error(`The npm installation directory is not writable (${directory}). Configure a user-owned npm prefix, then reconnect.`);
+      }
+      directory = parent(directory);
+    }
+  }
+}
 function cleanError(error) { return redactCredentials(error).slice(0, 500); }

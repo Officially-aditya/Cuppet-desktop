@@ -39,12 +39,13 @@ const DESCRIPTORS = Object.freeze({
       methods: [
         { id: 'xai.api_key', requiresEnv: 'XAI_API_KEY' },
         { id: 'cached_token' },
+        { id: 'grok.com', interactive: true },
       ],
       meta: { headless: true },
     },
   }),
   'github-copilot': descriptor({
-    id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--no-remote', '--no-remote-export', '--disable-builtin-mcps', '--allow-all-tools'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
+    id: 'github-copilot', label: 'GitHub Copilot', transport: 'acp', command: 'copilot', args: ['--acp', '--stdio', '--no-auto-update', '--disable-builtin-mcps', '--allow-all-tools'], versionArgs: ['--version'], envOverride: 'CUPPET_COPILOT_BIN',
     loginHint: 'Run `copilot` in Terminal once and complete GitHub sign-in, then retry.',
     mcpToolBridge: true,
     mcpConfigArg: '--additional-mcp-config',

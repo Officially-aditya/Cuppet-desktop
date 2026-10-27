@@ -15,7 +15,7 @@ const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 async function executable(path, source = `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture)} "$@"\n`) {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, source);
+  await writeFile(path, source.replace('#!/bin/sh\n', '#!/bin/sh\nif [ "$1" = "--help" ]; then printf "%s\\n" "--acp --sync-session"; exit 0; fi\n'));
   await chmod(path, 0o755);
   return path;
 }
@@ -93,7 +93,7 @@ test('a usable standalone runtime takes precedence over app copies', unix, async
   const { root, options, bundled } = await setup(t);
   const command = await executable(join(root, 'copilot'));
   await executable(bundled());
-  assert.deepEqual(await resolveCopilotAcpRuntime({}, options), { command, source: 'unknown' });
+  assert.deepEqual(await resolveCopilotAcpRuntime({}, options), { command, source: 'unknown', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
 });
 
 test('a version-only standalone command and broken newest extension do not hide a working runtime', unix, async (t) => {
@@ -102,7 +102,7 @@ test('a version-only standalone command and broken newest extension do not hide 
   await executable(join(root, 'copilot'), bad);
   await executable(bundled('2.0.0'), bad);
   const command = await executable(bundled('1.0.0', join('dist', 'node_modules')));
-  assert.deepEqual(await resolveCopilotAcpRuntime({}, options), { command, source: 'native' });
+  assert.deepEqual(await resolveCopilotAcpRuntime({}, options), { command, source: 'native', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
 });
 
 test('an app-bundled platform runtime can be reused outside the user extension directory', unix, async (t) => {
@@ -112,7 +112,7 @@ test('an app-bundled platform runtime can be reused outside the user extension d
   const runtime = await resolveCopilotAcpRuntime({}, {
     ...options, platform: 'darwin', arch: 'arm64', appDirectories: [app], extensionDirectories: [],
   });
-  assert.deepEqual(runtime, { command, source: 'native' });
+  assert.deepEqual(runtime, { command, source: 'native', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
 });
 
 test('app and SDK presence alone do not prevent installing the missing runtime', unix, async (t) => {
@@ -142,11 +142,11 @@ test('explicit executable overrides are preserved even when an app runtime is av
   const { root, options, bundled } = await setup(t);
   await executable(bundled());
   const command = await executable(join(root, 'custom-copilot'));
-  assert.deepEqual(await resolveCopilotAcpRuntime({ cliCommand: command }, options), { command, source: 'unknown' });
+  assert.deepEqual(await resolveCopilotAcpRuntime({ cliCommand: command }, options), { command, source: 'unknown', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
   assert.equal(await resolveCopilotAcpRuntime({ cliCommand: join(root, 'missing') }, options), null);
   assert.deepEqual(await resolveCopilotAcpRuntime({}, {
     ...options, environment: { ...options.environment, CUPPET_COPILOT_BIN: command },
-  }), { command, source: 'unknown' });
+  }), { command, source: 'unknown', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
 });
 
 test('ACP verification rejects incompatible responses and hung runtimes', unix, async (t) => {
@@ -178,10 +178,10 @@ test('a timed-out Copilot runtime stays installed and Connect does not reinstall
   assert.equal(detected.installed, true);
   assert.equal(detected.installation.executable, command);
   assert.match(detected.error, /initialize timed out/);
-  const status = await operations.connect();
+  const status = await operations.status();
   assert.equal(status.installed, true);
   assert.match(status.message, /is installed, but its startup check failed/);
-  assert.match(status.error, /initialize timed out/);
+  await assert.rejects(() => operations.connect(), /initialize timed out/);
   assert.equal(await resolveCopilotAcpRuntime({}, copilotRuntimeOptions), null, 'chat still requires a verified runtime');
   assert.ok(calls.length > 0);
 });
@@ -190,7 +190,7 @@ test('detection prefers a verified app runtime to an installed but incompatible 
   const { root, options, bundled } = await setup(t);
   await executable(join(root, 'copilot'), '#!/bin/sh\nprintf "Copilot 1.0.95\\n"\n');
   const command = await executable(bundled());
-  assert.deepEqual(await resolveCopilotAcpRuntime({}, { ...options, allowUnverified: true }), { command, source: 'native' });
+  assert.deepEqual(await resolveCopilotAcpRuntime({}, { ...options, allowUnverified: true }), { command, source: 'native', args: [...localCliDescriptor('github-copilot').args, '--sync-session=off'] });
 });
 
 test('an unstarted Copilot session can be closed without spawning discovery', async () => {

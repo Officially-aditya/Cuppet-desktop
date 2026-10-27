@@ -36,6 +36,8 @@ export const IPC_METHODS = {
   'remote.revoke': method('remote:revoke', [['deviceId', 'id']]),
   'cliAgents.status': method('cli-agent:status', [['providerID', 'id']], 'Types.CliAgentStatus'),
   'cliAgents.connect': method('cli-agent:connect', [['providerID', 'id']], 'Types.CliAgentStatus'),
+  'cliAgents.authRespond': method('cli-agent:auth-respond', [['authId', 'id'], ['response', 'object']], '{ accepted: boolean }'),
+  'cliAgents.authCancel': method('cli-agent:auth-cancel', [['authId', 'id']], '{ cancelled: boolean }'),
   'codexAuth.status': method('codex-auth:status'),
   'codexAuth.login': method('codex-auth:login'),
   'codexAuth.logout': method('codex-auth:logout'),

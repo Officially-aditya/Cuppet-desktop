@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { probeProviderCommand, providerProcessEnvironment } from './cli-command.mjs';
 import { lstat, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -62,13 +63,17 @@ export async function deleteAntigravitySessions({ environment, records }) {
 }
 
 export async function deleteCopilotSessions({ command, environment, records }) {
-  await copilotDeleteRpc(command, environment, records);
+  if (!records.length) return;
+  const { copilotAcpArguments } = await import('../copilot-acp-runtime.mjs');
+  const help = await probeProviderCommand(command, ['--help'], { env: providerProcessEnvironment(environment) });
+  const args = copilotAcpArguments(`${help.stdout ?? ''}\n${help.stderr ?? ''}`).filter(arg => !['--acp', '--allow-all-tools'].includes(arg));
+  await copilotDeleteRpc(command, environment, records, ['--server', ...args]);
 }
 
 function runCleanupCommand(command, args, environment) {
   return new Promise((resolve, reject) => {
     const launch = localCliLaunch(command, args);
-    const child = spawn(launch.command, launch.args, { env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
+    const child = spawn(launch.command, launch.args, { env: providerProcessEnvironment(environment), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
     let output = '';
     const timer = setTimeout(() => { child.kill(); reject(new Error('Provider session cleanup timed out.')); }, 8_000);
     child.stdout.on('data', chunk => { output = `${output}${chunk}`.slice(-4000); });
@@ -82,10 +87,10 @@ function runCleanupCommand(command, args, environment) {
   });
 }
 
-function copilotDeleteRpc(command, environment, records) {
+function copilotDeleteRpc(command, environment, records, args) {
   return new Promise((resolve, reject) => {
-    const launch = localCliLaunch(command, ['--server', '--stdio', '--no-auto-update', '--no-remote', '--no-remote-export', '--disable-builtin-mcps']);
-    const child = spawn(launch.command, launch.args, { env: environment, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
+    const launch = localCliLaunch(command, args);
+    const child = spawn(launch.command, launch.args, { env: providerProcessEnvironment(environment), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
     let buffer = Buffer.alloc(0);
     const pending = new Set(records.map((_, index) => index + 1));
     let settled = false;

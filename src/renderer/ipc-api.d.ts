@@ -52,6 +52,8 @@ export type CuppetApi = {
   cliAgents: {
     status: (providerID: string) => Promise<Types.CliAgentStatus>;
     connect: (providerID: string) => Promise<Types.CliAgentStatus>;
+    authRespond: (authId: string, response: Record<string, unknown>) => Promise<{ accepted: boolean }>;
+    authCancel: (authId: string) => Promise<{ cancelled: boolean }>;
   };
   codexAuth: {
     status: () => Promise<any>;

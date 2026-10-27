@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { providerProcessEnvironment } from './providers/cli-command.mjs';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -33,7 +34,7 @@ export class AntigravityHeadlessProvider {
     let child;
     try {
       const launch = localCliLaunch(command, args);
-      child = spawn(launch.command, launch.args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
+      child = spawn(launch.command, launch.args, { cwd, env: providerProcessEnvironment(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: launch.shell });
     } catch (error) {
       throw launchError(this.#descriptor, error);
     }

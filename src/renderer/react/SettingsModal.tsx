@@ -7,6 +7,7 @@ import { CUPPET_LOGO_URL } from './brand';
 import { invalidateModelCatalogCache } from './model-catalog-cache';
 import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './provider-settings-events';
 import { providerStatusPresentation } from './provider-status-presentation';
+import { ProviderAuthentication } from './ProviderAuthentication';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
 import { isUnsandboxed } from './sandbox-status';
 import { useModalBehavior } from './use-modal-behavior';
@@ -410,6 +411,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
             <div className="provider-auth-actions">{cliPresentation.canConnect ? <button type="button" className="primary-button settings-action-button" disabled={busy || cliStatus === null} onClick={() => void onConnectCli()}>{busy ? 'Connecting…' : `Connect ${selected?.label || 'provider'}`}</button> : <span className="settings-status-pill compact">{cliPresentation.runtimeState === 'stopped' ? 'Starts on demand' : cliPresentation.runtimeState === 'crashed' || cliPresentation.runtimeState === 'unhealthy' ? 'Retry next request' : cliPresentation.runtimeState === 'busy' ? 'Working' : 'Runtime ready'}</span>}</div>
           </div>
         ) : <label>API key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => onApiKey(event.target.value)} onBlur={() => void onApiKeyCommit()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void onApiKeyCommit(); } }} placeholder={current?.apiKeyConfigured && current?.providerID === providerID ? 'Saved securely · leave blank to keep it' : 'Enter API key'} /></label>}
+        {isLocalCli && <ProviderAuthentication providerID={providerID} />}
         {selected && <div className="platform-model-section">
           <div className="platform-model-grid">
             <div className="platform-model-field">

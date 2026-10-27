@@ -191,6 +191,8 @@ function registerIpc() {
 
   handle('cliAgents.status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
   handle('cliAgents.connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
+  handle('cliAgents.authRespond', (_event, authId, response) => request('provider.authentication.respond', { authId, response }));
+  handle('cliAgents.authCancel', (_event, authId) => request('provider.authentication.cancel', { authId }));
   const sandbox = new SandboxManager();
   handle('sandbox.status', () => sandbox.getCapabilities());
   handle('settings.get', () => settings.rendererValue());

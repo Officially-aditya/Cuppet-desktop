@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { providerFailureError } from '../../provider-failure.mjs';
 import { localCliLaunch } from '../../../local-cli-launch.mjs';
+import { providerProcessEnvironment } from '../../cli-command.mjs';
 
 export class AcpProcess {
   #child;
@@ -10,6 +11,7 @@ export class AcpProcess {
   #lineHandlers = new Set();
   #exitHandlers = new Set();
   #stderrLineHandlers = new Set();
+  #stderrDataHandlers = new Set();
   #writeErrorHandlers = new Set();
   #readyPromise;
   #state = 'starting';
@@ -24,7 +26,7 @@ export class AcpProcess {
       const launch = localCliLaunch(command, args);
       this.#child = spawn(launch.command, launch.args, {
         cwd,
-        env,
+        env: providerProcessEnvironment(env),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         shell: launch.shell,
@@ -75,6 +77,9 @@ export class AcpProcess {
     });
     this.#child.stderr.on('data', (chunk) => {
       this.#stderr = `${this.#stderr}${String(chunk)}`.slice(-16_000);
+      for (const handler of this.#stderrDataHandlers) {
+        try { handler(String(chunk)); } catch {}
+      }
     });
     const stderrLines = createInterface({ input: this.#child.stderr });
     stderrLines.on('line', (line) => {
@@ -97,6 +102,7 @@ export class AcpProcess {
   onLine(handler) { this.#lineHandlers.add(handler); return () => this.#lineHandlers.delete(handler); }
   onExit(handler) { this.#exitHandlers.add(handler); return () => this.#exitHandlers.delete(handler); }
   onStderrLine(handler) { this.#stderrLineHandlers.add(handler); return () => this.#stderrLineHandlers.delete(handler); }
+  onStderrData(handler) { this.#stderrDataHandlers.add(handler); return () => this.#stderrDataHandlers.delete(handler); }
   onWriteError(handler) { this.#writeErrorHandlers.add(handler); return () => this.#writeErrorHandlers.delete(handler); }
   isRunning() { return this.#state === 'running'; }
   snapshot() {

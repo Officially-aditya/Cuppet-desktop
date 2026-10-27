@@ -40,6 +40,8 @@ export class AcpSessionRuntime {
   #scopeEnvironment;
   #resolveRuntime;
   #initialized = null;
+  #explicitlyAuthenticated = false;
+  #abortHandler = null;
   #session = null;
   #capabilities = null;
   #state = 'idle';
@@ -69,10 +71,14 @@ export class AcpSessionRuntime {
     this.#environment = providerEnvironment(descriptor, configuration);
     this.#scopeEnvironment = { ...this.#environment };
     this.#resolveRuntime = resolveRuntimeImpl;
+    if (configuration.signal) {
+      this.#abortHandler = () => { void this.close().catch(() => undefined); };
+      configuration.signal.addEventListener('abort', this.#abortHandler, { once: true });
+    }
     this.#hostBridge = new AcpHostBridge({ providerId: descriptor.id, projectRoot: this.#projectRoot, executeTool, requestAgentPermission });
     const requestedCommand = text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]) || descriptor.command;
     const deferStartForMcp = Boolean(descriptor?.mcpConfigArg);
-    if (!deferStartForMcp && !descriptor.prepareEnvironment && (!this.#resolveRuntime || text(configuration.cliCommand) || text(this.#environment[descriptor.envOverride]))) {
+    if (!deferStartForMcp && !descriptor.prepareEnvironment && (!this.#resolveRuntime || configuration.cliArgs?.length)) {
       this.#startProcess(resolveLocalCliExecutable(requestedCommand, this.#environment, { environment: this.#environment }));
     }
   }
@@ -86,8 +92,14 @@ export class AcpSessionRuntime {
       ? configuration.cliArgs.map((value) => String(value))
       : [...descriptor.args];
     this.#process = new AcpProcess({ command, args, cwd: this.#projectRoot, env: this.#environment, label: descriptor.label });
+    if (configuration.allowInteractiveAuth && typeof configuration.onAuthenticationOutput === 'function') {
+      this.#process.onStderrData((data) => configuration.onAuthenticationOutput(data));
+    }
     this.#rpc = new AcpRpcChannel({ processHandle: this.#process, label: descriptor.label, diagnosticError: (line) => descriptor.diagnosticError?.(line, configuration) });
     this.#rpc.setRequestHandler(async (message) => {
+      if (message.method === 'elicitation/create' && configuration.allowInteractiveAuth && typeof configuration.onAuthenticationBrowserRequest === 'function') {
+        return configuration.onAuthenticationBrowserRequest(message.params);
+      }
       const turn = this.#activeTurn;
       if (turn) turn.pendingHostRequests += 1;
       this.#touchActiveTurn();
@@ -140,6 +152,7 @@ export class AcpSessionRuntime {
   }
 
   async start({ mcpServers = [], selection, authenticateOnly = false, initializeOnly = false } = {}) {
+    if (this.#configuration.signal?.aborted) throw new Error('Provider sign-in was cancelled.');
     if (this.#state === 'ready' || this.#state === 'running') return this.snapshot();
     if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
     if (this.#state === 'starting') throw new Error(`${this.#descriptor.label} runtime is already starting.`);
@@ -147,7 +160,7 @@ export class AcpSessionRuntime {
     try {
       if (!this.#rpc) {
         let command;
-        if (this.#resolveRuntime && !text(this.#configuration.cliCommand) && !text(this.#environment[this.#descriptor.envOverride])) {
+        if (this.#resolveRuntime && !this.#configuration.cliArgs?.length) {
           const installation = await this.#resolveRuntime(this.#configuration, { environment: this.#environment });
           if (this.#state === 'closed') throw new Error(`${this.#descriptor.label} runtime is closed.`);
           if (!installation) throw providerFailureError(`No usable ${this.#descriptor.label} ACP runtime was found. Reconnect to install the missing runtime.`, {
@@ -167,9 +180,13 @@ export class AcpSessionRuntime {
         this.#startProcess(command);
       }
       await this.#rpc.ready();
-      this.#initialized = await this.#rpc.request('initialize', {
+      this.#initialized ??= await this.#rpc.request('initialize', {
         protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true }, terminal: true,
+          ...(typeof this.#configuration.runAuthTerminal === 'function' ? { auth: { terminal: true } } : {}),
+          ...(typeof this.#configuration.onAuthenticationBrowserRequest === 'function' ? { elicitation: { url: {} } } : {}),
+        },
         clientInfo: { name: 'Cuppet Desktop', version: '0.9.0-alpha.1' },
       }, this.#startupTimeoutMs);
       if (initializeOnly) {
@@ -177,7 +194,7 @@ export class AcpSessionRuntime {
         return this.snapshot();
       }
       const authenticateOnSessionRequired = this.#descriptor.authentication?.onSessionRequired === true;
-      if (authenticateOnly || !authenticateOnSessionRequired || this.#configuration.forceAuthentication === true) {
+      if (!this.#explicitlyAuthenticated && (authenticateOnly || !authenticateOnSessionRequired || this.#configuration.forceAuthentication === true)) {
         await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
       }
       if (authenticateOnly) {
@@ -188,7 +205,7 @@ export class AcpSessionRuntime {
       try {
         await this.#openSession(mcpServers, selection);
       } catch (error) {
-        if (!authenticateOnSessionRequired || !/authentication required|not authenticated|unauthenticated|(?:log|sign)[ -]?in required/i.test(error?.message ?? '')) throw error;
+        if (!authenticateOnSessionRequired || !isAcpAuthenticationRequired(error)) throw error;
         await authenticateIfNeeded(this.#rpc, this.#descriptor, this.#initialized, this.#environment, this.#authenticationTimeoutMs, this.#configuration);
         await this.#openSession(mcpServers, selection);
       }
@@ -198,6 +215,22 @@ export class AcpSessionRuntime {
       if (this.#state !== 'closed') this.#state = 'error';
       throw enrichProviderError(this.#descriptor, error, this.#rpc?.stderr() ?? '');
     }
+  }
+
+  authenticationMethods() {
+    return Array.isArray(this.#initialized?.authMethods) ? structuredClone(this.#initialized.authMethods) : [];
+  }
+
+  authenticationLaunch() {
+    if (!this.#command || !this.#initialized) throw new Error('Initialize the provider before signing in.');
+    return { command: this.#command, args: [...(this.#configuration.cliArgs?.length ? this.#configuration.cliArgs : this.#descriptor.args)], env: { ...this.#environment }, cwd: this.#projectRoot };
+  }
+
+  async authenticate(methodId) {
+    const method = this.authenticationMethods().find((item) => item.id === methodId);
+    if (!method || (method.type && method.type !== 'agent')) throw new Error('Select an advertised agent authentication method.');
+    await this.#rpc.request('authenticate', { methodId }, this.#authenticationTimeoutMs);
+    this.#explicitlyAuthenticated = true;
   }
 
   async newSession({ mcpServers = [], selection } = {}) {
@@ -347,6 +380,7 @@ export class AcpSessionRuntime {
   }
 
   async close() {
+    if (this.#abortHandler) this.#configuration.signal?.removeEventListener('abort', this.#abortHandler);
     if (this.#state === 'closed') return;
     if (this.#activeTurn) await this.cancel().catch(() => undefined);
     if (!this.#activeTurn) await this.retireSession().catch(() => undefined);
@@ -624,7 +658,9 @@ async function authenticateIfNeeded(rpc, descriptor, initialized, environment, t
   });
   const selectedRecord = record(selected);
   const methodId = text(selectedRecord.id);
-  if (!methodId) throw new Error(descriptor.loginHint);
+  if (!methodId) throw providerFailureError(descriptor.loginHint, {
+    code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication', action: 'reauthenticate', providerID: descriptor.id,
+  });
   const isInteractive = selectedRecord.interactive === true || methodId === 'oauth-personal' || methodId.includes('oauth');
   if (isInteractive && configuration.allowInteractiveAuth !== true && policy.allowCached !== true) {
     throw providerFailureError(`Sign in to ${descriptor.label} in Settings before continuing.`, {
@@ -749,7 +785,7 @@ async function notifyObserver(callback, ...args){if(typeof callback!=='function'
 function enrichProviderError(descriptor, error, stderr) {
   if (providerFailureMetadata(error)) return error;
   const message = cleanError(error);
-  if (/authentication required|not authenticated|unauthenticated|(?:log|sign)[ -]?in required/i.test(message)) {
+  if (isAcpAuthenticationRequired(error)) {
     return providerFailureError(`${descriptor.label} sign-in is required. Connect again in Settings.`, {
       code: 'PROVIDER_AUTHENTICATION_REQUIRED', category: 'authentication',
       action: 'reauthenticate', providerID: descriptor.id, cause: error,
@@ -758,6 +794,10 @@ function enrichProviderError(descriptor, error, stderr) {
   const detail = cleanError(stderr).trim();
   if (/not found|ENOENT/i.test(message)) return new Error(`${descriptor.label} CLI was not found. ${descriptor.loginHint}`);
   return new Error(detail && !message.includes(detail) ? `${descriptor.label}: ${message}\n${detail}` : `${descriptor.label}: ${message}`);
+}
+export function isAcpAuthenticationRequired(error) {
+  return Number(error?.rpcCode) === -32000 && /auth|credential|api.?key|log.?in|sign.?in/i.test(error?.message ?? '')
+    || /authentication required|not authenticated|unauthenticated|(?:log|sign)[ -]?in required|not logged in|missing (?:api[ _-]?key|credentials)|api[ _-]?key (?:is )?required/i.test(error?.message ?? '');
 }
 function cleanError(error){return error instanceof Error?error.message:String(error??'');}
 function stalledError(descriptor){const error=new Error(`${descriptor.label} stopped responding via ACP. The provider/model may be unavailable, rate-limited, out of quota, or the agent process may have stalled.`); error.code='ACP_STALLED'; return error;}

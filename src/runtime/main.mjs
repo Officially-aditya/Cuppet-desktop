@@ -21,6 +21,7 @@ import { persistDurableRuntimeEvent } from './runtime-event-durability.mjs';
 import { ProviderControlPlane } from './providers/control-plane.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { localProviderOperations } from './providers/local-provider-operations.mjs';
+import { ProviderAuthFlow } from './providers/provider-auth-flow.mjs';
 import { CommandReceiptStore, commandReceiptResult } from './command-receipts.mjs';
 import { CommandReceiptDatabaseFacade } from './command-receipt-database.mjs';
 import { queueSafeSendParams, rehydrateQueuedSendParams } from './queued-send.mjs';
@@ -44,12 +45,17 @@ const sendCommands = new SessionCommandSerializer();
 const commandReceipts = new CommandReceiptStore(repository);
 const receiptDatabase = new CommandReceiptDatabaseFacade(localState, commandReceipts);
 const providerRuntimeManager = new ProviderRuntimeManager();
+const providerAuth = new ProviderAuthFlow({ emit: (event) => write({ kind: 'event', event }) });
 const providerControl = new ProviderControlPlane({
   dataDir,
   providerRuntimeManager,
   operationsFactory: (providerID, options) => localProviderOperations(providerID, {
     ...options,
-    onAuthenticationUrl: (url) => write({ kind: 'event', event: { type: 'provider.authentication.url', providerID, url } }),
+    signal: providerAuth.signal(providerID),
+    runAuthTerminal: providerAuth.terminalAvailable() ? (command, args, options) => providerAuth.runTerminal(providerID, command, args, options) : undefined,
+    onAuthenticationUrl: (url) => providerAuth.url(providerID, url),
+    onAuthenticationOutput: (data) => providerAuth.output(providerID, data),
+    onAuthenticationBrowserRequest: (request) => providerAuth.requestBrowser(providerID, request),
   }),
 });
 const emit = (event) => {
@@ -132,7 +138,12 @@ async function handle(method, params = {}, context = {}) {
     case 'usage.summary': return providerUsageSummary();
     case 'provider.config.sync': return syncProviderConfig(params.provider);
     case 'provider.local.status': return providerControl.localStatus(boundedProviderID(params.providerID));
-    case 'provider.local.connect': return providerControl.localConnect(boundedProviderID(params.providerID));
+    case 'provider.local.connect': {
+      const providerID = boundedProviderID(params.providerID);
+      return providerAuth.connect(providerID, () => providerControl.localConnect(providerID));
+    }
+    case 'provider.authentication.respond': return providerAuth.respond(String(params.authId ?? ''), params.response);
+    case 'provider.authentication.cancel': return providerAuth.cancel(String(params.authId ?? ''));
     case 'provider.local.detect': return providerControl.localDetect(boundedProviderID(params.providerID));
     case 'provider.local.probe': return providerControl.localProbe(boundedProviderID(params.providerID));
     case 'provider.local.update': return providerControl.localUpdate(boundedProviderID(params.providerID));
@@ -429,6 +440,7 @@ let closing;
 async function shutdown() {
   if (closing) return closing;
   clearInterval(purgeTimer);
+  providerAuth.close();
   closing = remote.close().catch(() => undefined)
     .then(() => service.close()).catch(() => undefined)
     .then(() => closeProviderUsageLedger()).catch(() => undefined)

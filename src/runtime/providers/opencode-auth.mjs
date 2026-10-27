@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import { localCliLaunch } from '../local-cli-launch.mjs';
+import { probeProviderCommand, runProviderCommand } from './cli-command.mjs';
 import { parseSemanticVersion } from './version-policy.mjs';
 import { openCodeMcpEnvironment } from './opencode-mcp.mjs';
 
@@ -65,58 +64,14 @@ export function parseOpenCodeV2AuthList(value) {
     : { connected: false, source: 'none', credentialCount: 0, environmentCount: 0 };
 }
 
-export async function probeOpenCodeAuthentication(command = 'opencode', { runImpl = runCommand, version } = {}) {
+export async function probeOpenCodeAuthentication(command = 'opencode', { runImpl = runProviderCommand, version, signal } = {}) {
   const v2 = (parseSemanticVersion(version)?.parts[0] ?? 0) >= 2;
   // V2's shared background service can fail independently of the installed CLI
   // and ACP runtime. Read its structured connections through a private server.
   const args = v2 ? ['auth', 'list', '--standalone', '--format', 'json'] : ['auth', 'list'];
-  const result = await runImpl(command, args, STATUS_TIMEOUT_MS, { stdin: 'ignore', env: openCodeMcpEnvironment(process.env, version) });
+  const result = await probeProviderCommand(command, args, { runImpl, timeoutMs: STATUS_TIMEOUT_MS, env: openCodeMcpEnvironment(process.env, version), signal });
   if (v2) return parseOpenCodeV2AuthList(result?.stdout);
   return parseOpenCodeAuthList(`${result?.stdout ?? ''}\n${result?.stderr ?? ''}`);
-}
-
-function runCommand(command, args, timeoutMs, options = {}) {
-  return new Promise((resolveRun, rejectRun) => {
-    let stdout = '';
-    let stderr = '';
-    let child;
-    try {
-      const isWindows = process.platform === 'win32';
-      const useShell = typeof options.shell === 'boolean'
-        ? options.shell
-        : (isWindows && (
-            /\.(cmd|bat)$/i.test(command) ||
-            (!/\.exe$/i.test(command) && !command.toLowerCase().includes('powershell'))
-          ));
-      const launch = localCliLaunch(command, args, { shell: useShell });
-      child = spawn(launch.command, launch.args, {
-        stdio: [options.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        shell: launch.shell,
-        env: options.env ?? process.env,
-      });
-    } catch (error) {
-      rejectRun(error);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
-      rejectRun(new Error(`${command} auth status timed out.`));
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk) => { stdout = `${stdout}${String(chunk)}`.slice(-64_000); });
-    child.stderr?.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-64_000); });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      rejectRun(error);
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolveRun({ stdout, stderr });
-      else rejectRun(Object.assign(new Error((stderr || stdout || `${command} exited with code ${code}`).trim()), { code: code ?? undefined }));
-    });
-  });
 }
 
 function stripAnsi(value) {

@@ -7,6 +7,8 @@ import { detectLocalProviderApp, getEnv, localCliEnvironment, resolveLocalCliExe
 import { localCliDescriptor } from './local-cli-descriptors.mjs';
 import { AcpProcess } from './providers/transports/acp/acp-process.mjs';
 import { AcpRpcChannel } from './providers/transports/acp/acp-rpc.mjs';
+import { isProbeTimeout, probeProviderCommand, providerProcessEnvironment } from './providers/cli-command.mjs';
+import { providerFailureMetadata } from './providers/provider-failure.mjs';
 
 const verifiedExecutables = new Map();
 const VERIFICATION_FRESH_MS = 30_000;
@@ -17,7 +19,7 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
   const arch = options.arch || process.arch;
   const inherited = options.environment || { ...process.env, ...(configuration.cliEnv ?? {}) };
   const home = options.home || getEnv(inherited, 'HOME', 'USERPROFILE') || homedir();
-  const environment = localCliEnvironment(inherited, { ...options, platform, home });
+  const environment = providerProcessEnvironment(localCliEnvironment(inherited, { ...options, platform, home }));
   const explicit = String(configuration.cliCommand || environment.CUPPET_COPILOT_BIN || '').trim();
   const verify = options.verifyImpl || verifyCopilotAcpExecutable;
   const candidates = [];
@@ -29,12 +31,17 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
   const usable = async () => {
     for (const candidate of candidates.splice(0)) {
       let failure;
-      try { if (await verify(candidate.command, environment, { throwOnError: true })) return candidate; }
+      try {
+        if (await verify(candidate.command, environment, { throwOnError: true, signal: configuration.signal })) {
+          return { ...candidate, args: [...(verifiedExecutables.get(verificationKey(candidate.command, environment))?.args ?? localCliDescriptor('github-copilot').args)] };
+        }
+      }
       catch (error) { failure = error; }
       if (options.allowUnverified && !unverified) {
         try {
           await access(candidate.command, platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-          unverified = { ...candidate, error: String(failure?.message || 'ACP initialization did not succeed.') };
+          const diagnostic = providerFailureMetadata(failure)?.diagnostic;
+          unverified = { ...candidate, error: [failure?.message || 'ACP initialization did not succeed.', diagnostic].filter(Boolean).join(' ') };
         } catch {}
       }
     }
@@ -94,35 +101,62 @@ export async function resolveCopilotAcpRuntime(configuration = {}, options = {})
 }
 
 /** Read-only handshake: do not authenticate or create a provider session during detection. */
-export async function verifyCopilotAcpExecutable(command, environment, { timeoutMs = 20_000, throwOnError = false } = {}) {
+export async function verifyCopilotAcpExecutable(command, environment, { timeoutMs = 20_000, throwOnError = false, probeImpl = probeProviderCommand, signal } = {}) {
   const descriptor = localCliDescriptor('github-copilot');
+  environment = providerProcessEnvironment(environment);
   const identity = await stat(command).catch(() => null);
-  const key = createHash('sha256').update(JSON.stringify([command, environment])).digest('hex');
+  const key = verificationKey(command, environment);
   const signature = identity ? [identity.dev, identity.ino, identity.size, identity.mtimeMs, identity.ctimeMs].join(':') : null;
   const cached = verifiedExecutables.get(key);
   if (signature && cached?.signature === signature && Date.now() - cached.checkedAt < VERIFICATION_FRESH_MS) return true;
   verifiedExecutables.delete(key);
   let rpc;
+  const cancel = () => { void rpc?.close().catch(() => undefined); };
   try {
-    const processHandle = new AcpProcess({ command, args: descriptor.args, env: environment, label: descriptor.label });
-    rpc = new AcpRpcChannel({ processHandle, label: descriptor.label });
-    await rpc.ready();
-    const initialized = await rpc.request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: {},
-      clientInfo: { name: 'Cuppet Desktop', version: '0.9.0' },
-    }, timeoutMs);
+    const help = await probeImpl(command, ['--help'], { env: environment, signal });
+    const args = copilotAcpArguments(`${help.stdout ?? ''}\n${help.stderr ?? ''}`);
+    let initialized;
+    for (const budget of [timeoutMs, timeoutMs * 2]) {
+      if (signal?.aborted) throw new Error('Provider setup was cancelled.');
+      const processHandle = new AcpProcess({ command, args, env: environment, label: descriptor.label });
+      rpc = new AcpRpcChannel({ processHandle, label: descriptor.label });
+      signal?.addEventListener('abort', cancel, { once: true });
+      try {
+        await rpc.ready();
+        initialized = await rpc.request('initialize', {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: 'Cuppet Desktop', version: '0.9.0' },
+        }, budget);
+        break;
+      } catch (error) {
+        if (signal?.aborted || budget !== timeoutMs || !isProbeTimeout(error)) throw error;
+        await rpc.close();
+      }
+    }
     const verified = initialized?.protocolVersion === 1
       && initialized.agentCapabilities !== null
       && typeof initialized.agentCapabilities === 'object'
       && !Array.isArray(initialized.agentCapabilities);
-    if (verified && signature) verifiedExecutables.set(key, { signature, checkedAt: Date.now() });
+    if (verified) verifiedExecutables.set(key, { signature, args, checkedAt: Date.now() });
     if (!verified && throwOnError) throw new Error('GitHub Copilot returned an incompatible ACP initialization response.');
     return verified;
   } catch (error) {
     if (throwOnError) throw error;
     return false;
   } finally {
+    signal?.removeEventListener('abort', cancel);
     await rpc?.close().catch(() => undefined);
   }
+}
+
+export function copilotAcpArguments(help) {
+  const args = localCliDescriptor('github-copilot').args;
+  if (/--sync-session\b/.test(help)) return [...args, '--sync-session=off'];
+  if (/--no-remote-export\b/.test(help)) return [...args, '--no-remote', '--no-remote-export'];
+  throw new Error('This Copilot CLI does not advertise a supported way to disable session syncing. Update Copilot and reconnect.');
+}
+
+function verificationKey(command, environment) {
+  return createHash('sha256').update(JSON.stringify([command, environment])).digest('hex');
 }

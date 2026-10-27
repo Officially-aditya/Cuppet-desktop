@@ -99,13 +99,13 @@ export async function resolveAntigravityAcpInstallation(configuration = {}, opti
   if (options.allowInstall === false) return null;
 
   if (!installPromise) {
-    installPromise = installRelease({ release, root, versionDirectory, platform, fetchImpl: options.fetchImpl ?? globalThis.fetch })
+    installPromise = installRelease({ release, root, versionDirectory, platform, fetchImpl: options.fetchImpl ?? globalThis.fetch, signal: options.signal })
       .finally(() => { installPromise = null; });
   }
   return installPromise;
 }
 
-async function installRelease({ release, root, versionDirectory, platform, fetchImpl }) {
+async function installRelease({ release, root, versionDirectory, platform, fetchImpl, signal }) {
   if (typeof fetchImpl !== 'function') throw new Error('Antigravity ACP installation requires fetch().');
   await mkdir(dirname(versionDirectory), { recursive: true, mode: 0o700 });
   const working = await mkdtemp(join(root || tmpdir(), '.install-')).catch(async () => {
@@ -115,7 +115,8 @@ async function installRelease({ release, root, versionDirectory, platform, fetch
   const archivePath = join(working, 'antigravity-acp.zip');
   const extracted = join(working, 'extracted');
   try {
-    await downloadVerifiedArchive(release, archivePath, fetchImpl);
+    await downloadVerifiedArchive(release, archivePath, fetchImpl, signal);
+    signal?.throwIfAborted();
     await mkdir(extracted, { recursive: true, mode: 0o700 });
     await extractArchive(archivePath, extracted, platform);
     const executablePath = await findNamedFile(extracted, release.executable.name);
@@ -171,12 +172,12 @@ function externalInstallation(command, harnessPath, platform) {
   return { command, harnessPath, args: platform === 'linux' ? ['--uid='] : [], version: null, source: 'native' };
 }
 
-async function downloadVerifiedArchive(release, destination, fetchImpl) {
-  const response = await fetchImpl(release.url, { redirect: 'follow' });
+async function downloadVerifiedArchive(release, destination, fetchImpl, signal) {
+  const response = await fetchImpl(release.url, { redirect: 'follow', signal });
   if (!response?.ok || !response.body) throw new Error(`Could not download Google Antigravity ACP (HTTP ${response?.status ?? 'unknown'}).`);
   const declaredLength = Number(response.headers?.get?.('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_ARCHIVE_BYTES) throw new Error('Antigravity ACP archive exceeds the allowed download size.');
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(destination, { flags: 'wx', mode: 0o600 }));
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(destination, { flags: 'wx', mode: 0o600 }), { signal });
   const archiveStat = await stat(destination);
   if (archiveStat.size !== release.archiveBytes) throw new Error(`Antigravity ACP archive size mismatch: expected ${release.archiveBytes}, received ${archiveStat.size}.`);
   const digest = await sha256File(destination);

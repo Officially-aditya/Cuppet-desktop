@@ -143,6 +143,14 @@ for (const [path, channel] of [
     "cuppet:cli-agent:connect"
   ],
   [
+    "cliAgents.authRespond",
+    "cuppet:cli-agent:auth-respond"
+  ],
+  [
+    "cliAgents.authCancel",
+    "cuppet:cli-agent:auth-cancel"
+  ],
+  [
     "codexAuth.status",
     "cuppet:codex-auth:status"
   ],
