@@ -90,7 +90,10 @@ test('Windows installer verifies a new CLI and repairs managed versions without 
     }
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  const operations = localProviderOperations('opencode', { userData: join(root, 'state') });
+  const operations = localProviderOperations('opencode', {
+    userData: join(root, 'state'),
+    acpRuntimeFactory: () => ({ start: async () => {}, close: async () => {} }),
+  });
   const plane = new ProviderControlPlane({ dataDir: root, operationsFactory: () => operations });
   await t.test('missing OpenCode is installed and the exact resulting launcher is verified', async () => {
     assert.equal((await operations.detect()).installed, false);
