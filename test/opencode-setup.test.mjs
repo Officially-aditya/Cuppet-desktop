@@ -24,6 +24,7 @@ async function setup(t, { version = '1.18.30', installed = false, probeError = n
   if (installed) await create();
   const operations = localProviderOperations('opencode', {
     userData: join(root, 'state'), platform: 'win32',
+    acpRuntimeFactory: () => ({ start: async () => {}, close: async () => {} }),
     runImpl: async (command, args) => {
       calls.push([...args]);
       if (args.includes('-Command')) {
@@ -69,7 +70,8 @@ test('an installed CLI that cannot report its version is not treated as absent',
   const status = await plane.localStatus('opencode');
   assert.equal(status.installed, true);
   assert.equal(status.control.installation.compatibility.state, 'unverified');
-  assert.equal(status.control.authentication.state, 'blocked');
+  assert.equal(status.control.authentication.state, 'unknown');
+  assert.equal(status.control.overall, 'needs_retry');
   assert.match(status.message, /CLI loader failed/);
 });
 
