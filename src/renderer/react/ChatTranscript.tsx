@@ -31,7 +31,7 @@ type TraceTool = {
 };
 type TraceItem = TraceReasoning | TraceTool | TraceStatus;
 const MAX_VISIBLE_USER_LINES = 10;
-const IMMEDIATE_HISTORY_ITEMS = 5;
+const IMMEDIATE_HISTORY_ITEMS = 3;
 const EMPTY_TRACE: TraceItem[] = [];
 const EMPTY_PENDING: readonly PendingUserMessage[] = [];
 const renderMarkdownCached = createMarkdownCache((source) => renderMarkdown(source));
