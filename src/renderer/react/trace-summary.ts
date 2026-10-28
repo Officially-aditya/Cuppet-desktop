@@ -128,6 +128,12 @@ export function toolActivityLabel(toolName = '', argumentsJson = '{}', status: T
   const focus = toolExploreFocus(args);
   const command = toolCommand(args);
 
+  if (normalizedTool === 'cuppet_subagent') {
+    const name = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : 'Subagent';
+    const model = typeof args.model === 'string' && args.model.trim() ? ` · ${args.model.trim()}` : '';
+    return phrase(`${name}${model} is working…`, `${name}${model} completed`, `${name}${model} failed`);
+  }
+  if (normalizedTool === 'cuppet_delegate') return phrase('Running subagents…', 'Subagents finished', 'Subagent delegation failed');
   if (kind === 'read') return target
     ? phrase(`Reading ${target}…`, `Read ${target}`, `Couldn’t read ${target}`)
     : phrase('Reading file…', 'Read file', 'Couldn’t read file');

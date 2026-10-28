@@ -77,6 +77,7 @@ export class JournaledToolRuntime {
     };
     const flushActivities = () => { flushReasoning(); textRunMessageId = null; };
     const emitProviderActivity = (activity) => {
+      if (options.suppressProviderActivity) return;
       const messageId = currentMessageId();
       if (!messageId || !isProviderActivity(activity)) return;
       if (activity.type === 'activity.reasoning.delta') {
@@ -119,6 +120,7 @@ export class JournaledToolRuntime {
         emitProviderActivity(providerActivity('activity.reasoning.delta', { text: segment, kind: 'commentary', ...timing }));
       },
       onPreview: (preview) => {
+        if (options.suppressProviderActivity) return;
         const messageId = currentMessageId();
         if (!messageId) return;
         this.#safeEmit({ type: 'message.preview', sessionId: options.sessionId, messageId, ...preview });

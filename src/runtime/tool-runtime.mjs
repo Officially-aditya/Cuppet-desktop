@@ -36,8 +36,9 @@ export class ToolRuntime {
     this.#emit = emit;
   }
 
-  definitions({ projectRoot = null, integrations = [] } = {}) {
+  definitions({ projectRoot = null, integrations = [], delegation = false } = {}) {
     const tools = [PLAN_TOOL, MEMORY_TOOL, QUESTION_TOOL];
+    if (delegation) tools.push(DELEGATE_TOOL);
     if (projectRoot) tools.push(EXPLORE_TOOL, READ_TOOL, BATCH_EDIT_TOOL, VALIDATE_TOOL, EDIT_TOOL, WRITE_TOOL, BASH_TOOL, BACKGROUND_PROCESS_TOOL);
     if (projectRoot && ['darwin', 'linux'].includes(process.platform)) tools.push(GIT_PUSH_TOOL);
     if (projectRoot && process.platform === 'darwin') tools.push(PACKAGE_DMG_TOOL);
@@ -48,7 +49,7 @@ export class ToolRuntime {
     return tools;
   }
 
-  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null }) {
+  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null, delegate = null }) {
     let resolvedProjectId = projectId;
     let resolvedProjectRoot = projectRoot;
     if ((!resolvedProjectId || !resolvedProjectRoot) && sessionId && this.#db) {
@@ -61,14 +62,14 @@ export class ToolRuntime {
         }
       } catch {}
     }
-    const conversation = injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode);
+    const conversation = injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode, Boolean(delegate));
     let toolSteps = 0;
     let usage = null;
 
     const executeTool = async (call) => {
       if (signal?.aborted) throw abortError();
       toolSteps += 1;
-      const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal, getAssistantMessageId });
+      const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal, getAssistantMessageId, delegate });
       const result = typeof this.#tst?.runWithProject === 'function'
         ? await this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, operation)
         : await operation();
@@ -83,8 +84,8 @@ export class ToolRuntime {
         const response = await adapter.stream(conversation, {
           signal,
           onDelta,
-          tools: this.definitions({ projectRoot: resolvedProjectRoot, integrations }),
-          getTools: () => this.definitions({ projectRoot: resolvedProjectRoot, integrations }),
+          tools: this.definitions({ projectRoot: resolvedProjectRoot, integrations, delegation: Boolean(delegate) }),
+          getTools: () => this.definitions({ projectRoot: resolvedProjectRoot, integrations, delegation: Boolean(delegate) }),
           projectRoot: resolvedProjectRoot,
           executeTool,
           requestAgentPermission: async (request) => {
@@ -124,7 +125,7 @@ export class ToolRuntime {
       : runTurn();
   }
 
-  async #executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal, getAssistantMessageId = null }) {
+  async #executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal, getAssistantMessageId = null, delegate = null }) {
     const executionId = `tool_${randomUUID()}`;
     const rawArguments = typeof call.arguments === 'string' ? call.arguments : '{}';
     let messageId = null;
@@ -135,7 +136,7 @@ export class ToolRuntime {
     let permissionSource = 'none';
     try {
       const args = parseArguments(rawArguments);
-      const result = await this.#dispatch({ name: call.name, args, executionId, sessionId, projectId, projectRoot, integrations, mode, signal, authorize: async (request) => {
+      const result = await this.#dispatch({ name: call.name, args, executionId, sessionId, projectId, projectRoot, integrations, mode, signal, delegate, authorize: async (request) => {
         const permission = await this.#permissions.authorize({ sessionId, projectRoot, planMode: mode === 'plan', signal, ...request });
         permissionSource = permission.source;
         return permission;
@@ -155,7 +156,7 @@ export class ToolRuntime {
     }
   }
 
-  async #dispatch({ name, args, executionId, sessionId, projectRoot, integrations, mode, signal, authorize }) {
+  async #dispatch({ name, args, executionId, sessionId, projectRoot, integrations, mode, signal, authorize, delegate }) {
     if (Array.isArray(integrations) && integrations.includes('browserControl') && this.#externalTools?.has?.(name)) {
       const readOnly = ['browser_status', 'browser_observe', 'browser_inspect', 'browser_tabs'].includes(name);
       await authorize({
@@ -173,6 +174,10 @@ export class ToolRuntime {
       };
     }
     switch (name) {
+      case 'cuppet_delegate': {
+        if (typeof delegate !== 'function') throw new Error('Subagent delegation is unavailable for this turn.');
+        return { output: await delegate(args), paths: [], mutation: false };
+      }
       case 'cuppet_plan': return this.#plan(sessionId, args);
       case 'cuppet_memory_search': return this.#memory(sessionId, projectRoot, args);
       case 'question': return this.#question(sessionId, args, signal);
@@ -619,6 +624,9 @@ export class ToolRuntime {
   }
 }
 
+const DELEGATE_TOOL = tool('cuppet_delegate', 'Run up to three independent subagents concurrently using the configured secondary model. Provide each worker a focused, self-contained task and the relevant constraints. Wait for the results, then verify and integrate the work. Workers share the project, so avoid overlapping edits.', {
+  tasks: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'object', additionalProperties: false, required: ['name', 'task'], properties: { name: { type: 'string', description: 'Short label for this worker.' }, task: { type: 'string', description: 'Self-contained assignment, including relevant constraints and expected result.' } } } },
+}, ['tasks']);
 const PLAN_TOOL = tool('cuppet_plan', 'Read Cuppet’s lossless canonical implementation plan. The plan is read-only.', {
   action: { type: 'string', enum: ['overview', 'phase', 'search'] }, phaseID: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 12000 }, query: { type: 'string' },
 });
@@ -679,7 +687,7 @@ const PACKAGE_DMG_TOOL = tool('package_dmg', 'Create a verified DMG from a proje
 }, ['source', 'output']);
 
 function tool(name, description, properties, required = []) { return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } }; }
-function injectToolPolicy(messages, projectBound, mode) {
+function injectToolPolicy(messages, projectBound, mode, delegation = false) {
   const policy = [
     '<CUPPET_TOOL_POLICY ephemeral="true">',
     'For coding changes, use tst_explore → tst_read → tst_edit_batch prepare/apply → tst_validate. Call these tools directly using their advertised names, including any MCP prefix; they are not shell commands.',
@@ -694,6 +702,7 @@ function injectToolPolicy(messages, projectBound, mode) {
     'Use the question tool only when a user decision or missing requirement genuinely blocks safe progress; do not ask for facts available from tools or project context.',
     'Do not repeat an identical tst_explore query; narrow or change it when more detail is needed.',
     'For long-lived dev servers, watchers, or other commands intended to keep running, use background_process action=start. Do not emulate backgrounding with shell &, nohup, disown, or a child process that inherits bash stdio.',
+    delegation ? 'Use cuppet_delegate for subagent work when independent tasks can be delegated; do not use provider-native subagent tools. Workers use the configured secondary model and share the current workspace and permission policy. Give each a self-contained task; avoid assigning overlapping edits. Inspect their results and verify the combined work.' : '',
     ['darwin', 'linux'].includes(process.platform) ? 'Default and Auto commands run inside the project sandbox with dedicated caches/temp storage. Full Access commands use host permissions and existing Git/SSH configuration. Use git_push for authenticated pushes without an additional approval prompt; Full Access also skips packaging approval. Never request credentials in shell. On macOS use package_dmg for disk images instead of host hdiutil commands.' : '',
     projectBound ? 'This session is project-bound; workspace tools are available through the runtime permission boundary. Never delete paths outside the active project root.' : 'This is a general chat; filesystem and shell tools are unavailable.',
     mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, and agent side effects are blocked.' : '',

@@ -10,7 +10,10 @@ export class AcpProviderAdapter {
   constructor(configuration = {}, { descriptor = null } = {}) {
     this.#configuration = { ...configuration };
     const providerID = text(configuration?.providerID || configuration?.primary?.providerID);
-    this.#descriptor = descriptor ?? localCliDescriptor(providerID);
+    const resolvedDescriptor = descriptor ?? localCliDescriptor(providerID);
+    this.#descriptor = resolvedDescriptor && configuration.cuppetOrchestrationBridge === true
+      ? { ...resolvedDescriptor, mcpToolBridge: true }
+      : resolvedDescriptor;
     if (!this.#descriptor || this.#descriptor.transport !== 'acp') {
       throw new Error(`Unsupported ACP backend: ${providerID || 'unknown'}`);
     }
@@ -32,7 +35,10 @@ export class AcpProviderAdapter {
       projectRoot: options.projectRoot ?? null,
     });
     const toolSession = this.#descriptor.mcpToolBridge === true
-      ? await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options })
+      ? await maybeToolSession({ backendId: this.#descriptor.id, sessionId: `stateless-${Date.now()}`, options: { ...options, executeTool: typeof options.executeTool === 'function' ? async (call) => {
+        const finish = runtime.beginExternalToolRequest();
+        try { return await options.executeTool(call); } finally { finish(); }
+      } : undefined } })
       : null;
     const textStream = new AcpTextStreamAssembler(this.#descriptor.textStream);
     const activityTextStream = new AcpTextStreamAssembler(this.#descriptor.textStream);

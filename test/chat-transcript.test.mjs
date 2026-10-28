@@ -8,6 +8,16 @@ import {
   mergeTranscriptState,
 } from '../src/renderer/react/chat-transcript.ts';
 
+test('concurrent subagents retain distinct activity rows and model labels', () => {
+  const event = (id, phase, sequence, name, model) => ({ type: 'runtime.activity', source: 'execution', messageId: 'm', sequence, activity: { type: `activity.tool.${phase}`, callId: id, tool: 'cuppet_subagent', argumentsJson: JSON.stringify({ name, model }), ...(phase === 'closed' ? { status: 'success' } : {}) } });
+  let state = reduceTranscriptEvent({}, event('agent-one', 'opened', 1, 'One', 'secondary'));
+  state = reduceTranscriptEvent(state, event('agent-two', 'opened', 2, 'Two', 'secondary'));
+  state = reduceTranscriptEvent(state, event('agent-one', 'closed', 3, 'One', 'secondary'));
+  const items = orderedTranscriptItems(state.m.items);
+  assert.deepEqual(items.map((item) => [item.id, item.status]), [['agent-one', 'complete'], ['agent-two', 'running']]);
+  assert.equal(JSON.parse(items[0].argumentsJson).model, 'secondary');
+});
+
 test('incremental previews preserve Unicode, tolerate overlaps, and reset between tool segments', () => {
   const event = (delta, seq) => ({ type: 'message.preview', messageId: 'm', delta, seq });
   let state = reduceTranscriptEvent({}, event('Hello 👋', 8));

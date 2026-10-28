@@ -20,12 +20,15 @@ import { parseSlashCommand } from './commands.mjs';
 import { classifyProviderError } from './provider-error.mjs';
 import { redactCredentials } from './credential-sanitization.mjs';
 import { generateChatTitle } from './title-generator.mjs';
+import { providerRequest } from './provider-policy.mjs';
+import { isLocalCliProvider } from './local-cli-descriptors.mjs';
+import { antigravityWorkerConfiguration } from './providers/backends/antigravity.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
 import { listSessionEditedFiles } from './session-edited-files.mjs';
 
 export class RuntimeService {
-  #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #ownedTurnStore = null; #liveExecutions = new Map(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
+  #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #ownedTurnStore = null; #liveExecutions = new Map(); #delegations = new Set(); #delegatingSessions = new Set(); #workerRuntimes = new Set(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
     database = null,
@@ -97,6 +100,8 @@ export class RuntimeService {
     await Promise.all([
       ...[...this.#backgrounds.values()].map((worker) => worker.close().catch(() => undefined)),
       Promise.resolve(this.#tools.close?.()).catch(() => undefined),
+      ...[...this.#workerRuntimes].map((runtime) => runtime.close().catch(() => undefined)),
+      ...[...this.#delegations].map((delegation) => delegation.catch(() => undefined)),
     ]);
     this.#permissions.close?.();
     this.#questions.close?.();
@@ -588,7 +593,8 @@ export class RuntimeService {
         const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot });
         const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
         this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
-        const adapter = this.#providerFactory(provider ?? {});
+        const orchestrationEnabled = this.#cognitive.snapshot().orchestratorEnabled === true || process.env.CUPPET_ORCHESTRATOR === '1';
+        const adapter = this.#providerFactory(orchestrationEnabled ? { ...provider, cuppetOrchestrationBridge: true } : provider ?? {});
         await this.#tools.run({
           adapter,
           messages: providerMessages.map((msg) => ({
@@ -604,6 +610,7 @@ export class RuntimeService {
           mode: this.#cognitive.mode(sessionId),
           contextWindow: contextWindow(provider),
           signal,
+          ...(orchestrationEnabled ? { delegate: (args) => this.#startDelegation({ args, provider, signal, sessionId, projectId, projectRoot, integrations, mode: this.#cognitive.mode(sessionId), getAssistantMessageId: currentAssistantId, userMessage: [...providerMessages].reverse().find((message) => message.role === 'user') }) } : {}),
           getAssistantMessageId: currentAssistantId,
           takeSteering,
           restoreSteering: (items) => execution?.steering.unshift(...items),
@@ -668,6 +675,81 @@ export class RuntimeService {
         worker.foregroundIdle(sessionId);
       }
     }
+  }
+
+  #startDelegation(options) {
+    if (this.#delegatingSessions.has(options.sessionId)) throw new Error('A subagent batch is already running in this session. Wait for it to finish before delegating more work.');
+    this.#delegatingSessions.add(options.sessionId);
+    const pending = this.#delegateTasks(options);
+    this.#delegations.add(pending);
+    const finish = () => { this.#delegations.delete(pending); this.#delegatingSessions.delete(options.sessionId); };
+    void pending.then(finish, finish);
+    return pending;
+  }
+
+  async #delegateTasks({ args, provider, signal, sessionId, projectId, projectRoot, integrations, mode, getAssistantMessageId, userMessage }) {
+    const tasks = delegationTasks(args);
+    const workerProvider = await antigravityWorkerConfiguration(workerProviderConfiguration(provider), this.#dataDir);
+    const results = await Promise.all(tasks.map(async (task) => {
+      const workerId = `agent_${randomUUID()}`;
+      const messageId = getAssistantMessageId();
+      const workerModel = workerProvider.modelID || workerProvider.primary?.modelID || workerProvider.model;
+      this.#workerActivity(sessionId, messageId, workerId, task.name, workerModel, 'running');
+      let output = '';
+      let truncated = false;
+      const permissions = {
+        authorize: (request) => this.#permissions.authorize({ ...request, description: `Subagent ${task.name}: ${request.description || 'Request permission'}` }),
+        autoStatus: (id) => this.#permissions.autoStatus(id),
+      };
+      const runtime = new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, externalTools: this.#browserControl, dataDir: this.#dataDir, emit: (event) => this.#emit(event) });
+      this.#workerRuntimes.add(runtime);
+      try {
+        const adapter = this.#providerFactory({ ...workerProvider, cuppetOrchestrationBridge: true });
+        await runtime.run({
+          adapter, sessionId, projectId, projectRoot, integrations, mode, signal, getAssistantMessageId, suppressProviderActivity: true,
+          messages: [
+            { role: 'system', content: 'You are a Cuppet subagent. Complete the assigned task and report what you did, evidence, and any unresolved issues. Work in the shared project; do not undo other workers’ changes. Do not delegate to further agents. Follow the user’s instructions and the existing permission policy.' },
+            { role: 'user', content: `Original user request:\n${String(userMessage?.content ?? '').slice(0, 12000)}\n\nYour assignment:\n${task.task}`, ...(Array.isArray(userMessage?.imageAttachments) ? { imageAttachments: userMessage.imageAttachments } : {}) },
+          ],
+          contextWindow: contextWindow(workerProvider),
+          onDelta: async (delta) => {
+            const next = `${output}${String(delta ?? '')}`;
+            if (next.length > 16000) truncated = true;
+            output = next.slice(0, 16000);
+          },
+          onPaths: async (paths, mutation, details = null) => {
+            if (mutation && details?.graphHandled !== true) await this.#refreshMutationGraph(projectRoot, paths);
+            if (projectId && process.env.CUPPET_PE3 !== '0') await this.#pe3Observe(sessionId, paths, mutation);
+          },
+          onValidation: async (validation) => { await this.#recordValidation(sessionId, validation).catch(() => undefined); this.#emit({ type: 'validation.completed', sessionId, validation }); },
+        });
+        if (signal.aborted) throw abortError();
+        if (!output.trim()) throw new Error('Subagent returned no result.');
+        if (/^The MCP server ['"`]?.+?['"`]? failed to initialize:/i.test(output.trim())) throw new Error(output.slice(0, 2000));
+        if (truncated) output += '\n[Subagent result truncated.]';
+        output = redactCredentials(output, workerProvider);
+        this.#workerActivity(sessionId, messageId, workerId, task.name, workerModel, 'success', output);
+        return { id: workerId, name: task.name, status: 'completed', result: output };
+      } catch (error) {
+        const cancelled = signal.aborted || error?.name === 'AbortError';
+        const message = redactCredentials(cleanError(error), workerProvider);
+        this.#workerActivity(sessionId, messageId, workerId, task.name, workerModel, cancelled ? 'cancelled' : 'error', message);
+        return { id: workerId, name: task.name, status: cancelled ? 'cancelled' : 'failed', error: message };
+      } finally {
+        await runtime.close().catch(() => undefined);
+        this.#workerRuntimes.delete(runtime);
+      }
+    }));
+    if (signal.aborted) throw abortError();
+    return JSON.stringify({ workers: results });
+  }
+
+  #workerActivity(sessionId, messageId, workerId, name, model, status, details = '') {
+    if (!messageId || this.#closed) return;
+    const activity = { type: status === 'running' ? 'activity.tool.opened' : 'activity.tool.closed', callId: workerId, tool: 'cuppet_subagent', argumentsJson: JSON.stringify({ name, ...(model ? { model } : {}) }), ...(status === 'running' ? {} : { status }), ...(details ? { details: String(details).slice(0, 4000) } : {}) };
+    let persisted;
+    try { persisted = this.#db.appendMessageActivity({ sessionId, messageId, source: 'execution', activity }); } catch {}
+    this.#emit({ type: 'runtime.activity', source: 'execution', sessionId, messageId, activity, createdAt: persisted?.createdAt ?? Date.now(), ...(persisted?.sequence !== undefined ? { sequence: persisted.sequence } : {}) });
   }
 
   #applySteering(execution, items) {
@@ -742,6 +824,36 @@ function promptIntegrations(text) {
   const source = String(text ?? '');
   return /(^|\s)@browsercontrol(?=$|\s|[.,!?;:])/i.test(source) ? ['browserControl'] : [];
 }
+function delegationTasks(args) {
+  const tasks = Array.isArray(args?.tasks) ? args.tasks : typeof args?.task === 'string' ? [args.task] : [];
+  if (tasks.length < 1 || tasks.length > 3) throw new Error('Provide between one and three subagent tasks.');
+  return tasks.map((item) => {
+    const task = typeof item === 'string' ? item.trim() : typeof item?.task === 'string' ? item.task.trim() : '';
+    const name = typeof item?.name === 'string' ? item.name.trim() : task.slice(0, 80);
+    if (!name || name.length > 100 || !task || task.length > 12000) throw new Error('Each subagent needs a name of at most 100 characters and a task of at most 12000 characters.');
+    return { name, task };
+  });
+}
+
+function workerProviderConfiguration(provider) {
+  const source = provider && typeof provider === 'object' ? provider : {};
+  const providerID = String(source.providerID || source.primary?.providerID || 'openai-compatible');
+  const selectedProvider = String(source.secondary?.providerID || providerID);
+  if (selectedProvider.toLowerCase() !== providerID.toLowerCase()) throw new Error('The secondary model must use the active provider connection.');
+  if (providerID.toLowerCase() === 'codex' || isLocalCliProvider(providerID)) {
+    const modelID = String(source.secondary?.modelID || source.backgroundModel || source.primary?.modelID || source.model || '').trim();
+    if (!modelID) throw new Error('Configure a secondary model before delegating work.');
+    const effort = String(source.secondary?.variant || source.secondaryEffort || source.backgroundEffort || '').trim();
+    return { ...source, providerID, model: modelID, modelID, primary: { providerID, modelID, ...(effort ? { variant: effort } : {}) }, primaryEffort: effort };
+  }
+  const request = providerRequest({ ...source, providerID }, 'secondary');
+  const selectedModel = String(source.secondary?.modelID || source.backgroundModel || '').trim();
+  if (selectedModel && request.modelID !== selectedModel) throw new Error('The selected secondary model is unavailable. Check provider settings.');
+  const selectedEffort = String(source.secondary?.variant || source.secondaryEffort || source.backgroundEffort || '').trim();
+  if (selectedEffort && String(request.variant || '').toLowerCase() !== selectedEffort.toLowerCase()) throw new Error('The selected secondary reasoning effort is unavailable. Check provider settings.');
+  return request;
+}
+
 function injectIntegrationContext(messages, integrations) {
   if (!Array.isArray(integrations) || !integrations.includes('browserControl')) return messages.map((message) => ({ ...message }));
   const output = messages.map((message) => ({ ...message }));

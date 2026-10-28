@@ -1,4 +1,7 @@
-import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { mkdir, realpath, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { localCliDescriptor } from '../../local-cli-descriptors.mjs';
 import { discoverAcpRuntimeCatalog } from '../transports/acp/acp-discovery.mjs';
 import { AcpProviderAdapter } from './acp.mjs';
@@ -55,6 +58,25 @@ export class ManagedAntigravityProvider {
 
   cuppetManagedRuntime() { return this.#adapter.cuppetManagedRuntime(); }
   stream(messages, options = {}) { return this.#adapter.stream(messages, options); }
+}
+
+export async function antigravityWorkerConfiguration(configuration, dataDir) {
+  if (text(configuration?.providerID).toLowerCase() !== 'antigravity') return configuration;
+  const configuredHome = text(configuration?.cliEnv?.GEMINI_HOME) || text(process.env.GEMINI_HOME) || join(homedir(), '.gemini');
+  const providerHome = /^~[\\/]/.test(configuredHome) ? join(homedir(), configuredHome.slice(2)) : configuredHome;
+  const authDirectory = await realpath(join(providerHome, 'antigravity-acp')).catch(() => { throw new Error('Connect Antigravity before starting subagents.'); });
+  const identity = createHash('sha256').update(authDirectory).digest('hex').slice(0, 20);
+  const workerHome = join(dataDir, 'antigravity-workers', identity);
+  const authLink = join(workerHome, 'antigravity-acp');
+  await mkdir(workerHome, { recursive: true, mode: 0o700 });
+  try { await symlink(authDirectory, authLink, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) {
+    if (error?.code !== 'EEXIST' || await realpath(authLink).catch(() => '') !== authDirectory) throw new Error('Could not prepare the Antigravity subagent profile.');
+  }
+  // Keep provider-owned authentication and session cleanup, but do not start
+  // the user's global MCP servers once per concurrent worker. Cuppet supplies
+  // the active turn's tools through its session-scoped MCP bridge.
+  return { ...configuration, cliEnv: { ...record(configuration?.cliEnv), GEMINI_HOME: workerHome } };
 }
 
 export function antigravityAcpDescriptor(installation, { resolveInstallation = resolveAntigravityAcpInstallation } = {}) {

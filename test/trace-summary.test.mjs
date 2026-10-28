@@ -17,6 +17,13 @@ test('tool classification covers native, provider, and namespaced calls', () => 
   })) for (const name of names) assert.equal(classifyTool(name), kind, name);
 });
 
+test('subagent activity identifies the worker and model', () => {
+  const args = JSON.stringify({ name: 'Review', model: 'secondary' });
+  assert.equal(toolActivityLabel('cuppet_subagent', args, 'running'), 'Review · secondary is working…');
+  assert.equal(toolActivityLabel('cuppet_subagent', args, 'complete'), 'Review · secondary completed');
+  assert.equal(toolActivityLabel('cuppet_delegate', '{}', 'running'), 'Running subagents…');
+});
+
 test('thought previews extract completed bold headings or short first sentences', () => {
   assert.equal(liveThoughtLine('**Planning the fix**\n\nInspecting files.'), 'Planning the fix');
   assert.equal(liveThoughtLine('**Reviewing `src/app.ts` and [tests](https://example.com)**'), 'Reviewing src/app.ts and tests');

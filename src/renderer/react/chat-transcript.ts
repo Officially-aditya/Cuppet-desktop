@@ -245,7 +245,7 @@ function updateTool(items: TranscriptItem[], activity: Record<string, any>, sequ
   const id = text(activity.executionId) || text(activity.callId) || `tool-${sequence ?? nextSequence(items)}`;
   const toolName = text(activity.tool) || 'agent-tool';
   const existingIndex = items.findIndex((item) => item.type === 'tool' && (
-    item.id === id || (item.status === 'running' && item.tool === toolName)
+    item.id === id || (toolName !== 'cuppet_subagent' && item.status === 'running' && item.tool === toolName)
   ));
   const existing = existingIndex >= 0 ? items[existingIndex] as TranscriptTool : null;
   const tool = toolName || existing?.tool || 'agent-tool';

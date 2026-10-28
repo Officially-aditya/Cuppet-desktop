@@ -12,7 +12,7 @@ Projects and conversations stay on your computer. Model requests go to your sele
 
 - **Work with projects:** open local folders, clone GitHub repositories, and keep each chat attached to its original project.
 - **Choose your provider:** use Codex with a ChatGPT account, connect a local coding CLI, or configure an API provider.
-- **Plan and build:** switch between read-only planning and implementation, review tool activity and file diffs, and run a project terminal.
+- **Plan, build, and orchestrate:** switch between read-only planning, implementation, and delegated work, review tool activity and file diffs, and run a project terminal.
 - **Guide an active task:** queue the next message or steer the current turn without stopping it. Attach files and images when needed.
 - **Keep context:** use project code navigation, session context, saved plans, and verified memory through Cuppet's TST context and memory runtime.
 - **Continue remotely:** pair a browser with the desktop host, respond to questions and approvals, or give a device viewer access.
@@ -55,6 +55,10 @@ The runtime also supports OpenAI-compatible API endpoints for custom headless co
 ## Working in a chat
 
 **Plan and Build.** Plan mode permits inspection while blocking mutating tools. Build mode enables implementation tools under the selected permission policy.
+
+**Orchestrate.** The primary model can delegate independent work to up to three concurrent subagents. Each uses the configured secondary model and a separate provider session. Workers share the active project and permission policy, and their activity appears in the conversation. Stop cancels the workers with the main turn. Provider model availability and support for the Cuppet tool bridge depend on the connected provider and its installed version.
+
+Antigravity subagents use an isolated provider profile linked to the existing Antigravity sign-in. They receive Cuppet's tools for the current turn; Antigravity's separately configured global MCP servers are not loaded in those workers.
 
 **Queue and Steer.** In **Settings → General**, choose whether a message sent during a run waits for the next turn or adds guidance to the active turn. Queued messages remain visible and can be edited, cancelled, or added to the current turn.
 

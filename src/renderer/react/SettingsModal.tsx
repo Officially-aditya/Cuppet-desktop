@@ -419,7 +419,7 @@ function PlatformPanel({ current, presets, selected, providerID, apiKey, isCodex
               <ModelPicker slot="primary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
             </div>
             <div className="platform-model-field">
-              <div className="platform-model-copy"><strong>Secondary model</strong><span>Context Memory</span></div>
+              <div className="platform-model-copy"><strong>Secondary model</strong><span>Context Memory and subagents</span></div>
               <ModelPicker slot="secondary" surface="settings" disabled={busy || !modelsReady} onChange={onModelSaved} />
             </div>
           </div>

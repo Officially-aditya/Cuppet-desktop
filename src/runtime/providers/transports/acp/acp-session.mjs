@@ -264,6 +264,22 @@ export class AcpSessionRuntime {
     this.#hostBridge.setHandlers(handlers);
   }
 
+  beginExternalToolRequest() {
+    const turn = this.#activeTurn;
+    if (!turn) return () => {};
+    turn.pendingHostRequests += 1;
+    this.#touchActiveTurn();
+    const finishCompletionRequest = turn.completion?.beginRequest?.() ?? (() => {});
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      finishCompletionRequest();
+      turn.pendingHostRequests -= 1;
+      if (this.#activeTurn === turn) this.#touchActiveTurn();
+    };
+  }
+
   async capabilities() {
     if (this.#state === 'idle') await this.start();
     return this.#capabilities;

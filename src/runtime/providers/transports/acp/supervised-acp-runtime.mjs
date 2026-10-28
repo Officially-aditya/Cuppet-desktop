@@ -77,6 +77,8 @@ export class SupervisedAcpSessionRuntime {
     return this.#runtime.setHostHandlers?.(handlers);
   }
 
+  beginExternalToolRequest() { return this.#runtime.beginExternalToolRequest?.() ?? (() => {}); }
+
   async runTurn(input = {}, hooks = {}) {
     try {
       const result = await this.#runtime.runTurn(input, hooks);

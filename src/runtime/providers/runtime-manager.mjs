@@ -303,7 +303,10 @@ export class ProviderRuntimeManager {
         } else {
           toolSession = entry.activeToolSession;
         }
-        toolSession.setTurn({ tools: options.tools, executeTool: options.executeTool, signal: options.signal });
+        toolSession.setTurn({ tools: options.tools, executeTool: async (call) => {
+          const finish = entry.runtime.beginExternalToolRequest?.() ?? (() => {});
+          try { return await options.executeTool(call); } finally { finish(); }
+        }, signal: options.signal });
         if (options.signal?.addEventListener) {
           abortToolSession = () => {
             void Promise.resolve(toolSession?.close?.()).catch(() => undefined);
