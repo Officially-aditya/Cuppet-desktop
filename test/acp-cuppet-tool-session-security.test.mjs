@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createConnection } from 'node:net';
 import { CuppetMcpToolSession } from '../src/runtime/providers/transports/acp/cuppet-mcp-tool-session.mjs';
+import steeringPlugin from '../src/runtime/providers/opencode-steering/index.js';
 
 const definition = (name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
 
@@ -107,6 +108,64 @@ test('Cuppet ACP tool authority disappears when the scoped tool session closes',
     });
   } finally {
     client.socket.destroy();
+    await session.close();
+  }
+});
+
+test('warm native steering preserves its connection while revoking previous MCP clients and tokens', async () => {
+  const session = new CuppetMcpToolSession({ sessionId: 'native-authority', backendId: 'opencode' });
+  await session.start();
+  session.setTurn({ tools: [definition('cuppet_plan')], executeTool: async () => ({ success: true, output: 'ok' }) });
+  const descriptor = session.descriptor();
+  const token = descriptorEnv(descriptor, 'CUPPET_MCP_BRIDGE_TOKEN');
+  const endpoint = descriptor.steering.endpoint;
+  assert.notEqual(descriptor.steering.token, token);
+  const calls = [];
+  const cleanup = await steeringPlugin.setup({ options: descriptor.steering, session: {
+    async prompt(input) { calls.push(input); },
+  } });
+  const client = bridgeClient(endpoint);
+  try {
+    await client.request('hello', {}, { token });
+    await assert.rejects(client.request('steering/register'), /Unsupported/);
+    assert.equal(await session.steer({ sessionId: 'native-session', text: 'first' }), true);
+    session.setTurn({ tools: [], executeTool: null });
+    await client.closed;
+    assert.equal(session.canSteer(), false);
+
+    session.setTurn({ tools: [definition('cuppet_plan')], executeTool: async () => ({ success: true, output: 'next' }) });
+    const stale = bridgeClient(endpoint);
+    try { await assert.rejects(stale.request('hello', {}, { token }), /authentication failed|bridge closed/); }
+    finally { stale.socket.destroy(); }
+    assert.equal(await session.steer({ sessionId: 'next-session', text: 'second' }), true);
+    assert.deepEqual(calls.map(({ sessionID, text, delivery }) => [sessionID, text, delivery]), [
+      ['native-session', 'first', 'steer'], ['next-session', 'second', 'steer'],
+    ]);
+  } finally {
+    cleanup();
+    client.socket.destroy();
+    await session.close();
+  }
+});
+
+test('closing native steering rejects an in-flight delivery instead of leaving it pending', async () => {
+  const session = new CuppetMcpToolSession({ sessionId: 'native-close', backendId: 'opencode' });
+  await session.start();
+  session.setTurn({ tools: [], executeTool: async () => ({ success: true }) });
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const cleanup = await steeringPlugin.setup({ options: session.descriptor().steering, session: {
+    async prompt() { started.resolve(); await release.promise; },
+  } });
+  try {
+    const pending = session.steer({ sessionId: 'native-session', text: 'in flight' });
+    const rejected = assert.rejects(pending, /connection closed/);
+    await started.promise;
+    await session.close();
+    await rejected;
+  } finally {
+    release.resolve();
+    cleanup();
     await session.close();
   }
 });

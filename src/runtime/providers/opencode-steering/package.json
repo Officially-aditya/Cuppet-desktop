@@ -1,0 +1,6 @@
+{
+  "name": "cuppet-opencode-steering",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}

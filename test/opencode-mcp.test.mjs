@@ -26,3 +26,13 @@ test('managed V2 MCP override does not change V1 settings or add permission rule
   assert.equal(config.permissions, undefined);
   assert.equal(config.permission, undefined);
 });
+
+test('OpenCode V2 loads the private native steering plugin alongside existing plugins', () => {
+  const prepared = openCodeMcpEnvironment({ OPENCODE_CONFIG_CONTENT: '{"plugins":["existing-plugin"]}' }, '2.0.27', [{
+    name: 'cuppet-runtime', steering: { endpoint: '/tmp/private.sock', token: 'private-token' },
+  }]);
+  const config = JSON.parse(prepared.OPENCODE_CONFIG_CONTENT);
+  assert.equal(config.plugins[0], 'existing-plugin');
+  assert.match(config.plugins[1].package, /opencode-steering$/);
+  assert.deepEqual(config.plugins[1].options, { endpoint: '/tmp/private.sock', token: 'private-token' });
+});

@@ -532,7 +532,12 @@ export class RuntimeService {
     const live = this.#liveExecutions.get(sessionId);
     if (live && !live.controller.signal.aborted) {
       const attachments = Array.isArray(params.attachments) ? params.attachments : [];
-      live.steering.push({ text, attachments, queuedAt: Date.now() });
+      const item = { text, attachments, queuedAt: Date.now() };
+      const nativeSteer = this.#tools.steer?.(sessionId, item);
+      if (nativeSteer && await nativeSteer) {
+        return { accepted: true, steered: true, sessionId, messageId: live.activeAssistantId };
+      }
+      live.steering.push(item);
       this.#emit({ type: 'steer.pending', sessionId, messageId: live.activeAssistantId });
       return { accepted: true, steered: true, sessionId, messageId: live.activeAssistantId };
     }
@@ -601,6 +606,7 @@ export class RuntimeService {
           signal,
           getAssistantMessageId: currentAssistantId,
           takeSteering,
+          restoreSteering: (items) => execution?.steering.unshift(...items),
           applySteering,
           onDelta: async (delta, meta = {}) => {
             if (this.#closed || (signal.aborted && meta?.stoppedPartial !== true)) return;
@@ -692,7 +698,12 @@ export class RuntimeService {
       execution.userText = [execution.userText, item.text].filter(Boolean).join('\n\n');
       this.#emit({ type: 'message.created', message: user });
     }
-    const assistant = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId: execution.sessionId, role: 'assistant', content: '', status: 'streaming' });
+    // This is another transcript segment of the existing run. Inserting a new
+    // streaming row would trigger a second durable run that never finishes.
+    const assistant = this.#db.transaction(() => {
+      const segment = this.#db.appendMessage({ id: `msg_${randomUUID()}`, sessionId: execution.sessionId, role: 'assistant', content: '', status: 'complete' });
+      return this.#db.updateMessage(segment.id, { status: 'streaming' });
+    });
     execution.activeAssistantId = assistant.id;
     this.#emit({ type: 'message.created', message: assistant });
     this.#emit({ type: 'steer.applied', sessionId: execution.sessionId, messageIds: users.map((message) => message.id), assistantId: assistant.id });

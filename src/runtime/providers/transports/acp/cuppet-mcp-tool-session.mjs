@@ -23,6 +23,11 @@ export class CuppetMcpToolSession {
   #signal = null;
   #queue = Promise.resolve();
   #closed = false;
+  #steeringSocket = null;
+  #steeringToken = randomBytes(32).toString('hex');
+  #steeringConnections = new Set();
+  #steeringRequests = new Map();
+  #nextSteeringId = 0;
 
   constructor({ sessionId, backendId }) {
     this.#sessionId = requiredText(sessionId, 'sessionId');
@@ -50,6 +55,12 @@ export class CuppetMcpToolSession {
     this.#definitions = normalizeTools(tools);
     this.#executeTool = typeof executeTool === 'function' ? executeTool : null;
     this.#signal = signal ?? null;
+    if (!this.#executeTool) {
+      // Retain native input across warm OpenCode turns, while revoking every
+      // previous MCP client and its token before another turn can start.
+      this.#token = randomBytes(32).toString('hex');
+      for (const socket of this.#connections) if (!this.#steeringConnections.has(socket)) socket.destroy();
+    }
   }
 
   descriptor() {
@@ -58,6 +69,8 @@ export class CuppetMcpToolSession {
       name: 'cuppet-runtime',
       command: process.execPath,
       args: [resolveCuppetMcpServerScript()],
+      // Host-only metadata, stripped by normalizeMcpServers before ACP delivery.
+      ...(this.#backendId === 'opencode' ? { steering: { endpoint: this.#endpoint, token: this.#steeringToken } } : {}),
       env: [
         { name: 'CUPPET_MCP_BRIDGE_ENDPOINT', value: this.#endpoint },
         { name: 'CUPPET_MCP_BRIDGE_TOKEN', value: this.#token },
@@ -69,16 +82,39 @@ export class CuppetMcpToolSession {
     };
   }
 
+  canSteer() { return Boolean(this.#steeringSocket && !this.#steeringSocket.destroyed && this.#executeTool && !this.#signal?.aborted); }
+
+  steer(params) {
+    if (!this.canSteer()) throw new Error('OpenCode native steering is unavailable.');
+    const socket = this.#steeringSocket;
+    const id = `steer_${++this.#nextSteeringId}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#steeringRequests.delete(id);
+        reject(new Error('OpenCode did not acknowledge the steering prompt.'));
+      }, 15_000);
+      this.#steeringRequests.set(id, { socket, resolve, reject, timer });
+      this.#write(socket, { id, method: 'session.steer', params });
+    });
+  }
+
   async close() {
     if (this.#closed) return;
     this.#closed = true;
     this.#definitions = [];
     this.#executeTool = null;
     this.#signal = null;
+    for (const pending of this.#steeringRequests.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('OpenCode steering connection closed.'));
+    }
+    this.#steeringRequests.clear();
+    this.#steeringSocket = null;
     for (const socket of this.#connections) {
       try { socket.destroy(); } catch {}
     }
     this.#connections.clear();
+    this.#steeringConnections.clear();
     const server = this.#server;
     this.#server = null;
     if (server) await new Promise((resolveClose) => server.close(() => resolveClose())).catch(() => undefined);
@@ -89,7 +125,7 @@ export class CuppetMcpToolSession {
   #accept(socket) {
     this.#connections.add(socket);
     socket.setEncoding('utf8');
-    let authenticated = false;
+    let authenticated = null;
     let buffer = '';
     socket.on('data', (chunk) => {
       buffer += chunk;
@@ -105,31 +141,58 @@ export class CuppetMcpToolSession {
         if (!line) continue;
         let message;
         try { message = JSON.parse(line); } catch { socket.destroy(new Error('Invalid Cuppet MCP bridge JSON.')); return; }
-        void this.#handleBridgeMessage(socket, message, () => authenticated, () => { authenticated = true; });
+        void this.#handleBridgeMessage(socket, message, () => authenticated, (role) => { authenticated = role; });
       }
     });
-    socket.on('close', () => this.#connections.delete(socket));
+    socket.on('close', () => {
+      this.#connections.delete(socket);
+      this.#steeringConnections.delete(socket);
+      if (this.#steeringSocket === socket) this.#steeringSocket = null;
+      for (const [id, pending] of this.#steeringRequests) {
+        if (pending.socket !== socket) continue;
+        clearTimeout(pending.timer);
+        pending.reject(new Error('OpenCode steering connection closed.'));
+        this.#steeringRequests.delete(id);
+      }
+    });
     socket.on('error', () => this.#connections.delete(socket));
   }
 
   async #handleBridgeMessage(socket, message, isAuthenticated, markAuthenticated) {
     const id = message?.id;
     if (!isAuthenticated()) {
-      if (message?.method !== 'hello' || !sameToken(message?.token, this.#token)) {
+      const native = this.#backendId === 'opencode' && sameToken(message?.token, this.#steeringToken);
+      if (message?.method !== 'hello' || (!native && !sameToken(message?.token, this.#token))) {
         this.#write(socket, { id, error: { message: 'Cuppet MCP bridge authentication failed.' } });
         socket.destroy();
         return;
       }
-      markAuthenticated();
+      markAuthenticated(native ? 'steering' : 'tools');
+      if (native) this.#steeringConnections.add(socket);
       this.#write(socket, { id, result: { ok: true } });
       return;
     }
 
-    if (message?.method === 'tools/list') {
+    if (message?.method === 'steering/register' && isAuthenticated() === 'steering') {
+      this.#steeringSocket = socket;
+      this.#write(socket, { id, result: { ok: true } });
+      return;
+    }
+    const steering = this.#steeringRequests.get(id);
+    if (steering?.socket === socket && !message?.method) {
+      this.#steeringRequests.delete(id);
+      clearTimeout(steering.timer);
+      if (message.error) steering.reject(new Error(cleanError(message.error.message)));
+      else if (message.result?.accepted === true) steering.resolve(true);
+      else steering.reject(new Error('OpenCode did not accept the steering prompt.'));
+      return;
+    }
+
+    if (message?.method === 'tools/list' && isAuthenticated() === 'tools') {
       this.#write(socket, { id, result: { tools: this.#definitions } });
       return;
     }
-    if (message?.method === 'tools/call') {
+    if (message?.method === 'tools/call' && isAuthenticated() === 'tools') {
       const task = this.#queue.then(() => this.#callTool(message?.params, id));
       this.#queue = task.catch(() => undefined);
       try { this.#write(socket, { id, result: await task }); }

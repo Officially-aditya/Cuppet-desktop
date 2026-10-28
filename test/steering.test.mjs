@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { RuntimeService } from '../src/runtime/service.mjs';
 import { AcpProviderAdapter } from '../src/runtime/providers/backends/acp.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
+import { openCodeMcpEnvironment } from '../src/runtime/providers/opencode-mcp.mjs';
 
 function waitFor(events, predicate, timeout = 3000) {
   return new Promise((resolve, reject) => {
@@ -32,6 +33,62 @@ function tstStub() {
     close() {},
   };
 }
+
+test('OpenCode native steering is delivered while reasoning without tool calls and survives warm turns', { timeout: 15_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-steer-native-'));
+  const events = [];
+  const attachment = { name: 'reference.png', mime: 'image/png', dataUrl: 'data:image/png;base64,aGVsbG8=' };
+  const runtime = new RuntimeService({
+    databasePath: join(dir, 'db.sqlite3'), dataDir: dir,
+    emit: (event) => events.push(event),
+    providerFactory: () => new AcpProviderAdapter({
+      providerID: 'opencode', cliCommand: process.execPath,
+      cliArgs: [fileURLToPath(new URL('./fixtures/fake-opencode-steering-agent.mjs', import.meta.url))],
+    }, { descriptor: {
+      ...localCliDescriptor('opencode'),
+      prepareEnvironment: (env, _config, _command, servers) => openCodeMcpEnvironment(env, '2.0.27', servers),
+    } }),
+    tst: tstStub(),
+    planStore: { async capture() { return null; }, async setAgent() {} },
+    interactive: false, backgroundFactory: backgroundStub,
+  });
+  try {
+    const session = await runtime.handle('session.create');
+    for (let turn = 1; turn <= 2; turn++) {
+      events.length = 0;
+      await runtime.handle('session.send', { sessionId: session.id, text: 'Search for PHP articles', provider: {} });
+      await runtime.handle('session.steer', { sessionId: session.id, text: 'Check the existing index first.' });
+      const started = await waitFor(events, (event) => event.activity?.type === 'activity.reasoning.delta' || event.type === 'runtime.error');
+      assert.notEqual(started.type, 'runtime.error', JSON.stringify(started));
+      await waitFor(events, (event) => event.type === 'steer.applied');
+      await assert.rejects(runtime.handle('session.steer', { sessionId: session.id, text: 'reject this' }), /Native steering rejected/);
+      await runtime.handle('session.steer', { sessionId: session.id, text: 'i checked it there is none', attachments: [attachment] });
+      const live = await runtime.handle('session.get', { sessionId: session.id });
+      assert.equal(live.messages.at(-2).content, 'i checked it there is none');
+      assert.deepEqual(live.messages.at(-2).attachments, [attachment]);
+      assert.equal(live.messages.at(-1).status, 'streaming');
+      assert.equal(live.messages.some((message) => message.content === 'reject this'), false);
+      assert.equal(live.toolExecutions.length, 0);
+      assert.equal(events.some((event) => event.type === 'run.finished'), false);
+      assert.equal(events.filter((event) => event.type === 'steer.applied').length, 2);
+      assert.equal((await runtime.handle('health')).activeRuns, 1);
+
+      await runtime.handle('session.steer', { sessionId: session.id, text: 'finish now' });
+      await waitFor(events, (event) => event.type === 'run.finished');
+      assert.equal((await runtime.handle('health')).activeRuns, 0);
+      const stored = await runtime.handle('session.get', { sessionId: session.id });
+      assert.equal(stored.messages.at(-1).status, 'complete');
+      const result = JSON.parse(stored.messages.at(-1).content);
+      assert.equal(result.sessionCount, turn, 'reuse the same OpenCode process and steering connection');
+      assert.deepEqual(result.received.map(({ text }) => text), ['Check the existing index first.', 'i checked it there is none', 'finish now']);
+      assert.deepEqual(result.received[1].files, [{ uri: attachment.dataUrl, name: attachment.name }]);
+      assert.equal(events.filter((event) => event.type === 'context.compiled').length, 1);
+    }
+  } finally {
+    await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('OpenCode receives steering through its live MCP tool reply before the ACP turn ends', { timeout: 15_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-steer-acp-'));

@@ -98,6 +98,7 @@
     },
     "asarUnpack": [
       "src/runtime/providers/transports/acp/cuppet-mcp-stdio.mjs",
+      "src/runtime/providers/opencode-steering/**/*",
       "node_modules/node-pty/**/*"
     ],
     "files": [

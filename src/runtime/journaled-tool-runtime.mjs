@@ -49,6 +49,7 @@ export class JournaledToolRuntime {
     return this.#providerRuntimes.forget?.(sessionId) ?? false;
   }
   async close() { await Promise.all([Promise.resolve(this.#inner.close?.()), Promise.resolve(this.#providerRuntimes.close?.())]); }
+  steer(sessionId, item) { return this.#captures.get(sessionId)?.steer(item) ?? false; }
 
   async run(options) {
     const initialMessageId = latestAssistantMessageID(this.#db, options.sessionId);
@@ -110,6 +111,7 @@ export class JournaledToolRuntime {
       contextWindow: options.contextWindow,
       executionKernel: this.#executionKernel,
       takeSteering: options.takeSteering,
+      restoreSteering: options.restoreSteering,
       applySteering: (...args) => { flushActivities(); return options.applySteering?.(...args) ?? []; },
       flushActivities,
       onReasoning: (segment, timing) => {
@@ -205,13 +207,17 @@ export class JournaledToolRuntime {
 }
 
 class ToolMutationCapture {
+  #steerCurrent = null;
+  #restoreSteering;
   #journal; #sessionId; #getMessageId; #projectRoot; #adapter; #previewPolicy; #contextWindow; #executionKernel; #takeSteering; #applySteering; #pending = new Map(); #calls = new Map(); #lastFinished = null; #failure = null; #onReasoning; #onPreview; #onActivity; #flushActivities;
-  constructor({ journal, sessionId, getMessageId = () => '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, takeSteering = () => [], applySteering = () => [], onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, flushActivities = () => {} }) {
+  constructor({ journal, sessionId, getMessageId = () => '', projectRoot, adapter, previewPolicy = 'live', contextWindow, executionKernel, takeSteering = () => [], restoreSteering = () => {}, applySteering = () => [], onReasoning = () => {}, onPreview = () => {}, onActivity = () => {}, flushActivities = () => {} }) {
     this.#journal = journal; this.#sessionId = sessionId; this.#getMessageId = getMessageId; this.#projectRoot = projectRoot; this.#adapter = adapter; this.#previewPolicy = previewPolicy; this.#contextWindow = contextWindow; this.#executionKernel = executionKernel; this.#takeSteering = takeSteering; this.#applySteering = applySteering; this.#onReasoning = onReasoning; this.#onPreview = onPreview; this.#onActivity = onActivity;
     this.#flushActivities = flushActivities;
+    this.#restoreSteering = restoreSteering;
   }
 
   flushActivities() { this.#flushActivities(); }
+  steer(item) { return this.#steerCurrent?.(item) ?? false; }
 
   async stream(messages, options) {
     if (this.#failure) throw this.#failure;
@@ -295,11 +301,33 @@ class ToolMutationCapture {
       }));
     }
     let response;
+    let nativeSteering = Promise.resolve();
+    this.#steerCurrent = (item) => {
+      if (options?.signal?.aborted || !this.#adapter.canSteer?.()) return false;
+      const pending = nativeSteering.then(async () => {
+        await this.#adapter.steer(item);
+        await flushReasoning();
+        await this.#applySteering([item]);
+        return true;
+      });
+      nativeSteering = pending.catch(() => undefined);
+      return pending;
+    };
     try {
       response = await this.#adapter.stream(messages, {
         ...options,
         tools: providerTools,
         onDelta: previewDelta,
+        onSteeringReady: () => {
+          if (!this.#adapter.canSteer?.()) return;
+          const items = this.#drainSteering();
+          if (!items.length) return;
+          const pending = items.map((item) => Promise.resolve(this.steer(item)).catch(() => false));
+          nativeSteering = Promise.all(pending).then((accepted) => {
+            this.#restoreSteering(items.filter((_item, index) => !accepted[index]));
+          });
+          return nativeSteering;
+        },
         onActivity: async (activity) => {
           if (activity?.type?.startsWith('activity.tool.') && pendingText) await flushReasoning();
           await this.#onActivity(activity);
@@ -340,6 +368,8 @@ class ToolMutationCapture {
       clearPreview();
       throw error;
     } finally {
+      this.#steerCurrent = null;
+      await nativeSteering;
       clearTimeout(previewTimer);
     }
     if (!receivedText && typeof response?.text === 'string') pendingText = response.text;

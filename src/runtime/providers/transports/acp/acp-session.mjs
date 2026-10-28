@@ -175,7 +175,7 @@ export class AcpSessionRuntime {
         }
         await this.#applyMcpConfigFile(mcpServers);
         if (this.#descriptor.prepareEnvironment) {
-          this.#environment = await this.#descriptor.prepareEnvironment(this.#environment, this.#configuration, command);
+          this.#environment = await this.#descriptor.prepareEnvironment(this.#environment, this.#configuration, command, mcpServers);
         }
         this.#startProcess(command);
       }
@@ -291,6 +291,7 @@ export class AcpSessionRuntime {
       completion: new AcpTurnCompletionGate(this.#descriptor),
       hooks,
       sessionId,
+      steeringReady: false,
     };
     this.#activeTurn = turn;
     this.#state = 'running';
@@ -311,6 +312,10 @@ export class AcpSessionRuntime {
       if (message.method !== 'session/update' && message.method !== 'session/notification') return;
       const params = record(message.params);
       if (params.sessionId && String(params.sessionId) !== sessionId) return;
+      if (!turn.steeringReady) {
+        turn.steeringReady = true;
+        void Promise.resolve(hooks.onSteeringReady?.()).catch(() => undefined);
+      }
       const update = params.update ?? params;
       turn.completion.observeUpdate(update);
       this.#touchActiveTurn();

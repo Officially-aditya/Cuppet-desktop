@@ -52,6 +52,12 @@ export class ProviderRuntimeManager {
       const descriptor = managed.descriptor ?? localCliDescriptor(backendId);
       if (!descriptor || descriptor.transport !== 'acp') throw new Error(`Managed ACP backend '${backendId}' has no ACP descriptor.`);
       return {
+        canSteer: () => this.#steeringEntry(id)?.activeToolSession?.canSteer?.() === true,
+        steer: (item) => {
+          const entry = this.#steeringEntry(id);
+          if (!entry) throw new Error('No active OpenCode turn to steer.');
+          return entry.activeToolSession.steer({ ...item, sessionId: entry.runtime.snapshot().sessionId });
+        },
         stream: (messages, options = {}) => this.#runAcp({
           sessionId: id,
           backendId,
@@ -78,6 +84,12 @@ export class ProviderRuntimeManager {
     }
 
     return adapter;
+  }
+
+  #steeringEntry(sessionId) {
+    const group = this.#entries.get(sessionId);
+    const entry = group?.routes.get(group.activeFingerprint);
+    return entry?.backendId === 'opencode' && entry.runtime.snapshot?.().state === 'running' ? entry : null;
   }
 
   async cancel(sessionId) {
@@ -318,6 +330,7 @@ export class ProviderRuntimeManager {
         signal: options.signal,
         executeTool: options.executeTool,
         requestAgentPermission: options.requestAgentPermission,
+        onSteeringReady: options.onSteeringReady,
         onText: async (rawDelta) => {
           const delta = textStream.push(rawDelta);
           if (delta) await options.onDelta?.(delta);
@@ -352,8 +365,8 @@ export class ProviderRuntimeManager {
     } finally {
       await Promise.resolve(entry?.runtime?.retireSession?.()).catch(() => undefined);
       if (abortToolSession) options.signal?.removeEventListener?.('abort', abortToolSession);
-      if (descriptor?.mcpConfigArg) {
-        toolSession?.setTurn({ tools: [], executeTool: null, signal: null });
+      if (descriptor?.mcpConfigArg || descriptor?.nativeSteering) {
+        if (entry?.activeToolSession === toolSession) toolSession?.setTurn({ tools: [], executeTool: null, signal: null });
       } else {
         await toolSession?.close().catch(() => undefined);
         if (entry?.activeToolSession === toolSession) entry.activeToolSession = null;

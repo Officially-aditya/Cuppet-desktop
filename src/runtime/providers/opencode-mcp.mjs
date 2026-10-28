@@ -1,7 +1,8 @@
 import JSON5 from 'json5';
 import { opendirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { providerProjectAccessError } from './provider-failure.mjs';
 import { parseSemanticVersion } from './version-policy.mjs';
 import { verifyLocalProviderExecutableVersion } from './local-provider-version-check.mjs';
@@ -24,14 +25,14 @@ export function assertOpenCodeProjectAccess(projectRoot) {
   }
 }
 
-export async function prepareOpenCodeAcpEnvironment(environment, configuration, command) {
+export async function prepareOpenCodeAcpEnvironment(environment, configuration, command, mcpServers = []) {
   const compatibility = await verifyLocalProviderExecutableVersion({ id: 'opencode', label: 'OpenCode', versionArgs: ['--version'] }, {
     ...configuration, cliCommand: command, cliEnv: environment,
   });
-  return openCodeMcpEnvironment(environment, compatibility.observedVersion);
+  return openCodeMcpEnvironment(environment, compatibility.observedVersion, mcpServers);
 }
 
-export function openCodeMcpEnvironment(environment, version) {
+export function openCodeMcpEnvironment(environment, version, mcpServers = []) {
   if ((parseSemanticVersion(version)?.parts[0] ?? 0) < 2) return environment;
   const config = environment.OPENCODE_CONFIG_CONTENT ? JSON5.parse(environment.OPENCODE_CONFIG_CONTENT) : {};
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('OpenCode inline configuration must be an object.');
@@ -40,11 +41,15 @@ export function openCodeMcpEnvironment(environment, version) {
   // Cuppet supplies browser tools through its own MCP bridge. Prevent each
   // private OpenCode server from launching the same global browserControl port.
   const browserControl = servers.browserControl ?? { type: 'local', command: [process.execPath] };
+  const bridge = mcpServers.find((server) => server.name === 'cuppet-runtime');
+  const { endpoint, token } = bridge?.steering ?? {};
+  const pluginPath = fileURLToPath(new URL('./opencode-steering', import.meta.url)).replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`);
   return {
     ...environment,
     OPENCODE_CONFIG_CONTENT: JSON.stringify({
       ...config,
       mcp: { ...mcp, servers: { ...servers, browserControl: { ...browserControl, disabled: true } } },
+      ...(endpoint && token ? { plugins: [...(config.plugins ?? []), { package: pluginPath, options: { endpoint, token } }] } : {}),
     }),
   };
 }
