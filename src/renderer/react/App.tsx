@@ -150,7 +150,7 @@ export function App() {
       if (previousSelection.current.sessionId === sessionId) previousSelection.current.mode = nextMode;
     }).catch((error) => { if (token === switchRequest.current) showToast(error); });
     try {
-      const session = await refreshClientSession(sessionId, { limit: 40 });
+      const session = await refreshClientSession(sessionId, { limit: 60 });
       loadedSessionIds.current.add(sessionId);
       if (token !== switchRequest.current) return;
       previousSelection.current = { sessionId: session.id, draft: null,

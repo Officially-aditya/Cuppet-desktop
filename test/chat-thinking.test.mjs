@@ -110,14 +110,14 @@ test('attachment-only user messages show files; text-only messages have no attac
   assert.equal(find(render({ message: { id: 'legacy', role: 'user', content: 'Legacy message' } }), (node) => node.props?.className === 'message-attachments'), undefined);
 });
 
-test('only the newest three historical messages render immediately', () => {
+test('only the newest five historical messages render immediately', () => {
   const messages = Array.from({ length: 8 }, (_, index) => ({
     id: `message-${index}`, role: index % 2 ? 'assistant' : 'user', content: 'History',
   }));
   const tree = fixture('ChatTranscript')({ session: { id: 'chat', messages }, project: null, transcript: {}, running: false });
   const section = find(tree, (node) => node.type === 'section');
   const rows = Array.from(section.props.children).flat(Infinity).filter((node) => node?.type?.name === 'TranscriptMessage');
-  assert.deepEqual(rows.map((node) => node.props.deferred), [true, true, true, true, true, false, false, false]);
+  assert.deepEqual(rows.map((node) => node.props.deferred), [true, true, true, false, false, false, false, false]);
   assert.deepEqual(rows.map((node) => node.props.message.id), messages.map((message) => message.id));
 });
 
@@ -158,7 +158,7 @@ test('offscreen history stays unrendered until its row approaches the viewport',
   cleanup();
 });
 
-test('expanded activity defers tools older than the newest three and keeps running tools immediate', () => {
+test('expanded activity defers tools older than the newest five and keeps running tools immediate', () => {
   const trace = Array.from({ length: 9 }, (_, index) => ({
     id: `call-${index}`, type: 'tool', tool: 'tst_read', argumentsJson: '{}',
     sequence: index + 1, status: index === 0 ? 'running' : 'complete',
@@ -170,8 +170,8 @@ test('expanded activity defers tools older than the newest three and keeps runni
   find(render(groupProps), (node) => node.type === 'button').props.onClick();
   const rows = find(render(groupProps), (node) => node.props.className === 'message-work-details').props.children;
   assert.ok(rows.every((node) => node.type?.name === 'ToolTraceRow'), 'tool rows keep their component type as they age');
-  assert.deepEqual(rows.filter((node) => !node.props.deferred).map((node) => node.props.item.id), ['call-0', 'call-6', 'call-7', 'call-8']);
-  assert.deepEqual(rows.filter((node) => node.props.deferred).map((node) => node.props.item.id), ['call-1', 'call-2', 'call-3', 'call-4', 'call-5']);
+  assert.deepEqual(rows.filter((node) => !node.props.deferred).map((node) => node.props.item.id), ['call-0', 'call-4', 'call-5', 'call-6', 'call-7', 'call-8']);
+  assert.deepEqual(rows.filter((node) => node.props.deferred).map((node) => node.props.item.id), ['call-1', 'call-2', 'call-3']);
 });
 
 test('earlier tool details load in the background or immediately when requested', () => {

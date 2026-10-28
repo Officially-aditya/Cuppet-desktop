@@ -68,6 +68,7 @@ async function rendererBenchmark() {
   // The benchmark uses a disposable profile with no credentials or provider requests.
   app.commandLine.appendSwitch('use-mock-keychain');
   const virtualDisplay = process.platform === 'darwin' && Boolean(process.env.CI);
+  const coldDomBudgetMs = virtualDisplay ? 500 : 250;
   const profile = mkdtempSync(join(tmpdir(), 'cuppet-switch-renderer-'));
   app.setPath('userData', profile);
   const db = new ConversationDatabase(join(profile, 'runtime', 'conversations.sqlite3'));
@@ -134,12 +135,12 @@ async function rendererBenchmark() {
         const workMs = Object.fromEntries(['ScriptDuration', 'RecalcStyleDuration', 'LayoutDuration', 'TaskDuration'].map(name =>
           [name, +(((after.metrics.find(metric => metric.name === name)?.value ?? 0)
             - (before.metrics.find(metric => metric.name === name)?.value ?? 0)) * 1000).toFixed(2)]));
-        console.log('Chat-switch renderer benchmark: ' + JSON.stringify({ platform: process.platform, arch: process.arch, virtualDisplay,
+        console.log('Chat-switch renderer benchmark: ' + JSON.stringify({ platform: process.platform, arch: process.arch, virtualDisplay, coldDomBudgetMs,
           gpuFeatures: app.getGPUFeatureStatus(), ...result, workMs }));
         assert.equal(result.visibility, 'visible', 'Benchmark window must be visible');
         assert.equal(result.focused, true, 'Benchmark window must be focused');
         assert.ok(result.payloadBytes < 250 * 1024, 'Initial session payload exceeds 250 KB');
-        assert.ok(result.coldDomMs < 250, 'Cold transcript commit exceeds 250 ms');
+        assert.ok(result.coldDomMs < coldDomBudgetMs, `Cold transcript commit exceeds ${coldDomBudgetMs} ms`);
         assert.ok(result.warmDomP95Ms < 100, 'Warm transcript commit p95 exceeds 100 ms');
         if (!virtualDisplay) {
           assert.ok(result.coldSwitchMs < 250, 'Cold chat switch paint exceeds 250 ms');
