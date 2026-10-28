@@ -44,6 +44,8 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
       - run: npm install --ignore-scripts
+      - name: Build node-pty for real PTY acceptance tests
+        run: npm rebuild node-pty
       - run: npm audit --audit-level=high
       - run: npm run renderer:verify
       - name: Verify security policies and windowed chat history
