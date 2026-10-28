@@ -75,10 +75,10 @@ test('Windows installer verifies a new CLI and repairs managed versions without 
   await mkdir(manager);
   const command = join(bin, 'opencode.cmd');
   const prepared = join(root, 'prepared-opencode.cmd');
-  const log = join(root, 'npm calls.txt');
+  const log = join(root, 'npm-calls.txt');
   const launcher = version => `@echo off\r\nif "%~1"=="--version" (\r\n echo OpenCode ${version}\r\n exit /b 0\r\n)\r\necho 1 credential\r\n`;
   await writeFile(prepared, launcher('1.18.30'));
-  await writeFile(join(manager, 'npm.cmd'), `@echo off\r\nif "%~1"=="prefix" (\r\n echo %NPM_CONFIG_PREFIX%\r\n exit /b 0\r\n)\r\nif "%~1"=="install" (\r\n copy /y "${prepared}" "%NPM_CONFIG_PREFIX%\\opencode.cmd" >nul\r\n if errorlevel 1 exit /b 1\r\n echo install>>"${log}"\r\n exit /b 0\r\n)\r\nexit /b 1\r\n`);
+  await writeFile(join(manager, 'npm.cmd'), `@echo off\r\nif "%~1"=="prefix" (\r\n echo %NPM_CONFIG_PREFIX%\r\n exit /b 0\r\n)\r\nif "%~1"=="install" (\r\n copy /y "${prepared}" "%NPM_CONFIG_PREFIX%\\opencode.cmd" >nul\r\n if errorlevel 1 exit /b 1\r\n echo install >> "${log}"\r\n exit /b 0\r\n)\r\nexit /b 1\r\n`);
   const previous = { path: process.env.PATH, prefix: process.env.NPM_CONFIG_PREFIX, override: process.env.CUPPET_OPENCODE_BIN };
   const isolatedPath = previous.path.split(';').filter((dir) => dir && !existsSync(join(dir, 'opencode.cmd')) && !existsSync(join(dir, 'opencode.exe'))).join(';');
   process.env.PATH = process.env.Path = `${manager};${isolatedPath}`;
