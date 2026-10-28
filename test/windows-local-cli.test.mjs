@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { localProviderOperations } from '../src/runtime/providers/local-provider-operations.mjs';
 import { readExecutableVersion } from '../src/runtime/providers/local-provider-version-check.mjs';
 import { probeOpenCodeAuthentication } from '../src/runtime/providers/opencode-auth.mjs';
+import { runProviderCommand } from '../src/runtime/providers/cli-command.mjs';
 import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-session.mjs';
 import { localCliDescriptor } from '../src/runtime/local-cli-descriptors.mjs';
 import { ProviderControlPlane } from '../src/runtime/providers/control-plane.mjs';
@@ -98,6 +99,13 @@ test('Windows installer verifies a new CLI and repairs managed versions without 
       authenticationMethods: () => [{ id: 'fake-auth', type: 'agent' }],
       authenticate: async () => {},
     }),
+    runImpl: async (executable, args, timeoutMs, options) => {
+      if (executable.toLowerCase().endsWith('opencode.cmd')) {
+        if (args[0] === '--version') return { stdout: 'OpenCode 1.18.30\n', stderr: '' };
+        if (args[0] === 'auth' && args[1] === 'list') return { stdout: '1 credential\n', stderr: '' };
+      }
+      return runProviderCommand(executable, args, timeoutMs, options);
+    },
   });
   const plane = new ProviderControlPlane({ dataDir: root, operationsFactory: () => operations });
   await t.test('missing OpenCode is installed and the exact resulting launcher is verified', async () => {
