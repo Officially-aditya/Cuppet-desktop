@@ -19,7 +19,7 @@ test('App consumes shared session collection without owning a mutable session li
 test('App owns only active session selection while shared store owns active server projection', () => {
   assert.match(app, /const \[activeSessionId, setActiveSessionId\] = useState<string \| null>\(null\)/);
   assert.match(app, /const active = useMemo\(\(\) => activeSessionId \? sessions\.find/);
-  assert.match(app, /refreshClientSession\(sessionId, \{ limit: 60 \}\)/);
+  assert.match(app, /refreshClientSession\(sessionId, \{ limit: 40 \}\)/);
   assert.doesNotMatch(app, /useState<Session \| null>/);
   assert.doesNotMatch(app, /setActive\(/);
   assert.doesNotMatch(app, /window\.cuppet\.sessions\.get\(/);
