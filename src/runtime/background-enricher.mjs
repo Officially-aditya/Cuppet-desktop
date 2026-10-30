@@ -8,9 +8,10 @@ const DEFAULT_IDLE_MS = 60_000;
 const DEFAULT_COOLDOWN_MS = 15 * 60_000;
 
 export class BackgroundEnricher {
-  #providerFactory; #tst; #ledger; #now; #idleMs; #cooldownMs; #batches = new Map(); #lastCompleted = new Map(); #timer; #paused; #running = false; #activeController; #providerConfig; #projectID;
-  constructor({ providerFactory, tst, projectStore, projectID = 'general', paused = false, now = Date.now, idleMs = DEFAULT_IDLE_MS, cooldownMs = DEFAULT_COOLDOWN_MS }) {
+  #providerFactory; #resolveProvider; #tst; #ledger; #now; #idleMs; #cooldownMs; #batches = new Map(); #lastCompleted = new Map(); #timer; #paused; #running = false; #activeController; #providerConfig; #projectID;
+  constructor({ providerFactory, resolveProvider = (config) => providerRequest(config, 'secondary'), tst, projectStore, projectID = 'general', paused = false, now = Date.now, idleMs = DEFAULT_IDLE_MS, cooldownMs = DEFAULT_COOLDOWN_MS }) {
     this.#providerFactory = providerFactory; this.#tst = tst; this.#now = now; this.#idleMs = Math.max(0, idleMs); this.#cooldownMs = Math.max(0, cooldownMs); this.#paused = paused; this.#projectID = projectID;
+    this.#resolveProvider = resolveProvider;
     this.#ledger = new CandidateLedger({ path: projectStore ? join(projectStore, 'candidate-ledger.json') : undefined, now });
   }
   async ready() { await this.#ledger.ready(); }
@@ -37,6 +38,12 @@ export class BackgroundEnricher {
     batch.signals = batch.signals.slice(-MAX_SIGNALS).map((signal, index) => ({ ...signal, id: `s${index}` })); batch.projectID = projectID; batch.idleAt = this.#now() + this.#idleMs; this.#batches.set(sessionID, batch); this.#schedule();
   }
   async flushNow(sessionID) { await this.ready(); const batch = this.#batches.get(sessionID); if (!batch) return { status: 'empty', candidates: 0 }; if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 }; batch.idleAt = 0; return this.#runBatch(batch); }
+  async enrichSnapshot(sessionID, summaries) {
+    await this.ready();
+    const signals = summaries.slice(-MAX_SIGNALS).map((summary, index) => ({ id: `s${index}`, summary: String(summary).slice(0, MAX_SIGNAL_CHARS), recordedAt: this.#now() }));
+    if (!signals.length) return { status: 'empty', candidates: 0 };
+    return this.#runBatch({ sessionID, projectID: this.#projectID, signals, idleAt: 0 });
+  }
   async close() { this.#clearTimer(); this.#activeController?.abort(); await this.#ledger.close(); }
   #schedule() {
     this.#clearTimer(); if (this.#paused || this.#running || !this.#batches.size || !this.#tst?.configured) return;
@@ -50,15 +57,15 @@ export class BackgroundEnricher {
     if (this.#paused || this.#running) return { status: 'deferred', candidates: 0 };
     if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 };
     let request;
-    try { request = providerRequest(this.#providerConfig ?? {}, 'secondary'); }
+    try { request = this.#resolveProvider(this.#providerConfig ?? {}); }
     catch { return { status: 'unconfigured', candidates: 0 }; }
     this.#running = true; const controller = new AbortController(); this.#activeController = controller;
     try {
       const provider = this.#providerFactory(request);
       let text = '';
-      await provider.stream([{ role: 'system', content: backgroundPrompt(batch.signals) }], { signal: controller.signal, onDelta: async (delta) => { text += delta; } });
+      const response = await provider.stream([{ role: 'system', content: backgroundPrompt(batch.signals) }], { signal: controller.signal, onDelta: async (delta) => { text += delta; } });
       if (controller.signal.aborted) return { status: 'cancelled', candidates: 0 };
-      const candidates = parseCandidates(text).slice(0, 4); let admitted = 0;
+      const candidates = parseCandidates(text).slice(0, 4); let admitted = 0; const admittedKeys = [];
       for (const candidate of candidates) {
         if (isSensitiveCandidate(candidate.key, candidate.value)) continue;
         const sources = candidate.source_ids.flatMap((id) => batch.signals.find((signal) => signal.id === id) ? [batch.signals.find((signal) => signal.id === id)] : []);
@@ -69,15 +76,16 @@ export class BackgroundEnricher {
         const key = canonicalLedgerKey(candidate.key); const sourceRef = candidateSourceRef('background', sources.map((signal) => signal.summary).join('\n'));
         this.#ledger.observe({ key, claim: candidate.value, kind: candidate.kind, relation, sessionID: batch.sessionID, projectID: batch.projectID, sourceRef, timestampMs: this.#now(), trustedSupport, explicitUser, downstreamVerified: false });
         const admission = this.#ledger.admission(key, candidate.kind); if (admission.blocked) continue;
-        admitted++;
         const scope = candidate.scope === 'project' && admission.independentlyReinforced ? 'project' : 'session';
         const observed = await this.#tst.observeMemory(batch.sessionID, { key, value: candidate.value, kind: candidate.kind, provenance: 'model_candidate', scope }).catch(() => undefined);
+        if (!observed?.id) continue;
+        admitted++; admittedKeys.push(key);
         if (observed?.id && explicitUser) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'user_preference', sourceRef, true).catch(() => undefined);
         if (observed?.id) {
           for (let index = 0; index < admission.reinforcementEvidenceCount; index += 1) await this.#tst.recordEvidence(batch.sessionID, observed.id, 'independent_reinforcement', `candidate-ledger:${index + 1}:${sourceRef}`, true).catch(() => undefined);
         }
       }
-      this.#batches.delete(batch.sessionID); this.#lastCompleted.set(batch.sessionID, this.#now()); await this.#ledger.persist(); return { status: 'completed', candidates: admitted };
+      this.#batches.delete(batch.sessionID); this.#lastCompleted.set(batch.sessionID, this.#now()); await this.#ledger.persist(); return { status: 'completed', candidates: admitted, admittedKeys, usage: response?.usage ?? null };
     } catch (error) {
       if (controller.signal.aborted) return { status: 'cancelled', candidates: 0 };
       return { status: 'failed', candidates: 0, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) };

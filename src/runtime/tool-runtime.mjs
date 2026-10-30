@@ -49,7 +49,7 @@ export class ToolRuntime {
     return tools;
   }
 
-  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null, delegate = null }) {
+  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null, delegate = null, onToolCall = () => {}, takeBackgroundContext = () => '' }) {
     let resolvedProjectId = projectId;
     let resolvedProjectRoot = projectRoot;
     if ((!resolvedProjectId || !resolvedProjectRoot) && sessionId && this.#db) {
@@ -68,6 +68,7 @@ export class ToolRuntime {
 
     const executeTool = async (call) => {
       if (signal?.aborted) throw abortError();
+      onToolCall();
       toolSteps += 1;
       const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal, getAssistantMessageId, delegate });
       const result = typeof this.#tst?.runWithProject === 'function'
@@ -75,6 +76,11 @@ export class ToolRuntime {
         : await operation();
       if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
       if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
+      const backgroundContext = takeBackgroundContext();
+      if (backgroundContext) {
+        result.output = `${backgroundContext}\n\n${result.output}`;
+        if (result.contentItems?.length) result.contentItems.unshift({ type: 'inputText', text: backgroundContext });
+      }
       return result;
     };
 

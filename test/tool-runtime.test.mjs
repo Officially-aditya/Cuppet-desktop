@@ -102,6 +102,23 @@ test('workspace write executes under guarded auto, persists audit, and reports P
   } finally { broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('new background context reaches the primary through the next tool result exactly once', async () => {
+  const { dir, root, db, broker, toolRuntime } = await fixture();
+  try {
+    broker.setAuto('s1', true);
+    let pending = '<CUPPET_CONTEXT>Retained observation</CUPPET_CONTEXT>';
+    let toolCalls = 0;
+    const adapter = scriptedAdapter([
+      { toolCalls: [{ id: 'write-1', name: 'workspace_write', arguments: '{"path":"one.txt","content":"one"}' }] },
+      { assertMessages(messages) { assert.match(messages.at(-1).content, /Retained observation/); }, toolCalls: [{ id: 'write-2', name: 'workspace_write', arguments: '{"path":"two.txt","content":"two"}' }] },
+      { assertMessages(messages) { assert.doesNotMatch(messages.at(-1).content, /Retained observation/); } },
+    ]);
+    await toolRuntime.run({ adapter, messages: [{ role: 'user', content: 'write the files' }], sessionId: 's1', projectId: 'p1', projectRoot: root, signal: new AbortController().signal, onDelta: async () => {}, onToolCall: () => toolCalls++, takeBackgroundContext: () => { const value = pending; pending = ''; return value; } });
+    assert.equal(toolCalls, 2);
+    assert.equal(await readFile(join(root, 'two.txt'), 'utf8'), 'two');
+  } finally { broker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('plan mode rejects mutation without touching the filesystem but still returns a tool result to the model', async () => {
   const { dir, root, db, broker, toolRuntime } = await fixture();
   try {

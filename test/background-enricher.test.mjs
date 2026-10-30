@@ -6,6 +6,30 @@ function providerFactory(output) {
   return () => ({ async stream(_messages, { onDelta }) { await onDelta(output); return { text: output }; } });
 }
 
+test('live snapshots use the supplied subscription resolver and retain model usage', async () => {
+  const observations = [];
+  const usage = { inputTokens: 30, outputTokens: 12, totalTokens: 42 };
+  const worker = new BackgroundEnricher({
+    resolveProvider: (config) => ({ providerID: 'codex', model: config.secondary.modelID, primaryEffort: config.secondary.variant }),
+    providerFactory: (config) => {
+      assert.equal(config.model, 'gpt-6-luna'); assert.equal(config.primaryEffort, 'max');
+      return { async stream(messages, { onDelta }) {
+        assert.match(messages[0].content, /OBSERVED TOOL RESULT/);
+        await onDelta(JSON.stringify({ candidates: [{ key: 'validation command', value: 'npm test completed', kind: 'concept_anchor', scope: 'session', source_ids: ['s0'] }] }));
+        return { usage };
+      } };
+    },
+    tst: { configured: true, async observeMemory(_session, observation) { observations.push(observation); return { id: 'memory-1' }; } },
+  });
+  worker.setProviderConfig({ providerID: 'codex', secondary: { modelID: 'gpt-6-luna', variant: 'max' } });
+  const result = await worker.enrichSnapshot('s1', ['OBSERVED TOOL RESULT: npm test succeeded']);
+  assert.equal(result.candidates, 1);
+  assert.deepEqual(result.usage, usage);
+  assert.equal(observations[0].provenance, 'model_candidate');
+  assert.equal(observations[0].scope, 'session');
+  await worker.close();
+});
+
 test('background model only emits model_candidate observations and explicit user evidence is separate', async () => {
   const calls = [];
   const tst = {

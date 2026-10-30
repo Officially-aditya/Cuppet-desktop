@@ -102,7 +102,7 @@ export class ContextCompiler {
   }
 }
 
-function renderPrepared(result, budget, planMode, mode) {
+export function renderPrepared(result, budget, planMode, mode) {
   if (mode === 'stm_only') {
     const stm = renderMemories('SESSION CONTINUITY (STM ONLY)', result.stm ?? result.retained ?? [], 24);
     return stm ? wrap('CUPPET_STM_ONLY_CONTEXT', clipTokens(stm, budget), budget) : '';

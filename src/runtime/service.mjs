@@ -7,8 +7,9 @@ import { ProjectManager } from './projects.mjs';
 import { TstBridge } from './tst-client.mjs';
 import { LosslessPlanStore } from './lossless-plan.mjs';
 import { CognitiveStateStore } from './cognitive-state.mjs';
-import { ContextCompiler } from './context-compiler.mjs';
+import { ContextCompiler, renderPrepared } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
+import { ActiveEnrichment } from './active-enrichment.mjs';
 import { Pe3ProjectRouter } from './pe3/router.mjs';
 import { PermissionBroker } from './permissions.mjs';
 import { QuestionBroker } from './questions.mjs';
@@ -83,7 +84,7 @@ export class RuntimeService {
     this.#batchEdits = batchEdits ?? new TstBatchEditManager({ tst: this.#tst, journal: this.#journal, writer: this.#writer, emit: this.#emit });
     this.#browserControl = browserControl;
     this.#tools = toolRuntime ?? new JournaledToolRuntime({ journal: this.#journal, tst: this.#tst, planStore: this.#plans, permissions: this.#permissions, questions: this.#questions, db: this.#db, batchEdits: this.#batchEdits, writer: this.#writer, externalTools: browserControl, dataDir, emit: this.#emit, providerRuntimeManager });
-    this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
+    this.#backgroundFactory = backgroundFactory ?? ((projectId) => new BackgroundEnricher({ providerFactory: this.#providerFactory, resolveProvider: workerProviderConfiguration, tst: this.#tst, projectStore: join(this.#dataDir, 'background', safeStoreName(projectId)), projectID: projectId ?? 'general' }));
     this.#pe3Factory = pe3Factory ?? (({ projectId, projectRoot }) => new Pe3ProjectRouter({ projectId, projectRoot, projectStore: join(this.#dataDir, 'pe3', safeStoreName(projectId)), db: this.#db, tst: this.#tst }));
     this.#ready = this.#cognitive.ready();
   }
@@ -563,6 +564,7 @@ export class RuntimeService {
 
   async #generate({ sessionId, assistantId, userId, execution = null, provider, signal, projectId = null, projectRoot = null, refreshPaths = [], attachments = [], integrations = [] }) {
     const currentAssistantId = () => execution?.activeAssistantId ?? assistantId;
+    const enrichment = this.#activeEnrichment({ sessionId, provider, projectId, projectRoot, signal, currentAssistantId });
     const takeSteering = () => execution ? execution.steering.splice(0, execution.steering.length) : [];
     let pendingDelta = '';
     let pendingMessageId = '';
@@ -610,6 +612,7 @@ export class RuntimeService {
           mode: this.#cognitive.mode(sessionId),
           contextWindow: contextWindow(provider),
           signal,
+          ...(enrichment ? { onToolCall: () => enrichment.start(), takeBackgroundContext: () => enrichment.takeContext() } : {}),
           ...(orchestrationEnabled ? { delegate: (args) => this.#startDelegation({ args, provider, signal, sessionId, projectId, projectRoot, integrations, mode: this.#cognitive.mode(sessionId), getAssistantMessageId: currentAssistantId, userMessage: [...providerMessages].reverse().find((message) => message.role === 'user') }) } : {}),
           getAssistantMessageId: currentAssistantId,
           takeSteering,
@@ -658,6 +661,7 @@ export class RuntimeService {
       this.#emit({ type: 'message.completed', message: completedMessage });
       if (!stopped) this.#emit({ type: 'runtime.error', sessionId, message: failure.toastMessage, providerError: failure });
     } finally {
+      enrichment?.close();
       flushDeltas();
       if (this.#closed) return;
       const currentExecution = this.#liveExecutions.get(sessionId);
@@ -667,7 +671,7 @@ export class RuntimeService {
       this.#emit({ type: 'run.finished', sessionId, messageId: assistantId, projectId: currentExecution?.projectId ?? session?.projectId ?? null });
       // Best-effort TST bookkeeping must not hold the foreground run open.
       if (this.#tst?.configured) void this.#tst.turnCompleted(sessionId).catch(() => undefined);
-      if (ownsExecution && completedMessage?.status === 'complete') {
+      if (!enrichment && ownsExecution && completedMessage?.status === 'complete') {
         const worker = this.#backgroundFor(currentExecution.projectId);
         worker.setProviderConfig(provider ?? {});
         const assistantText = [...(currentExecution.completedTexts ?? []), completedMessage.content].filter(Boolean).join('\n\n');
@@ -805,6 +809,36 @@ export class RuntimeService {
       pending.catch(() => { if (this.#pe3Routers.get(projectId) === pending) this.#pe3Routers.delete(projectId); });
     }
     return pending;
+  }
+
+  #activeEnrichment({ sessionId, provider, projectId, projectRoot, signal, currentAssistantId }) {
+    if (process.env.CUPPET_PROVIDER_BENCHMARK !== '1' || process.env.CUPPET_DYNAMIC_ENRICHMENT !== '1') return null;
+    const worker = this.#backgroundFor(projectId);
+    worker.setProviderConfig(provider);
+    const operate = (operation) => typeof this.#tst.runWithProject === 'function'
+      ? this.#tst.runWithProject({ sessionId, projectId, projectRoot }, operation) : operation();
+    return new ActiveEnrichment({
+      initialDelayMs: Number(process.env.CUPPET_DYNAMIC_ENRICHMENT_INTERVAL_MS || 60_000),
+      emit: (event) => this.#emit({ ...event, sessionId }),
+      cancel: () => worker.pause(),
+      enrich: () => operate(async () => {
+        if (signal.aborted || this.#closed) return { status: 'cancelled', candidates: 0 };
+        const messages = this.#db.getSessionMessages(sessionId);
+        const prompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+        const assistant = this.#db.getMessage(currentAssistantId())?.content ?? '';
+        const tools = this.#db.listToolExecutions(sessionId).filter((tool) => tool.status === 'complete').slice(-6);
+        const summaries = [
+          `CURRENT USER REQUEST: ${prompt}`,
+          `PRIMARY MODEL PROGRESS: ${String(assistant).slice(-1100)}`,
+          ...tools.map((tool) => `OBSERVED TOOL RESULT ${tool.toolName}\narguments: ${String(tool.argumentsJson).slice(0, 350)}\noutput: ${String(tool.output).slice(-700)}`),
+        ].map((summary) => redactCredentials(summary));
+        const result = await worker.enrichSnapshot(sessionId, summaries);
+        if (signal.aborted || this.#closed || !result.candidates) return result;
+        const prepared = await this.#tst.prepareContext(sessionId, prompt, [], [], 'foreground', 0);
+        const retrievedKeys = [...(prepared?.stm ?? []), ...(prepared?.ltm ?? [])].map((record) => record.key);
+        return { ...result, retrievedKeys, context: renderPrepared(prepared ?? {}, 2048, false, 'foreground') };
+      }),
+    });
   }
 
   #backgroundFor(projectId) {
