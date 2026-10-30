@@ -20,12 +20,16 @@ test('pre-run benchmark audit captures the actual initial model input and exclud
   try {
     await client.start();
     await client.request('account/read', {});
+    const thread = { developerInstructions: 'Complete the assigned task.' };
+    await client.request('thread/start', thread);
     const params = { threadId: 'primary', input: [{ type: 'text', text: '<CUPPET_CONTEXT>initial memory</CUPPET_CONTEXT>' }] };
     await client.request('turn/start', params);
     const records = (await readFile(join(dir, 'benchmark-provider-inputs.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-    assert.equal(records.length, 1);
-    assert.equal(records[0].message.method, 'turn/start');
-    assert.deepEqual(records[0].message.params, params);
+    assert.equal(records.length, 2);
+    assert.equal(records[0].message.method, 'thread/start');
+    assert.deepEqual(records[0].message.params, thread);
+    assert.equal(records[1].message.method, 'turn/start');
+    assert.deepEqual(records[1].message.params, params);
   } finally {
     await client.close(); await rm(dir, { recursive: true, force: true });
     for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;

@@ -113,7 +113,7 @@ export class CodexAppServerClient extends EventEmitter {
   #write(message) {
     if (!this.#child?.stdin?.writable) throw new Error('Codex app-server is unavailable');
     this.#child.stdin.write(`${JSON.stringify(message)}\n`);
-    if (process.env.CUPPET_PROVIDER_BENCHMARK === '1' && process.env.CUPPET_PRERUN_ENRICHMENT === '1' && process.env.CUPPET_DATA_DIR && message.method === 'turn/start') {
+    if (process.env.CUPPET_PROVIDER_BENCHMARK === '1' && process.env.CUPPET_PRERUN_ENRICHMENT === '1' && process.env.CUPPET_DATA_DIR && ['thread/start', 'turn/start'].includes(message.method)) {
       appendFileSync(join(process.env.CUPPET_DATA_DIR, 'benchmark-provider-inputs.jsonl'), `${JSON.stringify({ at: Date.now(), message })}\n`, { mode: 0o600 });
     }
   }
