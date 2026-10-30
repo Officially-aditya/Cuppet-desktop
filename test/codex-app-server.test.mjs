@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,28 @@ import { CodexAppServerClient, resolveCodexAppServerCommand } from '../src/runti
 import { parseCodexAccount } from '../src/runtime/codex-account.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-codex-app-server.mjs', import.meta.url));
+
+test('pre-run benchmark audit captures the actual initial model input and excludes account requests', async () => {
+  const keys = ['CUPPET_PROVIDER_BENCHMARK', 'CUPPET_PRERUN_ENRICHMENT', 'CUPPET_DATA_DIR'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-input-audit-'));
+  Object.assign(process.env, { CUPPET_PROVIDER_BENCHMARK: '1', CUPPET_PRERUN_ENRICHMENT: '1', CUPPET_DATA_DIR: dir });
+  const client = new CodexAppServerClient({ command: process.execPath, args: [fixture] });
+  client.on('request', (message) => client.respond(message.id, { contentItems: [], success: true }));
+  try {
+    await client.start();
+    await client.request('account/read', {});
+    const params = { threadId: 'primary', input: [{ type: 'text', text: '<CUPPET_CONTEXT>initial memory</CUPPET_CONTEXT>' }] };
+    await client.request('turn/start', params);
+    const records = (await readFile(join(dir, 'benchmark-provider-inputs.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].message.method, 'turn/start');
+    assert.deepEqual(records[0].message.params, params);
+  } finally {
+    await client.close(); await rm(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  }
+});
 
 test('Codex app-server transport initializes and reads official ChatGPT account union', async () => {
   const client = new CodexAppServerClient({ command: process.execPath, args: [fixture] });

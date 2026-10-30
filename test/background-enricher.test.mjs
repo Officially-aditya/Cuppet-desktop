@@ -6,6 +6,23 @@ function providerFactory(output) {
   return () => ({ async stream(_messages, { onDelta }) { await onDelta(output); return { text: output }; } });
 }
 
+test('repository enrichment retains source beyond the live snapshot cap in one model pass', async () => {
+  let calls = 0;
+  const worker = new BackgroundEnricher({
+    resolveProvider: () => ({ providerID: 'codex', model: 'gpt-6-luna' }),
+    providerFactory: () => ({ async stream(messages, { onDelta }) {
+      calls++;
+      assert.match(messages[0].content, /before the primary model starts/);
+      assert.match(messages[0].content, /late_source_fact/);
+      assert.doesNotMatch(messages[0].content, /primary model is still working/);
+      await onDelta('{"candidates":[]}'); return { usage: { totalTokens: 12 } };
+    } }), tst: { configured: true },
+  });
+  await worker.enrichSnapshot('s1', ['x'.repeat(5000) + 'late_source_fact'], { repository: true, maxSignalChars: 16000 });
+  assert.equal(calls, 1);
+  await worker.close();
+});
+
 test('live snapshots use the supplied subscription resolver and retain model usage', async () => {
   const observations = [];
   const usage = { inputTokens: 30, outputTokens: 12, totalTokens: 42 };

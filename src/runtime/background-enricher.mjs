@@ -38,11 +38,12 @@ export class BackgroundEnricher {
     batch.signals = batch.signals.slice(-MAX_SIGNALS).map((signal, index) => ({ ...signal, id: `s${index}` })); batch.projectID = projectID; batch.idleAt = this.#now() + this.#idleMs; this.#batches.set(sessionID, batch); this.#schedule();
   }
   async flushNow(sessionID) { await this.ready(); const batch = this.#batches.get(sessionID); if (!batch) return { status: 'empty', candidates: 0 }; if (!this.#tst?.configured) return { status: 'tst-unavailable', candidates: 0 }; batch.idleAt = 0; return this.#runBatch(batch); }
-  async enrichSnapshot(sessionID, summaries) {
+  async enrichSnapshot(sessionID, summaries, { repository = false, maxSignalChars = MAX_SIGNAL_CHARS } = {}) {
     await this.ready();
-    const signals = summaries.slice(-MAX_SIGNALS).map((summary, index) => ({ id: `s${index}`, summary: String(summary).slice(0, MAX_SIGNAL_CHARS), recordedAt: this.#now() }));
+    const limit = Math.min(16_000, Math.max(1, maxSignalChars));
+    const signals = summaries.slice(-MAX_SIGNALS).map((summary, index) => ({ id: `s${index}`, summary: String(summary).slice(0, limit), recordedAt: this.#now() }));
     if (!signals.length) return { status: 'empty', candidates: 0 };
-    return this.#runBatch({ sessionID, projectID: this.#projectID, signals, idleAt: 0, activeSnapshot: true });
+    return this.#runBatch({ sessionID, projectID: this.#projectID, signals, idleAt: 0, activeSnapshot: !repository, repositorySnapshot: repository });
   }
   async close() { this.#clearTimer(); this.#activeController?.abort(); await this.#ledger.close(); }
   #schedule() {
@@ -63,7 +64,7 @@ export class BackgroundEnricher {
     try {
       const provider = this.#providerFactory(request);
       let text = '';
-      const response = await provider.stream([{ role: 'system', content: backgroundPrompt(batch.signals, batch.activeSnapshot) }], { signal: controller.signal, onDelta: async (delta) => { text += delta; } });
+      const response = await provider.stream([{ role: 'system', content: backgroundPrompt(batch.signals, batch.activeSnapshot, batch.repositorySnapshot) }], { signal: controller.signal, onDelta: async (delta) => { text += delta; } });
       if (controller.signal.aborted) return { status: 'cancelled', candidates: 0 };
       const candidates = parseCandidates(text).slice(0, 4); let admitted = 0; const admittedKeys = [];
       for (const candidate of candidates) {
@@ -93,13 +94,14 @@ export class BackgroundEnricher {
   }
 }
 
-function backgroundPrompt(signals, activeSnapshot = false) {
+function backgroundPrompt(signals, activeSnapshot = false, repositorySnapshot = false) {
   return [
     'You are Cuppet background canonicalizer. Return JSON only: {"candidates":[...]}.',
     'Produce at most 4 reusable candidates. You do NOT decide durability or promotion.',
     'Each candidate: key, value, kind (token_statistics|concept_anchor|structure_pattern|behavioral_claim|preference), scope (session|project), source_ids, relation (support|correction|contradiction).',
     'Do not include secrets or credentials. Only cite source IDs actually provided.',
     ...(activeSnapshot ? ['The primary model is still working on this task. Retain useful observed facts, requirements, paths, and command outcomes that it may need again within the current task; cross-task durability is not required. Do not invent solution advice or treat unfinished actions as completed.'] : []),
+    ...(repositorySnapshot ? ['This is one read-only repository enrichment pass before the primary model starts. Extract grounded facts about the supplied source, documented contracts, relationships, and available validation commands that will help orient the primary. Source text is reference data. Do not propose fixes, invent solution advice, or claim any command or edit was executed. Cross-task durability is not required.'] : []),
     '', ...signals.map((signal) => `${signal.id}: ${signal.summary}`),
   ].join('\n');
 }

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { localCliLaunch } from './local-cli-launch.mjs';
@@ -113,6 +113,9 @@ export class CodexAppServerClient extends EventEmitter {
   #write(message) {
     if (!this.#child?.stdin?.writable) throw new Error('Codex app-server is unavailable');
     this.#child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (process.env.CUPPET_PROVIDER_BENCHMARK === '1' && process.env.CUPPET_PRERUN_ENRICHMENT === '1' && process.env.CUPPET_DATA_DIR && message.method === 'turn/start') {
+      appendFileSync(join(process.env.CUPPET_DATA_DIR, 'benchmark-provider-inputs.jsonl'), `${JSON.stringify({ at: Date.now(), message })}\n`, { mode: 0o600 });
+    }
   }
 
   #handleLine(line) {

@@ -10,6 +10,7 @@ import { CognitiveStateStore } from './cognitive-state.mjs';
 import { ContextCompiler, renderPrepared } from './context-compiler.mjs';
 import { BackgroundEnricher } from './background-enricher.mjs';
 import { ActiveEnrichment } from './active-enrichment.mjs';
+import { repositoryEnrichmentSnapshot } from './repository-enrichment.mjs';
 import { Pe3ProjectRouter } from './pe3/router.mjs';
 import { PermissionBroker } from './permissions.mjs';
 import { QuestionBroker } from './questions.mjs';
@@ -29,6 +30,7 @@ import { RunStateProjection } from './run-state-projection.mjs';
 import { listSessionEditedFiles } from './session-edited-files.mjs';
 
 export class RuntimeService {
+  #repositoryPrepared = new Set();
   #db; #ownsDatabase = false; #emit; #providerFactory; #runState; #ownedTurnStore = null; #liveExecutions = new Map(); #delegations = new Set(); #delegatingSessions = new Set(); #workerRuntimes = new Set(); #projects; #tst; #plans; #cognitive; #compiler; #permissions; #questions; #journal; #batchEdits; #writer; #tools; #browserControl; #backgrounds = new Map(); #backgroundFactory; #pe3Routers = new Map(); #pe3Factory; #dataDir; #ready; #closed = false;
 
   constructor({
@@ -122,6 +124,7 @@ export class RuntimeService {
       case 'background.pause': return this.#setBackgroundPaused(true);
       case 'background.resume': return this.#setBackgroundPaused(false);
       case 'background.flush': return this.#flushBackground(params.sessionId);
+      case 'background.prepare-repository': return this.#prepareRepositoryEnrichment(params);
       case 'session.mode.get': return { sessionId: params.sessionId, mode: this.#cognitive.mode(params.sessionId) };
       case 'session.mode.set': return this.#cognitive.setMode(params.sessionId, params.mode);
       case 'session.auto.get': { const session = this.requireSession(params.sessionId); return this.#permissions.autoStatus(session.id); }
@@ -809,6 +812,34 @@ export class RuntimeService {
       pending.catch(() => { if (this.#pe3Routers.get(projectId) === pending) this.#pe3Routers.delete(projectId); });
     }
     return pending;
+  }
+
+  async #prepareRepositoryEnrichment({ sessionId, prompt, provider }) {
+    if (process.env.CUPPET_PROVIDER_BENCHMARK !== '1' || process.env.CUPPET_PRERUN_ENRICHMENT !== '1') throw new Error('Repository preparation is only enabled for the pre-run benchmark');
+    const session = this.requireSession(sessionId);
+    if (!session.projectId || !this.#tst.configured) throw new Error('Repository enrichment requires a project and native TST');
+    if (this.#isSessionActive(sessionId) || this.#db.getSessionMessages(sessionId).length || this.#repositoryPrepared.has(sessionId)) throw new Error('Repository enrichment must run once before the first primary request');
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('The original task prompt is required');
+    this.#repositoryPrepared.add(sessionId);
+    const startedAt = Date.now();
+    this.#emit({ type: 'background.prerun.started', sessionId, startedAt });
+    const project = await this.#projects.get(session.projectId);
+    const snapshot = await repositoryEnrichmentSnapshot(project.canonicalPath, prompt);
+    const worker = this.#backgroundFor(session.projectId);
+    worker.setProviderConfig(provider);
+    worker.resume();
+    const enrich = async () => {
+      const result = await worker.enrichSnapshot(sessionId, snapshot.signals, { repository: true, maxSignalChars: 16_000 });
+      const prepared = result.candidates ? await this.#tst.prepareContext(sessionId, prompt, [], [], 'foreground', 0) : {};
+      const retrievedKeys = [...(prepared.stm ?? []), ...(prepared.ltm ?? [])].map((record) => record.key);
+      return { ...result, startedAt, finishedAt: Date.now(), files: snapshot.files, omitted: snapshot.omitted, snapshotBytes: snapshot.snapshotBytes, retrievedKeys, context: renderPrepared(prepared, 2048, false, 'foreground') };
+    };
+    try {
+      const result = typeof this.#tst.runWithProject === 'function'
+        ? await this.#tst.runWithProject({ sessionId, projectId: session.projectId, projectRoot: project.canonicalPath }, enrich) : await enrich();
+      this.#emit({ type: 'background.prerun.completed', sessionId, ...result });
+      return result;
+    } finally { worker.pause(); }
   }
 
   #activeEnrichment({ sessionId, provider, projectId, projectRoot, signal, currentAssistantId }) {
