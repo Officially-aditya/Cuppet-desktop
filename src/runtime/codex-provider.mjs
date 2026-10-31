@@ -125,6 +125,7 @@ export class CodexSessionRuntime {
           'Use only the dynamic Cuppet tools supplied by the host for those operations.',
           'Do not use Codex built-in shell, filesystem, patch, web, or mutation tools. The Codex working directory is intentionally not the user project.',
           'Do not stop with an incomplete task or a partial fix. Address all stated requirements and validate relevant edge cases before declaring completion; passing the first available check is not sufficient.',
+          'For implementation work, run meaningful tests against the full requirements before marking the task complete. Include boundary and failure cases that could disprove the fix, not only happy-path checks or tests tailored to pass the current code. Where practical, confirm new regression tests fail on the original code and pass with the fix; investigate failures rather than weakening the tests.',
         ].join('\n'),
         dynamicTools,
       };
