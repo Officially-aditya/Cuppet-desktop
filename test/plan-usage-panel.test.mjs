@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { normalizeCodexPlanUsage } from '../src/runtime/provider-plan-usage.mjs';
+import { normalizeClaudePlanUsage, normalizeAntigravityPlanUsage, normalizeCopilotPlanUsage } from '../src/runtime/plan-usage-normalizers.mjs';
 
 const compiled = ts.transpileModule(
   readFileSync(new URL('../src/renderer/react/PlanUsagePanel.tsx', import.meta.url), 'utf8'),
@@ -192,4 +193,37 @@ test('mismatched provider responses fail visibly and unmount retires all polling
   assert.equal(pending.listeners.size, 0);
   request.resolve(available()); await new Promise(setImmediate);
   assert.equal(pending.writes(), writes);
+});
+
+test('Claude, Antigravity and Copilot render their own plan windows in Settings', async () => {
+  const reports = [
+    normalizeClaudePlanUsage({ five_hour: { utilization: 25 }, seven_day: { utilization: 60 }, seven_day_opus: { utilization: 100 } }, { planType: 'max' }),
+    normalizeAntigravityPlanUsage({ groups: [{ displayName: 'Gemini Pro', buckets: [{ bucketId: 'weekly', window: 'weekly', remainingFraction: 0.4 }] }] }),
+    normalizeCopilotPlanUsage({ quotaSnapshots: { ai_credits: { usedRequests: 25, entitlementRequests: 100, remainingPercentage: 75 } } }),
+  ];
+  for (const report of reports) {
+    const ui = fixture(async () => report, report.providerID);
+    await ui.settle();
+    assert.equal(ui.progress().length, report.limits.flatMap(l => l.windows).length);
+    assert.match(ui.text(), /% remaining/);
+    assert.doesNotMatch(ui.text(), /unavailable/);
+    if (report.providerID === 'claude-code') assert.match(ui.text(), /Weekly limit · opus/);
+    if (report.providerID === 'antigravity') assert.match(ui.text(), /Gemini Pro/);
+    if (report.providerID === 'github-copilot') assert.match(ui.text(), /25 of 100 used this period/);
+    ui.unmount();
+  }
+});
+
+test('unlimited and zero-sized Copilot allowances show quantities without misleading percentage bars', async () => {
+  const report = normalizeCopilotPlanUsage({ quotaSnapshots: {
+    chat: { entitlementRequests: -1, isUnlimitedEntitlement: true, usedRequests: 123 },
+    premium_interactions: { entitlementRequests: 0, usedRequests: 0, remainingPercentage: 0 },
+  } });
+  const ui = fixture(async () => report, 'github-copilot');
+  await ui.settle();
+  assert.match(ui.text(), /Unlimited allowance · 123 used this period/);
+  assert.match(ui.text(), /0 of 0 used this period/);
+  assert.doesNotMatch(ui.text(), /% used|% remaining/);
+  assert.equal(ui.progress().length, 0);
+  ui.unmount();
 });

@@ -40,9 +40,11 @@ function renderSettings(provider, initialSection = 'usage') {
 }
 
 test('plan usage is mounted only on the Settings Usage page', () => {
-  for (const section of ['general', 'security', 'account', 'platform', 'personalisation', 'devices', 'privacy', 'about']) {
-    const nodes = renderSettings({ providerID: 'codex' }, section);
-    assert.ok(!nodes.some((node) => node.type === 'plan-usage-panel'), section);
+  for (const providerID of ['codex', 'claude-code', 'antigravity', 'github-copilot']) {
+    for (const section of ['general', 'security', 'account', 'platform', 'personalisation', 'devices', 'privacy', 'about']) {
+      const nodes = renderSettings({ providerID }, section);
+      assert.ok(!nodes.some((node) => node.type === 'plan-usage-panel'), providerID + ' ' + section);
+    }
   }
 });
 
@@ -50,6 +52,8 @@ test('Settings Usage displays plan limits before token totals for the active pla
   for (const provider of [
     { providerID: 'codex', primary: { providerID: 'codex' }, presets: [{ id: 'codex', label: 'Codex' }] },
     { providerID: 'claude-code', presets: [{ id: 'claude-code', label: 'Claude Code' }] },
+    { providerID: 'antigravity', presets: [{ id: 'antigravity', label: 'Google Antigravity' }] },
+    { providerID: 'github-copilot', presets: [{ id: 'github-copilot', label: 'GitHub Copilot' }] },
     { providerID: 'openai', primary: { providerID: 'codex' }, presets: [{ id: 'codex', label: 'Codex' }] },
   ]) {
     const nodes = renderSettings(provider);

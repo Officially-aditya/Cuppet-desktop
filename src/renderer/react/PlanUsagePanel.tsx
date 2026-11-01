@@ -71,6 +71,7 @@ export function PlanUsagePanel({ providerID, providerLabel }: Props) {
                 : 'Reset time not reported'}</span></div>
             </div>)}
           </div>
+          {limit.detail && <p className="plan-usage-credits">{limit.detail}</p>}
           {limit.credits && <p className="plan-usage-credits">{limit.credits.unlimited ? 'Unlimited credits' : `${limit.credits.balance} credits remaining`}</p>}
         </div>)}
       </div>

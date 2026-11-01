@@ -105,7 +105,7 @@ test('only a ChatGPT account can query the subscription limits, and every client
 test('unsupported platforms and absent Codex installations do not create or authenticate a client', async () => {
   let resolutions = 0;
   const options = { resolveCommand: async () => { resolutions++; return null; }, createClient: () => { throw new Error('must not create a client'); } };
-  for (const id of ['claude-code', 'openai', 'antigravity', '']) {
+  for (const id of ['openai', 'opencode', 'grok-build', '']) {
     const result = await readProviderPlanUsage(id, options);
     assert.equal(result.status, 'unsupported');
     assert.equal(result.providerID, id);

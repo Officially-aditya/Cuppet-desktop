@@ -1,17 +1,27 @@
 import { CodexAppServerClient, resolveCodexAppServerCommand } from './codex-app-server.mjs';
 import { parseCodexAccount } from './codex-account.mjs';
 import { redactCredentials } from './credential-sanitization.mjs';
+import { readAntigravityPlanUsage, readClaudePlanUsage, readCopilotPlanUsage } from './provider-plan-usage-readers.mjs';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
 // Query the provider's account limits. Local token totals cannot measure a plan allowance.
-export async function readProviderPlanUsage(providerID, {
-  resourcesPath = process.env.CUPPET_RESOURCES_PATH,
-  env = process.env,
-  resolveCommand = resolveCodexAppServerCommand,
-  createClient = (launch) => new CodexAppServerClient(launch),
-} = {}) {
+export async function readProviderPlanUsage(providerID, options = {}) {
+  const {
+    resourcesPath = process.env.CUPPET_RESOURCES_PATH,
+    env = process.env,
+    resolveCommand = resolveCodexAppServerCommand,
+    createClient = (launch) => new CodexAppServerClient(launch),
+  } = options;
   const base = emptyUsage(text(providerID, 120));
+  const reader = new Map([['claude-code', readClaudePlanUsage], ['antigravity', readAntigravityPlanUsage], ['github-copilot', readCopilotPlanUsage]]).get(base.providerID);
+  if (typeof reader === 'function') {
+    try { return await reader(options); }
+    catch (error) {
+      return { ...base, status: error?.usageStatus === 'signed-out' ? 'signed-out' : 'error',
+        message: redactCredentials(error, { env, configuration: options.configuration }).slice(0, 1000) || 'Could not load plan usage. Try refreshing.' };
+    }
+  }
   if (base.providerID !== 'codex') return {
     ...base, status: 'unsupported',
     message: base.providerID

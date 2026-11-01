@@ -46,7 +46,7 @@ const pkg = JSON.parse(pkgText);
 const chat = [chatPane, chatComposer, chatTranscript, chatPalette].join('\n');
 const styleEntry = await read('src/renderer/index.css');
 
-assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0' }, 'renderer libraries must stay build-time only; production dependencies are the provider JSONC parser and native terminal');
+assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0', 'vscode-jsonrpc': '8.2.1' }, 'renderer libraries must stay build-time only; production dependencies are provider JSONC/JSON-RPC and the native terminal');
 for (const dependency of ['react','react-dom','vite','typescript','@vitejs/plugin-react','qrcode']) assert.ok(pkg.devDependencies?.[dependency], `renderer build dependency missing: ${dependency}`);
 assert.equal(pkg.scripts?.['renderer:verify'], 'npm run ipc:check && tsc --noEmit && npm run runtime:typecheck && vite build && node scripts/verify-renderer.mjs');
 assert.ok(pkg.build.files.includes('dist-renderer/**/*'), 'compiled Vite renderer is not packaged');

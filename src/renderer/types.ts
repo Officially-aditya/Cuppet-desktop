@@ -180,6 +180,7 @@ export type ProviderPlanUsage = {
     id: string;
     label: string;
     windows: PlanUsageWindow[];
+    detail?: string | null;
     credits: { unlimited: boolean; balance: string | null } | null;
   }>;
   fetchedAt: number | null;

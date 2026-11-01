@@ -80,7 +80,13 @@ function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   handle('health', () => request('health'));
   handle('usage.summary', () => request('usage.summary'));
-  handle('usage.plan', (_event, providerID) => readProviderPlanUsage(providerID, { resourcesPath: process.resourcesPath }));
+  handle('usage.plan', (_event, providerID) => {
+    const configuration = ['claude-code', 'antigravity', 'github-copilot'].includes(providerID) ? settings.runtimeValue() : {};
+    return readProviderPlanUsage(providerID, {
+      resourcesPath: process.resourcesPath,
+      configuration: configuration.providerID === providerID ? configuration : {},
+    });
+  });
   handle('integrations.browserControl.status', () => request('integration.browser.status'));
   handle('integrations.browserControl.connect', () => request('integration.browser.connect'));
   handle('integrations.browserControl.disconnect', () => request('integration.browser.disconnect'));
