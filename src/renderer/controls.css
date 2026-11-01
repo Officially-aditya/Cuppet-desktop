@@ -297,21 +297,42 @@ input[type="checkbox"]:disabled,input[type="radio"]:disabled {
 
 .platform-picker {
   position: relative;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 150px;
+  flex: 0 0 auto;
 }
 
 .platform-picker .cuppet-select-trigger {
-  width: auto;
-  max-width: 100%;
+  width: 46px;
   height: 30px;
   min-height: 30px;
-  gap: 5px;
+  gap: 4px;
   border: 0;
   background: transparent;
-  padding: 5px 7px;
-  font-size: 12px;
+  padding: 5px 6px;
+}
+
+.platform-picker .cuppet-select-trigger>svg {
+  width: 12px;
+  height: 12px;
+}
+
+.platform-picker .cuppet-select-trigger>span,
+.platform-picker .cuppet-select-option>span:first-child {
+  display: flex;
+  align-items: center;
+}
+
+.platform-logo {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  background-color: currentColor;
+  mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
 }
 
 .platform-picker .cuppet-select-menu {
@@ -319,7 +340,11 @@ input[type="checkbox"]:disabled,input[type="radio"]:disabled {
   bottom: calc(100% + 8px);
   left: auto;
   right: 0;
-  width: min(240px, calc(100vw - 32px));
+  width: 68px;
+}
+
+.platform-picker .cuppet-select-option {
+  min-height: 36px;
 }
 
 .platform-picker-error {

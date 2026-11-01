@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 export type SelectOption = {
   value: string;
   label: string;
+  icon?: ReactNode;
   disabled?: boolean;
 };
 
@@ -13,9 +15,10 @@ type Props = {
   ariaLabel: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  iconOnly?: boolean;
 };
 
-export function SelectControl({ value, options, onChange, ariaLabel, disabled = false, autoFocus = false }: Props) {
+export function SelectControl({ value, options, onChange, ariaLabel, disabled = false, autoFocus = false, iconOnly = false }: Props) {
   const id = useId();
   const root = useRef<HTMLDivElement | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -64,7 +67,8 @@ export function SelectControl({ value, options, onChange, ariaLabel, disabled = 
         ref={trigger}
         type="button"
         className="cuppet-select-trigger"
-        aria-label={ariaLabel}
+        aria-label={iconOnly && selected ? `${ariaLabel}: ${selected.label}` : ariaLabel}
+        title={iconOnly ? selected?.label : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={`${id}-listbox`}
@@ -89,7 +93,7 @@ export function SelectControl({ value, options, onChange, ariaLabel, disabled = 
           }
         }}
       >
-        <span>{selected?.label ?? 'Choose'}</span>
+        <span>{iconOnly && selected?.icon ? selected.icon : selected?.label ?? 'Choose'}</span>
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
       {open && (
@@ -99,13 +103,15 @@ export function SelectControl({ value, options, onChange, ariaLabel, disabled = 
               type="button"
               role="option"
               aria-selected={option.value === value}
+              aria-label={iconOnly ? option.label : undefined}
+              title={iconOnly ? option.label : undefined}
               className={`cuppet-select-option${option.value === value ? ' selected' : ''}${index === activeIndex ? ' active' : ''}`}
               key={option.value}
               disabled={option.disabled}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => choose(option)}
             >
-              <span>{option.label}</span>
+              <span>{iconOnly && option.icon ? option.icon : option.label}</span>
               {option.value === value && <span className="cuppet-select-check" aria-hidden="true">✓</span>}
             </button>
           ))}

@@ -12,6 +12,14 @@ const settings = (providerID = 'codex') => ({
   providerID, primary: { providerID, modelID: providerID + '-saved-model' },
   savedProviderIDs: ['codex', 'claude-code'], presets,
 });
+test('saved platforms use logo-only presentation, including custom platforms', (t) => {
+  const picker = fixture(t, { ...settings(), savedProviderIDs: ['codex', 'claude-code', 'custom-platform'] });
+  const select = picker.select();
+  assert.equal(select.iconOnly, true);
+  assert.deepEqual(select.options.map((option) => option.icon.props.providerID), ['codex', 'claude-code', 'custom-platform']);
+  assert.deepEqual(select.options.map((option) => option.label), ['Codex', 'Claude Code', 'custom-platform']);
+});
+
 const SelectControl = () => null;
 function nodes(node) {
   if (!node || typeof node !== 'object') return [];
@@ -78,7 +86,8 @@ test('empty or loading settings keep the platform picker disabled without listin
   for (const initial of [null, { ...settings(), savedProviderIDs: [] }, { providerID: 'default', presets }]) {
     picker.setSettings(initial);
     assert.equal(picker.select().disabled, true);
-    assert.deepEqual(picker.select().options, [{ value: '', label: 'Platform', disabled: true }]);
+    assert.deepEqual(picker.select().options.map(({ value, label, disabled }) => ({ value, label, disabled })), [{ value: '', label: 'Platform', disabled: true }]);
+    assert.ok(picker.select().options[0].icon, 'the empty picker needs a fallback icon');
   }
 });
 
