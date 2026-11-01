@@ -140,6 +140,59 @@ function fixture(messages = [], initiallyOnline = true) {
   };
 }
 
+test('complete slash commands execute once on Enter and display their result', async () => {
+  for (const text of ['/status', '/doctor', '/memory', '/background', '/compact', '/undo']) {
+    const chat = fixture();
+    const name = text.slice(1);
+    chat.props.commands = [{ id: name, slash: name }];
+    chat.props.onSend = async () => ({ clear: true, commandResult: { id: name, presentation: 'Runtime result' } });
+    chat.type(text);
+    assert.equal(chat.key('Enter'), true);
+    chat.key('Enter');
+    await chat.settle();
+    assert.equal(chat.sends.length, 1, text);
+    assert.equal(chat.sends[0].text, text);
+    assert.equal(chat.nodes().find(node => node.type?.name === 'CommandResultView').props.result.presentation, 'Runtime result');
+  }
+});
+
+test('clicking a slash command executes its canonical name through the composer', async () => {
+  const chat = fixture();
+  const status = { id: 'status', slash: 'status' };
+  chat.props.commands = [status];
+  chat.type('/sta');
+  await chat.nodes().find(node => node.type?.name === 'CommandPalette').props.onChoose(status);
+  await chat.settle();
+  assert.equal(chat.sends.length, 1);
+  assert.equal(chat.sends[0].text, '/status');
+  assert.equal(chat.value(), '');
+});
+
+test('slash command arguments, Shift+Enter, and IME composition follow normal submission rules', async () => {
+  const chat = fixture();
+  chat.props.commands = [{ id: 'memory', slash: 'memory', takesText: true }];
+  chat.type('/memory build instructions');
+  chat.key('Enter', { shiftKey: true });
+  chat.key('Enter', { nativeEvent: { isComposing: true } });
+  assert.equal(chat.sends.length, 0);
+  chat.key('Enter');
+  await chat.settle();
+  assert.equal(chat.sends[0].text, '/memory build instructions');
+});
+
+test('a command result remains visible when its draft becomes a chat', async () => {
+  const chat = fixture();
+  chat.startDraft('project');
+  let finish;
+  chat.props.onSend = () => new Promise(resolve => { finish = resolve; });
+  chat.type('/memory tests');
+  chat.key('Enter');
+  chat.resetSession('created');
+  finish({ clear: true, commandResult: { id: 'memory', sessionId: 'created', presentation: 'Found memory' } });
+  await chat.settle();
+  assert.equal(chat.nodes().find(node => node.type?.name === 'CommandResultView').props.result.presentation, 'Found memory');
+});
+
 test('composer connection status tracks connection loss, recovery, and cleans up listeners', () => {
   const chat = fixture();
   const status = () => {

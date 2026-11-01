@@ -321,7 +321,12 @@ export function App() {
     const def = definition ?? commandForRaw(commands, raw);
     let sessionId = activeSessionId;
     if (def?.requiresSession && !sessionId) sessionId = (await ensureActiveSession()).id;
-    const result = await window.cuppet.commands.execute(sessionId, raw);
+    let result: CommandResult;
+    try { result = await window.cuppet.commands.execute(sessionId, raw); }
+    catch (error) {
+      return { id: def?.id, slash: def?.slash ? `/${def.slash}` : raw.split(/\s/, 1)[0], sessionId,
+        error: true, presentation: error instanceof Error ? error.message : String(error) };
+    }
     if ((result.id === 'plan' || result.id === 'cuppet.plan.agent') && result.result && typeof result.result === 'object') {
       const nextMode = (result.result as { mode?: string }).mode;
       if (nextMode === 'plan' || nextMode === 'build') setMode(nextMode);
@@ -377,7 +382,7 @@ export function App() {
         const definition = commandForRaw(commands, trimmed);
         if (!definition) throw new Error(`Unknown Cuppet command: ${trimmed.split(/\s/, 1)[0]}`);
         const result = await executeCommand(trimmed, definition);
-        return { clear: true, commandResult: result };
+        return { clear: !result.error, commandResult: result };
       }
 
       if (!provider?.configured || !provider?.credentialConfigured || !provider?.primary?.modelID) {
@@ -427,6 +432,10 @@ export function App() {
       if (String(error instanceof Error ? error.message : error).includes('Settings > General > Integrations')) {
         setSettingsSection('general');
         setModal('settings');
+      }
+      if (trimmed.startsWith('/')) {
+        return { clear: false, commandResult: { slash: trimmed.split(/\s/, 1)[0], sessionId: activeSessionId,
+          error: true, presentation: error instanceof Error ? error.message : String(error) } };
       }
       showToast(error);
       return { clear: false };

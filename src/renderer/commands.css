@@ -91,6 +91,11 @@
 .command-result-copy {
   flex: 1;
   min-width: 0;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .command-trigger {

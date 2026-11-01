@@ -228,6 +228,28 @@ test('Git failures preserve prompt hints in non-Git and unborn projects', async 
   }
 });
 
+test('manual compaction preserves system instructions and every message after its checkpoint', async () => {
+  const messages = [
+    { role: 'system', sequence: 1, content: 'Follow the project rules' },
+    { role: 'user', sequence: 2, content: 'Old task' },
+    { role: 'assistant', sequence: 3, content: 'Old answer' },
+    { role: 'user', sequence: 4, content: 'New task' },
+    { role: 'assistant', sequence: 5, content: 'New answer' },
+    { role: 'user', sequence: 6, content: 'Continue' },
+  ];
+  const before = structuredClone(messages);
+  const cognitiveState = { ...state(), compaction: () => ({ throughSequence: 3, directive: 'Retained task requirements' }) };
+  for (const orchestrator of [false, true]) {
+    cognitiveState.snapshot = () => ({ orchestratorEnabled: orchestrator });
+    const compiler = new ContextCompiler({ tst: fakeTst({}), cognitiveState });
+    const result = await compiler.compile({ sessionId: 'manual', messages, userMessageId: 'last' });
+    assert.equal(result.trimmed, true);
+    assert.deepEqual(result.messages.filter(message => message.sequence).map(message => message.sequence), [1, 4, 5, 6]);
+    assert.ok(result.messages.some(message => message.content.includes('Retained task requirements')));
+    assert.deepEqual(messages, before);
+  }
+});
+
 test('STM compaction aborts without TST and never authorizes transcript mutation', async () => {
   const compiler = new ContextCompiler({ tst: { configured: false, status: { configured: false } }, cognitiveState: state() });
   const result = await compiler.stmCompactionDirective({ sessionId: 's', prompt: 'compact', messages: [] });

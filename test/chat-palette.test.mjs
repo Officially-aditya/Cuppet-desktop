@@ -10,10 +10,10 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 
 function fixture(action = async () => ({ id: 'action', presentation: 'Done' })) {
-  const slots = [], effects = [], calls = [], drafts = new Map();
+  const slots = [], effects = [], calls = [], submissions = [], drafts = new Map();
   let index = 0, output, focusCount = 0;
   const props = { composerKey: 'chat:one', session: { id: 'one' }, mode: 'build', commands: [],
-    focusComposer: () => focusCount++ };
+    focusComposer: () => focusCount++, onSubmitCommand: async (raw) => { submissions.push(raw); } };
   const react = {
     useState(initial) {
       const slot = index++;
@@ -56,7 +56,7 @@ function fixture(action = async () => ({ id: 'action', presentation: 'Done' })) 
   const children = () => output.paletteView.props.children.filter(Boolean);
   render();
   return {
-    props, calls, drafts, render,
+    props, calls, submissions, drafts, render,
     type(value) { drafts.set(props.composerKey, value); render(); },
     value: () => drafts.get(props.composerKey) ?? '',
     palette: () => children().find((node) => node.type.name === 'CommandPalette'),
@@ -73,6 +73,51 @@ function fixture(action = async () => ({ id: 'action', presentation: 'Done' })) 
 }
 
 const action = { id: 'action', title: 'Action', paletteOnly: true };
+
+test('complete commands and aliases reach submission instead of being selected forever', () => {
+  for (const raw of ['/status', '/STATUS', '  /state']) {
+    const palette = fixture();
+    palette.props.commands = [{ ...action, title: 'Status action' }, { id: 'status', slash: 'status', aliases: ['state'] }];
+    palette.type(raw);
+    assert.equal(palette.key('Enter'), false, raw);
+    assert.equal(palette.calls.length, 0);
+    assert.equal(palette.submissions.length, 0, 'the composer owns complete-command submission');
+  }
+});
+
+test('selecting a command without arguments submits it immediately', async () => {
+  const palette = fixture();
+  const status = { id: 'status', slash: 'status' };
+  palette.props.commands = [status];
+  palette.type('/sta');
+  await palette.choose(status);
+  assert.deepEqual(palette.submissions, ['/status']);
+});
+
+test('selecting a command with arguments opens an editable command and then allows submission', async () => {
+  const palette = fixture();
+  const memory = { id: 'memory', slash: 'memory', takesText: true };
+  palette.props.commands = [memory];
+  palette.type('/mem');
+  await palette.choose(memory);
+  palette.render();
+  assert.equal(palette.value(), '/memory ');
+  assert.equal(palette.palette(), undefined);
+  assert.equal(palette.key('Enter'), false);
+  assert.equal(palette.submissions.length, 0);
+});
+
+test('a result for a newly created chat survives activation and clears on another chat', () => {
+  const palette = fixture();
+  palette.render().setCommandResult({ id: 'memory', sessionId: 'created', presentation: 'Found memory' });
+  palette.props.composerKey = 'session:created';
+  palette.props.session = { id: 'created' };
+  palette.render();
+  assert.equal(palette.result().presentation, 'Found memory');
+  palette.props.composerKey = 'session:other';
+  palette.render();
+  assert.equal(palette.result(), undefined);
+});
 
 test('slash palette supports keyboard selection and Escape preserves the draft', () => {
   const palette = fixture();

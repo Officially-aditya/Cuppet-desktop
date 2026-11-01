@@ -22,7 +22,14 @@ export class ContextCompiler {
     const prompt = String(user?.content ?? '').trim();
     if (!prompt) return { messages: source, mode, injected: false, trimmed: false, tst: this.#tst?.status ?? null };
 
-    if (orchestrator) return { messages: source, mode: 'orchestrator', injected: false, trimmed: false, tst: this.#tst?.status ?? null };
+    const checkpoint = this.#state?.compaction?.(sessionId);
+    const compaction = checkpoint && source.some((message) => message.sequence === checkpoint.throughSequence) &&
+      source.some((message) => message.role === 'user' && message.sequence > checkpoint.throughSequence) ? checkpoint : null;
+    const firstUser = source.findIndex((message) => message.role === 'user');
+    const modelSource = compaction ? source.filter((message, index) =>
+      (index < firstUser && message.role === 'system') || !Number.isSafeInteger(message.sequence) || message.sequence > compaction.throughSequence) : source;
+    const manuallyTrimmed = modelSource.length < source.length;
+    if (orchestrator) return { messages: injectBlocks(modelSource, compaction?.directive, ''), mode: 'orchestrator', injected: Boolean(compaction), trimmed: manuallyTrimmed, tst: this.#tst?.status ?? null };
 
     const plan = await this.#planStore?.capture({ sessionID: sessionId, messageID: userMessageId, prompt: String(user.content), agent: mode === 'plan' ? 'plan' : 'build' }).catch(() => undefined);
     if (plan) await this.#planStore?.setAgent(sessionId, mode === 'plan' ? 'plan' : 'build').catch(() => undefined);
@@ -38,9 +45,9 @@ export class ContextCompiler {
 
     const estimated = Number.isFinite(estimatedTokens) ? estimatedTokens : estimateMessages(source);
     const trim = canTrim({ messages: source, estimated, usableTokens, epoch, mode: experimentMode });
-    const selected = trim ? selectRecentTurns(source, experimentMode === 'stm_events' ? 1 : 2) : source;
-    const output = injectBlocks(selected, epoch.block, experimentMode === 'stm_only' ? '' : planBlock);
-    return { messages: output, mode: experimentMode, injected: Boolean(epoch.block || planBlock), trimmed: trim, tst: this.#tst?.status ?? null, budgetTokens: epoch.budgetTokens, projectionComplete: epoch.projectionComplete };
+    const selected = trim ? selectRecentTurns(modelSource, experimentMode === 'stm_events' ? 1 : 2) : modelSource;
+    const output = injectBlocks(selected, [compaction?.directive, epoch.block].filter(Boolean).join('\n\n'), experimentMode === 'stm_only' ? '' : planBlock);
+    return { messages: output, mode: experimentMode, injected: Boolean(compaction || epoch.block || planBlock), trimmed: trim || manuallyTrimmed, tst: this.#tst?.status ?? null, budgetTokens: epoch.budgetTokens, projectionComplete: epoch.projectionComplete };
   }
 
   async stmCompactionDirective({ sessionId, prompt, messages, usableTokens = 128_000 }) {
@@ -50,6 +57,7 @@ export class ContextCompiler {
       const records = (Array.isArray(refresh?.records) ? refresh.records : Array.isArray(refresh?.retained) ? refresh.retained : Array.isArray(refresh?.stm) ? refresh.stm : []).filter((record) => !isUserMessageReference(record));
       if (!records.length) throw new Error('STM refresh returned no retained records');
       const body = renderMemories('RETAINED SESSION STATE', records, 32);
+      if (!body) throw new Error('STM refresh returned no usable retained state');
       return { mode: 'stm_only', abort: false, directive: `<CUPPET_STM_COMPACTION mode="stm_only" abort="false">\nReplace model-facing historical continuity with the retained structured state below. Do not mutate the durable transcript.\n${clipTokens(body, Math.min(15_000, usableTokens))}\n</CUPPET_STM_COMPACTION>` };
     } catch (error) { return failCompaction(error instanceof Error ? error.message : String(error)); }
   }

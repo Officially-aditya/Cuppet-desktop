@@ -120,6 +120,7 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
   });
   const { setCommandResult, browserControlMentioned, handlePaletteKey, paletteView } = useChatPalette({
     value, setValue, commands, session, mode, composerKey, contextUsage, focusComposer,
+    onSubmitCommand: (raw) => submit(raw),
   });
 
   useEffect(() => {
@@ -129,7 +130,6 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
   useEffect(() => {
     historyRef.current = null;
     setSelectionMenu(null);
-    setCommandResult(null);
     if (fileInput.current) fileInput.current.value = '';
   }, [composerKey]);
 
@@ -171,8 +171,8 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
     return cleared;
   };
 
-  const submit = async () => {
-    const raw = value.trim();
+  const submit = async (commandText?: string) => {
+    const raw = (commandText ?? value).trim();
     const latest = composerRef.current;
     if (loading || (!raw && !attachments.length) || latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
     onSubmitStart?.();
@@ -183,7 +183,10 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
     try {
       const result = await onSend(raw, deliveryMode, attachments);
       restore = !result.clear;
-      if (result.commandResult && composerRef.current.key === composerKey) setCommandResult(result.commandResult);
+      if (result.commandResult && (composerRef.current.key === composerKey ||
+          (composerKey.startsWith('draft:') && composerRef.current.key === `session:${result.commandResult.sessionId}`))) {
+        setCommandResult(result.commandResult);
+      }
     } catch (error) {
       if (composerRef.current.key === composerKey) setCommandResult({ id: 'send', error: true, presentation: error instanceof Error ? error.message : String(error) });
     } finally {

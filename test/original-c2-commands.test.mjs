@@ -78,6 +78,40 @@ test('dispatcher delegates to existing authorities and never synthesizes a send 
   }
 });
 
+test('slash results display runtime data, memory matches, and structured failures', async () => {
+  const context = {
+    sessionId: 'chat', call: async () => ({}),
+    host: {
+      status: async () => ({ ok: true, activeRuns: 2, projects: { total: 3, missing: 1 },
+        provider: { configured: true, primary: { providerID: 'test', modelID: 'model' } },
+        cognitive: { tst: { connected: true }, backgroundPaused: true } }),
+      doctor: async () => ({ ok: false, checks: [{ id: 'runtime', status: 'error', message: 'Not responsive' }] }),
+    },
+  };
+  const status = await executeCommand(parseSlashCommand('/status'), context);
+  assert.match(status.presentation, /Active runs: 2/);
+  assert.match(status.presentation, /Projects: 3 \(1 missing\)/);
+  assert.match(status.presentation, /test \/ model/);
+  const doctor = await executeCommand(parseSlashCommand('/doctor'), context);
+  assert.equal(doctor.error, true);
+  assert.match(doctor.presentation, /ERROR · runtime: Not responsive/);
+  for (const [raw, data, expected, error] of [
+    ['/memory query', { available: true, records: [{ key: 'test-command', value: 'npm test', scope: 'project' }] }, /test-command \[project\]: npm test/, false],
+    ['/memory query', { available: true, records: [] }, /No matching memories/, false],
+    ['/memory query', { available: false, reason: 'TST disconnected' }, /TST disconnected/, true],
+    ['/background flush', { status: 'empty' }, /No background memory/, false],
+    ['/background flush', { status: 'completed', candidates: 3 }, /3 memories retained/, false],
+    ['/background flush', { status: 'failed', error: 'Worker offline' }, /Worker offline/, true],
+    ['/compact', { abort: true, error: 'No retained state' }, /No retained state/, true],
+    ['/undo', { undone: false, reason: 'Workspace changed' }, /Workspace changed/, false],
+  ]) {
+    context.call = async () => data;
+    const result = await executeCommand(parseSlashCommand(raw), context);
+    assert.match(result.presentation, expected, raw);
+    assert.equal(result.error, error, raw);
+  }
+});
+
 test('palette-only actions delegate through the same registry contract', async () => {
   const calls = [];
   const call = async (method, params = {}) => { calls.push({ method, params }); return { ok: true, ...params }; };

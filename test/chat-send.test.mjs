@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { listCommands } from '../src/runtime/commands.mjs';
 
 const source = await readFile(new URL('../src/renderer/react/App.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
@@ -15,7 +16,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function fixture({ activeSession = null, running = false, executeError = null, sessionLoads = new Map(), modeLoads = new Map() } = {}) {
+async function fixture({ activeSession = null, running = false, executeError = null, executeResult = null, providerConfigured = true, sessionLoads = new Map(), modeLoads = new Map() } = {}) {
   const created = deferred(), sent = deferred(), loaded = deferred(), deleted = deferred();
   const states = [], effects = [], saved = new Map(), sends = [], deletions = [], executions = [], pendingAdded = [], pendingRemoved = [];
   let stateIndex = 0, sessions = activeSession ? [activeSession] : [];
@@ -64,7 +65,7 @@ async function fixture({ activeSession = null, running = false, executeError = n
         hydrateClientRunState() {}, hydrateClientRunSession() {}, markClientRunStarted() {},
       };
       if (name === './client-provider-state') return {
-        useClientProviderSettings: () => ({ configured: true, credentialConfigured: true, primary: { modelID: 'test' } }),
+        useClientProviderSettings: () => ({ configured: providerConfigured, credentialConfigured: providerConfigured, primary: { modelID: 'test' } }),
         refreshClientProviderSettings: async () => ({}),
       };
       return {};
@@ -80,7 +81,7 @@ async function fixture({ activeSession = null, running = false, executeError = n
       },
       cognitive: { status: async () => ({}), modeGet: (id) => modeLoads.get(id)?.promise ?? Promise.resolve({ mode: 'build' }),
         modeSet: async () => ({}), orchestratorSet: async () => ({}) },
-      commands: { list: async () => [], execute: async (...args) => { executions.push(args); if (executeError) throw executeError; return { result: { accepted: true } }; } },
+      commands: { list: async () => listCommands(), execute: async (...args) => { executions.push(args); if (executeError) throw executeError; return executeResult ?? { result: { accepted: true } }; } },
       permissions: { list: async () => [] },
       questions: { list: async () => [] },
     } },
@@ -101,6 +102,44 @@ async function fixture({ activeSession = null, running = false, executeError = n
   await settle();
   return { pane, sidebar, toast, created, sent, loaded, deleted, deletions, sends, executions, pendingAdded, pendingRemoved, saved, settle };
 }
+
+test('all slash commands execute locally before checking provider configuration or queueing', async () => {
+  for (const raw of ['/status', '/doctor', '/memory find this', '/background pause', '/compact', '/undo']) {
+    const result = { id: raw.slice(1).split(' ')[0], presentation: 'Command output' };
+    const chat = await fixture({ activeSession: { id: 'chat', messages: [] }, running: true, providerConfigured: false, executeResult: result });
+    const sent = await chat.pane().onSend(raw, 'queue', []);
+    assert.equal(sent.clear, true, raw);
+    assert.equal(sent.commandResult, result);
+    assert.deepEqual(chat.executions, [['chat', raw]]);
+    assert.equal(chat.sends.length, 0);
+  }
+});
+
+test('command failures and unknown commands return inline errors and retain the draft', async () => {
+  for (const [raw, executeError, executeResult] of [
+    ['/status', new Error('Runtime offline'), null],
+    ['/compact', null, { id: 'compact', error: true, presentation: 'TST unavailable' }],
+    ['/missing', null, null],
+  ]) {
+    const chat = await fixture({ activeSession: { id: 'chat', messages: [] }, executeError, executeResult });
+    const result = await chat.pane().onSend(raw, 'queue', []);
+    assert.equal(result.clear, false);
+    assert.equal(result.commandResult.error, true);
+    assert.ok(result.commandResult.presentation);
+    assert.equal(chat.sends.length, 0);
+  }
+});
+
+test('session commands create a chat and return the result with that chat identity', async () => {
+  const result = { id: 'memory', sessionId: 'created-chat', presentation: 'No matching memories found.' };
+  const chat = await fixture({ executeResult: result });
+  const pending = chat.pane().onSend('/memory test', 'queue', []);
+  chat.created.resolve({ id: 'created-chat', messages: [] });
+  assert.equal((await pending).commandResult, result);
+  assert.equal(chat.pane().session.id, 'created-chat');
+  assert.deepEqual(chat.executions, [['created-chat', '/memory test']]);
+  assert.equal(chat.sends.length, 0);
+});
 
 for (const target of ['created-chat', 'routed-chat']) {
   test(`first prompt stays in its draft until the saved conversation is ready (${target})`, async () => {

@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RuntimeService } from '../src/runtime/service.mjs';
+import { executeCommand, parseSlashCommand } from '../src/runtime/commands.mjs';
+import { CognitiveStateStore } from '../src/runtime/cognitive-state.mjs';
 
 function waitFor(events, predicate, timeout = 1500) {
   return new Promise((resolve, reject) => {
@@ -139,6 +141,69 @@ test('orchestrator mode bypasses automatic retrieval and plan/build mode persist
     await waitFor(events, (event) => event.type === 'run.finished');
     assert.equal(providerRequests[0].some((message) => /CUPPET_(?:PLAN_MODE_)?CONTEXT/.test(message.content)), false);
     assert.equal((await runtime.handle('cognitive.status')).orchestratorEnabled, true);
+  } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('slash compaction persists across restart and changes model context while preserving chat history', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-slash-compact-'));
+  const events = [], requests = [];
+  let records = [{ key: 'goal', value: 'Keep the retained requirement' }];
+  const tst = { configured: true, status: { configured: true }, close() {},
+    prepareContext: async () => ({}), refreshStm: async () => ({ records }),
+    queryMemory: async () => ({ records }), turnCompleted: async () => ({}) };
+  const options = { databasePath: join(dir, 'db.sqlite3'), dataDir: dir, tst,
+    emit: event => events.push(event), backgroundFactory: backgroundStub,
+    providerFactory: () => ({ async stream(messages, { onDelta }) { requests.push(messages); await onDelta('done'); return { text: 'done' }; } }) };
+  let runtime = new RuntimeService(options);
+  const context = { sessionId: null, call: (method, params) => runtime.handle(method, params) };
+  try {
+    const session = await runtime.handle('session.create');
+    context.sessionId = session.id;
+    await runtime.handle('session.send', { sessionId: session.id, text: 'Original requirement' });
+    await waitFor(events, event => event.type === 'run.finished');
+    const before = (await runtime.handle('session.get', { sessionId: session.id })).messages;
+    const compact = await executeCommand(parseSlashCommand('/compact'), context);
+    assert.equal(compact.error, false);
+    assert.equal(compact.result.compacted, true);
+    assert.match(compact.presentation, /Context compacted through 2 messages/);
+    assert.deepEqual((await runtime.handle('session.get', { sessionId: session.id })).messages, before);
+    await runtime.close();
+    events.length = 0;
+    runtime = new RuntimeService(options);
+    await runtime.handle('session.send', { sessionId: session.id, text: 'Continue the task' });
+    await waitFor(events, event => event.type === 'run.finished');
+    assert.deepEqual(requests.at(-1).filter(message => message.role === 'user').map(message => message.content), ['Continue the task']);
+    assert.ok(requests.at(-1).some(message => message.role === 'system' && message.content.includes('Keep the retained requirement')));
+    const memory = await executeCommand(parseSlashCommand('/memory goal'), context);
+    assert.match(memory.presentation, /goal: Keep the retained requirement/);
+    assert.equal((await runtime.handle('session.get', { sessionId: session.id })).messages.length, 4);
+
+    records = [{ key: 'stale', value: 'Old state', stale: true }];
+    const failed = await executeCommand(parseSlashCommand('/compact'), context);
+    assert.equal(failed.error, true);
+    assert.equal(failed.result.abort, true);
+    const persisted = new CognitiveStateStore(join(dir, 'cognitive-state.json'));
+    await persisted.ready();
+    assert.equal(persisted.compaction(session.id).throughSequence, compact.result.throughSequence, 'failed compaction preserves the last valid checkpoint');
+    await runtime.handle('session.cleanup', { sessionId: session.id });
+    const cleaned = new CognitiveStateStore(join(dir, 'cognitive-state.json'));
+    await cleaned.ready();
+    assert.equal(cleaned.compaction(session.id), null, 'purge removes the saved compaction');
+  } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('manual compaction rejects a running chat', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-slash-busy-'));
+  const events = [];
+  const runtime = new RuntimeService({ databasePath: join(dir, 'db.sqlite3'), dataDir: dir,
+    emit: event => events.push(event), tst: { configured: false, close() {} }, backgroundFactory: backgroundStub,
+    providerFactory: () => ({ async stream(_messages, { signal }) { while (!signal.aborted) await new Promise(resolve => setTimeout(resolve, 5)); } }) });
+  try {
+    const session = await runtime.handle('session.create');
+    await runtime.handle('session.send', { sessionId: session.id, text: 'Keep working' });
+    await assert.rejects(runtime.handle('context.compact', { sessionId: session.id }), /while this chat is generating/);
+    runtime.stop(session.id);
+    await waitFor(events, event => event.type === 'run.finished');
   } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

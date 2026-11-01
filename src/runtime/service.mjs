@@ -241,14 +241,26 @@ export class RuntimeService {
   }
   async #compact(params) {
     const session = this.requireSession(params.sessionId);
+    if (this.#isSessionActive(session.id)) throw new Error('Cannot compact while this chat is generating. Stop it first.');
     const messages = this.#db.getSessionMessages(session.id);
     const prompt = typeof params.prompt === 'string' ? params.prompt : [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
     const userMessageId = [...messages].reverse().find((message) => message.role === 'user')?.id;
-    return this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(messages), userMessageId });
+    const result = await this.#compiler.stmCompactionDirective({ sessionId: session.id, prompt, messages, usableTokens: contextWindow(params.provider), estimatedTokens: estimateMessages(messages), userMessageId });
+    if (result.abort) return result;
+    const throughSequence = messages.at(-1)?.sequence;
+    if (!Number.isSafeInteger(throughSequence)) return { ...result, compacted: false, message: 'No conversation messages to compact yet.' };
+    if (this.#isSessionActive(session.id)) throw new Error('The chat started generating during compaction. Stop it and try again.');
+    await this.#cognitive.setCompaction(session.id, { throughSequence, directive: result.directive });
+    this.#compiler.clearSession?.(session.id);
+    return { ...result, compacted: true, throughSequence, messageCount: messages.length };
   }
   async #queryMemory(params) {
+    const session = this.requireSession(params.sessionId);
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
-    try { return { available: true, records: await this.#tst.queryMemory(params.sessionId, String(params.query ?? ''), params.limit ?? 20) }; }
+    try {
+      const result = await this.#tst.queryMemory(session.id, String(params.query ?? ''), params.limit ?? 20);
+      return { available: true, records: Array.isArray(result) ? result : result?.records ?? [] };
+    }
     catch (error) { return { available: false, records: [], reason: cleanError(error) }; }
   }
   async #memoryGraph(params) {

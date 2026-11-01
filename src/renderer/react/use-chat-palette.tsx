@@ -13,9 +13,10 @@ type Props = {
   composerKey: string;
   contextUsage?: ContextUsage;
   focusComposer: () => void;
+  onSubmitCommand: (raw: string) => Promise<void>;
 };
 
-export function useChatPalette({ value, setValue, commands, session, mode, composerKey, contextUsage, focusComposer }: Props) {
+export function useChatPalette({ value, setValue, commands, session, mode, composerKey, contextUsage, focusComposer, onSubmitCommand }: Props) {
   const [selected, setSelected] = useState(0);
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
   const [dismissedValue, setDismissedValue] = useState<string | null>(null);
@@ -36,7 +37,10 @@ export function useChatPalette({ value, setValue, commands, session, mode, compo
   useEffect(() => setSelected(0), [value, composerKey]);
 
 
-  useEffect(() => { setCommandResult(null); setDismissedValue(null); }, [composerKey]);
+  useEffect(() => {
+    setCommandResult((current) => current?.sessionId && composerKey === `session:${current.sessionId}` ? current : null);
+    setDismissedValue(null);
+  }, [composerKey]);
   const choose = async (item: CommandDefinition) => {
     if (item.paletteOnly) {
       if (item.requiresSession && !session) return;
@@ -53,8 +57,12 @@ export function useChatPalette({ value, setValue, commands, session, mode, compo
       return;
     }
     if (!item.slash) return;
-    setValue(`/${item.slash}${item.takesText ? ' ' : ''}`);
-    focusComposer();
+    if (item.takesText) {
+      setValue(`/${item.slash} `);
+      focusComposer();
+    } else {
+      await onSubmitCommand(`/${item.slash}`);
+    }
   };
 
 
@@ -87,6 +95,8 @@ export function useChatPalette({ value, setValue, commands, session, mode, compo
         return true;
       }
       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+        // Complete commands use the same submission path as the Send button.
+        if (commands.some((item) => !item.paletteOnly && exactSlash(value, item))) return false;
         event.preventDefault();
         const item = palette[selected] ?? palette[0];
         if (item) void choose(item);
@@ -200,10 +210,9 @@ export function removeBrowserControlMention(value: string) {
 }
 
 function currentSlashQuery(value: string) {
-  if (!value.startsWith('/') || value.includes('\n')) return null;
-  const trimmed = value.trim();
-  if (/\s/.test(trimmed)) return null;
-  return value.slice(1).toLowerCase();
+  const text = value.trimStart();
+  if (!text.startsWith('/') || /\s/.test(text)) return null;
+  return text.slice(1).toLowerCase();
 }
 
 function exactSlash(value: string, item: CommandDefinition) {

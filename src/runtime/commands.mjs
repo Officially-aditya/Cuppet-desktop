@@ -4,9 +4,9 @@ const MAX_ARGUMENTS = 32;
 const DEFINITIONS = Object.freeze([
   command('status', 'status', [], 'Show runtime, project, TST, PE3, and provider status.', 'session.read', 'host'),
   command('doctor', 'doctor', [], 'Run bounded runtime diagnostics.', 'session.read', 'host'),
-  command('memory', 'memory', [], 'Search verified Cuppet memory for this session.', 'session.read', 'runtime', { requiresSession: true }),
-  command('background', 'background', [], 'Show, pause, resume, or flush background memory.', 'session.write', 'runtime'),
-  command('compact', 'compact', [], 'Prepare the runtime compaction directive for this session.', 'session.write', 'runtime', { requiresSession: true }),
+  command('memory', 'memory', [], 'Search session memory: /memory [search text].', 'session.read', 'runtime', { requiresSession: true, takesText: true }),
+  command('background', 'background', [], 'Manage background memory: /background [status|pause|resume|toggle|flush].', 'session.write', 'runtime', { takesText: true }),
+  command('compact', 'compact', [], 'Compact context for future requests while keeping chat history.', 'session.write', 'runtime', { requiresSession: true }),
   command('undo', 'undo', [], 'Undo the latest conflict-safe Cuppet mutation.', 'session.write', 'runtime', { requiresSession: true }),
 
   palette('cuppet.memory.remember', 'Remember memory', 'Persist an explicit user memory through TST.', 'session.write', 'runtime'),
@@ -124,6 +124,7 @@ export async function executeCommand(parsedOrId, context = {}, input = {}) {
     alias: invocation.alias ?? null,
     sessionId,
     result,
+    error: commandFailed(definition.id, result),
     presentation: summarize(definition.id, result),
   };
 }
@@ -236,10 +237,66 @@ function normalizeToggle(value) {
 }
 async function resolveProviderRequest(value) { return typeof value === 'function' ? await value() : (value ?? {}); }
 function requiredFunction(value, label) { if (typeof value !== 'function') throw new Error(`${label} is unavailable on this surface`); return value; }
+function commandFailed(id, result) {
+  if (id === 'status' || id === 'doctor') return result?.ok === false;
+  if (id === 'memory') return result?.available === false;
+  if (id === 'compact') return result?.abort === true;
+  return id === 'background' && ['failed', 'tst-unavailable', 'unconfigured'].includes(result?.status);
+}
 function summarize(id, result) {
+  if (id === 'status') {
+    const lines = [`Runtime: ${result?.ok ? 'ready' : 'unavailable'}`];
+    if (result?.activeRuns !== undefined) lines.push(`Active runs: ${result.activeRuns}`);
+    if (result?.projects) lines.push(`Projects: ${result.projects.total} (${result.projects.missing} missing)`);
+    if (result?.sessions) lines.push(`Chats: ${result.sessions.total} (${result.sessions.interruptedOrError} interrupted or failed)`);
+    if (result?.permissions) lines.push(`Pending permissions: ${result.permissions.pending}`);
+    if (result?.provider) {
+      const primary = result.provider.primary;
+      lines.push(`Provider: ${result.provider.configured ? [primary?.providerID || result.provider.providerID, primary?.modelID].filter(Boolean).join(' / ') : 'not configured'}`);
+    }
+    if (result?.cognitive) {
+      const tst = result.cognitive.tst;
+      lines.push(`TST: ${tst?.connected ? 'connected' : tst?.configured ? 'disconnected' : 'not configured'}`);
+      lines.push(`Background memory: ${result.cognitive.backgroundPaused ? 'paused' : 'active'}`);
+    }
+    for (const [name, error] of Object.entries(result?.errors ?? {})) lines.push(`${name}: ${error}`);
+    return lines.join('\n');
+  }
+  if (id === 'doctor') {
+    const checks = Array.isArray(result?.checks) ? result.checks : [];
+    return [result?.ok ? 'Runtime diagnostics passed.' : 'Runtime diagnostics found a problem.', ...checks.map((check) => `${String(check.status).toUpperCase()} · ${check.id}: ${check.message}`)].join('\n');
+  }
+  if (id === 'memory') {
+    if (result?.available === false) return `Memory unavailable: ${result.reason || 'TST is unavailable.'}`;
+    const records = Array.isArray(result?.records) ? result.records : [];
+    if (!records.length) return 'No matching memories found.';
+    return [`${records.length} matching memor${records.length === 1 ? 'y' : 'ies'}:`, ...records.slice(0, 20).map((record) => `${record.key || record.id || 'Memory'}${record.scope ? ` [${record.scope}]` : ''}: ${String(record.value ?? '').slice(0, 1200)}`)].join('\n');
+  }
+  if (id === 'compact') {
+    if (result?.abort) return `Compaction could not run: ${result.error || 'retained session state is unavailable'}. Chat history was preserved.`;
+    return result?.compacted ? `Context compacted through ${result.messageCount} messages. Future requests will use retained session state; chat history is preserved.` : result?.message || 'Retained session state prepared. Chat history is preserved.';
+  }
   if (id === 'auto') return `Guarded auto: ${result?.enabled ? 'on' : 'off'}`;
   if (id === 'orchestrator') return `Orchestrator: ${result?.enabled ? 'on' : 'off'}`;
-  if (id === 'background') return result?.paused === true ? 'Background memory: paused' : result?.paused === false ? 'Background memory: active' : 'Background memory updated';
+  if (id === 'background' || id === 'cuppet.background.pause' || id === 'cuppet.background.resume') {
+    const messages = {
+      empty: 'No background memory is waiting to be processed.',
+      completed: `Background memory processed: ${result?.candidates ?? 0} memories retained.`,
+      deferred: 'Background memory is paused or already processing. Try again after resuming or waiting.',
+      cancelled: 'Background memory processing was cancelled.',
+      'tst-unavailable': 'Background memory cannot run: TST is unavailable.',
+      unconfigured: 'Configure a secondary model before processing background memory.',
+      failed: `Background memory failed: ${result?.error || 'unknown error'}`,
+    };
+    if (result?.status && messages[result.status]) return messages[result.status];
+    const lines = [result?.paused === true ? 'Background memory: paused' : result?.paused === false ? 'Background memory: active' : 'Background memory updated'];
+    if (Array.isArray(result?.workers)) {
+      const queued = result.workers.reduce((total, worker) => total + (Number(worker.queued) || 0), 0);
+      const running = result.workers.filter((worker) => worker.running).length;
+      lines.push(`Workers: ${result.workers.length} · running: ${running} · queued chats: ${queued}`);
+    }
+    return lines.join('\n');
+  }
   if (id === 'plan' || id === 'cuppet.plan.agent') return `Mode: ${result?.mode ?? 'updated'}`;
   if (id === 'abort') return result?.stopped ? 'Generation stopped.' : 'No active generation.';
   if (id === 'undo') return result?.undone ? 'Latest Cuppet mutation undone.' : result?.reason ?? 'Nothing to undo.';
