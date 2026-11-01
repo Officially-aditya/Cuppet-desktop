@@ -259,7 +259,15 @@ export class RuntimeService {
     if (!this.#tst.configured) return { available: false, records: [], reason: 'TST is not configured' };
     try {
       const result = await this.#tst.queryMemory(session.id, String(params.query ?? ''), params.limit ?? 20);
-      return { available: true, records: Array.isArray(result) ? result : result?.records ?? [] };
+      const records = Array.isArray(result) ? result : Array.isArray(result?.records) ? result.records
+        : [...(Array.isArray(result?.stm) ? result.stm : []), ...(Array.isArray(result?.ltm) ? result.ltm : [])];
+      const seen = new Set();
+      return { available: true, records: records.filter((record) => {
+        if (!record?.id) return true;
+        if (seen.has(record.id)) return false;
+        seen.add(record.id);
+        return true;
+      }) };
     }
     catch (error) { return { available: false, records: [], reason: cleanError(error) }; }
   }

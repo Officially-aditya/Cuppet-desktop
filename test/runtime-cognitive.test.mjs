@@ -192,6 +192,40 @@ test('slash compaction persists across restart and changes model context while p
   } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('memory slash command returns native TST memories before and after restart without duplicates', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cuppet-native-memory-'));
+  const retained = { id: 'project-memory', key: 'workspace marker', value: 'retained project requirement', scope: 'project' };
+  const recent = { id: 'session-memory', key: 'current goal', value: 'finish the local build', scope: 'session' };
+  let result = { stm: [retained, recent], ltm: [retained], graph: [] };
+  const options = { databasePath: join(dir, 'db.sqlite3'), dataDir: dir,
+    tst: { configured: true, close() {}, queryMemory: async () => result }, backgroundFactory: backgroundStub };
+  let runtime = new RuntimeService(options);
+  try {
+    const session = await runtime.handle('session.create');
+    const context = { sessionId: session.id, call: (method, params) => runtime.handle(method, params) };
+    const command = parseSlashCommand('/memory workspace');
+    const before = await executeCommand(command, context);
+    assert.equal(before.error, false);
+    assert.deepEqual(before.result.records, [retained, recent]);
+    assert.match(before.presentation, /2 matching memories/);
+    assert.match(before.presentation, /workspace marker \[project\]: retained project requirement/);
+    assert.match(before.presentation, /current goal \[session\]: finish the local build/);
+
+    await runtime.close();
+    result = { stm: [], ltm: [retained], graph: [] };
+    runtime = new RuntimeService(options);
+    const after = await executeCommand(command, context);
+    assert.equal(after.error, false);
+    assert.deepEqual(after.result.records, [retained]);
+    assert.match(after.presentation, /workspace marker \[project\]: retained project requirement/);
+
+    for (const legacyResult of [[retained], { records: [retained] }]) {
+      result = legacyResult;
+      assert.deepEqual((await runtime.handle('memory.query', { sessionId: session.id, query: 'workspace' })).records, [retained]);
+    }
+  } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('manual compaction rejects a running chat', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cuppet-slash-busy-'));
   const events = [];
