@@ -1,4 +1,4 @@
-import { ToolRuntime } from './tool-runtime.mjs';
+import { ToolRuntime, workspacePathArgument } from './tool-runtime.mjs';
 import { redactCredentials } from './credential-sanitization.mjs';
 import { ProviderRuntimeManager } from './providers/runtime-manager.mjs';
 import { ExecutionKernel } from './execution/execution-kernel.mjs';
@@ -465,12 +465,13 @@ class ToolMutationCapture {
     if (this.#pending.has(callId)) return;
     if (call?.name === 'workspace_edit' || call?.name === 'workspace_write') {
       const args = parseArguments(call.arguments);
-      const path = typeof args.path === 'string' ? args.path : '';
+      const path = workspacePathArgument(args);
       if (!path) return;
       const token = await this.#journal.beginFile({ sessionId: this.#sessionId, executionId: callId, tool: call.name, projectRoot: this.#projectRoot, path });
       this.#pending.set(callId, { kind: 'file', token });
-    } else if (call?.name === 'bash' || call?.name === 'package_dmg') {
-      this.#pending.set(callId, { kind: 'barrier', tool: call.name });
+    } else if (call?.name === 'bash' || call?.name === 'cuppet_execute' || call?.name === 'package_dmg') {
+      // `cuppet_execute` is the provider-facing name of `bash` (see ExecutionKernel); both must leave an undo barrier.
+      this.#pending.set(callId, { kind: 'barrier', tool: call.name === 'cuppet_execute' ? 'bash' : call.name });
     }
   }
 

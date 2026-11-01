@@ -199,7 +199,7 @@ export class ManagedTstManager {
 
 export class TstSupervisor {
   #binaryPath; #projectRoot; #projectStore; #globalStore; #runRoot; #idleMs; #projectKey;
-  #child; #bridge; #runDir; #idleTimer; #stderr = ''; #lastError; #starts = 0; #closed = false; #verified = false; #spawnError;
+  #child; #bridge; #starting; #runDir; #idleTimer; #stderr = ''; #lastError; #starts = 0; #closed = false; #verified = false; #spawnError;
 
   constructor({ binaryPath, projectRoot, projectStore, globalStore, runRoot, idleMs = DEFAULT_IDLE_MS, projectKey = null }) {
     this.#binaryPath = binaryPath;
@@ -250,8 +250,11 @@ export class TstSupervisor {
 
   async #ensureStarted() {
     if (this.#closed) throw new Error('TST supervisor is closed');
+    // One start at a time: concurrent cold-start callers used to spawn one daemon each and orphan all but the last.
+    if (this.#starting) { await this.#starting; return this.#bridge; }
     if (this.#child && this.#child.exitCode === null && this.#bridge) return this.#bridge;
-    await this.#start();
+    this.#starting = this.#start().finally(() => { this.#starting = undefined; });
+    await this.#starting;
     return this.#bridge;
   }
 
@@ -299,7 +302,7 @@ export class TstSupervisor {
       if (staleRun) void rm(staleRun, { recursive: true, force: true }).catch(() => undefined);
     });
 
-    const bridge = new TstBridge({ socketPath, token });
+    const bridge = new TstBridge({ socketPath, token, connectTimeoutMs: 2_000 });
     this.#bridge = bridge;
     const deadline = Date.now() + STARTUP_TIMEOUT_MS;
     let lastError;
@@ -307,7 +310,8 @@ export class TstSupervisor {
       if (this.#spawnError) throw this.#spawnError;
       if (child.exitCode !== null) throw new Error(`TST daemon exited during startup (${child.exitCode})${this.#stderr.trim() ? `: ${this.#stderr.trim().slice(-1000)}` : ''}`);
       try {
-        await bridge.call('status');
+        // Bounded probe: without a timeout a wedged daemon made this loop (and its 10s deadline) wait forever.
+        await bridge.call('status', {}, { timeoutMs: Math.max(250, Math.min(2_000, deadline - Date.now())) });
         this.#lastError = undefined;
         this.#scheduleIdle();
         return;

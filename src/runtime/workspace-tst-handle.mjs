@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { readdir, readFile, stat, mkdir, writeFile } from 'node:fs/promises';
-import { basename, extname, join, relative, resolve } from 'node:path';
+import { readdir, readFile, realpath, stat, mkdir, writeFile, rename, rm } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const WORKSPACE_TST_CAPABILITIES = [
   'context.prepare',
@@ -47,6 +47,8 @@ const BINARY_EXTENSIONS = new Set([
   '.sqlite3', '.sqlite', '.db',
 ]);
 
+const MAX_INDEXED_FILES = 5000;
+
 export class WorkspaceTstHandle {
   #projectRoot;
   #projectKey;
@@ -55,6 +57,8 @@ export class WorkspaceTstHandle {
   #sessionMemories = new Map();
   #cachedFiles = null;
   #cacheTimestamp = 0;
+  #indexCapped = false;
+  #memoryQueue = Promise.resolve();
 
   constructor({ projectRoot, projectKey = null, projectStore = null, globalStore = null } = {}) {
     if (!projectRoot) throw new Error('WorkspaceTstHandle requires projectRoot');
@@ -122,7 +126,7 @@ export class WorkspaceTstHandle {
   }
 
   async graphWorkspace(limit = 100) {
-    const files = await this.#scanFiles();
+    const { files, capped } = await this.#scanFiles();
     const clampedLimit = clamp(Number(limit) || 100, 1, 512);
     return {
       root: this.#projectRoot,
@@ -130,14 +134,15 @@ export class WorkspaceTstHandle {
         files: files.length,
         symbols: 0,
         edges: 0,
+        ...(capped ? { truncated: true } : {}),
       },
       files: files.slice(0, clampedLimit),
     };
   }
 
   async graphList(prefix, limit = 100) {
-    const files = await this.#scanFiles();
     const cleanPrefix = typeof prefix === 'string' ? prefix.trim().replace(/^\/+|\/+$/g, '') : '';
+    const { files, capped } = await this.#scanFiles(cleanPrefix);
     const filtered = cleanPrefix
       ? files.filter((path) => path === cleanPrefix || path.startsWith(`${cleanPrefix}/`))
       : files;
@@ -146,6 +151,7 @@ export class WorkspaceTstHandle {
       prefix: cleanPrefix,
       total: filtered.length,
       paths: filtered.slice(0, clampedLimit),
+      ...(capped ? { truncated: true } : {}),
     };
   }
 
@@ -154,8 +160,8 @@ export class WorkspaceTstHandle {
     const clampedLimit = clamp(Number(limit) || 12, 1, 12);
     if (!query) return { query, matches: [] };
 
-    const files = await this.#scanFiles();
     const cleanPrefix = typeof prefix === 'string' ? prefix.trim().replace(/^\/+|\/+$/g, '') : '';
+    const { files } = await this.#scanFiles(cleanPrefix);
     const candidates = cleanPrefix
       ? files.filter((path) => path === cleanPrefix || path.startsWith(`${cleanPrefix}/`))
       : files;
@@ -229,6 +235,7 @@ export class WorkspaceTstHandle {
       direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both',
       depth: clamp(Number(depth) || 2, 1, 4),
       edges: [],
+      unsupported: 'Call-graph tracing needs the native TST daemon; this workspace uses the text-search fallback, so an empty result means "unknown", not "no callers". Use tst_explore mode=search for references and tst_read to inspect call sites.',
     };
   }
 
@@ -299,7 +306,16 @@ export class WorkspaceTstHandle {
     return filtered.slice(0, maxLimit);
   }
 
-  async rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) {
+  rememberMemory(sessionId, input = {}) { return this.#serialMemory(() => this.#rememberMemory(sessionId, input)); }
+  forgetMemory(sessionId, key) { return this.#serialMemory(() => this.#forgetMemory(sessionId, key)); }
+  clearMemory(sessionId, scope = 'session') { return this.#serialMemory(() => this.#clearMemory(sessionId, scope)); }
+  #serialMemory(task) {
+    const run = this.#memoryQueue.then(task, task);
+    this.#memoryQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async #rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) {
     const normalizedScope = normalizeMemoryScope(scope);
     const recordKey = String(key ?? '').slice(0, 240);
     const recordValue = String(value ?? '').slice(0, 4000);
@@ -335,7 +351,7 @@ export class WorkspaceTstHandle {
     return memoryRecord;
   }
 
-  async forgetMemory(sessionId, key) {
+  async #forgetMemory(sessionId, key) {
     const targetKey = String(key ?? '').slice(0, 240);
     if (sessionId && this.#sessionMemories.has(sessionId)) {
       this.#sessionMemories.get(sessionId).delete(targetKey);
@@ -351,7 +367,7 @@ export class WorkspaceTstHandle {
     return { forgotten: true };
   }
 
-  async clearMemory(sessionId, scope = 'session') {
+  async #clearMemory(sessionId, scope = 'session') {
     const normalized = normalizeMemoryScope(scope);
     if (normalized === 'session' && sessionId) {
       this.#sessionMemories.delete(sessionId);
@@ -391,17 +407,31 @@ export class WorkspaceTstHandle {
     this.#cachedFiles = null;
   }
 
-  async #scanFiles() {
+  async #scanFiles(prefix = '') {
+    const cleanPrefix = normalizePrefix(prefix);
+    if (cleanPrefix === null) return { files: [], capped: false };
     const now = Date.now();
-    if (this.#cachedFiles && now - this.#cacheTimestamp < 3000) {
-      return this.#cachedFiles;
+    if (!cleanPrefix) {
+      if (this.#cachedFiles && now - this.#cacheTimestamp < 3000) return { files: this.#cachedFiles, capped: this.#indexCapped };
+      const files = [];
+      await walkDir(this.#projectRoot, this.#projectRoot, files, MAX_INDEXED_FILES);
+      this.#indexCapped = files.length >= MAX_INDEXED_FILES;
+      files.sort((a, b) => a.localeCompare(b));
+      this.#cachedFiles = files;
+      this.#cacheTimestamp = now;
+      return { files, capped: this.#indexCapped };
     }
+    // A prefix walks only that subtree, so it keeps working when the whole-repository index is capped.
+    const startPath = resolve(this.#projectRoot, cleanPrefix);
+    const rootReal = await realpath(this.#projectRoot).catch(() => resolve(this.#projectRoot));
+    const startReal = await realpath(startPath).catch(() => null);
+    if (!startReal || !isInside(rootReal, startReal)) return { files: [], capped: false };
+    const info = await stat(startReal).catch(() => null);
+    if (info?.isFile()) return { files: [cleanPrefix], capped: false };
     const files = [];
-    await walkDir(this.#projectRoot, this.#projectRoot, files, 5000);
+    await walkDir(this.#projectRoot, startPath, files, MAX_INDEXED_FILES);
     files.sort((a, b) => a.localeCompare(b));
-    this.#cachedFiles = files;
-    this.#cacheTimestamp = now;
-    return files;
+    return { files, capped: files.length >= MAX_INDEXED_FILES };
   }
 
   async #loadMemories(storeDir) {
@@ -409,9 +439,12 @@ export class WorkspaceTstHandle {
     try {
       const filePath = join(storeDir, 'memory.json');
       const raw = await readFile(filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return new Map(parsed.map((item) => [item.key, item]));
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return new Map(parsed.map((item) => [item.key, item]));
+      } catch {
+        // A torn/corrupt file used to be treated as empty and then overwritten; keep it for recovery instead.
+        await rename(filePath, `${filePath}.corrupt-${Date.now()}`).catch(() => undefined);
       }
     } catch {}
     return new Map();
@@ -423,7 +456,9 @@ export class WorkspaceTstHandle {
       await mkdir(storeDir, { recursive: true });
       const filePath = join(storeDir, 'memory.json');
       const records = [...memoryMap.values()];
-      await writeFile(filePath, JSON.stringify(records, null, 2), 'utf8');
+      const temp = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+      try { await writeFile(temp, JSON.stringify(records, null, 2), 'utf8'); await rename(temp, filePath); }
+      catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
     } catch {}
   }
 }
@@ -444,13 +479,24 @@ async function walkDir(rootDir, currentDir, accumulator, maxFiles) {
 
     const fullPath = join(currentDir, name);
     if (entry.isDirectory()) {
-      if (IGNORED_DIRECTORIES.has(name) || name.startsWith('.git')) continue;
+      if (IGNORED_DIRECTORIES.has(name)) continue;   // '.git' is in the set; .github/.gitlab/etc. are ordinary source directories
       await walkDir(rootDir, fullPath, accumulator, maxFiles);
     } else if (entry.isFile()) {
       const rel = relative(rootDir, fullPath).replaceAll('\\', '/');
       accumulator.push(rel);
     }
   }
+}
+
+function normalizePrefix(value) {
+  if (typeof value !== 'string') return '';
+  const text = value.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+  if (text.includes('\0') || text.split('/').includes('..')) return null;
+  return text;
+}
+function isInside(root, candidate) {
+  const path = relative(root, candidate);
+  return path === '' || (path !== '..' && !path.startsWith('../') && !path.startsWith('..\\') && !isAbsolute(path));
 }
 
 function clamp(value, min, max) {

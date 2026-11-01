@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -15,11 +15,15 @@ const MAX_TOOL_OUTPUT = 128 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_GRAPH_CACHE_SESSIONS = 128;
 const MAX_GRAPH_CACHE_CALLS = 128;
+const GRAPH_CACHE_TTL_MS = 120_000;
+const OBSERVATION_TIMEOUT_MS = 1_500;
+// Tools that never change the workspace; every other call advances the per-project epoch that scopes the explore dedupe cache.
+const READ_ONLY_TOOLS = new Set(['tst_explore', 'tst_read', 'workspace_read', 'cuppet_plan', 'cuppet_memory_search', 'question']);
 const MAX_BATCH_READS = 12;
 const MAX_VALIDATION_COMMANDS = 8;
 
 export class ToolRuntime {
-  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #operations; #graphCache = new Map();
+  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #operations; #graphCache = new Map(); #workspaceEpoch = new Map();
 
   constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, sandboxManager = null, dataDir = join(homedir(), '.cuppet-desktop'), emit = () => {} }) {
     this.#tst = tst;
@@ -106,7 +110,8 @@ export class ToolRuntime {
               description: String(request?.title || 'Allow local coding agent action').slice(0, 500),
               fingerprintKey: stableJson(request?.rawInput ?? {}),
             });
-            return permission.source === 'session-exact' ? 'always' : 'once';
+            // Cuppet stays the approval authority: an exact-request approval is replayed by Cuppet itself, never widened into the agent's own 'allow always'.
+            return 'once';
           },
         });
         usage = response?.usage ?? usage;
@@ -150,7 +155,9 @@ export class ToolRuntime {
       const output = capText(result.output ?? '', MAX_TOOL_OUTPUT);
       this.#db.finishToolExecution(executionId, { status: 'complete', output, permissionSource });
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), output, message: output, ...(messageId ? { messageId } : {}) });
-      if (result.details?.prepared !== true) await this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? '').catch(() => undefined);
+      this.#noteWorkspaceActivity(projectRoot, call.name, result);
+      // Memory bookkeeping must never be able to hold the model's tool result hostage (a wedged TST daemon used to block every tool call).
+      if (result.details?.prepared !== true) await settleWithin(this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? ''), OBSERVATION_TIMEOUT_MS);
       return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;
@@ -158,7 +165,8 @@ export class ToolRuntime {
       const output = capText(`${rejected ? 'Permission denied' : 'Tool failed'}: ${cleanError(error)}`, MAX_TOOL_OUTPUT);
       this.#db.finishToolExecution(executionId, { status: rejected ? 'rejected' : 'error', output, permissionSource });
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: false, rejected, message: cleanError(error), ...(messageId ? { messageId } : {}) });
-      return { output, contentItems: [], success: false, paths: [], mutation: false, validation: null };
+      this.#noteWorkspaceActivity(projectRoot, call.name, null);
+      return { output, contentItems: [], success: false, denied: rejected, paths: [], mutation: false, validation: null };
     }
   }
 
@@ -190,14 +198,14 @@ export class ToolRuntime {
       case 'tst_explore': return this.#explore(sessionId, projectRoot, args);
       case 'tst_read': return this.#read(projectRoot, args, authorize);
       case 'workspace_read': return this.#rawRead(projectRoot, args, authorize);
-      case 'tst_edit_batch': return this.#batchEdit({ sessionId, projectRoot, executionId, args, authorize });
+      case 'tst_edit_batch': return this.#batchEdit({ sessionId, projectRoot, executionId, args, authorize, signal });
       case 'tst_validate': return this.#validate(projectRoot, args, authorize, signal, sessionId);
-      case 'workspace_edit': return this.#mutating(projectRoot, () => this.#edit(projectRoot, args, authorize));
-      case 'workspace_write': return this.#mutating(projectRoot, () => this.#write(projectRoot, args, authorize));
+      case 'workspace_edit': return this.#mutating(projectRoot, (lock) => this.#edit(projectRoot, args, unlocked(authorize, lock)), signal);
+      case 'workspace_write': return this.#mutating(projectRoot, (lock) => this.#write(projectRoot, args, unlocked(authorize, lock)), signal);
       case 'bash': return this.#bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId);
       case 'background_process': return this.#backgroundProcess(projectRoot, args, authorize, signal, sessionId);
       case 'git_push': return this.#operations.gitPush({ projectRoot, repositoryPath: args.repository_path, remote: args.remote, branch: args.branch, commit: args.commit, authorize, signal });
-      case 'package_dmg': return this.#mutating(projectRoot, () => this.#operations.packageDmg({ projectRoot, source: args.source, output: args.output, authorize, signal }));
+      case 'package_dmg': return this.#mutating(projectRoot, () => this.#operations.packageDmg({ projectRoot, source: args.source, output: args.output, authorize, signal }), signal);
       default: throw new Error(`Unknown tool: ${name}`);
     }
   }
@@ -396,7 +404,7 @@ export class ToolRuntime {
     if (!projectRoot) return { output: 'Cuppet workspace graph requires a project-bound chat.', paths: [], mutation: false };
     if (!this.#tst?.configured) return { output: 'Cuppet workspace graph is unavailable because TST is not configured.', paths: [], mutation: false };
     const mode = ['workspace', 'tree', 'search', 'trace'].includes(args.mode) ? args.mode : 'workspace';
-    const key = stableJson({ mode, query: args.query ?? '', prefix: args.prefix ?? '', direction: args.direction ?? 'both', depth: args.depth ?? 2, limit: args.limit ?? null });
+    const key = stableJson({ mode, query: args.query ?? '', prefix: args.prefix ?? '', direction: args.direction ?? 'both', depth: args.depth ?? 2, limit: args.limit ?? null, epoch: this.#workspaceEpoch.get(projectRoot) ?? 0 });
     const prior = this.#graphPrior(sessionId, key);
     if (prior) return { output: `UNTRUSTED CUPPET CODE GRAPH RESULTS\nThe identical ${mode} result was already returned earlier in this session (result #${prior.id}).\nUse that result or narrow/change the query for new navigation detail.`, paths: prior.paths, mutation: false };
 
@@ -452,8 +460,8 @@ export class ToolRuntime {
   async #read(projectRoot, args, authorize) {
     const requests = [];
     if (typeof args.path === 'string' && args.path) requests.push({ kind: 'lines', path: args.path, start_line: args.start_line, end_line: args.end_line });
-    for (const value of array(args.reads).slice(0, MAX_BATCH_READS)) { const item = record(value); if (item.path) requests.push({ kind: 'lines', path: item.path, start_line: item.start_line, end_line: item.end_line }); }
-    for (const value of array(args.targets).slice(0, MAX_BATCH_READS)) requests.push({ kind: 'target', target: validateReadTarget(record(value)) });
+    for (const value of array(args.reads)) { const item = record(value); if (item.path) requests.push({ kind: 'lines', path: item.path, start_line: item.start_line, end_line: item.end_line }); }
+    for (const value of array(args.targets)) requests.push({ kind: 'target', target: validateReadTarget(record(value)) });
     if (!requests.length) throw new Error('tst_read requires path, reads, or targets');
     if (requests.length > MAX_BATCH_READS) throw new Error(`tst_read supports at most ${MAX_BATCH_READS} batched reads`);
 
@@ -464,7 +472,8 @@ export class ToolRuntime {
       resolved.push({ request, file });
     }
     const resources = [...new Set(resolved.map((item) => item.file.relative))];
-    await authorize({ action: 'read', resources, description: `Read ${resources.length} project source target${resources.length === 1 ? '' : 's'}` });
+    const permissionResources = [...new Set(resolved.map((item) => item.file.canonical))];
+    await authorize({ action: 'read', resources: permissionResources, description: `Read ${resources.length} project source target${resources.length === 1 ? '' : 's'}` });
     const maxBytes = clamp(Number(args.max_bytes) || 65536, 1024, MAX_TOOL_OUTPUT);
     const sections = [];
     for (const { request, file } of resolved) {
@@ -475,19 +484,27 @@ export class ToolRuntime {
         const hash = sha256(raw); const target = request.target;
         if (hash !== target.base_hash) throw new Error(`Revision-bound target is stale for ${file.relative}`);
         if (target.end_byte > raw.length || !raw.subarray(target.start_byte, target.end_byte).equals(Buffer.from(target.expected_source, 'utf8'))) throw new Error(`Revision-bound target source no longer matches ${target.target_id}`);
-        sections.push(`TARGET ${target.target_id} ${file.relative}:${target.start_row + 1}:${target.start_column + 1}-${target.end_row + 1}:${target.end_column + 1}\nbase_hash: ${hash}\n${raw.subarray(target.start_byte, target.end_byte).toString('utf8')}`);
+        sections.push({ label: target.target_id, text: `TARGET ${target.target_id} ${file.relative}:${target.start_row + 1}:${target.start_column + 1}-${target.end_row + 1}:${target.end_column + 1}\nbase_hash: ${hash}\n${raw.subarray(target.start_byte, target.end_byte).toString('utf8')}` });
       } else {
         const source = raw.toString('utf8'); const lines = source.split(/\r?\n/);
         const start = clamp(Number(request.start_line) || 1, 1, Math.max(1, lines.length));
         const end = clamp(Number(request.end_line) || Math.min(lines.length, start + 399), start, lines.length || start);
         const selected = lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`).join('\n');
-        sections.push(`FILE ${file.relative} lines ${start}-${end}\ncontent_hash: ${sha256(raw)}\n${selected}`);
+        sections.push({ label: file.relative, text: `FILE ${file.relative} lines ${start}-${end}\ncontent_hash: ${sha256(raw)}\n${selected}` });
       }
     }
-    return { output: capText(`AUTHORITATIVE FILESYSTEM SOURCE (${sections.length} result${sections.length === 1 ? '' : 's'}; coverage=${sections.length}/${requests.length})\n\n${sections.join('\n\n---\n\n')}`, maxBytes), paths: resources, mutation: false };
+    // Coverage must describe what the model actually receives, so apply the output budget per section first.
+    const separator = '\n\n---\n\n'; const kept = []; const omitted = []; let used = 384;
+    for (const section of sections) {
+      const size = Buffer.byteLength(section.text) + separator.length;
+      if (kept.length && used + size > maxBytes) { omitted.push(section.label); continue; }
+      kept.push(section.text); used += size;
+    }
+    const omittedNote = omitted.length ? `; omitted for size: ${omitted.slice(0, 12).join(', ')} (read them in a separate call)` : '';
+    return { output: capText(`AUTHORITATIVE FILESYSTEM SOURCE (${kept.length} result${kept.length === 1 ? '' : 's'}; coverage=${kept.length}/${requests.length}${omittedNote})\n\n${kept.join(separator)}`, maxBytes), paths: resources, mutation: false };
   }
 
-  async #batchEdit({ sessionId, projectRoot, executionId, args, authorize }) {
+  async #batchEdit({ sessionId, projectRoot, executionId, args, authorize, signal }) {
     if (!this.#batchEdits) throw new Error('TST batch editing is unavailable in this runtime.');
     const action = args.action === 'apply' ? 'apply' : 'prepare';
     if (action === 'prepare') {
@@ -495,7 +512,7 @@ export class ToolRuntime {
       return { output: `TST EDIT BATCH PREPARED (no files written)\nbatch_id: ${batch.id}\ndiff_digest: ${batch.diffDigest}\npaths: ${batch.paths.join(', ')}\n\n${batch.diff}`, paths: [], mutation: false, details: { prepared: true, batchId: batch.id, diffDigest: batch.diffDigest } };
     }
     const batchId = String(args.batch_id ?? '').trim(); if (!batchId) throw new Error('batch_id is required for action=apply');
-    const result = await this.#batchEdits.apply({ batchId, sessionId, projectRoot, executionId, authorize });
+    const result = await this.#batchEdits.apply({ batchId, sessionId, projectRoot, executionId, authorize, signal });
     return {
       output: `TST EDIT BATCH APPLIED\nbatch_id: ${result.id}\ndiff_digest: ${result.diffDigest}\ngraph_ready: ${result.graphReady}${result.graphError ? `\ngraph_error: ${result.graphError}` : ''}\npaths: ${result.paths.join(', ')}\n\n${result.diff}`,
       paths: result.paths, mutation: true,
@@ -534,9 +551,9 @@ export class ToolRuntime {
   }
 
   async #edit(projectRoot, args, authorize) {
-    const filePath = args.path ?? args.file_path ?? args.filePath ?? args.file;
+    const filePath = workspacePathArgument(args);
     const resolved = await resolveWorkspacePath(projectRoot, filePath, { mustExist: true });
-    await authorize({ action: 'edit', resources: [resolved.relative], description: `Edit ${resolved.relative}` });
+    await authorize({ action: 'edit', resources: [resolved.canonical], description: `Edit ${describeResolved(resolved)}` });
     const rawOld = args.old_text ?? args.oldText ?? args.oldtext ?? args.search ?? args.needle;
     const oldText = String(rawOld ?? '');
     const rawNew = args.new_text ?? args.newText ?? args.newtext ?? args.replacement ?? args.replace;
@@ -551,7 +568,7 @@ export class ToolRuntime {
     if (!count) throw new Error('old_text was not found');
     const replaceAll = args.replace_all ?? args.replaceAll;
     if (replaceAll !== true && count !== 1) throw new Error(`old_text matched ${count} times; make the edit more specific or set replace_all=true`);
-    const next = replaceAll === true ? source.split(oldText).join(newText) : source.replace(oldText, newText);
+    const next = replaceAll === true ? source.split(oldText).join(newText) : source.replace(oldText, () => newText);
     if (Buffer.byteLength(next) > MAX_FILE_BYTES) throw new Error(`Edited file exceeds ${MAX_FILE_BYTES} byte limit`);
     await writeFile(resolved.absolute, next, 'utf8');
     return { output: `Edited ${resolved.relative}${replaceAll === true ? ` (${count} replacements)` : ''}.`, paths: [resolved.relative], mutation: true };
@@ -559,7 +576,7 @@ export class ToolRuntime {
 
   async #rawRead(projectRoot, args, authorize) {
     const resolved = await resolveWorkspacePath(projectRoot, args.path, { mustExist: true });
-    await authorize({ action: 'read', resources: [resolved.relative], description: `Read ${resolved.relative}` });
+    await authorize({ action: 'read', resources: [resolved.canonical], description: `Read ${describeResolved(resolved)}` });
     const content = await readFile(resolved.absolute, 'utf8');
     const start = Math.max(1, Number.isInteger(args.start_line) ? args.start_line : 1);
     const lines = content.split(/\r?\n/);
@@ -570,9 +587,9 @@ export class ToolRuntime {
   }
 
   async #write(projectRoot, args, authorize) {
-    const filePath = args.path ?? args.file_path ?? args.filePath ?? args.file;
+    const filePath = workspacePathArgument(args);
     const resolved = await resolveWorkspacePath(projectRoot, filePath, { mustExist: false });
-    await authorize({ action: 'write', resources: [resolved.relative], description: `Write ${resolved.relative}` });
+    await authorize({ action: 'write', resources: [resolved.canonical], description: `Write ${describeResolved(resolved)}` });
     const rawContent = args.content ?? args.text ?? args.file_content ?? args.fileContent;
     const content = String(rawContent ?? '');
     if (Buffer.byteLength(content) > MAX_FILE_BYTES) throw new Error(`Content exceeds ${MAX_FILE_BYTES} byte write limit`);
@@ -584,7 +601,7 @@ export class ToolRuntime {
   async #bashWithWriter(projectRoot, args, authorize, signal, mode, sessionId = null) {
     const command = String(args.command ?? '').trim();
     if (isSafeAutoBashCommand(command)) return this.#bash(projectRoot, args, authorize, signal, mode, sessionId);
-    return this.#mutating(projectRoot, () => this.#bash(projectRoot, args, authorize, signal, mode, sessionId));
+    return this.#mutating(projectRoot, (lock) => this.#bash(projectRoot, args, unlocked(authorize, lock), signal, mode, sessionId), signal);
   }
 
   async #bash(projectRoot, args, authorize, signal, mode = 'build', sessionId = null) {
@@ -611,8 +628,8 @@ export class ToolRuntime {
     return { output, paths: changed, mutation: changed.length > 0, validation: validationReference(command) };
   }
 
-  async #mutating(projectRoot, fn) {
-    return this.#writer?.withProject ? this.#writer.withProject(projectRoot, fn) : fn();
+  async #mutating(projectRoot, fn, signal) {
+    return this.#writer?.withProject ? this.#writer.withProject(projectRoot, fn, { signal }) : fn({ suspend: (work) => work() });
   }
 
   async #recordToolObservation(sessionId, name, path) {
@@ -620,11 +637,19 @@ export class ToolRuntime {
     await this.#tst.observeMemory(sessionId, { key: `action:${name}:${String(path).slice(0, 60)}`, value: `Executed ${name}${path ? ` on ${path}` : ''}`, kind: 'concept_anchor', scope: 'session', provenance: 'tool' });
   }
 
-  #graphPrior(sessionId, key) { return this.#graphCache.get(sessionId)?.calls.get(key) ?? null; }
+  #noteWorkspaceActivity(projectRoot, name, result) {
+    if (!projectRoot || READ_ONLY_TOOLS.has(name) || result?.details?.prepared === true) return;
+    this.#workspaceEpoch.set(projectRoot, (this.#workspaceEpoch.get(projectRoot) ?? 0) + 1);
+  }
+
+  #graphPrior(sessionId, key) {
+    const entry = this.#graphCache.get(sessionId)?.calls.get(key);
+    return entry && Date.now() - entry.at <= GRAPH_CACHE_TTL_MS ? entry : null;
+  }
   #graphRemember(sessionId, key, paths) {
     let session = this.#graphCache.get(sessionId);
     if (!session) { session = { nextID: 1, calls: new Map() }; this.#graphCache.set(sessionId, session); }
-    session.calls.set(key, { id: session.nextID++, paths: paths.slice(0, 64) });
+    session.calls.set(key, { id: session.nextID++, paths: paths.slice(0, 64), at: Date.now() });
     while (session.calls.size > MAX_GRAPH_CACHE_CALLS) session.calls.delete(session.calls.keys().next().value);
     while (this.#graphCache.size > MAX_GRAPH_CACHE_SESSIONS) this.#graphCache.delete(this.#graphCache.keys().next().value);
   }
@@ -755,10 +780,11 @@ export function agentPermissionAction(kind, title = '') {
   if (value === 'read') return 'read';
   if (value === 'search') return /\b(web|browser|url|https?)\b/.test(hint) ? 'web-fetch' : 'read';
   if (['fetch', 'web-fetch', 'web-search', 'browse', 'browser-fetch', 'url-fetch', 'http-fetch'].includes(value)) return 'web-fetch';
-  if (/\b(web|browser|url|https?)\b/.test(hint) && /\b(fetch|search|browse|open|get|read)\b/.test(hint)) return 'web-fetch';
+  // An explicit side-effecting kind is authoritative; the agent-supplied free-text title may only classify kinds we do not recognise.
   if (value === 'delete') return 'delete';
   if (['edit', 'move', 'write'].includes(value)) return 'edit';
   if (['execute', 'terminal'].includes(value)) return 'bash';
+  if (/\b(web|browser|url|https?)\b/.test(hint) && /\b(fetch|search|browse|open|get|read)\b/.test(hint)) return 'web-fetch';
   return 'agent-tool';
 }
 export function agentPermissionResources(request) {
@@ -816,14 +842,33 @@ async function resolveWorkspacePath(projectRoot, resource, { mustExist }) {
   if (mustExist) {
     const actual = await realpath(candidate).catch((error) => { throw new Error(error?.code === 'ENOENT' ? 'Path does not exist' : 'Unable to resolve workspace path'); });
     if (!isAtOrInside(root, actual)) throw new Error('Path resolves outside the project workspace');
-    return { absolute: actual, relative: relative(root, candidate).replaceAll('\\', '/') };
+    return { absolute: actual, relative: relative(root, candidate).replaceAll('\\', '/'), canonical: relative(root, actual).replaceAll('\\', '/') };
   }
-  let ancestor = candidate;
+  let ancestor = candidate; let resolvedAncestor;
   for (;;) {
-    try { const actual = await realpath(ancestor); if (!isAtOrInside(root, actual)) throw new Error('Path ancestor resolves outside the project workspace'); break; }
-    catch (error) { if (error?.message?.includes('outside')) throw error; if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) throw error; const parent = dirname(ancestor); if (parent === ancestor) throw new Error('Unable to validate workspace path'); ancestor = parent; }
+    try { const actual = await realpath(ancestor); if (!isAtOrInside(root, actual)) throw new Error('Path ancestor resolves outside the project workspace'); resolvedAncestor = actual; break; }
+    catch (error) {
+      if (error?.message?.includes('outside')) throw error;
+      if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) throw error;
+      // realpath() reports ENOENT for a DANGLING symlink, yet writeFile() would still follow it to a target nobody validated.
+      if (await lstat(ancestor).then(() => true, () => false)) throw new Error('Path is a dangling symlink; refusing to write through it');
+      const parent = dirname(ancestor); if (parent === ancestor) throw new Error('Unable to validate workspace path'); ancestor = parent;
+    }
   }
-  return { absolute: candidate, relative: relative(root, candidate).replaceAll('\\', '/') };
+  const absolute = join(resolvedAncestor, relative(ancestor, candidate));
+  return { absolute, relative: relative(root, candidate).replaceAll('\\', '/'), canonical: relative(root, absolute).replaceAll('\\', '/') };
+}
+/** The path argument as the runtime itself reads it (models emit Claude-style aliases); the undo journal must agree with it. */
+export function workspacePathArgument(args) {
+  const value = args?.path ?? args?.file_path ?? args?.filePath ?? args?.file;
+  return typeof value === 'string' ? value : '';
+}
+/** Wrap `authorize` so waiting for a human does not hold the project write lock; the lock is re-acquired afterwards. */
+function unlocked(authorize, lock) { return lock?.suspend ? (request) => lock.suspend(() => authorize(request)) : authorize; }
+function describeResolved(resolved) { return resolved.canonical && resolved.canonical !== resolved.relative ? `${resolved.relative} (symlink to ${resolved.canonical})` : resolved.relative; }
+function settleWithin(promise, ms) {
+  let timer;
+  return Promise.race([Promise.resolve(promise).then(() => undefined, () => undefined), new Promise((resolveTimeout) => { timer = setTimeout(resolveTimeout, ms); timer.unref?.(); })]).finally(() => clearTimeout(timer));
 }
 function isAtOrInside(root, candidate) { const path = relative(root, candidate); return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path); }
 
@@ -831,14 +876,15 @@ function graphToolOutput(kind, result, cap) {
   const data = record(result); const header = 'UNTRUSTED CUPPET CODE GRAPH RESULTS'; let text = ''; let paths = [];
   if (kind === 'workspace') {
     const graph = record(data.graph); paths = strings(data.files);
-    text = [header, `Workspace: ${inline(data.root) || '(unknown root)'}`, `Indexed: ${number(graph.files)} files, ${number(graph.symbols)} symbols, ${number(graph.edges)} edges.`, paths.length ? 'Files:' : '', ...paths.map((path) => `- ${path}`)].filter(Boolean).join('\n');
+    text = [header, `Workspace: ${inline(data.root) || '(unknown root)'}`, `Indexed: ${number(graph.files)} files, ${number(graph.symbols)} symbols, ${number(graph.edges)} edges.${graph.truncated ? ' The index is capped, so some files are not listed; use tst_read with a known path or tst_explore with a narrower prefix.' : ''}`, paths.length ? 'Files:' : '', ...paths.map((path) => `- ${path}`)].filter(Boolean).join('\n');
   } else if (kind === 'tree') {
     paths = strings(data.paths); const total = number(data.total); const prefix = inline(data.prefix);
-    text = [header, `Files${prefix ? ` under ${prefix}` : ''}: ${paths.length}${total > paths.length ? ` of ${total}` : ''}.`, ...paths.map((path) => `- ${path}`)].join('\n');
+    text = [header, `Files${prefix ? ` under ${prefix}` : ''}: ${paths.length}${total > paths.length ? ` of ${total}` : ''}.${data.truncated ? ' The index is capped, so this listing may be incomplete.' : ''}`, ...paths.map((path) => `- ${path}`)].join('\n');
   } else if (kind === 'search') {
     const matches = array(data.matches).slice(0, 12); paths = [...new Set(matches.map((item) => inline(record(item).path)).filter(Boolean))];
     text = [header, `Locate ${inline(data.query) || '(query)'}: ${matches.length} match${matches.length === 1 ? '' : 'es'}.`, ...matches.map((value) => { const match = record(value); return `- ${inline(match.path) || '(unknown path)'}:${positive(match.line)}:${positive(match.column)} — ${inline(match.kind) || 'text'}${inline(match.symbol) ? ` ${inline(match.symbol)}` : ''}`; })].join('\n');
   } else {
+    if (data.unsupported) return { output: capText([header, `Trace ${inline(data.query) || '(query)'}: unavailable. ${inline(data.unsupported)}`].join('\n'), cap), paths: [] };
     const edges = array(data.edges).slice(0, 12); paths = [...new Set(edges.flatMap((item) => [inline(record(record(item).from).path), inline(record(record(item).to).path)]).filter(Boolean))];
     text = [header, `Trace ${inline(data.query) || '(query)'} (${inline(data.direction) || 'both'}, depth ${positive(data.depth)}): ${edges.length} edge${edges.length === 1 ? '' : 's'}.`, ...edges.map((value) => { const edge = record(value); return `- ${compactReference(edge.from)} --${inline(edge.kind) || 'dependency'}--> ${compactReference(edge.to)}`; })].join('\n');
   }
@@ -900,10 +946,16 @@ export function safeShellEnvironment(sourceEnv = process.env, overrides = {}) {
 async function gitChangedPaths(cwd) {
   const result = await runShell('git status --porcelain=v1 -z', cwd, 10000);
   if (result.code !== 0) return [];
-  const entries = result.stdout.split('\0').filter(Boolean); const paths = [];
-  for (const entry of entries) {
-    const body = entry.slice(3); const path = body.includes(' -> ') ? body.split(' -> ').at(-1) : body;
-    if (path) paths.push(path.replaceAll('\\', '/'));
+  return parsePorcelainZ(result.stdout);
+}
+// `git status --porcelain=v1 -z` prints a rename/copy as "XY <new>\0<old>\0"; the <old> record has NO "XY " prefix.
+export function parsePorcelainZ(stdout) {
+  const parts = String(stdout).split('\0'); const paths = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const entry = parts[index];
+    if (entry.length < 4) continue;
+    paths.push(entry.slice(3).replaceAll('\\', '/'));
+    if ('RC'.includes(entry[0]) || 'RC'.includes(entry[1])) { index += 1; const original = parts[index]; if (original) paths.push(original.replaceAll('\\', '/')); }
   }
   return [...new Set(paths)].slice(0, 128);
 }

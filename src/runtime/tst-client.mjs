@@ -3,6 +3,8 @@ import { createConnection } from 'node:net';
 
 export const TST_PROTOCOL_VERSION = 'cuppet.tst.v3';
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+// A daemon that accepted the request but never answers must not be able to hang tool calls forever.
+const DEFAULT_CALL_TIMEOUT_MS = Math.max(1_000, Number(process.env.CUPPET_TST_CALL_TIMEOUT_MS) || 60_000);
 
 export class TstClient extends EventEmitter {
   #socket; #nextID = 1; #buffer = Buffer.alloc(0); #pending = new Map(); #closed = false; #capabilities = new Set();
@@ -12,26 +14,34 @@ export class TstClient extends EventEmitter {
     socket.on('error', (error) => this.#disconnect(error));
     socket.on('close', () => this.#disconnect(new Error('TST socket closed')));
   }
-  static async connect(socketPath, token) {
+  static async connect(socketPath, token, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) {
     const socket = await new Promise((resolve, reject) => {
       const candidate = createConnection(socketPath); candidate.once('connect', () => resolve(candidate)); candidate.once('error', reject);
     });
     const client = new TstClient(socket);
-    const initialized = await client.call('initialize', { token, notifications: true });
+    let initialized;
+    try { initialized = await client.call('initialize', { token, notifications: true }, { timeoutMs }); }
+    catch (error) { client.destroy(); throw error; }
     if (initialized?.protocol !== TST_PROTOCOL_VERSION) {
       client.destroy(); throw new Error(`TST protocol mismatch: expected ${TST_PROTOCOL_VERSION}, received ${initialized?.protocol ?? 'unknown'}`);
     }
     client.#capabilities = new Set(Array.isArray(initialized?.capabilities) ? initialized.capabilities.map(String) : []);
     return client;
   }
-  call(method, params = {}) {
+  call(method, params = {}, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) {
     if (this.#closed) return Promise.reject(new Error('TST client is closed'));
     const id = this.#nextID++; const payload = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
     if (!payload.length || payload.length > MAX_FRAME_BYTES) return Promise.reject(new Error('TST request exceeds frame limit'));
     const header = Buffer.allocUnsafe(4); header.writeUInt32BE(payload.length);
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
-      this.#socket.write(Buffer.concat([header, payload]), (error) => { if (!error) return; this.#pending.delete(id); reject(error); });
+      let timer = null;
+      const settle = (fn) => (value) => { if (timer) clearTimeout(timer); fn(value); };
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => { if (this.#pending.delete(id)) reject(new Error(`TST ${method} timed out after ${timeoutMs}ms`)); }, timeoutMs);
+        timer.unref?.();
+      }
+      this.#pending.set(id, { resolve: settle(resolve), reject: settle(reject) });
+      this.#socket.write(Buffer.concat([header, payload]), (error) => { if (!error) return; this.#pending.delete(id); settle(reject)(error); });
     });
   }
   supports(capability) { return this.#capabilities.has(capability); }
@@ -55,14 +65,14 @@ export class TstClient extends EventEmitter {
 }
 
 export class TstBridge {
-  #socketPath; #token; #client; #lastError; #lastCapabilities = [];
-  constructor({ socketPath = process.env.CUPPET_TST_SOCKET, token = process.env.CUPPET_TST_TOKEN } = {}) { this.#socketPath = socketPath; this.#token = token; }
+  #socketPath; #token; #client; #lastError; #lastCapabilities = []; #connecting; #connectTimeoutMs;
+  constructor({ socketPath = process.env.CUPPET_TST_SOCKET, token = process.env.CUPPET_TST_TOKEN, connectTimeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) { this.#socketPath = socketPath; this.#token = token; this.#connectTimeoutMs = connectTimeoutMs; }
   get configured() { return Boolean(this.#socketPath && this.#token); }
   get status() { return { configured: this.configured, connected: Boolean(this.#client?.connected), lastError: this.#lastError ?? null, protocol: TST_PROTOCOL_VERSION, capabilities: this.#client?.capabilities ?? this.#lastCapabilities }; }
-  async call(method, params = {}) {
+  async call(method, params = {}, options = {}) {
     if (!this.configured) throw new Error('TST is not configured');
     const client = await this.#ensure();
-    try { return await client.call(method, params); } catch (error) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; throw error; }
+    try { return await client.call(method, params, options); } catch (error) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; throw error; }
   }
   async supports(capability) {
     if (!this.configured) return false;
@@ -102,8 +112,13 @@ export class TstBridge {
   close() { this.#client?.destroy(); this.#client = undefined; }
   async #ensure() {
     if (this.#client?.connected) return this.#client;
+    // Share one in-flight connect: concurrent first calls used to open (and leak) one daemon connection each.
+    this.#connecting ??= this.#connect().finally(() => { this.#connecting = undefined; });
+    return this.#connecting;
+  }
+  async #connect() {
     try {
-      const client = await TstClient.connect(this.#socketPath, this.#token); this.#lastError = undefined; this.#client = client; this.#lastCapabilities = client.capabilities;
+      const client = await TstClient.connect(this.#socketPath, this.#token, { timeoutMs: this.#connectTimeoutMs }); this.#lastError = undefined; this.#client = client; this.#lastCapabilities = client.capabilities;
       client.on('disconnect', (error) => { this.#lastError = cleanError(error); this.#lastCapabilities = client.capabilities; if (this.#client === client) this.#client = undefined; });
       return client;
     } catch (error) { this.#lastError = cleanError(error); throw error; }

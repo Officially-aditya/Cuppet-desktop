@@ -8,7 +8,7 @@
 /** @typedef {{ effect: 'allow', source: string } | { effect: 'deny', reason: string, code: string } | { effect: 'ask', autoEligible: boolean }} PermissionDecision */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { providerCredentialPaths } from './sandbox/types.mjs';
 
@@ -222,6 +222,7 @@ async function immediateDecision({ action, resources, projectRoot, planMode, aut
     if (action === 'read' && process.env.CUPPET_GRAPH_FIRST_GATE !== '1' && (safe || envExample)) {
       return { effect: 'allow', source: 'workspace-read' };
     }
+    if (action !== 'read' && resources.some(isGitExecutionSurface)) return { effect: 'ask', autoEligible: false };
     if (auto && projectScoped) return { effect: 'allow', source: 'session-auto' };
     return { effect: 'ask', autoEligible: auto ? projectScoped : safe };
   }
@@ -474,6 +475,7 @@ export async function isAutoProjectBashCommand(command, projectRoot) {
   if (!deletion.allowed) return false;
   if (/(^|[\s"'=])(?:~(?:[\/]|$)|\.\.(?:[\/]|$)|file:)/i.test(source)) return false;
   if (/`|\$\(/.test(source)) return false;
+  if (/(^|[\s"'=\/\\])\.git[\/\\](?:hooks|config)\b/i.test(source) || DANGEROUS_GIT_CONFIG.test(source)) return false;
   if (/\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})(?:[\/]|$)|%USERPROFILE%/i.test(source)) return false;
 
   const withoutUrls = source.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`]+/gi, '');
@@ -497,8 +499,29 @@ export async function isSafeWorkspaceResource(resource, workspaceRoot) {
 /** @param {string} path */
 export function isSensitivePath(path) {
   const parts = String(path).split(/[\\/]/).map((part) => part.toLowerCase());
-  return parts.some((part) => part === '.env' || part.startsWith('.env.') || part.includes('credentials') || part.endsWith('.pem') || part.endsWith('.key') || part === 'ltm-trie.json');
+  if (parts.some((part) => part === '.env' || part.startsWith('.env.') || part.includes('credentials') || part.endsWith('.pem') || part.endsWith('.key') || part === 'ltm-trie.json')) return true;
+  const base = parts.at(-1) ?? '';
+  if (parts.some((part) => SENSITIVE_DIRECTORIES.has(part))) return true;
+  if (SENSITIVE_BASENAMES.has(base) || base.startsWith('kubeconfig') || /^terraform\.tfstate(?:\.|$)/.test(base) || /^secrets?\.(?:ya?ml|json|toml)$/.test(base) || /\.(?:p12|pfx|jks|keystore)$/.test(base)) return true;
+  if (base === 'config.json' && parts.includes('.docker')) return true;
+  const gitIndex = parts.indexOf('.git');                       // .git/config can embed credentialed remote URLs
+  return gitIndex !== -1 && parts[gitIndex + 1] === 'config' && gitIndex + 2 === parts.length;
 }
+const SENSITIVE_DIRECTORIES = new Set(['.ssh', '.aws', '.gnupg', '.kube']);
+const SENSITIVE_BASENAMES = new Set(['.npmrc', '.netrc', '_netrc', '.pypirc', '.dockercfg', '.htpasswd', '.git-credentials', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'service-account.json']);
+
+/**
+ * Git internals that execute code OUTSIDE the sandbox the next time the user runs git (hooks, config such as core.fsmonitor/core.hooksPath).
+ * @param {string} resource
+ */
+export function isGitExecutionSurface(resource) {
+  const parts = String(resource).replaceAll('\\', '/').toLowerCase().split('/').filter((part) => part && part !== '.');
+  const gitIndex = parts.indexOf('.git');
+  if (gitIndex === -1) return false;
+  const next = parts[gitIndex + 1];
+  return next === 'hooks' || (next === 'config' && gitIndex + 2 === parts.length);
+}
+const DANGEROUS_GIT_CONFIG = /\b(?:core\.(?:hookspath|fsmonitor|sshcommand|editor|pager|gitproxy)|credential\.helper|alias\.[\w-]+|diff\.external|filter\.[\w.-]+\.(?:clean|smudge|process)|gpg\.program)\b/i;
 
 /** @param {string} resource */
 function isEnvExampleResource(resource) {
@@ -520,6 +543,7 @@ async function nearestExistingAncestorIsInside(candidate, root) {
     try { return isAtOrInside(root, await realpath(ancestor)); }
     catch (error) {
       if (!error || typeof error !== 'object' || !('code' in error) || !['ENOENT', 'ENOTDIR'].includes(String(error.code))) return false;
+      if (error.code === 'ENOENT' && await lstat(ancestor).then(() => true, () => false)) return false;
       const parent = dirname(ancestor);
       if (parent === ancestor) return false;
       ancestor = parent;

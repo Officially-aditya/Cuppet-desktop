@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const MAX_BATCHES = 32;
@@ -113,29 +113,35 @@ export class TstBatchEditManager {
     }
     if (parseFailures.length) throw batchConflict('Staged parse validation failed; nothing was written.', parseFailures);
 
-    const diff = renderBatchDiff(stagedFiles);
-    const diffDigest = sha256(Buffer.from(diff, 'utf8'));
+    const { diff, stats } = renderBatchDiffWithStats(stagedFiles);
+    // The digest binds the approval to the exact state transition (path, base, result, mode) — never to a truncated rendering of it.
+    const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8)].join('\0')).join('\n'), 'utf8'));
     const id = `batch_${randomUUID()}`;
     const batch = {
       id, sessionId, projectRoot: root, createdAt: Date.now(), expiresAt: Date.now() + BATCH_TTL_MS,
-      diffDigest, diff, operations: requested, files: stagedFiles.map(serializeStagedFile), state: 'prepared',
+      diffDigest, diff, stats, operations: requested, files: stagedFiles.map(serializeStagedFile), state: 'prepared',
     };
     this.#remember(batch);
     this.#emit({ type: 'edit.batch.prepared', sessionId, batchId: id, paths: batch.files.map((file) => file.path), diffDigest });
     return publicBatch(batch);
   }
 
-  async apply({ batchId, sessionId, projectRoot, executionId, authorize }) {
+  async apply({ batchId, sessionId, projectRoot, executionId, authorize, signal }) {
     const batch = await this.#require(batchId, sessionId, projectRoot);
     if (batch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
-    return this.#withWriter(batch.projectRoot, async () => {
+    return this.#withWriter(batch.projectRoot, async (lock) => {
       const freshBatch = await this.#require(batchId, sessionId, projectRoot);
       const paths = freshBatch.files.map((file) => file.path);
-      await authorize({
-        action: 'edit', resources: paths,
-        description: `Apply checked TST batch ${batchId} (${freshBatch.diffDigest.slice(0, 12)}): ${paths.join(', ')}`,
+      // Permission decisions are about the files actually touched, so classify symlink aliases by their real target.
+      const canonical = [...new Set(await Promise.all(freshBatch.files.map(async (file) => (await resolveWorkspacePath(freshBatch.projectRoot, file.path, false)).canonical)))];
+      const request = {
+        action: 'edit', resources: canonical,
+        description: `Apply checked TST batch ${batchId} (${freshBatch.diffDigest.slice(0, 12)}): ${(freshBatch.stats ?? []).length ? freshBatch.stats.map((entry) => `${entry.path} (+${entry.added} -${entry.removed})`).join(', ') : paths.join(', ')}`,
         fingerprintKey: `tst-batch:${batchId}:${freshBatch.diffDigest}`,
-      });
+      };
+      // A human may take minutes to answer: do not hold the project write lock while waiting.
+      await (lock?.suspend ? lock.suspend(() => authorize(request)) : authorize(request));
+      if ((await this.#require(batchId, sessionId, projectRoot)).state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
 
       const conflicts = [];
       for (const file of freshBatch.files) {
@@ -223,7 +229,7 @@ export class TstBatchEditManager {
 
   #remember(batch) { this.#prune(); this.#batches.set(batch.id, batch); while (this.#batches.size > MAX_BATCHES) this.#batches.delete(this.#batches.keys().next().value); }
   #prune() { const now = Date.now(); for (const [id, batch] of this.#batches) if (batch.expiresAt < now) this.#batches.delete(id); }
-  async #withWriter(root, fn) { return this.#writer?.withProject ? this.#writer.withProject(root, fn) : fn(); }
+  async #withWriter(root, fn, signal) { return this.#writer?.withProject ? this.#writer.withProject(root, fn, { signal }) : fn({ suspend: (work) => work() }); }
 
   #emitRecovery(report = {}) {
     for (const item of Array.isArray(report.recovered) ? report.recovered : []) {
@@ -299,8 +305,8 @@ async function stageOperation({ root, operation, index, files }) {
 
 async function ensureFile(root, path, files, { mustExist }) {
   const resolved = await resolveWorkspacePath(root, path, mustExist);
-  if (files.has(resolved.relative)) {
-    const prior = files.get(resolved.relative);
+  if (files.has(resolved.canonical)) {
+    const prior = files.get(resolved.canonical);
     if (prior.exists !== mustExist) throw new Error(`conflicting existence assumptions for ${resolved.relative}`);
     return prior;
   }
@@ -309,7 +315,7 @@ async function ensureFile(root, path, files, { mustExist }) {
   if (!mustExist && snapshot.exists) throw new Error(`file already exists: ${resolved.relative}`);
   const mode = snapshot.exists ? (await stat(resolved.absolute)).mode : 0o644;
   const file = { path: resolved.relative, absolute: resolved.absolute, exists: snapshot.exists, before: snapshot.exists ? snapshot.content : Buffer.alloc(0), baseHash: snapshot.hash, mode, edits: [], after: null, afterHash: null, parse: null };
-  files.set(resolved.relative, file); return file;
+  files.set(resolved.canonical, file); return file;
 }
 
 function addEdit(file, edit) {
@@ -342,15 +348,93 @@ function publicBatch(batch) {
   return { id: batch.id, state: batch.state, sessionId: batch.sessionId, paths: batch.files.map((file) => file.path), diffDigest: batch.diffDigest, diff: batch.diff, createdAt: batch.createdAt, expiresAt: batch.expiresAt, files: batch.files.map((file) => ({ path: file.path, baseHash: file.baseHash, afterHash: file.afterHash, parse: file.parse })) };
 }
 
-function renderBatchDiff(files) {
-  const chunks = [];
-  for (const file of files) {
-    const before = file.before.toString('utf8'); const after = file.after.toString('utf8');
-    chunks.push(`--- a/${file.path}\n+++ b/${file.path}\n@@ checked whole-file projection @@\n${renderLines(before, '-')}${renderLines(after, '+')}`);
-  }
-  return capText(chunks.join('\n'), MAX_DIFF_BYTES);
+const DIFF_CONTEXT_LINES = 3;
+const MAX_DIFF_EDIT_DISTANCE = 1500;
+const MAX_HUNK_LINES = 400;
+
+/** Standard unified diff (3 lines of context). Every file keeps a share of the byte budget so later files are never silently dropped. */
+export function renderBatchDiff(files) { return renderBatchDiffWithStats(files).diff; }
+export function renderBatchDiffWithStats(files) {
+  const budget = Math.max(8 * 1024, Math.floor(MAX_DIFF_BYTES / Math.max(1, files.length)));
+  const rendered = files.map((file) => renderFileDiff(file, budget));
+  return { diff: capText(rendered.map((entry) => entry.text).join('\n'), MAX_DIFF_BYTES), stats: rendered.map((entry) => ({ path: entry.path, added: entry.added, removed: entry.removed })) };
 }
-function renderLines(text, prefix) { return text.split(/(?<=\n)/).slice(0, 400).map((line) => `${prefix}${line}`).join(''); }
+function renderFileDiff(file, budget) {
+  const header = `--- ${file.exists ? `a/${file.path}` : '/dev/null'}\n+++ b/${file.path}\n`;
+  const { hunks, added, removed } = diffHunks(splitLines(file.before.toString('utf8')), splitLines(file.after.toString('utf8')));
+  let body = ''; let omitted = 0;
+  for (let index = 0; index < hunks.length; index += 1) {
+    if (body && Buffer.byteLength(header + body + hunks[index]) > budget) { omitted = hunks.length - index; break; }
+    body += hunks[index];
+  }
+  if (omitted) body += `... ${omitted} more hunk${omitted === 1 ? '' : 's'} omitted for size; use tst_read on ${file.path} to review them\n`;
+  return { path: file.path, text: header + body, added, removed };
+}
+function splitLines(text) { return text ? text.split(/(?<=\n)/) : []; }
+function diffHunks(a, b) {
+  let prefix = 0; while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix += 1;
+  let suffix = 0; while (suffix < a.length - prefix && suffix < b.length - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
+  const midA = a.slice(prefix, a.length - suffix); const midB = b.slice(prefix, b.length - suffix);
+  let middle = midA.length || midB.length ? myersOps(midA, midB) : [];
+  // Pathological rewrites: fall back to one replace block rather than burning CPU on an edit script nobody can review.
+  if (middle === null) middle = [...midA.map((_, x) => ({ t: '-', x })), ...midB.map((_, y) => ({ t: '+', y }))];
+  const ops = [];
+  for (let i = 0; i < prefix; i += 1) ops.push({ t: '=', x: i, y: i });
+  for (const op of middle) ops.push({ t: op.t, ...(op.x === undefined ? {} : { x: op.x + prefix }), ...(op.y === undefined ? {} : { y: op.y + prefix }) });
+  for (let i = 0; i < suffix; i += 1) ops.push({ t: '=', x: a.length - suffix + i, y: b.length - suffix + i });
+
+  const changed = []; for (let i = 0; i < ops.length; i += 1) if (ops[i].t !== '=') changed.push(i);
+  if (!changed.length) return { hunks: [], added: 0, removed: 0 };
+  const added = changed.filter((index) => ops[index].t === '+').length; const removed = changed.length - added;
+  const oldBefore = new Int32Array(ops.length + 1); const newBefore = new Int32Array(ops.length + 1);
+  for (let i = 0; i < ops.length; i += 1) { oldBefore[i + 1] = oldBefore[i] + (ops[i].t === '+' ? 0 : 1); newBefore[i + 1] = newBefore[i] + (ops[i].t === '-' ? 0 : 1); }
+  const ranges = []; let from = Math.max(0, changed[0] - DIFF_CONTEXT_LINES); let last = changed[0];
+  for (const index of changed.slice(1)) {
+    if (index - last - 1 > 2 * DIFF_CONTEXT_LINES) { ranges.push([from, Math.min(ops.length - 1, last + DIFF_CONTEXT_LINES)]); from = Math.max(0, index - DIFF_CONTEXT_LINES); }
+    last = index;
+  }
+  ranges.push([from, Math.min(ops.length - 1, last + DIFF_CONTEXT_LINES)]);
+  const hunks = ranges.map(([start, end]) => {
+    const oldCount = oldBefore[end + 1] - oldBefore[start]; const newCount = newBefore[end + 1] - newBefore[start];
+    const lines = [];
+    for (let i = start; i <= end; i += 1) {
+      const op = ops[i]; const text = op.t === '+' ? b[op.y] : a[op.x];
+      lines.push(`${op.t === '=' ? ' ' : op.t}${text}${text.endsWith('\n') ? '' : '\n\\ No newline at end of file\n'}`);
+    }
+    const shown = lines.length > MAX_HUNK_LINES ? [...lines.slice(0, MAX_HUNK_LINES), `... ${lines.length - MAX_HUNK_LINES} more lines in this hunk omitted\n`] : lines;
+    return `@@ -${oldCount ? oldBefore[start] + 1 : oldBefore[start]},${oldCount} +${newCount ? newBefore[start] + 1 : newBefore[start]},${newCount} @@\n${shown.join('')}`;
+  });
+  return { hunks, added, removed };
+}
+/** Myers O(ND) line diff; returns null when the edit distance exceeds MAX_DIFF_EDIT_DISTANCE. */
+function myersOps(a, b) {
+  const n = a.length; const m = b.length; const max = Math.min(n + m, MAX_DIFF_EDIT_DISTANCE); const offset = max + 1;
+  const v = new Int32Array(2 * max + 3); const trace = [];
+  for (let d = 0; d <= max; d += 1) {
+    trace.push(v.slice());
+    for (let k = -d; k <= d; k += 2) {
+      let x = (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) ? v[offset + k + 1] : v[offset + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) { x += 1; y += 1; }
+      v[offset + k] = x;
+      if (x >= n && y >= m) return backtrackOps(trace, n, m, d, offset);
+    }
+  }
+  return null;
+}
+function backtrackOps(trace, n, m, dEnd, offset) {
+  let x = n; let y = m; const ops = [];
+  for (let d = dEnd; d > 0; d -= 1) {
+    const v = trace[d]; const k = x - y;
+    const prevK = (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) ? k + 1 : k - 1;
+    const prevX = v[offset + prevK]; const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) { ops.push({ t: '=', x: x - 1, y: y - 1 }); x -= 1; y -= 1; }
+    ops.push(x === prevX ? { t: '+', y: y - 1 } : { t: '-', x: x - 1 });
+    x = prevX; y = prevY;
+  }
+  while (x > 0 && y > 0) { ops.push({ t: '=', x: x - 1, y: y - 1 }); x -= 1; y -= 1; }
+  return ops.reverse();
+}
 
 async function atomicPublish(path, content, mode) {
   await mkdir(dirname(path), { recursive: true });
@@ -375,16 +459,25 @@ async function resolveWorkspacePath(projectRoot, resource, mustExist) {
   if (!raw || raw.includes('\0') || raw.startsWith('~') || raw.startsWith('file:')) throw new Error('Invalid batch path');
   const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
   if (candidate === root || !isAtOrInside(root, candidate)) throw new Error('Batch path escapes the project workspace');
+  let ancestor = candidate; let resolvedAncestor;
   if (mustExist) {
     const actual = await realpath(candidate); if (!isAtOrInside(root, actual)) throw new Error('Batch path resolves outside the project workspace');
+    resolvedAncestor = actual;
   } else {
-    let ancestor = candidate;
     for (;;) {
-      try { const actual = await realpath(ancestor); if (!isAtOrInside(root, actual)) throw new Error('Batch path ancestor resolves outside the project workspace'); break; }
-      catch (error) { if (String(error?.message).includes('outside')) throw error; if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) throw error; const parent = dirname(ancestor); if (parent === ancestor) throw error; ancestor = parent; }
+      try { const actual = await realpath(ancestor); if (!isAtOrInside(root, actual)) throw new Error('Batch path ancestor resolves outside the project workspace'); resolvedAncestor = actual; break; }
+      catch (error) {
+        if (String(error?.message).includes('outside')) throw error;
+        if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) throw error;
+        // realpath() reports ENOENT for a dangling symlink; never write through one.
+        if (await lstat(ancestor).then(() => true, () => false)) throw new Error('Batch path is a dangling symlink; refusing to write through it');
+        const parent = dirname(ancestor); if (parent === ancestor) throw error; ancestor = parent;
+      }
     }
   }
-  return { root, absolute: candidate, relative: relative(root, candidate).replaceAll('\\', '/') };
+  // Operate on the real file: renaming the temp file over the symlink itself used to replace the link with a regular file.
+  const absolute = join(resolvedAncestor, relative(ancestor, candidate));
+  return { root, absolute, relative: relative(root, candidate).replaceAll('\\', '/'), canonical: relative(root, absolute).replaceAll('\\', '/') };
 }
 async function canonicalRoot(root) { return realpath(root).catch(() => resolve(root)); }
 function isAtOrInside(root, candidate) { const path = relative(root, candidate); return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path); }

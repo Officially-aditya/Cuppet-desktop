@@ -136,8 +136,9 @@ export class ExecutionKernel {
       const result = await execute(executionCall);
       const durationMs = Math.max(0, this.#now() - startedAt);
       const success = result?.success === true;
-      if (!rawBaseline && tool === 'tst_edit_batch' && !success) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
-      if (!rawBaseline && tool === 'tst_read' && !success) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
+      // A human rejection or a policy denial (plan mode, protected path) is a decision, not a broken optimized path: it must not unlock raw tools.
+      if (!rawBaseline && tool === 'tst_edit_batch' && !success && result?.denied !== true) this.#enableFallback(sessionId, state, 'rawMutationFallback', 'raw-mutation', 'optimized-batch-failed');
+      if (!rawBaseline && tool === 'tst_read' && !success && result?.denied !== true) this.#enableFallback(sessionId, state, 'rawReadFallback', 'raw-read', 'optimized-read-failed');
       this.#recordOutcome(state, { path, result, success, durationMs });
       this.#safeEmit({
         type: 'execution.kernel.completed',
@@ -293,9 +294,20 @@ function shellWorkspaceBypass(command) {
   return null;
 }
 
+// File-descriptor plumbing (2>&1, >&2) and /dev/null sinks are not workspace writes; quoted text ("a > b") is not a redirection.
+function withoutBenignRedirects(source) {
+  return source.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""').replace(/\d*>&(?:\d+|-)|\d*>>?\s*\/dev\/null\b/g, ' ');
+}
+// A command word only counts as a command, not as a fragment of an argument (patch-package, rm-old, src/mv.js).
+const COMMAND_WORD_BEFORE = '(?<![\\w.=-])';
+const COMMAND_WORD_AFTER = '(?![\\w.-])';
+const MUTATING_WORDS = new RegExp(`${COMMAND_WORD_BEFORE}(?:rm|rmdir|unlink|mv|cp|touch|truncate|tee|patch)${COMMAND_WORD_AFTER}`, 'i');
+const FIRST_STAGE_READERS = new RegExp(`${COMMAND_WORD_BEFORE}(?:cat|head|tail|less|more|grep|rg|ripgrep|find|fd|tree|awk)${COMMAND_WORD_AFTER}`, 'i');
+// Later pipeline stages that merely filter stdin (`npm test | tail`) do not read source files; stages that fetch files do.
+const PIPE_CONSUMER_READERS = new RegExp(`${COMMAND_WORD_BEFORE}(?:cat|rg|ripgrep|find|fd|tree|xargs)${COMMAND_WORD_AFTER}`, 'i');
 function looksLikeShellMutation(source) {
-  if (/(^|[^<])>{1,2}(?!>)/.test(source)) return true;
-  if (/\b(?:rm|rmdir|unlink|mv|cp|touch|truncate|tee|patch)\b/i.test(source)) return true;
+  if (/(^|[^<])>{1,2}(?!>)/.test(withoutBenignRedirects(source))) return true;
+  if (MUTATING_WORDS.test(source)) return true;
   if (/\bsed\b[^\n;&|]*\s-i(?:\s|$)/i.test(source) || /\bperl\b[^\n;&|]*\s-(?:p?i|i?p)\b/i.test(source)) return true;
   if (/\bgit\s+(?:checkout|switch|restore|reset|clean|apply|am|merge|rebase|cherry-pick|rm|mv)\b/i.test(source)) return true;
   if (/\b(?:python\d*|node|ruby|perl)\b[^\n;&|]*(?:-c|-e)\b[^\n;&|]*(?:write|append|unlink|rename|mkdir|rmdir|remove|open\s*\()/i.test(source)) return true;
@@ -303,8 +315,13 @@ function looksLikeShellMutation(source) {
 }
 
 function looksLikeShellRead(source) {
-  if (/\b(?:cat|head|tail|less|more|grep|rg|ripgrep|find|fd|tree|awk)\b/i.test(source)) return true;
-  if (/\bsed\b(?![^\n;&|]*\s-i(?:\s|$))/i.test(source)) return true;
+  for (const statement of source.split(/&&|\|\||;|\n/)) {
+    const stages = statement.split(/(?<!\|)\|(?!\|)/);
+    for (let index = 0; index < stages.length; index += 1) {
+      if ((index === 0 ? FIRST_STAGE_READERS : PIPE_CONSUMER_READERS).test(stages[index])) return true;
+      if (index === 0 && /(?<![\w.=-])sed(?![\w.-])(?![^\n;&|]*\s-i(?:\s|$))/i.test(stages[index])) return true;
+    }
+  }
   if (/\bgit\s+(?:grep|show|diff|blame)\b/i.test(source)) return true;
   if (/\b(?:python\d*|node|ruby|perl)\b[^\n;&|]*(?:-c|-e)\b[^\n;&|]*(?:readFile|read_to_string|File\.read|open\s*\()/i.test(source)) return true;
   return false;
