@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const MAX_BATCHES = 32;
@@ -35,15 +35,15 @@ export class TstBatchEditManager {
     const stale = await this.#journal.graphInvalidations(root);
     if (!stale.length) return { ready: true };
     try {
-      const expected = new Map();
-      for (const path of stale) {
-        const target = await resolveWorkspacePath(root, path, false);
-        const current = await snapshotBytes(target.absolute);
-        expected.set(path, current.exists ? current.hash : null);
-      }
+      const expected = await graphRefreshSnapshots(root, stale, this.#tst);
       let refresh;
       try {
-        refresh = await this.#tst.refreshGraphPaths(stale);
+        const paths = [...expected.keys()]; const refreshed = [];
+        for (let offset = 0; offset < paths.length; offset += 64) {
+          const result = await this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64));
+          refreshed.push(...(result?.paths ?? []));
+        }
+        refresh = { paths: refreshed };
       } catch (error) {
         if (isUnsupportedGraphRefresh(error)) {
           await this.#journal.acknowledgeGraphRefresh({ projectRoot: root, paths: stale }).catch(() => undefined);
@@ -52,7 +52,7 @@ export class TstBatchEditManager {
         throw error;
       }
       const returned = new Map((refresh?.paths ?? []).map((item) => [String(item.path), item.content_hash ?? null]));
-      const mismatches = stale.filter((path) => !returned.has(path) || returned.get(path) !== expected.get(path));
+      const mismatches = [...expected.keys()].filter((path) => !returned.has(path) || returned.get(path) !== expected.get(path));
       if (mismatches.length) {
         return { ready: false, reason: `TST graph refresh is required before another structural operation: refresh did not acknowledge current hashes for ${mismatches.join(', ')}` };
       }
@@ -65,9 +65,11 @@ export class TstBatchEditManager {
 
   async prepare({ sessionId, projectRoot, operations }) {
     if (!this.#tst?.configured) throw new Error('tst_edit_batch requires TST to be configured.');
-    const freshness = await this.ensureGraphFresh(projectRoot);
-    if (!freshness.ready) throw new Error(freshness.reason);
     const requested = normalizeOperations(operations);
+    if (requested.some((operation) => STRUCTURAL_OPS.has(operation.op))) {
+      const freshness = await this.ensureGraphFresh(projectRoot);
+      if (!freshness.ready) throw new Error(freshness.reason);
+    }
     if (!requested.length) throw new Error('operations must contain at least one edit');
     if (requested.length > MAX_OPERATIONS) throw new Error(`Batch exceeds ${MAX_OPERATIONS} operation limit`);
 
@@ -113,13 +115,13 @@ export class TstBatchEditManager {
     }
     if (parseFailures.length) throw batchConflict('Staged parse validation failed; nothing was written.', parseFailures);
 
-    const { diff, stats } = renderBatchDiffWithStats(stagedFiles);
+    const { diff, stats, rendered } = renderBatchDiffWithStats(stagedFiles);
     // The digest binds the approval to the exact state transition (path, base, result, mode) — never to a truncated rendering of it.
-    const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8)].join('\0')).join('\n'), 'utf8'));
+    const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.canonical, ...file.aliases.slice().sort(), file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8)].join('\0')).join('\n'), 'utf8'));
     const id = `batch_${randomUUID()}`;
     const batch = {
       id, sessionId, projectRoot: root, createdAt: Date.now(), expiresAt: Date.now() + BATCH_TTL_MS,
-      diffDigest, diff, stats, operations: requested, files: stagedFiles.map(serializeStagedFile), state: 'prepared',
+      diffDigest, diff, stats, operations: requested, files: stagedFiles.map((file, index) => ({ ...serializeStagedFile(file), fullDiff: rendered[index].fullText, diffTruncated: rendered[index].truncated })), state: 'prepared',
     };
     this.#remember(batch);
     this.#emit({ type: 'edit.batch.prepared', sessionId, batchId: id, paths: batch.files.map((file) => file.path), diffDigest });
@@ -127,61 +129,70 @@ export class TstBatchEditManager {
   }
 
   async apply({ batchId, sessionId, projectRoot, executionId, authorize, signal }) {
+    throwIfAborted(signal);
     const batch = await this.#require(batchId, sessionId, projectRoot);
     if (batch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
     return this.#withWriter(batch.projectRoot, async (lock) => {
+      throwIfAborted(signal);
       const freshBatch = await this.#require(batchId, sessionId, projectRoot);
-      const paths = freshBatch.files.map((file) => file.path);
-      // Permission decisions are about the files actually touched, so classify symlink aliases by their real target.
-      const canonical = [...new Set(await Promise.all(freshBatch.files.map(async (file) => (await resolveWorkspacePath(freshBatch.projectRoot, file.path, false)).canonical)))];
+      if (freshBatch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
+      const paths = [...new Set(freshBatch.files.flatMap((file) => [...file.aliases, file.canonical]))];
+      await validateBatchFiles(freshBatch);
+      const canonical = freshBatch.files.map((file) => file.canonical);
       const request = {
         action: 'edit', resources: canonical,
         description: `Apply checked TST batch ${batchId} (${freshBatch.diffDigest.slice(0, 12)}): ${(freshBatch.stats ?? []).length ? freshBatch.stats.map((entry) => `${entry.path} (+${entry.added} -${entry.removed})`).join(', ') : paths.join(', ')}`,
         fingerprintKey: `tst-batch:${batchId}:${freshBatch.diffDigest}`,
       };
       // A human may take minutes to answer: do not hold the project write lock while waiting.
-      await (lock?.suspend ? lock.suspend(() => authorize(request)) : authorize(request));
+      const permission = () => abortable(Promise.resolve().then(() => authorize(request)), signal);
+      await (lock?.suspend ? lock.suspend(permission) : permission());
+      throwIfAborted(signal);
       if ((await this.#require(batchId, sessionId, projectRoot)).state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
 
-      const conflicts = [];
-      for (const file of freshBatch.files) {
-        const target = await resolveWorkspacePath(freshBatch.projectRoot, file.path, false);
-        const current = await snapshotBytes(target.absolute);
-        if (file.exists) {
-          if (!current.exists || current.hash !== file.baseHash) conflicts.push({ path: file.path, expected: file.baseHash, actual: current.hash, reason: 'base file changed after prepare' });
-        } else if (current.exists) {
-          conflicts.push({ path: file.path, reason: 'file was created externally after prepare' });
-        }
-      }
-      if (conflicts.length) throw batchConflict('Batch became stale before apply; nothing was written.', conflicts);
+      await validateBatchFiles(freshBatch);
+      throwIfAborted(signal);
 
       const journalToken = await this.#journal.beginBatch({
         sessionId,
         executionId,
         tool: 'tst_edit_batch',
         projectRoot: freshBatch.projectRoot,
-        paths,
-        expectedAfter: freshBatch.files.map((file) => ({ path: file.path, exists: true, hash: file.afterHash })),
+        paths: canonical,
+        expectedAfter: freshBatch.files.map((file) => ({ path: file.canonical, exists: true, hash: file.afterHash })),
       });
       const published = [];
       try {
+        throwIfAborted(signal);
+        await validateBatchFiles(freshBatch);
         for (const file of freshBatch.files) {
-          const target = await resolveWorkspacePath(freshBatch.projectRoot, file.path, false);
-          await atomicPublish(target.absolute, Buffer.from(file.afterBase64, 'base64'), file.mode);
+          throwIfAborted(signal);
+          const target = await validateStagedFile(freshBatch.projectRoot, file);
+          await atomicPublish(target.absolute, Buffer.from(file.afterBase64, 'base64'), file.mode, async () => {
+            throwIfAborted(signal);
+            await validateStagedFile(freshBatch.projectRoot, file);
+            throwIfAborted(signal);
+          });
           published.push({ file, target });
           const after = await snapshotBytes(target.absolute);
           if (!after.exists || after.hash !== file.afterHash) throw new Error(`post-write hash mismatch for ${file.path}`);
         }
+        throwIfAborted(signal);
         await this.#journal.commitBatch(journalToken);
       } catch (error) {
         let rollbackClean = true;
         for (const record of published.reverse()) {
-          const before = journalToken.files.find((item) => item.path === record.file.path)?.before;
-          if (!before) continue;
-          try { await restoreSnapshot(record.target.absolute, before); }
-          catch { rollbackClean = false; }
+          const before = journalToken.files.find((item) => item.path === record.file.canonical)?.before;
+          if (!before) { rollbackClean = false; continue; }
+          try {
+            const target = await resolveWorkspacePath(freshBatch.projectRoot, record.file.canonical, false);
+            const current = await snapshotBytes(target.absolute);
+            if (target.canonical !== record.file.canonical || current.hash !== record.file.afterHash) throw new Error('Rollback target changed externally');
+            await restoreSnapshot(target.absolute, before);
+          } catch { rollbackClean = false; }
         }
         if (rollbackClean) await this.#journal.abortBatch?.(journalToken).catch(() => undefined);
+        if (error?.name === 'AbortError') throw error;
         throw new Error(`Batch publish failed and was recovered where hash-safe: ${cleanError(error)}`);
       }
 
@@ -190,9 +201,15 @@ export class TstBatchEditManager {
 
       let refresh = null; let graphReady = true; let graphError = null;
       try {
-        refresh = await this.#tst.refreshGraphPaths(paths);
-        const returned = new Map((refresh?.paths ?? []).map((item) => [String(item.path), item.content_hash ?? null]));
-        const mismatches = freshBatch.files.filter((file) => !returned.has(file.path) || returned.get(file.path) !== file.afterHash).map((file) => file.path);
+        const refreshed = [];
+        for (let offset = 0; offset < paths.length; offset += 64) {
+          const result = await this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64));
+          refreshed.push(...(result?.paths ?? []));
+        }
+        refresh = { paths: refreshed };
+        const returned = new Map(refresh.paths.map((item) => [String(item.path), item.content_hash ?? null]));
+        const expected = new Map(freshBatch.files.flatMap((file) => [...file.aliases, file.canonical].map((path) => [path, file.afterHash])));
+        const mismatches = paths.filter((path) => !returned.has(path) || returned.get(path) !== expected.get(path));
         if (mismatches.length) {
           graphReady = false; graphError = `Graph refresh observed different post-edit hashes for: ${mismatches.join(', ')}`;
         } else {
@@ -209,11 +226,25 @@ export class TstBatchEditManager {
 
       this.#emit({ type: 'edit.batch.applied', sessionId, batchId, paths, diffDigest: freshBatch.diffDigest, graphReady, graphError });
       return { ...publicBatch(freshBatch), applied: true, graphReady, graphError, refresh };
-    });
+    }, signal);
   }
 
   get(batchId) {
+    this.#prune();
     const batch = this.#batches.get(batchId); if (!batch) return null; return publicBatch(batch);
+  }
+
+  async review({ batchId, sessionId, projectRoot, path, offset = 0, maxBytes = 16384 }) {
+    const batch = await this.#require(batchId, sessionId, projectRoot);
+    const files = path ? batch.files.filter((file) => file.path === path || file.canonical === path) : batch.files;
+    if (!files.length) throw new Error('Path is not part of this TST edit batch');
+    const bytes = Buffer.from(files.map((file) => file.fullDiff).join('\n'));
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > bytes.length) throw new Error('Diff offset must be a byte offset inside the staged diff');
+    if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Diff offset must be a UTF-8 character boundary; use next_offset');
+    const limit = Math.min(65536, Math.max(1024, Math.floor(Number(maxBytes) || 16384)));
+    let end = Math.min(bytes.length, offset + limit);
+    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+    return { id: batch.id, diffDigest: batch.diffDigest, path: path ?? null, offset, nextOffset: end < bytes.length ? end : null, totalBytes: bytes.length, diff: bytes.subarray(offset, end).toString('utf8') };
   }
 
   async #require(batchId, sessionId, projectRoot) {
@@ -252,6 +283,76 @@ export class TstBatchEditManager {
       });
     }
   }
+}
+
+async function validateBatchFiles(batch) {
+  const conflicts = [];
+  for (const file of batch.files) {
+    try { await validateStagedFile(batch.projectRoot, file); }
+    catch (error) { conflicts.push({ path: file.path, reason: cleanError(error) }); }
+  }
+  if (conflicts.length) throw batchConflict('Batch became stale before apply; nothing was written.', conflicts);
+}
+async function validateStagedFile(root, file) {
+  for (const alias of [...file.aliases, file.canonical]) {
+    const target = await resolveWorkspacePath(root, alias, false);
+    if (target.canonical !== file.canonical) throw new Error(`canonical target changed for ${alias}`);
+  }
+  const target = await resolveWorkspacePath(root, file.canonical, false);
+  const current = await snapshotBytes(target.absolute);
+  if (file.exists ? !current.exists || current.hash !== file.baseHash : current.exists) throw new Error(`base file changed after prepare: ${file.path}`);
+  return target;
+}
+async function graphRefreshSnapshots(root, stale, tst) {
+  const paths = new Set();
+  const visit = async (path, seen = new Set()) => {
+    const target = path === '.' ? { absolute: root, canonical: '.' } : await resolveWorkspacePath(root, path, false);
+    const info = await stat(target.absolute).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
+    if (!info?.isDirectory()) { paths.add(path); return; }
+    if (seen.has(target.absolute)) return;
+    seen.add(target.absolute);
+    // Keep the directory acknowledgement as well as each descendant's hash.
+    if (path !== '.') paths.add(path);
+    for (const entry of await readdir(target.absolute, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+      if (!entry.isFile() && !entry.isDirectory()) continue;
+      await visit(path === '.' ? entry.name : `${path}/${entry.name}`, seen);
+    }
+  };
+  for (const path of stale) {
+    await visit(path);
+    // Include old indexed descendants, so deleted files are removed from the graph too.
+    if (typeof tst.graphList === 'function') {
+      const indexed = await tst.graphList(path === '.' ? '' : path, 512);
+      if (indexed?.truncated || Number(indexed?.total) > (indexed?.paths ?? []).length) throw new Error(`Incomplete indexed directory listing for ${path}; narrow the graph invalidation before structural edits`);
+      for (const child of indexed?.paths ?? []) if (child === path || path === '.' || child.startsWith(`${path}/`)) paths.add(child);
+    }
+  }
+  const expected = new Map();
+  for (const path of [...paths].sort()) {
+    const target = await resolveWorkspacePath(root, path, false);
+    const info = await stat(target.absolute).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
+    if (info && !info.isDirectory() && !info.isFile()) throw new Error(`Cannot refresh non-file graph path: ${path}`);
+    expected.set(path, info?.isFile() ? sha256(await readFile(target.absolute)) : null);
+  }
+  return expected;
+}
+function utf8Prefix(text, maxBytes) {
+  const bytes = Buffer.from(text); let end = Math.min(bytes.length, maxBytes);
+  while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString('utf8');
+}
+function abortError() { const error = new Error('Generation stopped'); error.name = 'AbortError'; return error; }
+function throwIfAborted(signal) { if (signal?.aborted) throw abortError(); }
+function abortable(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolvePromise, rejectPromise) => {
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => { cleanup(); rejectPromise(abortError()); };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then((value) => { cleanup(); resolvePromise(value); }, (error) => { cleanup(); rejectPromise(error); });
+  });
 }
 
 async function stageOperation({ root, operation, index, files }) {
@@ -308,13 +409,14 @@ async function ensureFile(root, path, files, { mustExist }) {
   if (files.has(resolved.canonical)) {
     const prior = files.get(resolved.canonical);
     if (prior.exists !== mustExist) throw new Error(`conflicting existence assumptions for ${resolved.relative}`);
+    if (!prior.aliases.includes(resolved.relative)) prior.aliases.push(resolved.relative);
     return prior;
   }
   const snapshot = await snapshotBytes(resolved.absolute);
   if (mustExist && !snapshot.exists) throw new Error(`file does not exist: ${resolved.relative}`);
   if (!mustExist && snapshot.exists) throw new Error(`file already exists: ${resolved.relative}`);
   const mode = snapshot.exists ? (await stat(resolved.absolute)).mode : 0o644;
-  const file = { path: resolved.relative, absolute: resolved.absolute, exists: snapshot.exists, before: snapshot.exists ? snapshot.content : Buffer.alloc(0), baseHash: snapshot.hash, mode, edits: [], after: null, afterHash: null, parse: null };
+  const file = { path: resolved.relative, canonical: resolved.canonical, aliases: [resolved.relative], absolute: resolved.absolute, exists: snapshot.exists, before: snapshot.exists ? snapshot.content : Buffer.alloc(0), baseHash: snapshot.hash, mode, edits: [], after: null, afterHash: null, parse: null };
   files.set(resolved.canonical, file); return file;
 }
 
@@ -341,34 +443,31 @@ function finalizeFileEdits(file) {
 }
 
 function serializeStagedFile(file) {
-  return { path: file.path, exists: file.exists, baseHash: file.baseHash, afterHash: file.afterHash, afterBase64: file.after.toString('base64'), mode: file.mode, parse: file.parse };
+  return { path: file.path, canonical: file.canonical, aliases: [...file.aliases], exists: file.exists, baseHash: file.baseHash, afterHash: file.afterHash, afterBase64: file.after.toString('base64'), mode: file.mode, parse: file.parse };
 }
 
 function publicBatch(batch) {
-  return { id: batch.id, state: batch.state, sessionId: batch.sessionId, paths: batch.files.map((file) => file.path), diffDigest: batch.diffDigest, diff: batch.diff, createdAt: batch.createdAt, expiresAt: batch.expiresAt, files: batch.files.map((file) => ({ path: file.path, baseHash: file.baseHash, afterHash: file.afterHash, parse: file.parse })) };
+  return { id: batch.id, state: batch.state, sessionId: batch.sessionId, paths: batch.files.map((file) => file.path), diffDigest: batch.diffDigest, diff: batch.diff, diffTruncated: batch.files.some((file) => file.diffTruncated), createdAt: batch.createdAt, expiresAt: batch.expiresAt, files: batch.files.map((file) => ({ path: file.path, canonical: file.canonical, baseHash: file.baseHash, afterHash: file.afterHash, parse: file.parse, diffBytes: Buffer.byteLength(file.fullDiff), diffTruncated: file.diffTruncated })) };
 }
 
 const DIFF_CONTEXT_LINES = 3;
 const MAX_DIFF_EDIT_DISTANCE = 1500;
-const MAX_HUNK_LINES = 400;
 
 /** Standard unified diff (3 lines of context). Every file keeps a share of the byte budget so later files are never silently dropped. */
 export function renderBatchDiff(files) { return renderBatchDiffWithStats(files).diff; }
 export function renderBatchDiffWithStats(files) {
-  const budget = Math.max(8 * 1024, Math.floor(MAX_DIFF_BYTES / Math.max(1, files.length)));
+  const budget = Math.floor((MAX_DIFF_BYTES - Math.max(0, files.length - 1)) / Math.max(1, files.length));
   const rendered = files.map((file) => renderFileDiff(file, budget));
-  return { diff: capText(rendered.map((entry) => entry.text).join('\n'), MAX_DIFF_BYTES), stats: rendered.map((entry) => ({ path: entry.path, added: entry.added, removed: entry.removed })) };
+  return { diff: rendered.map((entry) => entry.text).join('\n'), stats: rendered.map((entry) => ({ path: entry.path, added: entry.added, removed: entry.removed })), rendered };
 }
 function renderFileDiff(file, budget) {
   const header = `--- ${file.exists ? `a/${file.path}` : '/dev/null'}\n+++ b/${file.path}\n`;
   const { hunks, added, removed } = diffHunks(splitLines(file.before.toString('utf8')), splitLines(file.after.toString('utf8')));
-  let body = ''; let omitted = 0;
-  for (let index = 0; index < hunks.length; index += 1) {
-    if (body && Buffer.byteLength(header + body + hunks[index]) > budget) { omitted = hunks.length - index; break; }
-    body += hunks[index];
-  }
-  if (omitted) body += `... ${omitted} more hunk${omitted === 1 ? '' : 's'} omitted for size; use tst_read on ${file.path} to review them\n`;
-  return { path: file.path, text: header + body, added, removed };
+  const fullText = header + hunks.join('');
+  const truncated = Buffer.byteLength(fullText) > budget;
+  const note = '\n... preview truncated; review the full staged diff with tst_edit_batch action=diff, batch_id, path, offset and max_bytes.\n';
+  const text = truncated ? utf8Prefix(fullText, Math.max(0, budget - Buffer.byteLength(note))) + note : fullText;
+  return { path: file.path, text, fullText, truncated, added, removed };
 }
 function splitLines(text) { return text ? text.split(/(?<=\n)/) : []; }
 function diffHunks(a, b) {
@@ -401,8 +500,7 @@ function diffHunks(a, b) {
       const op = ops[i]; const text = op.t === '+' ? b[op.y] : a[op.x];
       lines.push(`${op.t === '=' ? ' ' : op.t}${text}${text.endsWith('\n') ? '' : '\n\\ No newline at end of file\n'}`);
     }
-    const shown = lines.length > MAX_HUNK_LINES ? [...lines.slice(0, MAX_HUNK_LINES), `... ${lines.length - MAX_HUNK_LINES} more lines in this hunk omitted\n`] : lines;
-    return `@@ -${oldCount ? oldBefore[start] + 1 : oldBefore[start]},${oldCount} +${newCount ? newBefore[start] + 1 : newBefore[start]},${newCount} @@\n${shown.join('')}`;
+    return `@@ -${oldCount ? oldBefore[start] + 1 : oldBefore[start]},${oldCount} +${newCount ? newBefore[start] + 1 : newBefore[start]},${newCount} @@\n${lines.join('')}`;
   });
   return { hunks, added, removed };
 }
@@ -436,10 +534,10 @@ function backtrackOps(trace, n, m, dEnd, offset) {
   return ops.reverse();
 }
 
-async function atomicPublish(path, content, mode) {
+async function atomicPublish(path, content, mode, beforePublish = async () => {}) {
   await mkdir(dirname(path), { recursive: true });
   const temp = join(dirname(path), `.${Date.now().toString(36)}.${randomUUID()}.cuppet-tmp`);
-  try { await writeFile(temp, content, { mode: mode & 0o777 }); await rename(temp, path); }
+  try { await writeFile(temp, content, { mode: mode & 0o777 }); await beforePublish(); await rename(temp, path); }
   catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
 }
 async function restoreSnapshot(path, snapshot) {
@@ -456,7 +554,7 @@ async function snapshotBytes(path) {
 
 async function resolveWorkspacePath(projectRoot, resource, mustExist) {
   const root = await canonicalRoot(projectRoot); const raw = String(resource ?? '').trim();
-  if (!raw || raw.includes('\0') || raw.startsWith('~') || raw.startsWith('file:')) throw new Error('Invalid batch path');
+  if (!raw || Buffer.byteLength(raw) > 1024 || raw.includes('\0') || raw.startsWith('~') || raw.startsWith('file:')) throw new Error('Invalid batch path (maximum 1024 UTF-8 bytes)');
   const candidate = isAbsolute(raw) ? resolve(raw) : resolve(root, raw);
   if (candidate === root || !isAtOrInside(root, candidate)) throw new Error('Batch path escapes the project workspace');
   let ancestor = candidate; let resolvedAncestor;

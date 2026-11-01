@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readdir, readFile, realpath, stat, mkdir, writeFile, rename, rm } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const WORKSPACE_TST_CAPABILITIES = [
   'context.prepare',
@@ -48,6 +48,30 @@ const BINARY_EXTENSIONS = new Set([
 ]);
 
 const MAX_INDEXED_FILES = 5000;
+// Handles for different projects share the global store. Lock the read/modify/rename
+// transition by the canonical store path, including when the store does not exist yet.
+const memoryStoreQueues = new Map();
+let memoryStoreRegistration = Promise.resolve();
+async function withMemoryStore(storeDir, operation) {
+  if (!storeDir) throw new Error('Memory store is not configured');
+  const registration = memoryStoreRegistration.then(async () => {
+    let ancestor = resolve(storeDir);
+    for (;;) {
+      try { const actual = await realpath(ancestor); return join(actual, relative(ancestor, resolve(storeDir))); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; const parent = dirname(ancestor); if (parent === ancestor) throw error; ancestor = parent; }
+    }
+  });
+  // Register before the next canonicalization can overtake us.
+  const queued = registration.then((key) => {
+    const prior = memoryStoreQueues.get(key) ?? Promise.resolve();
+    const run = prior.catch(() => undefined).then(() => operation(key));
+    memoryStoreQueues.set(key, run);
+    void run.then(() => { if (memoryStoreQueues.get(key) === run) memoryStoreQueues.delete(key); }, () => { if (memoryStoreQueues.get(key) === run) memoryStoreQueues.delete(key); });
+    return { run };
+  });
+  memoryStoreRegistration = queued.then(() => undefined, () => undefined);
+  return (await queued).run;
+}
 
 export class WorkspaceTstHandle {
   #projectRoot;
@@ -90,9 +114,9 @@ export class WorkspaceTstHandle {
   async call(method, params = {}) {
     switch (method) {
       case 'graph.workspace':
-        return this.graphWorkspace(params.limit);
+        return this.graphWorkspace(params.limit, params.offset);
       case 'graph.list':
-        return this.graphList(params.prefix, params.limit);
+        return this.graphList(params.prefix, params.limit, params.offset);
       case 'graph.locate':
         return this.graphLocate(params.pattern, params.prefix, params.limit);
       case 'graph.query':
@@ -125,7 +149,7 @@ export class WorkspaceTstHandle {
     }
   }
 
-  async graphWorkspace(limit = 100) {
+  async graphWorkspace(limit = 100, offset = 0) {
     const { files, capped } = await this.#scanFiles();
     const clampedLimit = clamp(Number(limit) || 100, 1, 512);
     return {
@@ -136,11 +160,12 @@ export class WorkspaceTstHandle {
         edges: 0,
         ...(capped ? { truncated: true } : {}),
       },
-      files: files.slice(0, clampedLimit),
+      ...pageMetadata(files.length, offset, clampedLimit),
+      files: files.slice(pageOffset(offset), pageOffset(offset) + clampedLimit),
     };
   }
 
-  async graphList(prefix, limit = 100) {
+  async graphList(prefix, limit = 100, offset = 0) {
     const cleanPrefix = typeof prefix === 'string' ? prefix.trim().replace(/^\/+|\/+$/g, '') : '';
     const { files, capped } = await this.#scanFiles(cleanPrefix);
     const filtered = cleanPrefix
@@ -150,9 +175,56 @@ export class WorkspaceTstHandle {
     return {
       prefix: cleanPrefix,
       total: filtered.length,
-      paths: filtered.slice(0, clampedLimit),
+      ...pageMetadata(filtered.length, offset, clampedLimit),
+      paths: filtered.slice(pageOffset(offset), pageOffset(offset) + clampedLimit),
       ...(capped ? { truncated: true } : {}),
     };
+  }
+
+  async searchWorkspace(query, prefix, limit = 12, offset = 0, { caseSensitive = true, resolveTargets = null, authorizeRead = async () => {}, signal } = {}) {
+    const needle = String(query ?? '');
+    if (!needle || /[\r\n]/.test(needle)) throw new Error('query must be a non-empty, single-line literal');
+    const { files, capped } = await this.#scanFiles(prefix);
+    const start = pageOffset(offset); const count = clamp(limit, 1, 512);
+    const matches = []; let total = 0; let targetLimitReached = false;
+    const rootReal = await realpath(this.#projectRoot);
+    const searched = caseSensitive ? needle : needle.toLowerCase();
+    for (const path of files) {
+      if (signal?.aborted) { const error = new Error('Generation stopped'); error.name = 'AbortError'; throw error; }
+      if (BINARY_EXTENSIONS.has(extname(path).toLowerCase())) continue;
+      const absolute = await realpath(resolve(this.#projectRoot, path)).catch(() => null);
+      if (!absolute || !isInside(rootReal, absolute)) continue;
+      let raw;
+      try {
+        const info = await stat(absolute);
+        if (!info.isFile() || info.size > 1024 * 1024) continue;
+        await authorizeRead(path, relative(rootReal, absolute).replaceAll('\\', '/'));
+        if (signal?.aborted) { const error = new Error('Generation stopped'); error.name = 'AbortError'; throw error; }
+        raw = await readFile(absolute, 'utf8');
+      } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      if (raw.includes('\0') || !(caseSensitive ? raw : raw.toLowerCase()).includes(searched)) continue;
+      if (resolveTargets) {
+        const result = await resolveTargets(path, needle, hashSource(raw), 64);
+        targetLimitReached ||= (result?.matches ?? []).length >= 64;
+        for (const target of result?.matches ?? []) {
+          if (target.symbol !== needle || target.path !== path || !target.target_id) continue;
+          if (total >= start && matches.length < count) matches.push({
+            path, line: target.start_row + 1, column: target.start_column + 1,
+            kind: target.kind, symbol: target.symbol, target,
+          });
+          total++;
+        }
+      } else {
+        const lines = raw.split(/\r?\n/);
+        for (let index = 0; index < lines.length; index++) {
+          const column = (caseSensitive ? lines[index] : lines[index].toLowerCase()).indexOf(searched);
+          if (column < 0) continue;
+          if (total >= start && matches.length < count) matches.push({ path, line: index + 1, column: column + 1, kind: 'text', symbol: needle, text: lines[index].slice(0, 500) });
+          total++;
+        }
+      }
+    }
+    return { query: needle, total, matches, ...pageMetadata(total, start, count), ...(capped || targetLimitReached ? { truncated: true } : {}) };
   }
 
   async graphLocate(pattern, prefix, limit = 12) {
@@ -277,12 +349,12 @@ export class WorkspaceTstHandle {
     }
 
     if (this.#projectStore) {
-      const map = await this.#loadMemories(this.#projectStore);
+      const map = await withMemoryStore(this.#projectStore, (store) => this.#loadMemories(store));
       allRecords.push(...map.values());
     }
 
     if (this.#globalStore) {
-      const map = await this.#loadMemories(this.#globalStore);
+      const map = await withMemoryStore(this.#globalStore, (store) => this.#loadMemories(store));
       allRecords.push(...map.values());
     }
 
@@ -335,18 +407,13 @@ export class WorkspaceTstHandle {
         if (!sessionMap) { sessionMap = new Map(); this.#sessionMemories.set(sessionId, sessionMap); }
         sessionMap.set(recordKey, memoryRecord);
       }
-    } else if (normalizedScope === 'project') {
-      if (this.#projectStore) {
-        const map = await this.#loadMemories(this.#projectStore);
+    } else {
+      const store = normalizedScope === 'global' ? this.#globalStore : this.#projectStore;
+      await withMemoryStore(store, async (canonical) => {
+        const map = await this.#loadMemories(canonical);
         map.set(recordKey, memoryRecord);
-        await this.#saveMemories(this.#projectStore, map);
-      }
-    } else if (normalizedScope === 'global') {
-      if (this.#globalStore) {
-        const map = await this.#loadMemories(this.#globalStore);
-        map.set(recordKey, memoryRecord);
-        await this.#saveMemories(this.#globalStore, map);
-      }
+        await this.#saveMemories(canonical, map);
+      });
     }
     return memoryRecord;
   }
@@ -356,13 +423,11 @@ export class WorkspaceTstHandle {
     if (sessionId && this.#sessionMemories.has(sessionId)) {
       this.#sessionMemories.get(sessionId).delete(targetKey);
     }
-    if (this.#projectStore) {
-      const map = await this.#loadMemories(this.#projectStore);
-      if (map.delete(targetKey)) await this.#saveMemories(this.#projectStore, map);
-    }
-    if (this.#globalStore) {
-      const map = await this.#loadMemories(this.#globalStore);
-      if (map.delete(targetKey)) await this.#saveMemories(this.#globalStore, map);
+    for (const store of new Set([this.#projectStore, this.#globalStore].filter(Boolean))) {
+      await withMemoryStore(store, async (canonical) => {
+        const map = await this.#loadMemories(canonical);
+        if (map.delete(targetKey)) await this.#saveMemories(canonical, map);
+      });
     }
     return { forgotten: true };
   }
@@ -371,10 +436,9 @@ export class WorkspaceTstHandle {
     const normalized = normalizeMemoryScope(scope);
     if (normalized === 'session' && sessionId) {
       this.#sessionMemories.delete(sessionId);
-    } else if (normalized === 'project' && this.#projectStore) {
-      await this.#saveMemories(this.#projectStore, new Map());
-    } else if (normalized === 'global' && this.#globalStore) {
-      await this.#saveMemories(this.#globalStore, new Map());
+    } else if (normalized !== 'session') {
+      const store = normalized === 'global' ? this.#globalStore : this.#projectStore;
+      await withMemoryStore(store, (canonical) => this.#saveMemories(canonical, new Map()));
     }
     return { cleared: true };
   }
@@ -435,31 +499,27 @@ export class WorkspaceTstHandle {
   }
 
   async #loadMemories(storeDir) {
-    if (!storeDir) return new Map();
+    const filePath = join(storeDir, 'memory.json');
+    let raw;
+    try { raw = await readFile(filePath, 'utf8'); }
+    catch (error) { if (error.code === 'ENOENT') return new Map(); throw error; }
     try {
-      const filePath = join(storeDir, 'memory.json');
-      const raw = await readFile(filePath, 'utf8');
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return new Map(parsed.map((item) => [item.key, item]));
-      } catch {
-        // A torn/corrupt file used to be treated as empty and then overwritten; keep it for recovery instead.
-        await rename(filePath, `${filePath}.corrupt-${Date.now()}`).catch(() => undefined);
-      }
-    } catch {}
-    return new Map();
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.some((item) => !item || typeof item.key !== 'string' || typeof item.value !== 'string')) throw new Error('Invalid memory file');
+      return new Map(parsed.map((item) => [item.key, item]));
+    } catch {
+      // Quarantine must succeed before a replacement is allowed to overwrite the store.
+      await rename(filePath, `${filePath}.corrupt-${Date.now()}-${randomBytes(4).toString('hex')}`);
+      return new Map();
+    }
   }
 
   async #saveMemories(storeDir, memoryMap) {
-    if (!storeDir) return;
-    try {
-      await mkdir(storeDir, { recursive: true });
-      const filePath = join(storeDir, 'memory.json');
-      const records = [...memoryMap.values()];
-      const temp = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-      try { await writeFile(temp, JSON.stringify(records, null, 2), 'utf8'); await rename(temp, filePath); }
-      catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
-    } catch {}
+    await mkdir(storeDir, { recursive: true });
+    const filePath = join(storeDir, 'memory.json');
+    const temp = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    try { await writeFile(temp, JSON.stringify([...memoryMap.values()], null, 2), 'utf8'); await rename(temp, filePath); }
+    catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
   }
 }
 
@@ -472,7 +532,7 @@ async function walkDir(rootDir, currentDir, accumulator, maxFiles) {
     return;
   }
 
-  for (const entry of entries) {
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (accumulator.length >= maxFiles) break;
     const name = entry.name;
     if (name === '.DS_Store' || name === 'Thumbs.db') continue;
@@ -488,10 +548,20 @@ async function walkDir(rootDir, currentDir, accumulator, maxFiles) {
   }
 }
 
+function hashSource(text) { return createHash('sha256').update(text).digest('hex'); }
+function pageOffset(value) {
+  const offset = Number(value);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('offset must be a non-negative integer');
+  return offset;
+}
+function pageMetadata(total, offset, limit) {
+  const start = pageOffset(offset);
+  return { offset: start, next_offset: start + limit < total ? start + limit : null };
+}
 function normalizePrefix(value) {
   if (typeof value !== 'string') return '';
   const text = value.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
-  if (text.includes('\0') || text.split('/').includes('..')) return null;
+  if (isAbsolute(value) || /^[A-Za-z]:/.test(value) || text.includes('\0') || text.split('/').includes('..')) return null;
   return text;
 }
 function isInside(root, candidate) {

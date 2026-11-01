@@ -131,16 +131,21 @@ test('graph refresh failure remains a durable structural barrier across process 
   assert.equal(applied.graphReady, false);
   assert.equal(await readFile(join(root, 'a.ts'), 'utf8'), 'export const a = 2;\n');
   assert.deepEqual(await journal.graphInvalidations(root), ['a.ts']);
-  await assert.rejects(() => manager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] }), /graph refresh is required/);
+  const source = 'export const a = 2;\n';
+  const target = { target_id: 'tst:barrier', path: 'a.ts', symbol: 'a', kind: 'lexical_declaration', base_hash: sha(source), start_byte: 0, end_byte: Buffer.byteLength(source), expected_source: source };
+  const structural = { op: 'replace_node', target, content: 'export const a = 3;\n' };
+  const textBatch = await manager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] });
+  assert.equal(textBatch.state, 'prepared', 'text edits remain available while structural edits wait for graph recovery');
+  await assert.rejects(() => manager.prepare({ sessionId: 's1', projectRoot: root, operations: [structural] }), /graph refresh is required/);
 
   const restartedJournal = new MutationJournal(join(root, '.cuppet', 'journal'));
   await restartedJournal.ready();
   const restartedManager = new TstBatchEditManager({ tst, journal: restartedJournal });
   assert.deepEqual(await restartedJournal.graphInvalidations(root), ['a.ts']);
-  await assert.rejects(() => restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] }), /graph refresh is required/);
+  await assert.rejects(() => restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [structural] }), /graph refresh is required/);
 
   tst.failRefresh = false;
-  const recovered = await restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [{ op: 'replace_text', path: 'a.ts', old_text: '2', new_text: '3' }] });
+  const recovered = await restartedManager.prepare({ sessionId: 's1', projectRoot: root, operations: [structural] });
   assert.equal(recovered.state, 'prepared');
   assert.deepEqual(await restartedJournal.graphInvalidations(root), []);
 });
@@ -327,7 +332,7 @@ test('batch prepare and apply succeed when daemon does not support graph refresh
   assert.equal(await readFile(join(root, 'app.ts'), 'utf8'), 'export const version = 3;\n');
   assert.deepEqual(await journal.graphInvalidations(root), []);
 
-  // Pre-existing pending invalidations are also gracefully acknowledged on next prepare
+  // Text preparation does not depend on graph health; an explicit barrier still handles older daemons.
   await journal.recordBarrier({
     sessionId: 's-unsupported-graph',
     executionId: 'barrier-1',
@@ -345,6 +350,10 @@ test('batch prepare and apply succeed when daemon does not support graph refresh
     ],
   });
   assert.equal(prepared3.state, 'prepared');
+  assert.deepEqual(await journal.graphInvalidations(root), ['app.ts']);
+  const freshness = await manager.ensureGraphFresh(root);
+  assert.equal(freshness.ready, true);
+  assert.equal(freshness.supported, false);
   assert.deepEqual(await journal.graphInvalidations(root), []);
 });
 

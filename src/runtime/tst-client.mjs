@@ -14,14 +14,28 @@ export class TstClient extends EventEmitter {
     socket.on('error', (error) => this.#disconnect(error));
     socket.on('close', () => this.#disconnect(new Error('TST socket closed')));
   }
-  static async connect(socketPath, token, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) {
+  static async connect(socketPath, token, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS, signal } = {}) {
+    if (signal?.aborted) throw connectionClosed();
     const socket = await new Promise((resolve, reject) => {
-      const candidate = createConnection(socketPath); candidate.once('connect', () => resolve(candidate)); candidate.once('error', reject);
+      const candidate = createConnection(socketPath);
+      const cleanup = () => { signal?.removeEventListener('abort', onAbort); candidate.removeListener('error', onError); candidate.removeListener('connect', onConnect); };
+      const onAbort = () => { cleanup(); candidate.destroy(); reject(connectionClosed()); };
+      const onError = (error) => { cleanup(); candidate.destroy(); reject(error); };
+      const onConnect = () => { cleanup(); resolve(candidate); };
+      candidate.once('connect', onConnect); candidate.once('error', onError);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
     const client = new TstClient(socket);
+    const onAbort = () => client.destroy();
+    signal?.addEventListener('abort', onAbort, { once: true });
     let initialized;
-    try { initialized = await client.call('initialize', { token, notifications: true }, { timeoutMs }); }
-    catch (error) { client.destroy(); throw error; }
+    try {
+      if (signal?.aborted) throw connectionClosed();
+      initialized = await client.call('initialize', { token, notifications: true }, { timeoutMs });
+      if (signal?.aborted) throw connectionClosed();
+    } catch (error) { client.destroy(); throw error; }
+    finally { signal?.removeEventListener('abort', onAbort); }
     if (initialized?.protocol !== TST_PROTOCOL_VERSION) {
       client.destroy(); throw new Error(`TST protocol mismatch: expected ${TST_PROTOCOL_VERSION}, received ${initialized?.protocol ?? 'unknown'}`);
     }
@@ -65,14 +79,14 @@ export class TstClient extends EventEmitter {
 }
 
 export class TstBridge {
-  #socketPath; #token; #client; #lastError; #lastCapabilities = []; #connecting; #connectTimeoutMs;
+  #socketPath; #token; #client; #lastError; #lastCapabilities = []; #connecting; #connectTimeoutMs; #generation = 0; #connectController;
   constructor({ socketPath = process.env.CUPPET_TST_SOCKET, token = process.env.CUPPET_TST_TOKEN, connectTimeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) { this.#socketPath = socketPath; this.#token = token; this.#connectTimeoutMs = connectTimeoutMs; }
   get configured() { return Boolean(this.#socketPath && this.#token); }
   get status() { return { configured: this.configured, connected: Boolean(this.#client?.connected), lastError: this.#lastError ?? null, protocol: TST_PROTOCOL_VERSION, capabilities: this.#client?.capabilities ?? this.#lastCapabilities }; }
   async call(method, params = {}, options = {}) {
     if (!this.configured) throw new Error('TST is not configured');
     const client = await this.#ensure();
-    try { return await client.call(method, params, options); } catch (error) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; throw error; }
+    try { return await client.call(method, params, options); } catch (error) { if (this.#client === client) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; } throw error; }
   }
   async supports(capability) {
     if (!this.configured) return false;
@@ -109,22 +123,38 @@ export class TstBridge {
     if (!(await this.supports('graph.refresh_paths'))) throw new Error('Connected TST daemon does not support the graph refresh barrier. Upgrade the bundled TST runtime.');
     return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) });
   }
-  close() { this.#client?.destroy(); this.#client = undefined; }
+  close() {
+    this.#generation++;
+    this.#connectController?.abort(); this.#connectController = undefined;
+    this.#client?.destroy(); this.#client = undefined; this.#connecting = undefined;
+  }
   async #ensure() {
     if (this.#client?.connected) return this.#client;
-    // Share one in-flight connect: concurrent first calls used to open (and leak) one daemon connection each.
-    this.#connecting ??= this.#connect().finally(() => { this.#connecting = undefined; });
+    if (!this.#connecting) {
+      const generation = this.#generation; const controller = new AbortController();
+      this.#connectController = controller;
+      const connecting = this.#connect(generation, controller.signal).finally(() => {
+        if (this.#connecting === connecting) { this.#connecting = undefined; this.#connectController = undefined; }
+      });
+      this.#connecting = connecting;
+    }
     return this.#connecting;
   }
-  async #connect() {
+  async #connect(generation, signal) {
     try {
-      const client = await TstClient.connect(this.#socketPath, this.#token, { timeoutMs: this.#connectTimeoutMs }); this.#lastError = undefined; this.#client = client; this.#lastCapabilities = client.capabilities;
-      client.on('disconnect', (error) => { this.#lastError = cleanError(error); this.#lastCapabilities = client.capabilities; if (this.#client === client) this.#client = undefined; });
+      const client = await TstClient.connect(this.#socketPath, this.#token, { timeoutMs: this.#connectTimeoutMs, signal });
+      if (generation !== this.#generation || signal.aborted) { client.destroy(); throw connectionClosed(); }
+      this.#lastError = undefined; this.#client = client; this.#lastCapabilities = client.capabilities;
+      client.on('disconnect', (error) => {
+        if (this.#client !== client) return;
+        this.#lastError = cleanError(error); this.#lastCapabilities = client.capabilities; this.#client = undefined;
+      });
       return client;
-    } catch (error) { this.#lastError = cleanError(error); throw error; }
+    } catch (error) { if (generation === this.#generation) this.#lastError = cleanError(error); throw error; }
   }
 }
 
+function connectionClosed() { const error = new Error('TST connection closed while initializing'); error.name = 'AbortError'; return error; }
 function boundedRefresh(input = {}) {
   return {
     ...input,

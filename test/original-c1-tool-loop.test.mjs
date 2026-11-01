@@ -118,7 +118,7 @@ test('original C1 tool loop explores, reads, prepares, applies, and validates wi
       assert.ok(tools.some((item) => item.function?.name === 'tst_edit_batch'));
       switch (step++) {
         case 0:
-          return { toolCalls: [{ id: 'explore', name: 'tst_explore', arguments: JSON.stringify({ mode: 'search', query: 'Widget' }) }] };
+          return { toolCalls: [{ id: 'explore', name: 'tst_explore', arguments: JSON.stringify({ mode: 'search', query: 'Widget', include_targets: true }) }] };
         case 1:
           target = parseTarget(latestTool(messages));
           return { toolCalls: [{ id: 'read', name: 'tst_read', arguments: JSON.stringify({ targets: [target] }) }] };
@@ -187,7 +187,11 @@ test('original C1 treats an omitted graph-refresh receipt as stale after a succe
     assert.equal(applied.applied, true);
     assert.equal(applied.graphReady, false);
     assert.match(applied.graphError ?? '', /different post-edit hashes/);
-    await assert.rejects(() => fx.batchEdits.prepare({ sessionId: 'session', projectRoot: fx.root, operations: [{ op: 'replace_text', path: 'src/widget.js', old_text: '3', new_text: '4' }] }), /graph refresh is required/i);
+    const changed = await readFile(join(fx.root, 'src/widget.js'));
+    const currentTarget = { ...target, base_hash: sha256(changed), expected_source: changed.toString('utf8').trimEnd() };
+    const plain = await fx.batchEdits.prepare({ sessionId: 'session', projectRoot: fx.root, operations: [{ op: 'replace_text', path: 'src/widget.js', old_text: '3', new_text: '4' }] });
+    assert.equal(plain.state, 'prepared');
+    await assert.rejects(() => fx.batchEdits.prepare({ sessionId: 'session', projectRoot: fx.root, operations: [{ op: 'replace_node', target: currentTarget, content: 'export function Widget(){ return 4; }' }] }), /graph refresh is required/i);
   } finally {
     fx.db.close();
     await rm(fx.dir, { recursive: true, force: true });
