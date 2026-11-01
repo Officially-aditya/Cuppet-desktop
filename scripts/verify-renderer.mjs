@@ -105,7 +105,7 @@ assert.match(app, /Settings > General > Integrations/, 'browserControl disconnec
 assert.match(chat, /aria-label="Attach files"/, 'composer attachment action missing');
 assert.match(chat, /type="file"\s+multiple/, 'composer attachment action is not backed by the native OS file picker');
 assert.match(chat, /composer-attachments/, 'selected attachment chips missing');
-assert.match(chat, /<ModelPicker disabled=\{running\}\s*\/>/, 'composer does not expose the active model picker');
+assert.match(chat, /<PlatformPicker disabled=\{running \|\| loading\} onBusyChange=\{setSwitchingPlatform\}\s*\/>\s*<ModelPicker disabled=\{running \|\| switchingPlatform\}\s*\/>/, 'composer must expose adjacent platform and model pickers and disable model changes during a platform switch');
 assert.doesNotMatch(chat, /className=\{`mode-inline-button/, 'Build/Plan button returned to the permanent composer controls');
 assert.match(chat, /data-message-id=\{message\.id\}/, 'messages are not addressable for exact search navigation');
 assert.match(modelPicker, /aria-label="Select model"/, 'model picker trigger is not accessible');

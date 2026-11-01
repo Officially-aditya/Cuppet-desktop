@@ -43,6 +43,8 @@ function fixture(messages = [], initiallyOnline = true) {
       if (name === './client-transcript') return { useClientTranscript: () => ({}) };
       if (name === './chat-transcript') return { orderedTranscriptItems: (items) => items };
       if (name === './behavior-preferences') return { readSendBehavior: () => 'queue' };
+      if (name === './PlatformPicker') return { PlatformPicker: 'platform-picker' };
+      if (name === './ModelPicker') return { ModelPicker: 'model-picker' };
       return {};
     },
     window: {
@@ -139,6 +141,36 @@ function fixture(messages = [], initiallyOnline = true) {
     },
   };
 }
+
+test('platform picker sits beside the model picker and prevents model changes and sends during switching', () => {
+  const chat = fixture();
+  chat.props.loading = false;
+  chat.type('Keep this draft');
+  let items = chat.nodes();
+  const platform = items.find((node) => node.type === 'platform-picker');
+  assert.ok(platform);
+  assert.equal(items[items.indexOf(platform) + 1].type, 'model-picker');
+  assert.equal(platform.props.disabled, false);
+  platform.props.onBusyChange(true);
+  chat.render();
+  assert.equal(chat.nodes().find((node) => node.type === 'model-picker').props.disabled, true);
+  assert.equal(chat.nodes().find((node) => node.props?.['aria-label'] === 'Send').props.disabled, true);
+  chat.key('Enter');
+  assert.equal(chat.sends.length, 0);
+  assert.equal(chat.value(), 'Keep this draft');
+  chat.nodes().find((node) => node.type === 'platform-picker').props.onBusyChange(false);
+  chat.render();
+  assert.equal(chat.nodes().find((node) => node.type === 'model-picker').props.disabled, false);
+  chat.key('Enter');
+  assert.equal(chat.sends.length, 1);
+
+  for (const prop of ['running', 'loading']) {
+    chat.props[prop] = true;
+    chat.render();
+    assert.equal(chat.nodes().find((node) => node.type === 'platform-picker').props.disabled, true);
+    chat.props[prop] = false;
+  }
+});
 
 test('complete slash commands execute once on Enter and display their result', async () => {
   for (const text of ['/status', '/doctor', '/memory', '/background', '/compact', '/undo']) {

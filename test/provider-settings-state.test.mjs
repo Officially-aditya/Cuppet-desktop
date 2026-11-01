@@ -31,6 +31,40 @@ async function fixture(t, initial) {
   return { store: await load(), load, path };
 }
 
+test('platform picker history contains only saved platforms and survives restart', async (t) => {
+  const { store, load } = await fixture(t);
+  assert.deepEqual(store.rendererValue().savedProviderIDs, []);
+  await assert.rejects(store.save({ providerID: 'never-added', baseUrl: 'invalid', model: 'model' }));
+  assert.deepEqual(store.rendererValue().savedProviderIDs, []);
+  await store.save({ providerID: 'codex', model: 'my-codex-model', primaryEffort: 'xhigh' });
+  await store.save({ providerID: 'claude-code', model: 'my-claude-model' });
+  await store.save({ providerID: 'codex' });
+  assert.deepEqual(store.rendererValue().savedProviderIDs, ['codex', 'claude-code']);
+  const restarted = await load();
+  assert.deepEqual(restarted.rendererValue().savedProviderIDs, ['codex', 'claude-code']);
+  assert.equal((await restarted.save({ providerID: 'claude-code' })).primary.modelID, 'my-claude-model');
+  const restored = await restarted.save({ providerID: 'codex' });
+  assert.equal(restored.primary.modelID, 'my-codex-model');
+  assert.equal(restored.primaryEffort, 'xhigh');
+  assert.deepEqual(restored.savedProviderIDs, ['codex', 'claude-code']);
+});
+
+test('platform history migrates legacy settings, includes custom providers, and skips empty states', async (t) => {
+  const { store } = await fixture(t, {
+    providerID: 'custom-provider', baseUrl: 'https://provider.example/v1', model: 'custom-model',
+    apiKey: 'encrypted-credential-canary',
+    providerStates: {
+      codex: { model: 'saved-model' },
+      kiro: { model: '' },
+      'claude-code': null,
+    },
+  });
+  const projection = store.rendererValue();
+  assert.deepEqual(projection.savedProviderIDs, ['codex', 'custom-provider']);
+  assert.ok(!JSON.stringify(projection).includes('encrypted-credential-canary'));
+  assert.ok(!Object.hasOwn(projection, 'providerStates'));
+});
+
 test('provider model, effort, and secondary choices survive switching and restart', async (t) => {
   const { store, load, path } = await fixture(t);
   const codex = await store.save({

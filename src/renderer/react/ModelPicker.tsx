@@ -103,6 +103,12 @@ export function ModelPicker({ disabled = false, slot = 'primary', surface = 'com
     return () => document.removeEventListener('pointerdown', close);
   }, [open]);
 
+  useEffect(() => {
+    if (!disabled) return;
+    setOpen(false);
+    setStage('models');
+  }, [disabled]);
+
   const providerID = settings?.primary?.providerID || settings?.providerID || '';
   const pinnedModels = usePinnedModels(providerID);
   const providerPreset = settings?.presets?.find((item) => item.id === providerID);

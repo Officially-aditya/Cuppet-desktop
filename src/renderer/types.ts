@@ -149,6 +149,7 @@ export type ProviderSettings = {
   requiresLocalCli?: boolean;
   presetID?: string | null;
   presets?: ProviderPreset[];
+  savedProviderIDs?: string[];
   customModels?: ProviderCustomModel[];
   customModelProbe?: { ok?: boolean; providerID?: string; modelID?: string; reply?: string };
   baseUrl?: string;

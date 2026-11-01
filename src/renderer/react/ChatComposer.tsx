@@ -4,6 +4,7 @@ import type { Attachment, QueuedTurn, Session } from '../types';
 import type { ChatPaneProps, DeliveryMode } from './ChatPane';
 import type { ContextUsage } from './chat-transcript';
 import { ModelPicker } from './ModelPicker';
+import { PlatformPicker } from './PlatformPicker';
 import { ModePicker } from './ModePicker';
 import { QuestionInline } from './QuestionModal';
 import { PermissionModal } from './PermissionModal';
@@ -40,6 +41,7 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
     });
   };
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(() => readSendBehavior());
+  const [switchingPlatform, setSwitchingPlatform] = useState(false);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const localPaneRef = useRef<HTMLElement | null>(null);
@@ -174,7 +176,7 @@ export function ChatComposer({ ref, paneRef: externalPaneRef, contextUsage, onSu
   const submit = async (commandText?: string) => {
     const raw = (commandText ?? value).trim();
     const latest = composerRef.current;
-    if (loading || (!raw && !attachments.length) || latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
+    if (loading || switchingPlatform || (!raw && !attachments.length) || latest.key !== composerKey || latest.value !== value || latest.attachments !== attachments) return;
     onSubmitStart?.();
     const cleared = clearComposer();
     let restore = true;
@@ -478,7 +480,8 @@ function imageMimeFromName(name: string): string | null {
               </div>
             )}
             <div className="composer-actions-spacer" aria-hidden="true" />
-            <ModelPicker disabled={running} />
+            <PlatformPicker disabled={running || loading} onBusyChange={setSwitchingPlatform} />
+            <ModelPicker disabled={running || switchingPlatform} />
             {running ? (
               <button type="button" className="send-button composer-pause-button" aria-label="Pause" title="Pause" onClick={() => void onStop()}>
                 <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -486,7 +489,7 @@ function imageMimeFromName(name: string): string | null {
                 </svg>
               </button>
             ) : (
-              <button type="submit" className="send-button" aria-label="Send" title="Send" disabled={loading || (!value.trim() && !attachments.length)}>
+              <button type="submit" className="send-button" aria-label="Send" title="Send" disabled={loading || switchingPlatform || (!value.trim() && !attachments.length)}>
                 <svg className="send-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                   <path d="M10 15V5M6.5 8.5 10 5l3.5 3.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>

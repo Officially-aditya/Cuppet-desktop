@@ -102,6 +102,9 @@ export class ProviderSettingsStore {
       requiresLocalCli: localCliProvider,
       presetID: selectedPreset?.id ?? null,
       presets: providerPresetList(),
+      savedProviderIDs: Object.entries(this.#providerStates)
+        .filter(([, state]) => Boolean(state.primary?.modelID || state.model))
+        .map(([providerID]) => providerID),
       customModels: customModelEntries(this.#customModels),
       primaryEffort: this.#primaryEffort || projection.primary?.variant || null,
       encryptionAvailable: externalCredentialProvider ? true : storage?.available === true,
