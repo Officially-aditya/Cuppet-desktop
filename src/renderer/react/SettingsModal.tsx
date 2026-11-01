@@ -8,6 +8,7 @@ import { invalidateModelCatalogCache } from './model-catalog-cache';
 import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './provider-settings-events';
 import { providerStatusPresentation } from './provider-status-presentation';
 import { ProviderAuthentication } from './ProviderAuthentication';
+import { PlanUsagePanel } from './PlanUsagePanel';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
 import { isUnsandboxed } from './sandbox-status';
 import { useModalBehavior } from './use-modal-behavior';
@@ -18,7 +19,7 @@ const SECTION_META: Record<string, [string, string]> = {
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
-  usage: ['Token usage', 'Review exact token counts reported by your model providers.'],
+  usage: ['Usage', 'Review your subscription limits and provider-reported token counts.'],
   devices: ['Connected devices', 'Review devices paired through Cuppet Remote.'],
   privacy: ['Data & privacy', 'Understand where desktop data and credentials live.'],
   about: ['About', 'Desktop runtime and build information.'],
@@ -55,6 +56,8 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
 
   const presets = current?.presets ?? provider?.presets ?? [];
+  const usageProviderID = current?.primary?.providerID || current?.providerID || '';
+  const usageProviderLabel = presets.find((item) => item.id === usageProviderID)?.label || usageProviderID;
   const selected = useMemo(() => presets.find((item) => item.id === providerID) ?? null, [presets, providerID]);
   const isCodex = selected?.authType === 'chatgpt' || providerID === 'codex';
   const isLocalCli = selected?.authType === 'local-cli';
@@ -307,7 +310,10 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={activateProvider} onApiKey={setApiKey} onApiKeyCommit={persistApiKey} onReset={resetProvider} onModelSaved={modelSaved} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
-              {section === 'usage' && <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />}
+              {section === 'usage' && <>
+                <PlanUsagePanel providerID={usageProviderID} providerLabel={usageProviderLabel} />
+                <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />
+              </>}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
               {section === 'privacy' && <PrivacyPanel />}
               {section === 'about' && <AboutPanel />}

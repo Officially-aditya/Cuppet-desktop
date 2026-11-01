@@ -22,6 +22,13 @@ lines.on('line', (line) => {
     send({ id: message.id, result: { account: { type: 'chatgpt', email: 'fake@example.com', planType: 'plus' }, requiresOpenaiAuth: true } });
     return;
   }
+  if (message.method === 'account/rateLimits/read' && message.id != null) {
+    send({ id: message.id, result: { rateLimits: {
+      primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 2000000000 },
+      secondary: { usedPercent: 75, windowDurationMins: 10080, resetsAt: 2000600000 },
+    } } });
+    return;
+  }
   if (message.method === 'account/login/start' && message.id != null) {
     send({ id: message.id, result: { type: 'chatgpt', loginId: 'fake-login', authUrl: 'https://example.com/codex-login' } });
     setTimeout(() => send({ method: 'account/login/completed', params: { loginId: 'fake-login', success: true } }), 10);

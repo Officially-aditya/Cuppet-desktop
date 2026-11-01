@@ -5,6 +5,7 @@ const method = (channel, args = [], result = 'any') => ({ channel: 'cuppet:' + c
 export const IPC_METHODS = {
   health: method('health'),
   'usage.summary': method('usage:summary', [], 'Types.TokenUsageSummary'),
+  'usage.plan': method('usage:plan', [['providerID', 'id']], 'Types.ProviderPlanUsage'),
   'integrations.browserControl.status': method('browser-control:status', [], 'Types.BrowserControlStatus'),
   'integrations.browserControl.connect': method('browser-control:connect', [], 'Types.BrowserControlStatus'),
   'integrations.browserControl.disconnect': method('browser-control:disconnect', [], 'Types.BrowserControlStatus'),

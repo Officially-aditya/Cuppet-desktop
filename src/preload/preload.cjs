@@ -19,6 +19,10 @@ for (const [path, channel] of [
     "cuppet:usage:summary"
   ],
   [
+    "usage.plan",
+    "cuppet:usage:plan"
+  ],
+  [
     "integrations.browserControl.status",
     "cuppet:browser-control:status"
   ],

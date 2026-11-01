@@ -5,6 +5,7 @@ export type CuppetApi = {
   health: () => Promise<any>;
   usage: {
     summary: () => Promise<Types.TokenUsageSummary>;
+    plan: (providerID: string) => Promise<Types.ProviderPlanUsage>;
   };
   integrations: {
     browserControl: {

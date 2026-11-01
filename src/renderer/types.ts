@@ -163,6 +163,29 @@ export type ProviderSettings = {
   encryptionUnavailableReason?: string;
 };
 
+export type PlanUsageWindow = {
+  id: string;
+  label: string;
+  usedPercent: number;
+  remainingPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+};
+
+export type ProviderPlanUsage = {
+  providerID: string;
+  status: 'available' | 'unsupported' | 'signed-out' | 'unavailable' | 'error';
+  planType: string | null;
+  limits: Array<{
+    id: string;
+    label: string;
+    windows: PlanUsageWindow[];
+    credits: { unlimited: boolean; balance: string | null } | null;
+  }>;
+  fetchedAt: number | null;
+  message: string;
+};
+
 export type TokenUsageBucket = {
   providerID: string;
   modelID: string;

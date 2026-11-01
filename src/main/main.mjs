@@ -16,6 +16,7 @@ import { createApprovalAttention } from './approval-attention.mjs';
 import { createWindowAppearance } from './window-appearance.mjs';
 import { createIpcRegistrar } from './ipc-boundary.mjs';
 import { validateAttachments, validateCommandInput } from './command-input.mjs';
+import { readProviderPlanUsage } from '../runtime/provider-plan-usage.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
@@ -79,6 +80,7 @@ function registerIpc() {
   const request = (method, params) => runtime.request(method, params);
   handle('health', () => request('health'));
   handle('usage.summary', () => request('usage.summary'));
+  handle('usage.plan', (_event, providerID) => readProviderPlanUsage(providerID, { resourcesPath: process.resourcesPath }));
   handle('integrations.browserControl.status', () => request('integration.browser.status'));
   handle('integrations.browserControl.connect', () => request('integration.browser.connect'));
   handle('integrations.browserControl.disconnect', () => request('integration.browser.disconnect'));
