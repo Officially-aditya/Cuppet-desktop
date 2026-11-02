@@ -501,7 +501,7 @@ export class RuntimeService {
     this.#emit({ type: 'run.started', sessionId: targetSessionId, sourceSessionId, messageId: delivery.assistant.id, projectId: projectBinding.projectId, mode: this.#cognitive.mode(targetSessionId), pe3: route });
     const runGeneration = () => this.#generate({ sessionId: targetSessionId, assistantId: delivery.assistant.id, userId: delivery.user.id, execution, provider: params.provider, signal: controller.signal, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, refreshPaths: route.refreshPaths ?? [], attachments: route.attachments ?? [], integrations });
     if (this.#tst && typeof this.#tst.runWithProject === 'function') {
-      void this.#tst.runWithProject({ sessionId: targetSessionId, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null }, runGeneration);
+      void this.#tst.runWithProject({ sessionId: targetSessionId, projectId: existing.projectId ?? null, projectRoot: project?.canonicalPath ?? null, signal: controller.signal }, runGeneration);
     } else {
       void runGeneration();
     }
@@ -615,7 +615,7 @@ export class RuntimeService {
               : [];
             return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
           });
-        const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot });
+        const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot, signal });
         const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations);
         this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
         const orchestrationEnabled = this.#cognitive.snapshot().orchestratorEnabled === true || process.env.CUPPET_ORCHESTRATOR === '1';

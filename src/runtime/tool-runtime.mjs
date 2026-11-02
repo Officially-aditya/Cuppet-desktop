@@ -11,6 +11,7 @@ import { redactCredentials } from './credential-sanitization.mjs';
 import { buildMacSeatbeltProfile } from './sandbox/mac-seatbelt-driver.mjs';
 import { OperationBroker } from './sandbox/operation-broker.mjs';
 import { WorkspaceTstHandle } from './workspace-tst-handle.mjs';
+import { checkTstSignal, waitForTst, withTstRequest } from './tst-request.mjs';
 
 const MAX_TOOL_OUTPUT = 128 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -77,7 +78,7 @@ export class ToolRuntime {
       toolSteps += 1;
       const operation = () => this.#executeCall({ call, sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, integrations, mode, signal, getAssistantMessageId, delegate });
       const result = typeof this.#tst?.runWithProject === 'function'
-        ? await this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, operation)
+        ? await this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, signal }, operation)
         : await operation();
       if (result.success && result.paths.length) await onPaths(result.paths, result.mutation, result.details ?? null).catch(() => undefined);
       if (result.success && result.validation) await onValidation(result.validation).catch(() => undefined);
@@ -132,9 +133,9 @@ export class ToolRuntime {
       }
     };
 
-    return typeof this.#tst?.runWithProject === 'function'
-      ? this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot }, runTurn)
-      : runTurn();
+    return withTstRequest({ signal }, () => typeof this.#tst?.runWithProject === 'function'
+      ? this.#tst.runWithProject({ sessionId, projectId: resolvedProjectId, projectRoot: resolvedProjectRoot, signal }, runTurn)
+      : runTurn());
   }
 
   async #executeCall({ call, sessionId, projectId, projectRoot, integrations, mode, signal, getAssistantMessageId = null, delegate = null }) {
@@ -158,7 +159,7 @@ export class ToolRuntime {
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), output, message: output, ...(messageId ? { messageId } : {}) });
       this.#noteWorkspaceActivity(projectRoot, call.name, result);
       // Memory bookkeeping must never be able to hold the model's tool result hostage (a wedged TST daemon used to block every tool call).
-      if (result.details?.prepared !== true && result.details?.readOnly !== true) await settleWithin(this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? ''), OBSERVATION_TIMEOUT_MS);
+      if (result.details?.prepared !== true && result.details?.readOnly !== true) await waitForTst(settleWithin(this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? ''), OBSERVATION_TIMEOUT_MS), signal);
       return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;
@@ -409,8 +410,16 @@ export class ToolRuntime {
     if (!['symbol', 'exact_symbol', 'text'].includes(searchMode)) throw new Error('search_mode must be symbol, exact_symbol, or text');
     const offset = pageOffset(args.offset ?? 0);
     const includeTargets = args.include_targets === true;
-    const key = stableJson({ mode, searchMode, offset, includeTargets, caseSensitive: args.case_sensitive !== false, query: args.query ?? '', prefix: args.prefix ?? '', direction: args.direction ?? 'both', depth: args.depth ?? 2, limit: args.limit ?? null, epoch: this.#workspaceEpoch.get(projectRoot) ?? 0 });
-    const prior = this.#graphPrior(sessionId, key);
+    let revision = null;
+    try {
+      const nativeRevision = this.#tst.call && await this.#tst.supports?.('graph.revision');
+      const snapshot = nativeRevision
+        ? await this.#tst.call('graph.revision', {}, { signal })
+        : await new WorkspaceTstHandle({ projectRoot }).graphRevision({ signal });
+      if (snapshot?.indexing_complete !== false && typeof snapshot?.revision === 'string') revision = snapshot.revision;
+    } catch (error) { if (error?.name === 'AbortError') throw error; checkTstSignal(signal); }
+    const key = stableJson({ revision, cursor: args.cursor ?? null, mode, searchMode, offset, includeTargets, caseSensitive: args.case_sensitive !== false, query: args.query ?? '', prefix: args.prefix ?? '', direction: args.direction ?? 'both', depth: args.depth ?? 2, limit: args.limit ?? null, epoch: this.#workspaceEpoch.get(projectRoot) ?? 0 });
+    const prior = revision ? this.#graphPrior(sessionId, key) : null;
     if (prior) return { output: `UNTRUSTED CUPPET CODE GRAPH RESULTS\nThe identical ${mode} result was already returned earlier in this session (result #${prior.id}).\nUse that result or narrow/change the query for new navigation detail.`, paths: prior.paths, mutation: false };
 
     let result;
@@ -439,14 +448,27 @@ export class ToolRuntime {
         if (searchMode === 'symbol') {
           if (offset) throw new Error('Symbol navigation does not support offsets; use search_mode=exact_symbol or text for paginated search');
           result = await this.#tst.graphLocate(query, cleanPrefix(args.prefix), clamp(Number(args.limit) || 12, 1, 12));
+        } else if (this.#tst.call && await this.#tst.supports?.('graph.search_page')) {
+          result = await this.#tst.call('graph.search_page', {
+            query, search_mode: searchMode, prefix: cleanPrefix(args.prefix), limit: clamp(Number(args.limit) || 12, 1, 512),
+            offset, ...(args.cursor ? { cursor: String(args.cursor) } : {}), case_sensitive: searchMode === 'exact_symbol' || args.case_sensitive !== false,
+          }, { signal });
+          const resources = [];
+          for (const path of [...new Set(array(result.matches).map((match) => String(match.path)))]) {
+            const resolved = await resolveWorkspacePath(projectRoot, path, { mustExist: true });
+            resources.push(resolved.canonical);
+          }
+          if (resources.length) await authorize({ action: 'read', resources, description: 'Read indexed project search matches' });
+          checkTstSignal(signal);
         } else {
+          if (args.cursor) throw new Error('This TST runtime does not support native search cursors; restart with offset=0');
           const workspace = new WorkspaceTstHandle({ projectRoot });
           result = await workspace.searchWorkspace(query, args.prefix, clamp(Number(args.limit) || 12, 1, 512), offset, {
             caseSensitive: searchMode === 'exact_symbol' || args.case_sensitive !== false,
             signal,
             authorizeRead: (path, canonical) => authorize({ action: 'read', resources: [canonical], description: `Search project source in ${path}` }),
             resolveTargets: searchMode === 'exact_symbol'
-              ? (path, query, expectedHash, limit) => this.#tst.resolveEditTargets(path, query, expectedHash, limit)
+              ? (path, query, expectedHash, limit) => this.#tst.resolveEditTargets(path, query, expectedHash, limit, { signal })
               : null,
           });
         }
@@ -465,18 +487,20 @@ export class ToolRuntime {
     }
     const rendered = graphToolOutput(mode, result, cap);
     if (mode === 'search' && includeTargets && this.#batchEdits) {
-      const targetBlock = await this.#editTargetBlock({ matches: rendered.matches }).catch((error) => {
+      const targetBlock = await this.#editTargetBlock({ matches: rendered.matches }, signal).catch((error) => {
+        if (error?.name === 'AbortError') throw error; checkTstSignal(signal);
         const msg = cleanError(error);
         if (/does not support revision-bound edit targets|not supported/i.test(msg)) return '';
         return `EDIT TARGETS unavailable: ${msg}`;
       });
       if (targetBlock) rendered.output = `${rendered.output}\n\n${targetBlock}`;
     }
-    this.#graphRemember(sessionId, key, rendered.paths);
+    checkTstSignal(signal);
+    if (revision) this.#graphRemember(sessionId, key, rendered.paths);
     return { output: rendered.output, paths: rendered.paths, mutation: false };
   }
 
-  async #editTargetBlock(result) {
+  async #editTargetBlock(result, signal) {
     const matches = array(record(result).matches).slice(0, 6);
     const refs = [];
     const seen = new Set(); let omitted = 0;
@@ -485,7 +509,10 @@ export class ToolRuntime {
       const key = `${path}\0${symbol}`; if (!path || !symbol || seen.has(key)) continue; seen.add(key);
       let target = record(match.target);
       if (!target.target_id && match.kind !== 'text') {
-        const resolved = await this.#batchEdits.resolveTargets({ path, query: symbol, limit: 64 });
+        const expectedHash = typeof match.content_hash === 'string' ? match.content_hash : undefined;
+        const resolved = typeof this.#tst.resolveEditTargets === 'function'
+          ? await this.#tst.resolveEditTargets(path, symbol, expectedHash, 64, { signal })
+          : await this.#batchEdits.resolveTargets({ path, query: symbol, expectedHash, limit: 64, signal });
         target = array(resolved?.matches).map(record).find((item) => Number(item.start_row) + 1 === positive(match.line) && inline(item.symbol) === symbol) ?? {};
       }
       if (target.target_id) {
@@ -558,7 +585,7 @@ export class ToolRuntime {
       };
     }
     if (action === 'prepare') {
-      const batch = await this.#batchEdits.prepare({ sessionId, projectRoot, operations: args.operations });
+      const batch = await this.#batchEdits.prepare({ sessionId, projectRoot, operations: args.operations, signal });
       return { output: `TST EDIT BATCH PREPARED (no files written)\nbatch_id: ${batch.id}\ndiff_digest: ${batch.diffDigest}\npaths: ${batch.paths.join(', ')}\n\n${batch.diff}${batch.diffTruncated ? '\nFull staged diff: tst_edit_batch action=diff with this batch_id; follow next_offset until null.' : ''}`, paths: [], mutation: false, details: { prepared: true, batchId: batch.id, diffDigest: batch.diffDigest } };
     }
     const batchId = String(args.batch_id ?? '').trim(); if (!batchId) throw new Error('batch_id is required for action=apply');
@@ -721,7 +748,8 @@ const QUESTION_TOOL = tool('question', 'Ask the user a bounded interactive quest
 }, ['questions']);
 const EXPLORE_TOOL = tool('tst_explore', 'Find code and list project files before reading or editing. Use search to locate a symbol, tree to list paths under a folder, workspace for an overview, and trace for callers/callees. Examples: {"mode":"search","query":"handleLogin"} or {"mode":"tree","prefix":"src"}. Read the returned paths and line numbers with tst_read. If you already know the file path, go directly to tst_read. An empty search result is a reason to narrow the query or list a folder, not to abandon TST.', {
   search_mode: { type: 'string', enum: ['symbol', 'exact_symbol', 'text'], description: 'For search: symbol is fuzzy navigation (default); exact_symbol returns declarations with exactly this name using the native parser; text is literal filesystem search.' },
-  offset: { type: 'integer', minimum: 0, description: 'Continue workspace/tree/text/exact_symbol results using next_offset from the previous page.' },
+  offset: { type: 'integer', minimum: 0, description: 'Continue workspace/tree or legacy search results using next_offset. Native search uses cursor.' },
+  cursor: { type: 'string', maxLength: 4096, description: 'Copy next_cursor from native text/exact_symbol search. Bound to the query and workspace revision; restart the query if stale.' },
   include_targets: { type: 'boolean', description: 'Opt in to revision-bound structural targets for displayed symbol matches. Default false; ordinary reads and text edits need no targets.' },
   case_sensitive: { type: 'boolean', description: 'For text search only: default true. Set false for case-insensitive literal search.' },
   mode: { type: 'string', enum: ['workspace', 'tree', 'search', 'trace'], description: 'search=find a symbol; tree=list files; workspace=project overview; trace=callers/callees.' },
@@ -782,7 +810,7 @@ function injectToolPolicy(messages, projectBound, mode, delegation = false) {
     'Use tst_explore for grep/glob-style discovery and file listing, tst_read for file contents, and tst_edit_batch for edits/new files. If the file path is already known, start with tst_read. An empty graph search does not prevent reading a known path.',
     'The simple edit path needs no structural target: read the file, prepare a replace_text operation with path/old_text/new_text, review the returned diff, then apply the returned batch_id. For new files, prepare create_file with path/content and then apply. Use generic text/shell fallbacks when the TST operation is unavailable, fails, or cannot represent the required operation.',
     'A prepared batch has not modified the workspace. Never report an edit until tst_edit_batch action=apply succeeds.',
-    'For literal source lookup use tst_explore mode=search search_mode=text; for exact declaration names use search_mode=exact_symbol. Follow next_offset for listing/search pages. Request include_targets=true only for structural edits. Review truncated staged previews with tst_edit_batch action=diff before applying.',
+    'For literal source lookup use tst_explore mode=search search_mode=text; for exact declaration names use search_mode=exact_symbol. For native search pages, copy next_cursor into cursor; restart the query if the cursor is stale. Use next_offset for listings and legacy search pages. Request include_targets=true only for structural edits. Review truncated staged previews with tst_edit_batch action=diff before applying.',
     'Revision-bound targets become stale after file changes; re-explore/re-read instead of guessing offsets.',
     'Validation is evidence only when tst_validate reports success against unchanged post-edit hashes.',
     'Filesystem state is authoritative. Never claim a write, edit, command, test, validation, or user answer happened unless its tool result says it succeeded.',
@@ -957,6 +985,7 @@ function graphToolOutput(kind, result, cap) {
     lines.push(line); shown.push(entry); used += Buffer.byteLength(line) + 1;
   }
   const next = shown.length < entries.length || data.next_offset != null ? offset + shown.length : null;
+  const nextCursor = next == null ? null : record(shown.at(-1)).cursor_after ?? (shown.length === entries.length ? data.next_cursor : null);
   const capped = data.truncated || data.graph?.truncated;
   let summary;
   if (kind === 'workspace') {
@@ -965,7 +994,7 @@ function graphToolOutput(kind, result, cap) {
   } else if (kind === 'tree') {
     summary = `Files${data.prefix ? ` under ${inline(data.prefix)}` : ''}: ${shown.length} of ${number(data.total)}.`;
   } else summary = `Locate ${inline(data.query) || '(query)'}: ${shown.length} match${shown.length === 1 ? '' : 'es'}.`;
-  const output = [header, summary, `offset: ${offset}`, ...lines, `next_offset: ${next}`, capped ? 'The index or per-file symbol scan is capped; use a narrower prefix or a known path with tst_read for remaining files.' : ''].filter(Boolean).join('\n');
+  const output = [header, summary, `offset: ${offset}`, ...lines, `next_offset: ${next}`, nextCursor ? `next_cursor: ${nextCursor}` : '', capped ? 'The index or per-file symbol scan is capped; use a narrower prefix or a known path with tst_read for remaining files.' : ''].filter(Boolean).join('\n');
   const paths = kind === 'search' ? [...new Set(shown.map((value) => inline(record(value).path)).filter(Boolean))] : shown;
   return { output, paths, matches: kind === 'search' ? shown : [] };
 }

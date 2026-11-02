@@ -5,6 +5,7 @@ import { chmod, mkdir, realpath, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TstBridge, TST_PROTOCOL_VERSION } from './tst-client.mjs';
+import { checkTstSignal, tstOptions, waitForTst, withTstRequest } from './tst-request.mjs';
 import { WorkspaceTstHandle, WORKSPACE_TST_CAPABILITIES } from './workspace-tst-handle.mjs';
 
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -12,6 +13,8 @@ const SHUTDOWN_TIMEOUT_MS = 1_500;
 const EXIT_TIMEOUT_MS = 3_000;
 const DEFAULT_IDLE_MS = 5 * 60_000;
 const STDERR_LIMIT = 8_000;
+const SAFE_RETRY_METHODS = new Set(['status', 'graph.query', 'graph.search', 'graph.search_page', 'graph.revision', 'graph.locate', 'graph.list', 'graph.workspace', 'graph.trace', 'graph.trace_summary', 'memory.query', 'edit.resolve_targets', 'edit.parse_staged']);
+const transportFailure = (error) => ['TST_TIMEOUT', 'TST_DISCONNECTED', 'ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ENOENT'].includes(error?.code);
 const here = dirname(fileURLToPath(import.meta.url));
 
 export class ManagedTstManager {
@@ -119,21 +122,21 @@ export class ManagedTstManager {
     await Promise.all(records.map((record) => Promise.resolve(record.supervisor.close()).catch(() => undefined)));
   }
 
-  async call(method, params = {}) {
+  async call(method, params = {}, options = {}) {
     const sessionId = typeof params?.session_id === 'string' ? params.session_id : null;
     if (!sessionId) throw new Error(`Project-scoped TST method ${method} requires an explicit project handle or session_id`);
-    return (await this.#forSession(sessionId)).call(method, params);
+    return (await this.#forSession(sessionId)).call(method, params, options);
   }
-  async supports(capability, sessionId) { return (await this.#forSession(sessionId)).supports(capability); }
-  async prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0) { return (await this.#forSession(sessionId)).prepareContext(sessionId, query, hints, observations, mode, projectionBudget); }
-  async refreshStm(input) { return (await this.#forSession(input?.session_id)).refreshStm(input); }
-  async turnCompleted(sessionId) { return (await this.#forSession(sessionId)).turnCompleted(sessionId); }
-  async observeMemory(sessionId, observation) { return (await this.#forSession(sessionId)).observeMemory(sessionId, observation); }
-  async queryMemory(sessionId, query, limit = 20) { return (await this.#forSession(sessionId)).queryMemory(sessionId, query, limit); }
-  async rememberMemory(sessionId, value = {}) { return (await this.#forSession(sessionId)).rememberMemory(sessionId, value); }
-  async forgetMemory(sessionId, key) { return (await this.#forSession(sessionId)).forgetMemory(sessionId, key); }
-  async clearMemory(sessionId, scope = 'session') { return (await this.#forSession(sessionId)).clearMemory(sessionId, scope); }
-  async recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash) { return (await this.#forSession(sessionId)).recordEvidence(sessionId, memoryId, kind, reference, success, contentHash); }
+  async supports(capability, sessionId, options = {}) { return (await this.#forSession(sessionId)).supports(capability, options); }
+  async prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0, options = {}) { return (await this.#forSession(sessionId)).prepareContext(sessionId, query, hints, observations, mode, projectionBudget, options); }
+  async refreshStm(input, options = {}) { return (await this.#forSession(input?.session_id)).refreshStm(input, options); }
+  async turnCompleted(sessionId, options = {}) { return (await this.#forSession(sessionId)).turnCompleted(sessionId, options); }
+  async observeMemory(sessionId, observation, options = {}) { return (await this.#forSession(sessionId)).observeMemory(sessionId, observation, options); }
+  async queryMemory(sessionId, query, limit = 20, options = {}) { return (await this.#forSession(sessionId)).queryMemory(sessionId, query, limit, options); }
+  async rememberMemory(sessionId, value = {}, options = {}) { return (await this.#forSession(sessionId)).rememberMemory(sessionId, value, options); }
+  async forgetMemory(sessionId, key, options = {}) { return (await this.#forSession(sessionId)).forgetMemory(sessionId, key, options); }
+  async clearMemory(sessionId, scope = 'session', options = {}) { return (await this.#forSession(sessionId)).clearMemory(sessionId, scope, options); }
+  async recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash, options = {}) { return (await this.#forSession(sessionId)).recordEvidence(sessionId, memoryId, kind, reference, success, contentHash, options); }
   async forSession(sessionId) { return this.#forSession(sessionId); }
   sessionBinding(sessionId) { return this.#sessionBindings.get(sessionId) ?? null; }
 
@@ -199,9 +202,11 @@ export class ManagedTstManager {
 
 export class TstSupervisor {
   #binaryPath; #projectRoot; #projectStore; #globalStore; #runRoot; #idleMs; #projectKey;
+  #recovering; #stopping; #activeCalls = 0; #failures = 0; #restarts = []; #recoveryBlockedUntil = 0;
+  #healthTimeoutMs; #failureThreshold; #maxRestarts; #restartWindowMs; #startController;
   #child; #bridge; #starting; #runDir; #idleTimer; #stderr = ''; #lastError; #starts = 0; #closed = false; #verified = false; #spawnError;
 
-  constructor({ binaryPath, projectRoot, projectStore, globalStore, runRoot, idleMs = DEFAULT_IDLE_MS, projectKey = null }) {
+  constructor({ binaryPath, projectRoot, projectStore, globalStore, runRoot, idleMs = DEFAULT_IDLE_MS, projectKey = null, healthTimeoutMs = 1000, failureThreshold = 2, maxRestarts = 2, restartWindowMs = 60000 }) {
     this.#binaryPath = binaryPath;
     this.#projectRoot = projectRoot;
     this.#projectStore = projectStore;
@@ -209,6 +214,10 @@ export class TstSupervisor {
     this.#runRoot = runRoot;
     this.#idleMs = idleMs;
     this.#projectKey = projectKey;
+    this.#healthTimeoutMs = Math.max(20, healthTimeoutMs);
+    this.#failureThreshold = Math.max(1, failureThreshold);
+    this.#maxRestarts = Math.max(0, maxRestarts);
+    this.#restartWindowMs = Math.max(1000, restartWindowMs);
   }
 
   get status() {
@@ -217,48 +226,108 @@ export class TstSupervisor {
       connected: Boolean(this.#bridge?.status?.connected),
       capabilities: this.#bridge?.status?.capabilities ?? [],
       starts: this.#starts,
+      recoveryBlockedUntil: this.#recoveryBlockedUntil || null,
       lastError: this.#lastError ?? null,
       projectKey: this.#projectKey,
     };
   }
 
-  async call(method, params = {}) {
-    const bridge = await this.#ensureStarted();
-    this.#clearIdle();
+  async call(method, params = {}, options = {}) {
+    options = tstOptions(options); checkTstSignal(options.signal);
+    if (this.#closed) throw new Error('TST supervisor is closed');
+    if (Date.now() < this.#recoveryBlockedUntil) throw new Error('TST recovery limit reached; retry after the recovery window');
+    if (this.#recovering) await waitForTst(this.#recovering, options.signal);
+    if (this.#closed) throw new Error('TST supervisor is closed');
+    if (Date.now() < this.#recoveryBlockedUntil) throw new Error('TST recovery limit reached; retry after the recovery window');
+    this.#activeCalls++; this.#clearIdle();
+    let bridge;
     try {
-      const result = await bridge.call(method, params);
-      this.#lastError = undefined;
-      return result;
-    } catch (error) {
-      this.#lastError = cleanError(error);
-      throw error;
-    } finally { this.#scheduleIdle(); }
+      bridge = await waitForTst(this.#ensureStarted(), options.signal);
+      checkTstSignal(options.signal);
+      try {
+        const result = await bridge.call(method, params, options);
+        this.#failures = 0; this.#lastError = undefined;
+        return result;
+      } catch (error) {
+        if (error?.name === 'AbortError' || options.signal?.aborted) throw error;
+        this.#lastError = cleanError(error);
+        if (!transportFailure(error)) throw error;
+        const recovered = await waitForTst(this.#recover(bridge), options.signal);
+        checkTstSignal(options.signal);
+        if (!recovered || !SAFE_RETRY_METHODS.has(method)) throw error;
+        // One retry per safe request. An uncertain mutation must be reconciled by its caller.
+        const current = await waitForTst(this.#ensureStarted(), options.signal);
+        try {
+          const result = await current.call(method, params, options);
+          this.#failures = 0; this.#lastError = undefined; return result;
+        } catch (retryError) {
+          if (retryError?.name !== 'AbortError' && !options.signal?.aborted && transportFailure(retryError)) {
+            await waitForTst(this.#recover(current), options.signal);
+          }
+          throw retryError;
+        }
+      }
+    } finally { this.#activeCalls--; this.#scheduleIdle(); }
   }
 
-  async supports(capability) {
-    const bridge = await this.#ensureStarted();
-    this.#clearIdle();
-    try { return await bridge.supports(capability); }
-    finally { this.#scheduleIdle(); }
+  async #recover(failedBridge) {
+    if (this.#closed) return false;
+    if (this.#recovering) return this.#recovering;
+    if (failedBridge !== this.#bridge && this.#bridge?.status.connected) return true;
+    const recovering = withTstRequest({ signal: undefined }, async () => {
+      this.#failures++;
+      let healthy = false;
+      try { await failedBridge.call('status', {}, { timeoutMs: this.#healthTimeoutMs, signal: undefined }); healthy = true; }
+      catch { this.#failures++; failedBridge.close(); }
+      if (this.#closed) return false;
+      if (healthy && this.#failures < this.#failureThreshold) return true;
+      const now = Date.now();
+      this.#restarts = this.#restarts.filter((time) => now - time < this.#restartWindowMs);
+      if (this.#restarts.length >= this.#maxRestarts) {
+        this.#recoveryBlockedUntil = (this.#restarts[0] ?? now) + this.#restartWindowMs;
+        this.#lastError = 'TST recovery limit reached after repeated daemon failures';
+        await this.#stop(true);
+        return false;
+      }
+      this.#restarts.push(now);
+      await this.#stop(true);
+      if (this.#closed) return false;
+      await this.#ensureStarted();
+      this.#failures = 0;
+      return true;
+    }).finally(() => { if (this.#recovering === recovering) this.#recovering = undefined; });
+    this.#recovering = recovering;
+    return recovering;
+  }
+
+  async supports(capability, options = {}) {
+    options = tstOptions(options); checkTstSignal(options.signal);
+    await this.call('status', {}, options);
+    return this.#bridge?.supports(capability, options) ?? false;
   }
 
   async close() {
     if (this.#closed) return;
-    this.#closed = true;
+    this.#closed = true; this.#startController?.abort();
+    await this.#starting?.catch(() => undefined);
+    await this.#recovering?.catch(() => undefined);
     await this.#stop();
   }
 
   async #ensureStarted() {
     if (this.#closed) throw new Error('TST supervisor is closed');
     // One start at a time: concurrent cold-start callers used to spawn one daemon each and orphan all but the last.
+    if (this.#stopping) await this.#stopping;
+    if (this.#closed) throw new Error('TST supervisor is closed');
     if (this.#starting) { await this.#starting; return this.#bridge; }
     if (this.#child && this.#child.exitCode === null && this.#bridge) return this.#bridge;
-    this.#starting = this.#start().finally(() => { this.#starting = undefined; });
+    this.#startController = new AbortController();
+    this.#starting = withTstRequest({ signal: undefined }, () => this.#start(this.#startController.signal)).finally(() => { this.#starting = undefined; this.#startController = undefined; });
     await this.#starting;
     return this.#bridge;
   }
 
-  async #start() {
+  async #start(signal) {
     if (!this.#binaryPath) throw new Error('Managed TST binary is unavailable');
     if (!this.#verified) {
       const protocol = (await capture(this.#binaryPath, ['--protocol'], 5_000)).trim();
@@ -268,6 +337,7 @@ export class TstSupervisor {
     await Promise.all([
       privateDirectory(this.#projectStore), privateDirectory(this.#globalStore), privateDirectory(this.#runRoot),
     ]);
+    checkTstSignal(signal); if (this.#closed) throw new Error('TST supervisor is closed');
     const launchId = `${process.pid}-${randomBytes(8).toString('hex')}`;
     const runDir = join(this.#runRoot, launchId);
     await privateDirectory(runDir);
@@ -307,11 +377,12 @@ export class TstSupervisor {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS;
     let lastError;
     while (Date.now() < deadline) {
-      if (this.#spawnError) throw this.#spawnError;
+      if (this.#closed || signal.aborted) { bridge.close(); await this.#stop(true); checkTstSignal(signal); throw new Error('TST supervisor is closed'); }
+      if (this.#spawnError) { await this.#stop(true); throw this.#spawnError; }
       if (child.exitCode !== null) throw new Error(`TST daemon exited during startup (${child.exitCode})${this.#stderr.trim() ? `: ${this.#stderr.trim().slice(-1000)}` : ''}`);
       try {
         // Bounded probe: without a timeout a wedged daemon made this loop (and its 10s deadline) wait forever.
-        await bridge.call('status', {}, { timeoutMs: Math.max(250, Math.min(2_000, deadline - Date.now())) });
+        await bridge.call('status', {}, { timeoutMs: Math.max(250, Math.min(2_000, deadline - Date.now())), signal });
         this.#lastError = undefined;
         this.#scheduleIdle();
         return;
@@ -327,13 +398,20 @@ export class TstSupervisor {
 
   #scheduleIdle() {
     this.#clearIdle();
-    if (this.#closed || this.#idleMs <= 0) return;
+    if (this.#closed || this.#activeCalls || this.#recovering || this.#idleMs <= 0) return;
     this.#idleTimer = setTimeout(() => void this.#stop().catch(() => undefined), this.#idleMs);
     this.#idleTimer.unref?.();
   }
   #clearIdle() { if (this.#idleTimer) clearTimeout(this.#idleTimer); this.#idleTimer = undefined; }
 
-  async #stop() {
+  async #stop(force = false) {
+    if (this.#stopping) return this.#stopping;
+    const stopping = this.#stopNow(force).finally(() => { if (this.#stopping === stopping) this.#stopping = undefined; });
+    this.#stopping = stopping;
+    return stopping;
+  }
+
+  async #stopNow(force) {
     this.#clearIdle();
     const child = this.#child;
     const bridge = this.#bridge;
@@ -342,11 +420,12 @@ export class TstSupervisor {
     this.#bridge = undefined;
     this.#runDir = undefined;
     if (bridge) {
-      try { await settleBefore(bridge.call('shutdown'), SHUTDOWN_TIMEOUT_MS); } catch {}
+      if (!force) { try { await settleBefore(bridge.call('shutdown', {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS, signal: undefined }), SHUTDOWN_TIMEOUT_MS); } catch {} }
       bridge.close();
     }
     if (child && child.exitCode === null) {
       const exited = new Promise((resolveExit) => child.once('exit', resolveExit));
+      if (force) child.kill('SIGTERM');
       if (!await settleBefore(exited, EXIT_TIMEOUT_MS)) {
         child.kill('SIGTERM');
         if (!await settleBefore(exited, 1_000) && child.exitCode === null) child.kill('SIGKILL');
@@ -361,25 +440,25 @@ class ProjectTstHandle {
   constructor(supervisor) { this.#supervisor = supervisor; }
   get configured() { return true; }
   get status() { return { configured: true, protocol: TST_PROTOCOL_VERSION, ...this.#supervisor.status }; }
-  call(method, params = {}) { return this.#supervisor.call(method, params); }
-  supports(capability) { return this.#supervisor.supports(capability); }
-  prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0) { return this.call('context.prepare', { session_id: sessionId, query: String(query).slice(0, 6000), mode, projection_budget: Math.min(Math.max(Math.floor(projectionBudget), 0), 16384), hints: hints.slice(0, 32), observations: observations.slice(0, 256) }); }
-  refreshStm(input) { return this.call('stm.refresh', boundedRefresh(input)); }
-  turnCompleted(sessionId) { return this.call('turn.completed', { session_id: sessionId }); }
-  observeMemory(sessionId, observation) { return this.call('memory.observe', { session_id: sessionId, ...observation }); }
-  queryMemory(sessionId, query, limit = 20) { return this.call('memory.query', { session_id: sessionId, query, limit: Math.min(Math.max(limit, 1), 40) }); }
-  rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) { return this.call('memory.remember', { session_id: sessionId, key: String(key ?? '').slice(0, 240), value: String(value ?? '').slice(0, 4000), scope: normalizeMemoryScope(scope), pinned: Boolean(pinned), file_hashes: boundedHashes(fileHashes) }); }
-  forgetMemory(sessionId, key) { return this.call('memory.forget', { session_id: sessionId, key: String(key ?? '').slice(0, 240) }); }
-  clearMemory(sessionId, scope = 'session') { return this.call('memory.forget', { session_id: sessionId, clear_scope: normalizeMemoryScope(scope) }); }
-  recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash) { return this.call('evidence.record', { session_id: sessionId, memory_id: memoryId, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }); }
-  graphQuery(query, prefix, limit = 12) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 32) }); }
-  graphLocate(pattern, prefix, limit = 12) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 12) }); }
-  graphList(prefix, limit = 100) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 512) }); }
-  graphWorkspace(limit = 100) { return this.call('graph.workspace', { limit: clamp(limit, 1, 512) }); }
-  graphTraceSummary(query, direction = 'both', depth = 2, limit = 12) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: clamp(depth, 1, 4), limit: clamp(limit, 1, 12) }); }
-  async resolveEditTargets(path, query, expectedHash, limit = 12) { if (!await this.supports('edit.resolve_targets')) throw new Error('Connected TST daemon does not support revision-bound edit targets.'); return this.call('edit.resolve_targets', { path: String(path).slice(0, 1024), query: String(query).slice(0, 512), ...(expectedHash ? { expected_hash: String(expectedHash).slice(0, 128) } : {}), limit: clamp(limit, 1, 64) }); }
-  async parseStaged(path, baseHash, content) { if (!await this.supports('edit.parse_staged')) throw new Error('Connected TST daemon does not support staged parsing.'); return this.call('edit.parse_staged', { path: String(path).slice(0, 1024), base_hash: baseHash || null, content: String(content) }); }
-  async refreshGraphPaths(paths) { if (!await this.supports('graph.refresh_paths')) throw new Error('Connected TST daemon does not support the graph refresh barrier.'); return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) }); }
+  call(method, params = {}, options = {}) { return this.#supervisor.call(method, params, options); }
+  supports(capability, options = {}) { return this.#supervisor.supports(capability, options); }
+  prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0, options = {}) { return this.call('context.prepare', { session_id: sessionId, query: String(query).slice(0, 6000), mode, projection_budget: Math.min(Math.max(Math.floor(projectionBudget), 0), 16384), hints: hints.slice(0, 32), observations: observations.slice(0, 256) }, options); }
+  refreshStm(input, options = {}) { return this.call('stm.refresh', boundedRefresh(input), options); }
+  turnCompleted(sessionId, options = {}) { return this.call('turn.completed', { session_id: sessionId }, options); }
+  observeMemory(sessionId, observation, options = {}) { return this.call('memory.observe', { session_id: sessionId, ...observation }, options); }
+  queryMemory(sessionId, query, limit = 20, options = {}) { return this.call('memory.query', { session_id: sessionId, query, limit: Math.min(Math.max(limit, 1), 40) }, options); }
+  rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}, options = {}) { return this.call('memory.remember', { session_id: sessionId, key: String(key ?? '').slice(0, 240), value: String(value ?? '').slice(0, 4000), scope: normalizeMemoryScope(scope), pinned: Boolean(pinned), file_hashes: boundedHashes(fileHashes) }, options); }
+  forgetMemory(sessionId, key, options = {}) { return this.call('memory.forget', { session_id: sessionId, key: String(key ?? '').slice(0, 240) }, options); }
+  clearMemory(sessionId, scope = 'session', options = {}) { return this.call('memory.forget', { session_id: sessionId, clear_scope: normalizeMemoryScope(scope) }, options); }
+  recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash, options = {}) { return this.call('evidence.record', { session_id: sessionId, memory_id: memoryId, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }, options); }
+  graphQuery(query, prefix, limit = 12, options = {}) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 32) }, options); }
+  graphLocate(pattern, prefix, limit = 12, options = {}) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 12) }, options); }
+  graphList(prefix, limit = 100, options = {}) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: clamp(limit, 1, 512) }, options); }
+  graphWorkspace(limit = 100, options = {}) { return this.call('graph.workspace', { limit: clamp(limit, 1, 512) }, options); }
+  graphTraceSummary(query, direction = 'both', depth = 2, limit = 12, options = {}) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: clamp(depth, 1, 4), limit: clamp(limit, 1, 12) }, options); }
+  async resolveEditTargets(path, query, expectedHash, limit = 12, options = {}) { if (!await this.supports('edit.resolve_targets', options)) throw new Error('Connected TST daemon does not support revision-bound edit targets.'); return this.call('edit.resolve_targets', { path: String(path).slice(0, 1024), query: String(query).slice(0, 512), ...(expectedHash ? { expected_hash: String(expectedHash).slice(0, 128) } : {}), limit: clamp(limit, 1, 64) }, options); }
+  async parseStaged(path, baseHash, content, options = {}) { if (!await this.supports('edit.parse_staged', options)) throw new Error('Connected TST daemon does not support staged parsing.'); return this.call('edit.parse_staged', { path: String(path).slice(0, 1024), base_hash: baseHash || null, content: String(content) }, options); }
+  async refreshGraphPaths(paths, options = {}) { if (!await this.supports('graph.refresh_paths', options)) throw new Error('Connected TST daemon does not support the graph refresh barrier.'); return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) }, options); }
   close() {}
 }
 

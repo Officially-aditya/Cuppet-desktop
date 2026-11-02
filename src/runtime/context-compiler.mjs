@@ -1,3 +1,4 @@
+import { checkTstSignal, tstOptions, waitForTst } from './tst-request.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { renderLosslessPlanContext } from './lossless-plan.mjs';
@@ -14,7 +15,8 @@ export class ContextCompiler {
   #tst; #planStore; #state; #epochs = new Map(); #indexedUserMessages = new Map();
   constructor({ tst, planStore, cognitiveState }) { this.#tst = tst; this.#planStore = planStore; this.#state = cognitiveState; }
 
-  async compile({ sessionId, messages, usableTokens = 128_000, estimatedTokens, userMessageId, projectRoot = null }) {
+  async compile({ sessionId, messages, usableTokens = 128_000, estimatedTokens, userMessageId, projectRoot = null, signal }) {
+    signal ??= tstOptions().signal; checkTstSignal(signal);
     const mode = this.#state?.mode(sessionId) === 'plan' ? 'plan' : 'foreground';
     const orchestrator = this.#state?.snapshot().orchestratorEnabled === true || process.env.CUPPET_ORCHESTRATOR === '1';
     const source = messages.map((message) => ({ ...message }));
@@ -39,7 +41,8 @@ export class ContextCompiler {
     const epochKey = `${sessionId}\0${userMessageId}\0${experimentMode}`;
     let epoch = this.#epochs.get(epochKey);
     if (!epoch) {
-      epoch = await this.#buildEpoch({ sessionId, prompt, messages: source, mode: experimentMode, usableTokens, projectRoot });
+      epoch = await this.#buildEpoch({ sessionId, prompt, messages: source, mode: experimentMode, usableTokens, projectRoot, signal });
+      checkTstSignal(signal);
       this.#rememberEpoch(epochKey, epoch);
     }
 
@@ -50,16 +53,16 @@ export class ContextCompiler {
     return { messages: output, mode: experimentMode, injected: Boolean(compaction || epoch.block || planBlock), trimmed: trim || manuallyTrimmed, tst: this.#tst?.status ?? null, budgetTokens: epoch.budgetTokens, projectionComplete: epoch.projectionComplete };
   }
 
-  async stmCompactionDirective({ sessionId, prompt, messages, usableTokens = 128_000 }) {
+  async stmCompactionDirective({ sessionId, prompt, messages, usableTokens = 128_000, signal }) {
     if (!this.#tst?.configured) return failCompaction('TST client unavailable');
     try {
-      const refresh = await this.#tst.refreshStm({ session_id: sessionId, query: String(prompt ?? '').slice(0, 6000), prompt: String(prompt ?? '').slice(0, 6000), requirements: [], outcomes: [], constraints: [], observations: [], explicit_paths: extractPaths(String(prompt ?? '')), tool_paths: [], validated_paths: [], graph_paths: [], file_evidence: [] });
+      const refresh = await this.#tst.refreshStm({ session_id: sessionId, query: String(prompt ?? '').slice(0, 6000), prompt: String(prompt ?? '').slice(0, 6000), requirements: [], outcomes: [], constraints: [], observations: [], explicit_paths: extractPaths(String(prompt ?? '')), tool_paths: [], validated_paths: [], graph_paths: [], file_evidence: [] }, { signal });
       const records = (Array.isArray(refresh?.records) ? refresh.records : Array.isArray(refresh?.retained) ? refresh.retained : Array.isArray(refresh?.stm) ? refresh.stm : []).filter((record) => !isUserMessageReference(record));
       if (!records.length) throw new Error('STM refresh returned no retained records');
       const body = renderMemories('RETAINED SESSION STATE', records, 32);
       if (!body) throw new Error('STM refresh returned no usable retained state');
       return { mode: 'stm_only', abort: false, directive: `<CUPPET_STM_COMPACTION mode="stm_only" abort="false">\nReplace model-facing historical continuity with the retained structured state below. Do not mutate the durable transcript.\n${clipTokens(body, Math.min(15_000, usableTokens))}\n</CUPPET_STM_COMPACTION>` };
-    } catch (error) { return failCompaction(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { checkTstSignal(signal); return failCompaction(error instanceof Error ? error.message : String(error)); }
   }
 
   clearSession(sessionId) {
@@ -67,7 +70,7 @@ export class ContextCompiler {
     this.#indexedUserMessages.delete(sessionId);
   }
 
-  async #indexUserMessages(sessionId, messages) {
+  async #indexUserMessages(sessionId, messages, signal) {
     if (typeof this.#tst.observeMemory !== 'function') return;
     let indexed = this.#indexedUserMessages.get(sessionId);
     if (!indexed) {
@@ -79,28 +82,30 @@ export class ContextCompiler {
       if (!message.id || indexed.has(message.id)) continue;
       const content = String(message.content ?? '');
       try {
-        await this.#tst.observeMemory(sessionId, {
+        checkTstSignal(signal);
+        await waitForTst(this.#tst.observeMemory(sessionId, {
           key: `user_message:${message.id}`,
           value: JSON.stringify({ type: 'user_message', message_id: message.id, sequence: message.sequence, characters: content.length, preview: content.replace(/\s+/g, ' ').slice(0, 600) }),
           scope: 'session', kind: 'concept_anchor', provenance: 'tool',
-        });
+        }, { signal }), signal);
         indexed.add(message.id);
-      } catch {
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error; checkTstSignal(signal);
         // The durable transcript remains available for on-demand retrieval.
         break;
       }
     }
   }
 
-  async #buildEpoch({ sessionId, prompt, messages, mode, usableTokens, projectRoot }) {
+  async #buildEpoch({ sessionId, prompt, messages, mode, usableTokens, projectRoot, signal }) {
     const planMode = mode === 'plan';
     const budgetTokens = planMode ? Math.min(16_384, Math.max(0, Math.floor(usableTokens * 0.12))) : mode === 'stm_events' ? Math.min(STM_EVENT_CONTEXT_MAX_TOKENS, Math.max(0, usableTokens)) : Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)));
     if (!this.#tst?.configured || budgetTokens <= 0) return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false };
-    await this.#indexUserMessages(sessionId, messages);
+    await this.#indexUserMessages(sessionId, messages, signal);
     const projectionBudget = planMode ? Math.floor(budgetTokens * 0.70) : 0;
     let prepared;
-    try { prepared = await this.#tst.prepareContext(sessionId, prompt, await retrievalHints(prompt, projectRoot), [], mode, projectionBudget); }
-    catch { return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false }; }
+    try { prepared = await waitForTst(this.#tst.prepareContext(sessionId, prompt, await retrievalHints(prompt, projectRoot, signal), [], mode, projectionBudget, { signal }), signal); }
+    catch (error) { if (error?.name === 'AbortError') throw error; checkTstSignal(signal); return { block: '', budgetTokens, observationComplete: false, hasStm: false, projectionComplete: false }; }
     const block = renderPrepared(prepared ?? {}, budgetTokens, planMode, mode);
     return { block, budgetTokens, observationComplete: prepared?.observation_complete === true, hasStm: Array.isArray(prepared?.stm) && prepared.stm.some((record) => !isUserMessageReference(record)), projectionComplete: planMode && projectionComplete(prepared?.plan_projection) };
   }
@@ -121,7 +126,7 @@ export function renderPrepared(result, budget, planMode, mode) {
   }
   const stm = renderMemories('SESSION CONTINUITY (STM)', result.stm ?? [], planMode ? 12 : 8);
   const graph = renderGraph(result.graph ?? [], result.edges ?? [], planMode ? 12 : 8);
-  const ltm = renderMemories('VERIFIED PROJECT MEMORY', result.ltm ?? [], planMode ? 8 : 5);
+  const ltm = renderMemories('PROJECT AND GLOBAL MEMORY', result.ltm ?? [], planMode ? 8 : 5);
   const projection = planMode ? renderProjection(result.plan_projection) : '';
   const sections = planMode ? [{ text: projection, share: .70 }, { text: graph, share: .15 }, { text: stm, share: .10 }, { text: ltm, share: .05 }] : [{ text: stm, share: .45 }, { text: graph, share: .35 }, { text: ltm, share: .20 }];
   if (sections.every((section) => !section.text)) return '';
@@ -175,13 +180,13 @@ function selectRecentTurns(messages, count) {
   const userIndexes = messages.flatMap((message, i) => message.role === 'user' ? [i] : []); if (userIndexes.length <= count) return messages.map((message) => ({ ...message }));
   return messages.slice(userIndexes[userIndexes.length - count]).map((message) => ({ ...message }));
 }
-async function retrievalHints(prompt, projectRoot) {
-  const paths = await gitRetrievalPaths(projectRoot);
+async function retrievalHints(prompt, projectRoot, signal) {
+  const paths = await gitRetrievalPaths(projectRoot, signal);
   return [...new Set([...extractPaths(prompt), ...paths, ...(String(prompt).match(/[A-Za-z_$][\w$]{2,}/g) ?? []).slice(0, 16)])].slice(0, 32);
 }
-async function gitRetrievalPaths(projectRoot) {
+async function gitRetrievalPaths(projectRoot, signal) {
   if (!projectRoot) return [];
-  const git = (args) => execFileAsync('git', ['--no-optional-locks', ...args], { cwd: projectRoot, timeout: 2_000, maxBuffer: 1024 * 1024, windowsHide: true });
+  const git = (args) => execFileAsync('git', ['--no-optional-locks', ...args], { cwd: projectRoot, timeout: 2_000, maxBuffer: 1024 * 1024, windowsHide: true, signal });
   try {
     const [status, prefixResult] = await Promise.all([
       git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.']),
@@ -202,7 +207,7 @@ async function gitRetrievalPaths(projectRoot) {
     }
     const prefix = prefixResult.stdout.replace(/\r?\n$/, '');
     return paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length));
-  } catch { return []; }
+  } catch { checkTstSignal(signal); return []; }
 }
 function extractPaths(value) { return [...new Set((String(value).match(/(?:^|[\s`'"(])([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.@+-]+)+)/g) ?? []).map((item) => item.trim().replace(/^[`'"(]+|[`'"),.;:]+$/g, ''))) ].slice(0, 32); }
 function estimateMessages(messages) { return Math.ceil(messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0) / 4); }

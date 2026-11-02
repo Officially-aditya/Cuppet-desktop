@@ -54,7 +54,7 @@ export class ProjectWriter {
   }
 
   async #waitForTurn(root, ticket, signal) {
-    try { await abortable(ticket.prior.catch(() => undefined), signal); }
+    try { await abortable(ticket.prior.catch(() => undefined), signal); if (signal?.aborted) throw abortError(); }
     catch (error) { this.#surrender(root, ticket); throw error; }
   }
 
@@ -62,7 +62,11 @@ export class ProjectWriter {
     if (ticket.done) return;
     ticket.done = true;
     ticket.release();
-    if (this.#tails.get(root) === ticket.tail) this.#tails.delete(root);
+    // A cancelled waiter may release before its predecessor. Keep its tail linked
+    // until the entire chain settles, or a later writer can bypass the holder.
+    void ticket.tail.then(() => {
+      if (this.#tails.get(root) === ticket.tail) this.#tails.delete(root);
+    });
   }
 }
 

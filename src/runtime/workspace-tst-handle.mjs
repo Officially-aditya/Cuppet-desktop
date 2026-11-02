@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readdir, readFile, realpath, stat, mkdir, writeFile, rename, rm } from 'node:fs/promises';
+import { checkTstSignal, tstOptions, waitForTst, withTstRequest } from './tst-request.mjs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const WORKSPACE_TST_CAPABILITIES = [
@@ -9,13 +10,12 @@ export const WORKSPACE_TST_CAPABILITIES = [
   'graph.locate',
   'graph.query',
   'graph.refresh_paths',
-  'graph.trace_summary',
+  'graph.revision',
   'graph.workspace',
   'memory.forget',
   'memory.observe',
   'memory.query',
   'memory.remember',
-  'stm.refresh',
   'turn.completed',
 ];
 
@@ -107,12 +107,20 @@ export class WorkspaceTstHandle {
     };
   }
 
-  supports(capability) {
+  supports(capability, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
     return WORKSPACE_TST_CAPABILITIES.includes(capability);
   }
 
-  async call(method, params = {}) {
+  async call(method, params = {}, options = {}) {
+    options = tstOptions(options); checkTstSignal(options.signal);
+    return withTstRequest(options, () => this.#dispatch(method, params));
+  }
+
+  async #dispatch(method, params) {
     switch (method) {
+      case 'graph.revision':
+        return this.graphRevision();
       case 'graph.workspace':
         return this.graphWorkspace(params.limit, params.offset);
       case 'graph.list':
@@ -149,8 +157,11 @@ export class WorkspaceTstHandle {
     }
   }
 
-  async graphWorkspace(limit = 100, offset = 0) {
-    const { files, capped } = await this.#scanFiles();
+  async graphWorkspace(limit = 100, offset = 0, options = {}) {
+    if (offset && typeof offset === 'object') { options = offset; offset = 0; }
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
+    const { files, capped } = await this.#scanFiles('', signal);
+    checkTstSignal(signal);
     const clampedLimit = clamp(Number(limit) || 100, 1, 512);
     return {
       root: this.#projectRoot,
@@ -165,9 +176,12 @@ export class WorkspaceTstHandle {
     };
   }
 
-  async graphList(prefix, limit = 100, offset = 0) {
+  async graphList(prefix, limit = 100, offset = 0, options = {}) {
+    if (offset && typeof offset === 'object') { options = offset; offset = 0; }
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
     const cleanPrefix = typeof prefix === 'string' ? prefix.trim().replace(/^\/+|\/+$/g, '') : '';
-    const { files, capped } = await this.#scanFiles(cleanPrefix);
+    const { files, capped } = await this.#scanFiles(cleanPrefix, signal);
+    checkTstSignal(signal);
     const filtered = cleanPrefix
       ? files.filter((path) => path === cleanPrefix || path.startsWith(`${cleanPrefix}/`))
       : files;
@@ -181,10 +195,25 @@ export class WorkspaceTstHandle {
     };
   }
 
+  async graphRevision(options = {}) {
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
+    this.#cachedFiles = null;
+    const { files, capped } = await this.#scanFiles('', signal);
+    if (capped) return { revision: null, indexing_complete: false };
+    const digest = createHash('sha256').update(this.#projectRoot);
+    for (const path of files) {
+      checkTstSignal(signal);
+      const metadata = await stat(resolve(this.#projectRoot, path), { bigint: true }).catch(() => null);
+      digest.update(JSON.stringify([path, metadata?.dev?.toString(), metadata?.ino?.toString(), metadata?.size?.toString(), metadata?.mtimeNs?.toString(), metadata?.ctimeNs?.toString()]));
+    }
+    return { revision: digest.digest('hex'), indexing_complete: true };
+  }
+
   async searchWorkspace(query, prefix, limit = 12, offset = 0, { caseSensitive = true, resolveTargets = null, authorizeRead = async () => {}, signal } = {}) {
+    signal ??= tstOptions().signal; checkTstSignal(signal);
     const needle = String(query ?? '');
     if (!needle || /[\r\n]/.test(needle)) throw new Error('query must be a non-empty, single-line literal');
-    const { files, capped } = await this.#scanFiles(prefix);
+    const { files, capped } = await this.#scanFiles(prefix, signal);
     const start = pageOffset(offset); const count = clamp(limit, 1, 512);
     const matches = []; let total = 0; let targetLimitReached = false;
     const rootReal = await realpath(this.#projectRoot);
@@ -227,13 +256,15 @@ export class WorkspaceTstHandle {
     return { query: needle, total, matches, ...pageMetadata(total, start, count), ...(capped || targetLimitReached ? { truncated: true } : {}) };
   }
 
-  async graphLocate(pattern, prefix, limit = 12) {
+  async graphLocate(pattern, prefix, limit = 12, options = {}) {
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
     const query = String(pattern ?? '').trim();
     const clampedLimit = clamp(Number(limit) || 12, 1, 12);
     if (!query) return { query, matches: [] };
 
     const cleanPrefix = typeof prefix === 'string' ? prefix.trim().replace(/^\/+|\/+$/g, '') : '';
-    const { files } = await this.#scanFiles(cleanPrefix);
+    const { files } = await this.#scanFiles(cleanPrefix, signal);
+    checkTstSignal(signal);
     const candidates = cleanPrefix
       ? files.filter((path) => path === cleanPrefix || path.startsWith(`${cleanPrefix}/`))
       : files;
@@ -260,6 +291,7 @@ export class WorkspaceTstHandle {
     // 2. File content search in non-binary files
     if (matches.length < clampedLimit) {
       for (const relativePath of candidates) {
+        checkTstSignal(signal);
         if (matches.length >= clampedLimit) break;
         const ext = extname(relativePath).toLowerCase();
         if (BINARY_EXTENSIONS.has(ext)) continue;
@@ -297,11 +329,12 @@ export class WorkspaceTstHandle {
     };
   }
 
-  async graphQuery(query, prefix, limit = 12) {
-    return this.graphLocate(query, prefix, limit);
+  async graphQuery(query, prefix, limit = 12, options = {}) {
+    return this.graphLocate(query, prefix, limit, options);
   }
 
-  async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12) {
+  async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
     return {
       query: String(query ?? ''),
       direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both',
@@ -311,11 +344,13 @@ export class WorkspaceTstHandle {
     };
   }
 
-  async refreshGraphPaths(paths) {
+  async refreshGraphPaths(paths, options = {}) {
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
     this.#cachedFiles = null;
     const requested = [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64);
     const refreshed = [];
     for (const relativePath of requested) {
+      checkTstSignal(signal);
       const fullPath = resolve(this.#projectRoot, relativePath);
       let hash = null;
       try {
@@ -331,34 +366,24 @@ export class WorkspaceTstHandle {
     return this.refreshGraphPaths(paths);
   }
 
-  async resolveEditTargets(path, query, expectedHash, limit = 12) {
+  async resolveEditTargets(path, query, expectedHash, limit = 12, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
     throw new Error('Connected TST daemon does not support revision-bound edit targets.');
   }
 
-  async parseStaged(path, baseHash, content) {
+  async parseStaged(path, baseHash, content, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
     throw new Error('Connected TST daemon does not support staged parsing.');
   }
 
-  async queryMemory(sessionId, query, limit = 20) {
+  async queryMemory(sessionId, query, limit = 20, options = {}) {
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
     const maxLimit = clamp(Number(limit) || 20, 1, 40);
     const needle = String(query ?? '').trim().toLowerCase();
-    const allRecords = [];
-
-    if (sessionId && this.#sessionMemories.has(sessionId)) {
-      allRecords.push(...this.#sessionMemories.get(sessionId).values());
-    }
-
-    if (this.#projectStore) {
-      const map = await withMemoryStore(this.#projectStore, (store) => this.#loadMemories(store));
-      allRecords.push(...map.values());
-    }
-
-    if (this.#globalStore) {
-      const map = await withMemoryStore(this.#globalStore, (store) => this.#loadMemories(store));
-      allRecords.push(...map.values());
-    }
+    const allRecords = await waitForTst(this.#memoryRecords(sessionId), signal);
 
     const seenKeys = new Set();
+
     const unique = [];
     for (const rec of allRecords) {
       if (!rec?.key || seenKeys.has(rec.key)) continue;
@@ -375,29 +400,34 @@ export class WorkspaceTstHandle {
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
 
-    return filtered.slice(0, maxLimit);
+    return Promise.all(filtered.slice(0, maxLimit).map((record) => this.#freshMemory(record, signal)));
   }
 
-  rememberMemory(sessionId, input = {}) { return this.#serialMemory(() => this.#rememberMemory(sessionId, input)); }
-  forgetMemory(sessionId, key) { return this.#serialMemory(() => this.#forgetMemory(sessionId, key)); }
-  clearMemory(sessionId, scope = 'session') { return this.#serialMemory(() => this.#clearMemory(sessionId, scope)); }
+  rememberMemory(sessionId, input = {}, options = {}) { return withTstRequest(options, () => this.#serialMemory(() => this.#rememberMemory(sessionId, input))); }
+  forgetMemory(sessionId, key, options = {}) { return withTstRequest(options, () => this.#serialMemory(() => this.#forgetMemory(sessionId, key))); }
+  clearMemory(sessionId, scope = 'session', options = {}) { return withTstRequest(options, () => this.#serialMemory(() => this.#clearMemory(sessionId, scope))); }
   #serialMemory(task) {
     const run = this.#memoryQueue.then(task, task);
     this.#memoryQueue = run.then(() => undefined, () => undefined);
-    return run;
+    return waitForTst(run, tstOptions().signal);
   }
 
-  async #rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) {
+  async #rememberMemory(sessionId, { key, value, scope = 'project', pinned = false, fileHashes, file_hashes = {} } = {}) {
     const normalizedScope = normalizeMemoryScope(scope);
     const recordKey = String(key ?? '').slice(0, 240);
     const recordValue = String(value ?? '').slice(0, 4000);
+    if (!recordKey.trim() || !recordValue.trim()) throw new Error('Memory key and value are required');
+    if (normalizedScope === 'session' && !sessionId) throw new Error('Session memory requires a session ID');
+    checkTstSignal(tstOptions().signal);
     const memoryRecord = {
       id: `mem-${randomBytes(8).toString('hex')}`,
       key: recordKey,
       value: recordValue,
       scope: normalizedScope,
       pinned: Boolean(pinned),
-      file_hashes: boundedHashes(fileHashes),
+      file_hashes: boundedHashes(fileHashes ?? file_hashes),
+      file_project_key: this.#projectKey,
+      evidence: [],
       createdAt: Date.now(),
     };
 
@@ -405,13 +435,14 @@ export class WorkspaceTstHandle {
       if (sessionId) {
         let sessionMap = this.#sessionMemories.get(sessionId);
         if (!sessionMap) { sessionMap = new Map(); this.#sessionMemories.set(sessionId, sessionMap); }
-        sessionMap.set(recordKey, memoryRecord);
+        sessionMap.delete(recordKey); sessionMap.set(recordKey, memoryRecord);
       }
     } else {
       const store = normalizedScope === 'global' ? this.#globalStore : this.#projectStore;
       await withMemoryStore(store, async (canonical) => {
         const map = await this.#loadMemories(canonical);
-        map.set(recordKey, memoryRecord);
+        checkTstSignal(tstOptions().signal);
+        map.delete(recordKey); map.set(recordKey, memoryRecord);
         await this.#saveMemories(canonical, map);
       });
     }
@@ -419,6 +450,7 @@ export class WorkspaceTstHandle {
   }
 
   async #forgetMemory(sessionId, key) {
+    checkTstSignal(tstOptions().signal);
     const targetKey = String(key ?? '').slice(0, 240);
     if (sessionId && this.#sessionMemories.has(sessionId)) {
       this.#sessionMemories.get(sessionId).delete(targetKey);
@@ -433,6 +465,7 @@ export class WorkspaceTstHandle {
   }
 
   async #clearMemory(sessionId, scope = 'session') {
+    checkTstSignal(tstOptions().signal);
     const normalized = normalizeMemoryScope(scope);
     if (normalized === 'session' && sessionId) {
       this.#sessionMemories.delete(sessionId);
@@ -443,26 +476,103 @@ export class WorkspaceTstHandle {
     return { cleared: true };
   }
 
-  async observeMemory(sessionId, observation) {
-    if (observation?.scope === 'session' && typeof observation.key === 'string' && observation.key.startsWith('user_message:')) {
-      return this.rememberMemory(sessionId, observation);
+  async #memoryRecords(sessionId) {
+    checkTstSignal(tstOptions().signal);
+    const records = [...(this.#sessionMemories.get(sessionId)?.values() ?? [])];
+    for (const store of new Set([this.#projectStore, this.#globalStore].filter(Boolean))) {
+      const map = await withMemoryStore(store, (canonical) => this.#loadMemories(canonical));
+      records.push(...map.values());
     }
-    return { observed: true };
+    return records;
   }
 
-  async recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash) {
-    return { recorded: true };
+  async #freshMemory(record, signal) {
+    checkTstSignal(signal);
+    let stale = record.stale === true;
+    const hashes = Object.entries(record.file_hashes ?? {});
+    if (hashes.length && record.file_project_key && record.file_project_key !== this.#projectKey) stale = true;
+    const root = await realpath(this.#projectRoot);
+    for (const [path, expected] of hashes.slice(0, 64)) {
+      checkTstSignal(signal);
+      const normalized = normalizePrefix(path);
+      if (!normalized || normalized !== path.replaceAll('\\', '/')) { stale = true; break; }
+      try {
+        const canonical = await realpath(resolve(root, path));
+        if (!isInside(root, canonical)) { stale = true; break; }
+        const metadata = await stat(canonical);
+        if (!metadata.isFile() || metadata.size > 1024 * 1024 || hashSource(await readFile(canonical, { signal })) !== expected) { stale = true; break; }
+      } catch (error) { checkTstSignal(signal); stale = true; break; }
+    }
+    const evidence = (Array.isArray(record.evidence) ? record.evidence : []).slice(-16);
+    return { ...record, stale, evidence, verified: !stale && evidence.at(-1)?.success === true };
   }
 
-  async prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0) {
-    return { context: '', memories: [] };
+  async observeMemory(sessionId, observation, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
+    if (!observation || typeof observation.key !== 'string' || typeof observation.value !== 'string') return { observed: false };
+    // Observations are session continuity, never implicitly promoted to shared memory.
+    const record = await this.rememberMemory(sessionId, { ...observation, scope: 'session' }, tstOptions(options));
+    return { observed: true, id: record.id };
   }
 
-  async refreshStm(input) {
-    return { ok: true };
+  recordEvidence(sessionId, memoryId, kind, reference, success = true, contentHash, options = {}) {
+    const signal = tstOptions(options).signal;
+    return this.#serialMemory(async () => {
+      checkTstSignal(signal);
+      const append = (record) => ({ ...record, evidence: [...(record.evidence ?? []).slice(-15), {
+        kind: String(kind ?? '').slice(0, 100), reference: String(reference ?? '').slice(0, 500),
+        success: success === true, timestamp_ms: Date.now(), ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}),
+      }] });
+      const session = this.#sessionMemories.get(sessionId);
+      for (const [key, record] of session ?? []) if (record.id === memoryId) {
+        checkTstSignal(signal); session.set(key, append(record)); return { recorded: true };
+      }
+      for (const store of new Set([this.#projectStore, this.#globalStore].filter(Boolean))) {
+        const recorded = await withMemoryStore(store, async (canonical) => {
+          const map = await this.#loadMemories(canonical);
+          for (const [key, record] of map) if (record.id === memoryId) {
+            checkTstSignal(signal); map.set(key, append(record)); await this.#saveMemories(canonical, map); return true;
+          }
+          return false;
+        });
+        if (recorded) return { recorded: true };
+      }
+      return { recorded: false, reason: 'memory_not_found' };
+    });
   }
 
-  async turnCompleted(sessionId) {
+  async prepareContext(sessionId, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0, options = {}) {
+    const signal = tstOptions(options).signal; checkTstSignal(signal);
+    for (const observation of (Array.isArray(observations) ? observations : []).slice(0, 32)) {
+      await this.observeMemory(sessionId, observation, { signal });
+    }
+    const terms = [...new Set((String(query ?? '').slice(0, 6000) + ' ' + (Array.isArray(hints) ? hints.slice(0, 32).join(' ') : '')).toLowerCase().match(/[\p{L}\p{N}_./-]{3,}/gu) ?? [])].slice(0, 64);
+    const scored = (await waitForTst(this.#memoryRecords(sessionId), signal)).filter((record) => !record.key.startsWith('user_message:')).map((record) => ({
+      record, score: (record.pinned ? 2 : 0) + terms.filter((term) => (record.key + ' ' + record.value).toLowerCase().includes(term)).length,
+    })).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || (b.record.createdAt ?? 0) - (a.record.createdAt ?? 0));
+    const memories = []; const keys = new Set(); let bytes = 0;
+    for (const { record } of scored.slice(0, 64)) {
+      checkTstSignal(signal);
+      if (keys.has(record.key)) continue;
+      const fresh = await this.#freshMemory(record, signal);
+      if (fresh.stale || fresh.evidence.at(-1)?.success === false) continue;
+      const compact = { id: fresh.id, key: fresh.key, value: fresh.value.slice(0, 1200), scope: fresh.scope, stale: false, verified: fresh.verified };
+      const size = Buffer.byteLength(JSON.stringify(compact));
+      if (bytes + size > 6000) break;
+      memories.push(compact); keys.add(record.key); bytes += size;
+      if (memories.length >= 24) break;
+    }
+    // Fallback retrieval is incomplete continuity; it must never permit compaction.
+    return { memories, stm: memories.filter((record) => record.scope === 'session'), ltm: memories.filter((record) => record.scope !== 'session'),
+      observation_complete: false, mode: 'workspace-fallback', plan_projection: { complete: false, coverage: { indexing_complete: false } } };
+  }
+
+  async refreshStm() {
+    throw new Error('Workspace TST fallback does not support structured STM refresh');
+  }
+
+  async turnCompleted(sessionId, options = {}) {
+    checkTstSignal(tstOptions(options).signal);
     return { ok: true };
   }
 
@@ -471,14 +581,15 @@ export class WorkspaceTstHandle {
     this.#cachedFiles = null;
   }
 
-  async #scanFiles(prefix = '') {
+  async #scanFiles(prefix = '', signal = tstOptions().signal) {
+    checkTstSignal(signal);
     const cleanPrefix = normalizePrefix(prefix);
     if (cleanPrefix === null) return { files: [], capped: false };
     const now = Date.now();
     if (!cleanPrefix) {
       if (this.#cachedFiles && now - this.#cacheTimestamp < 3000) return { files: this.#cachedFiles, capped: this.#indexCapped };
       const files = [];
-      await walkDir(this.#projectRoot, this.#projectRoot, files, MAX_INDEXED_FILES);
+      await walkDir(this.#projectRoot, this.#projectRoot, files, MAX_INDEXED_FILES, signal);
       this.#indexCapped = files.length >= MAX_INDEXED_FILES;
       files.sort((a, b) => a.localeCompare(b));
       this.#cachedFiles = files;
@@ -493,7 +604,7 @@ export class WorkspaceTstHandle {
     const info = await stat(startReal).catch(() => null);
     if (info?.isFile()) return { files: [cleanPrefix], capped: false };
     const files = [];
-    await walkDir(this.#projectRoot, startPath, files, MAX_INDEXED_FILES);
+    await walkDir(this.#projectRoot, startPath, files, MAX_INDEXED_FILES, signal);
     files.sort((a, b) => a.localeCompare(b));
     return { files, capped: files.length >= MAX_INDEXED_FILES };
   }
@@ -501,7 +612,7 @@ export class WorkspaceTstHandle {
   async #loadMemories(storeDir) {
     const filePath = join(storeDir, 'memory.json');
     let raw;
-    try { raw = await readFile(filePath, 'utf8'); }
+    try { raw = await readFile(filePath, { encoding: 'utf8', signal: tstOptions().signal }); }
     catch (error) { if (error.code === 'ENOENT') return new Map(); throw error; }
     try {
       const parsed = JSON.parse(raw);
@@ -518,12 +629,13 @@ export class WorkspaceTstHandle {
     await mkdir(storeDir, { recursive: true });
     const filePath = join(storeDir, 'memory.json');
     const temp = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-    try { await writeFile(temp, JSON.stringify([...memoryMap.values()], null, 2), 'utf8'); await rename(temp, filePath); }
+    try { checkTstSignal(tstOptions().signal); await writeFile(temp, JSON.stringify([...memoryMap.values()], null, 2), { encoding: 'utf8', signal: tstOptions().signal }); checkTstSignal(tstOptions().signal); await rename(temp, filePath); }
     catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
   }
 }
 
-async function walkDir(rootDir, currentDir, accumulator, maxFiles) {
+async function walkDir(rootDir, currentDir, accumulator, maxFiles, signal) {
+  checkTstSignal(signal);
   if (accumulator.length >= maxFiles) return;
   let entries;
   try {
@@ -534,13 +646,14 @@ async function walkDir(rootDir, currentDir, accumulator, maxFiles) {
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (accumulator.length >= maxFiles) break;
+    checkTstSignal(signal);
     const name = entry.name;
     if (name === '.DS_Store' || name === 'Thumbs.db') continue;
 
     const fullPath = join(currentDir, name);
     if (entry.isDirectory()) {
       if (IGNORED_DIRECTORIES.has(name)) continue;   // '.git' is in the set; .github/.gitlab/etc. are ordinary source directories
-      await walkDir(rootDir, fullPath, accumulator, maxFiles);
+      await walkDir(rootDir, fullPath, accumulator, maxFiles, signal);
     } else if (entry.isFile()) {
       const rel = relative(rootDir, fullPath).replaceAll('\\', '/');
       accumulator.push(rel);

@@ -1,3 +1,4 @@
+import { checkTstSignal, tstOptions, waitForTst } from './tst-request.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -26,11 +27,12 @@ export class TstBatchEditManager {
     }
   }
 
-  async resolveTargets({ path, query, expectedHash, limit = 12 }) {
-    return this.#tst.resolveEditTargets(path, query, expectedHash, limit);
+  async resolveTargets({ path, query, expectedHash, limit = 12, signal }) {
+    return this.#tst.resolveEditTargets(path, query, expectedHash, limit, { signal });
   }
 
-  async ensureGraphFresh(projectRoot) {
+  async ensureGraphFresh(projectRoot, signal) {
+    signal ??= tstOptions().signal; checkTstSignal(signal);
     const root = await canonicalRoot(projectRoot);
     const stale = await this.#journal.graphInvalidations(root);
     if (!stale.length) return { ready: true };
@@ -40,11 +42,13 @@ export class TstBatchEditManager {
       try {
         const paths = [...expected.keys()]; const refreshed = [];
         for (let offset = 0; offset < paths.length; offset += 64) {
-          const result = await this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64));
+          const result = await this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64), { signal });
           refreshed.push(...(result?.paths ?? []));
         }
         refresh = { paths: refreshed };
       } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        checkTstSignal(signal);
         if (isUnsupportedGraphRefresh(error)) {
           await this.#journal.acknowledgeGraphRefresh({ projectRoot: root, paths: stale }).catch(() => undefined);
           return { ready: true, supported: false, acknowledged: stale, refresh: { supported: false, reason: 'unsupported_by_daemon' } };
@@ -59,15 +63,18 @@ export class TstBatchEditManager {
       await this.#journal.acknowledgeGraphRefresh({ projectRoot: root, paths: stale });
       return { ready: true, recovered: true, refresh };
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      checkTstSignal(signal);
       return { ready: false, reason: `TST graph refresh is required before another structural operation: ${cleanError(error)}` };
     }
   }
 
-  async prepare({ sessionId, projectRoot, operations }) {
+  async prepare({ sessionId, projectRoot, operations, signal }) {
+    signal ??= tstOptions().signal; checkTstSignal(signal);
     if (!this.#tst?.configured) throw new Error('tst_edit_batch requires TST to be configured.');
     const requested = normalizeOperations(operations);
     if (requested.some((operation) => STRUCTURAL_OPS.has(operation.op))) {
-      const freshness = await this.ensureGraphFresh(projectRoot);
+      const freshness = await this.ensureGraphFresh(projectRoot, signal);
       if (!freshness.ready) throw new Error(freshness.reason);
     }
     if (!requested.length) throw new Error('operations must contain at least one edit');
@@ -77,10 +84,13 @@ export class TstBatchEditManager {
     const files = new Map();
     const conflicts = [];
     for (let index = 0; index < requested.length; index++) {
+      checkTstSignal(signal);
       const operation = requested[index];
       try {
         await stageOperation({ root, operation, index, files });
       } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        checkTstSignal(signal);
         conflicts.push({ index, step: index + 1, op: operation.op, path: operation.path ?? operation.target?.path ?? null, error: cleanError(error) });
       }
     }
@@ -90,13 +100,16 @@ export class TstBatchEditManager {
     const stagedFiles = [];
     const parseFailures = [];
     for (const file of [...files.values()].sort((a, b) => a.path.localeCompare(b.path))) {
+      checkTstSignal(signal);
       try {
         finalizeFileEdits(file);
         if (file.after.length > MAX_FILE_BYTES) throw new Error(`staged file exceeds ${MAX_FILE_BYTES} byte limit`);
         let parse;
         try {
-          parse = await this.#tst.parseStaged(file.path, file.exists ? file.baseHash : null, file.after.toString('utf8'));
+          parse = await waitForTst(this.#tst.parseStaged(file.path, file.exists ? file.baseHash : null, file.after.toString('utf8'), { signal }), signal);
         } catch (error) {
+          if (error?.name === 'AbortError') throw error;
+          checkTstSignal(signal);
           const msg = cleanError(error);
           if (/does not support staged parsing|not supported/i.test(msg)) {
             parse = { supported: false, reason: 'unsupported_by_daemon' };
@@ -110,11 +123,14 @@ export class TstBatchEditManager {
         }
         stagedFiles.push(file);
       } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        checkTstSignal(signal);
         parseFailures.push({ path: file.path, error: cleanError(error) });
       }
     }
     if (parseFailures.length) throw batchConflict('Staged parse validation failed; nothing was written.', parseFailures);
 
+    checkTstSignal(signal);
     const { diff, stats, rendered } = renderBatchDiffWithStats(stagedFiles);
     // The digest binds the approval to the exact state transition (path, base, result, mode) — never to a truncated rendering of it.
     const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.canonical, ...file.aliases.slice().sort(), file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8)].join('\0')).join('\n'), 'utf8'));

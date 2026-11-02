@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
+import { checkTstSignal, tstAbortError, tstOptions, waitForTst } from './tst-request.mjs';
 
 export const TST_PROTOCOL_VERSION = 'cuppet.tst.v3';
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -14,16 +15,24 @@ export class TstClient extends EventEmitter {
     socket.on('error', (error) => this.#disconnect(error));
     socket.on('close', () => this.#disconnect(new Error('TST socket closed')));
   }
-  static async connect(socketPath, token, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS, signal } = {}) {
+  static async connect(socketPath, token, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS, signal, connectImpl = createConnection } = {}) {
     if (signal?.aborted) throw connectionClosed();
     const socket = await new Promise((resolve, reject) => {
-      const candidate = createConnection(socketPath);
-      const cleanup = () => { signal?.removeEventListener('abort', onAbort); candidate.removeListener('error', onError); candidate.removeListener('connect', onConnect); };
+      const candidate = connectImpl(socketPath);
+      let timer;
+      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); candidate.removeListener('error', onError); candidate.removeListener('connect', onConnect); };
       const onAbort = () => { cleanup(); candidate.destroy(); reject(connectionClosed()); };
       const onError = (error) => { cleanup(); candidate.destroy(); reject(error); };
       const onConnect = () => { cleanup(); resolve(candidate); };
       candidate.once('connect', onConnect); candidate.once('error', onError);
       signal?.addEventListener('abort', onAbort, { once: true });
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          const error = new Error(`TST socket connection timed out after ${timeoutMs}ms`); error.code = 'TST_TIMEOUT';
+          onError(error);
+        }, timeoutMs);
+        timer.unref?.();
+      }
       if (signal?.aborted) onAbort();
     });
     const client = new TstClient(socket);
@@ -32,7 +41,7 @@ export class TstClient extends EventEmitter {
     let initialized;
     try {
       if (signal?.aborted) throw connectionClosed();
-      initialized = await client.call('initialize', { token, notifications: true }, { timeoutMs });
+      initialized = await client.call('initialize', { token, notifications: true }, { timeoutMs, signal });
       if (signal?.aborted) throw connectionClosed();
     } catch (error) { client.destroy(); throw error; }
     finally { signal?.removeEventListener('abort', onAbort); }
@@ -42,26 +51,46 @@ export class TstClient extends EventEmitter {
     client.#capabilities = new Set(Array.isArray(initialized?.capabilities) ? initialized.capabilities.map(String) : []);
     return client;
   }
-  call(method, params = {}, { timeoutMs = DEFAULT_CALL_TIMEOUT_MS } = {}) {
-    if (this.#closed) return Promise.reject(new Error('TST client is closed'));
+  call(method, params = {}, options = {}) {
+    const { timeoutMs = DEFAULT_CALL_TIMEOUT_MS, signal } = tstOptions(options);
+    if (signal?.aborted) return Promise.reject(tstAbortError());
+    if (this.#closed) return Promise.reject(transportError('TST client is closed'));
     const id = this.#nextID++; const payload = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
     if (!payload.length || payload.length > MAX_FRAME_BYTES) return Promise.reject(new Error('TST request exceeds frame limit'));
     const header = Buffer.allocUnsafe(4); header.writeUInt32BE(payload.length);
     return new Promise((resolve, reject) => {
       let timer = null;
-      const settle = (fn) => (value) => { if (timer) clearTimeout(timer); fn(value); };
+      const finish = (fn, value) => {
+        if (!this.#pending.delete(id)) return;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        fn(value);
+      };
+      const onAbort = () => {
+        finish(reject, tstAbortError());
+        if (this.supports('request.cancel') && !this.#closed) {
+          const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }));
+          const size = Buffer.alloc(4); size.writeUInt32BE(body.length);
+          this.#socket.write(Buffer.concat([size, body]), () => {});
+        }
+      };
+      this.#pending.set(id, { resolve: (value) => finish(resolve, value), reject: (error) => finish(reject, error) });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
       if (timeoutMs > 0) {
-        timer = setTimeout(() => { if (this.#pending.delete(id)) reject(new Error(`TST ${method} timed out after ${timeoutMs}ms`)); }, timeoutMs);
+        timer = setTimeout(() => {
+          const error = new Error(`TST ${method} timed out after ${timeoutMs}ms`); error.code = 'TST_TIMEOUT';
+          finish(reject, error);
+        }, timeoutMs);
         timer.unref?.();
       }
-      this.#pending.set(id, { resolve: settle(resolve), reject: settle(reject) });
-      this.#socket.write(Buffer.concat([header, payload]), (error) => { if (!error) return; this.#pending.delete(id); settle(reject)(error); });
+      this.#socket.write(Buffer.concat([header, payload]), (error) => { if (error) finish(reject, transportError(error.message)); });
     });
   }
   supports(capability) { return this.#capabilities.has(capability); }
   get capabilities() { return [...this.#capabilities].sort(); }
   get connected() { return !this.#closed; }
-  destroy() { if (this.#closed) return; this.#closed = true; this.#socket.destroy(); this.#failAll(new Error('TST client closed')); }
+  destroy() { if (this.#closed) return; this.#closed = true; this.#socket.destroy(); this.#failAll(transportError('TST client closed')); }
   #consume(chunk) {
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     while (this.#buffer.length >= 4) {
@@ -70,12 +99,12 @@ export class TstClient extends EventEmitter {
       const payload = this.#buffer.subarray(4, length + 4); this.#buffer = this.#buffer.subarray(length + 4);
       let response; try { response = JSON.parse(payload.toString('utf8')); } catch { return this.destroy(); }
       if (response?.method) { this.emit('notification', response); continue; }
-      const pending = this.#pending.get(response?.id); if (!pending) continue; this.#pending.delete(response.id);
+      const pending = this.#pending.get(response?.id); if (!pending) continue;
       if (response.error) pending.reject(new Error(response.error.message)); else pending.resolve(response.result);
     }
   }
   #failAll(error) { for (const pending of this.#pending.values()) pending.reject(error); this.#pending.clear(); }
-  #disconnect(error) { if (this.#closed) return; this.#closed = true; this.#failAll(error); this.emit('disconnect', error); }
+  #disconnect(error) { error = transportError(error.message); if (this.#closed) return; this.#closed = true; this.#failAll(error); this.emit('disconnect', error); }
 }
 
 export class TstBridge {
@@ -85,43 +114,45 @@ export class TstBridge {
   get status() { return { configured: this.configured, connected: Boolean(this.#client?.connected), lastError: this.#lastError ?? null, protocol: TST_PROTOCOL_VERSION, capabilities: this.#client?.capabilities ?? this.#lastCapabilities }; }
   async call(method, params = {}, options = {}) {
     if (!this.configured) throw new Error('TST is not configured');
-    const client = await this.#ensure();
+    options = tstOptions(options); checkTstSignal(options.signal);
+    const client = await waitForTst(this.#ensure(), options.signal); checkTstSignal(options.signal);
     try { return await client.call(method, params, options); } catch (error) { if (this.#client === client) { this.#lastError = cleanError(error); if (!client.connected) this.#client = undefined; } throw error; }
   }
-  async supports(capability) {
+  async supports(capability, options = {}) {
+    options = tstOptions(options); checkTstSignal(options.signal);
     if (!this.configured) return false;
-    const client = await this.#ensure();
+    const client = await waitForTst(this.#ensure(), options.signal); checkTstSignal(options.signal);
     return client.supports(capability);
   }
-  async prepareContext(sessionID, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0) {
-    return this.call('context.prepare', { session_id: sessionID, query: String(query).slice(0, 6000), mode, projection_budget: Math.min(Math.max(Math.floor(projectionBudget), 0), 16384), hints: hints.slice(0, 32), observations: observations.slice(0, 256) });
+  async prepareContext(sessionID, query, hints = [], observations = [], mode = 'foreground', projectionBudget = 0, options = {}) {
+    return this.call('context.prepare', { session_id: sessionID, query: String(query).slice(0, 6000), mode, projection_budget: Math.min(Math.max(Math.floor(projectionBudget), 0), 16384), hints: hints.slice(0, 32), observations: observations.slice(0, 256) }, options);
   }
-  async refreshStm(input) { return this.call('stm.refresh', boundedRefresh(input)); }
-  async turnCompleted(sessionID) { return this.call('turn.completed', { session_id: sessionID }); }
-  async observeMemory(sessionID, observation) { return this.call('memory.observe', { session_id: sessionID, ...observation }); }
-  async queryMemory(sessionID, query, limit = 20) { return this.call('memory.query', { session_id: sessionID, query, limit: Math.min(Math.max(limit, 1), 40) }); }
-  async rememberMemory(sessionID, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}) {
-    return this.call('memory.remember', { session_id: sessionID, key: String(key ?? '').slice(0, 240), value: String(value ?? '').slice(0, 4000), scope: normalizeMemoryScope(scope), pinned: Boolean(pinned), file_hashes: boundedHashes(fileHashes) });
+  async refreshStm(input, options = {}) { return this.call('stm.refresh', boundedRefresh(input), options); }
+  async turnCompleted(sessionID, options = {}) { return this.call('turn.completed', { session_id: sessionID }, options); }
+  async observeMemory(sessionID, observation, options = {}) { return this.call('memory.observe', { session_id: sessionID, ...observation }, options); }
+  async queryMemory(sessionID, query, limit = 20, options = {}) { return this.call('memory.query', { session_id: sessionID, query, limit: Math.min(Math.max(limit, 1), 40) }, options); }
+  async rememberMemory(sessionID, { key, value, scope = 'project', pinned = false, fileHashes = {} } = {}, options = {}) {
+    return this.call('memory.remember', { session_id: sessionID, key: String(key ?? '').slice(0, 240), value: String(value ?? '').slice(0, 4000), scope: normalizeMemoryScope(scope), pinned: Boolean(pinned), file_hashes: boundedHashes(fileHashes) }, options);
   }
-  async forgetMemory(sessionID, key) { return this.call('memory.forget', { session_id: sessionID, key: String(key ?? '').slice(0, 240) }); }
-  async clearMemory(sessionID, scope = 'session') { return this.call('memory.forget', { session_id: sessionID, clear_scope: normalizeMemoryScope(scope) }); }
-  async recordEvidence(sessionID, memoryID, kind, reference, success = true, contentHash = undefined) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }); }
-  async graphQuery(query, prefix, limit = 12) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 32) }); }
-  async graphLocate(pattern, prefix, limit = 12) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
-  async graphList(prefix, limit = 100) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
-  async graphWorkspace(limit = 100) { return this.call('graph.workspace', { limit: Math.min(Math.max(Math.floor(limit), 1), 512) }); }
-  async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: Math.min(Math.max(Math.floor(depth), 1), 4), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }); }
-  async resolveEditTargets(path, query, expectedHash = undefined, limit = 12) {
-    if (!(await this.supports('edit.resolve_targets'))) throw new Error('Connected TST daemon does not support revision-bound edit targets. Upgrade the bundled TST runtime.');
-    return this.call('edit.resolve_targets', { path: String(path).slice(0, 1024), query: String(query).slice(0, 512), ...(expectedHash ? { expected_hash: String(expectedHash).slice(0, 128) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 64) });
+  async forgetMemory(sessionID, key, options = {}) { return this.call('memory.forget', { session_id: sessionID, key: String(key ?? '').slice(0, 240) }, options); }
+  async clearMemory(sessionID, scope = 'session', options = {}) { return this.call('memory.forget', { session_id: sessionID, clear_scope: normalizeMemoryScope(scope) }, options); }
+  async recordEvidence(sessionID, memoryID, kind, reference, success = true, contentHash = undefined, options = {}) { return this.call('evidence.record', { session_id: sessionID, memory_id: memoryID, kind, reference: String(reference).slice(0, 500), success, ...(contentHash ? { content_hash: String(contentHash).slice(0, 128) } : {}) }, options); }
+  async graphQuery(query, prefix, limit = 12, options = {}) { return this.call('graph.query', { query: String(query).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 32) }, options); }
+  async graphLocate(pattern, prefix, limit = 12, options = {}) { return this.call('graph.locate', { pattern: String(pattern).slice(0, 512), ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }, options); }
+  async graphList(prefix, limit = 100, options = {}) { return this.call('graph.list', { ...(prefix ? { prefix: String(prefix).slice(0, 512) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 512) }, options); }
+  async graphWorkspace(limit = 100, options = {}) { return this.call('graph.workspace', { limit: Math.min(Math.max(Math.floor(limit), 1), 512) }, options); }
+  async graphTraceSummary(query, direction = 'both', depth = 2, limit = 12, options = {}) { return this.call('graph.trace_summary', { query: String(query).slice(0, 512), direction: ['callers', 'callees', 'both'].includes(direction) ? direction : 'both', depth: Math.min(Math.max(Math.floor(depth), 1), 4), limit: Math.min(Math.max(Math.floor(limit), 1), 12) }, options); }
+  async resolveEditTargets(path, query, expectedHash = undefined, limit = 12, options = {}) {
+    if (!(await this.supports('edit.resolve_targets', options))) throw new Error('Connected TST daemon does not support revision-bound edit targets. Upgrade the bundled TST runtime.');
+    return this.call('edit.resolve_targets', { path: String(path).slice(0, 1024), query: String(query).slice(0, 512), ...(expectedHash ? { expected_hash: String(expectedHash).slice(0, 128) } : {}), limit: Math.min(Math.max(Math.floor(limit), 1), 64) }, options);
   }
-  async parseStaged(path, baseHash, content) {
-    if (!(await this.supports('edit.parse_staged'))) throw new Error('Connected TST daemon does not support staged parsing. Upgrade the bundled TST runtime.');
-    return this.call('edit.parse_staged', { path: String(path).slice(0, 1024), base_hash: baseHash || null, content: String(content) });
+  async parseStaged(path, baseHash, content, options = {}) {
+    if (!(await this.supports('edit.parse_staged', options))) throw new Error('Connected TST daemon does not support staged parsing. Upgrade the bundled TST runtime.');
+    return this.call('edit.parse_staged', { path: String(path).slice(0, 1024), base_hash: baseHash || null, content: String(content) }, options);
   }
-  async refreshGraphPaths(paths) {
-    if (!(await this.supports('graph.refresh_paths'))) throw new Error('Connected TST daemon does not support the graph refresh barrier. Upgrade the bundled TST runtime.');
-    return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) });
+  async refreshGraphPaths(paths, options = {}) {
+    if (!(await this.supports('graph.refresh_paths', options))) throw new Error('Connected TST daemon does not support the graph refresh barrier. Upgrade the bundled TST runtime.');
+    return this.call('graph.refresh_paths', { paths: [...new Set((Array.isArray(paths) ? paths : []).map((value) => String(value).slice(0, 1024)))].slice(0, 64) }, options);
   }
   close() {
     this.#generation++;
@@ -167,3 +198,5 @@ function boundedRefresh(input = {}) {
 function normalizeMemoryScope(value) { const scope = String(value ?? 'session').toLowerCase(); return ['session', 'project', 'global'].includes(scope) ? scope : 'session'; }
 function boundedHashes(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return {}; return Object.fromEntries(Object.entries(value).slice(0, 64).flatMap(([path, hash]) => typeof path === 'string' && typeof hash === 'string' ? [[path.slice(0, 512), hash.slice(0, 128)]] : [])); }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error)).slice(0, 300); }
+
+function transportError(message) { const error = new Error(message); error.code = 'TST_DISCONNECTED'; return error; }
