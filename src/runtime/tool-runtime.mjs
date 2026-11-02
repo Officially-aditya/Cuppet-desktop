@@ -159,7 +159,7 @@ export class ToolRuntime {
       this.#emit({ type: 'tool.finished', sessionId, executionId, callId: call.id, tool: call.name, success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), output, message: output, ...(messageId ? { messageId } : {}) });
       this.#noteWorkspaceActivity(projectRoot, call.name, result);
       // Memory bookkeeping must never be able to hold the model's tool result hostage (a wedged TST daemon used to block every tool call).
-      if (result.details?.prepared !== true && result.details?.readOnly !== true) await waitForTst(settleWithin(this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? ''), OBSERVATION_TIMEOUT_MS), signal);
+      if (result.details?.prepared !== true && result.details?.readOnly !== true) await waitForTst(settleWithin(this.#recordToolObservation(sessionId, call.name, result.paths?.[0] ?? ''), OBSERVATION_TIMEOUT_MS), signal).catch(() => undefined);
       return { output, contentItems: Array.isArray(result.contentItems) ? result.contentItems : [], success: true, paths: result.paths ?? [], mutation: Boolean(result.mutation), validation: result.validation ?? null, details: result.details ?? null };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;

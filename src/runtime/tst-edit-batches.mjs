@@ -1,6 +1,7 @@
 import { checkTstSignal, tstOptions, waitForTst } from './tst-request.mjs';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const MAX_BATCHES = 32;
@@ -133,7 +134,7 @@ export class TstBatchEditManager {
     checkTstSignal(signal);
     const { diff, stats, rendered } = renderBatchDiffWithStats(stagedFiles);
     // The digest binds the approval to the exact state transition (path, base, result, mode) — never to a truncated rendering of it.
-    const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.canonical, ...file.aliases.slice().sort(), file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8)].join('\0')).join('\n'), 'utf8'));
+    const diffDigest = sha256(Buffer.from(stagedFiles.map((file) => [file.path, file.canonical, ...file.aliases.slice().sort(), file.exists ? file.baseHash : '', file.afterHash, (file.mode & 0o777).toString(8), JSON.stringify(file.identity)].join('\0')).join('\n'), 'utf8'));
     const id = `batch_${randomUUID()}`;
     const batch = {
       id, sessionId, projectRoot: root, createdAt: Date.now(), expiresAt: Date.now() + BATCH_TTL_MS,
@@ -147,10 +148,12 @@ export class TstBatchEditManager {
   async apply({ batchId, sessionId, projectRoot, executionId, authorize, signal }) {
     throwIfAborted(signal);
     const batch = await this.#require(batchId, sessionId, projectRoot);
+    if (batch.state === 'applied' && batch.result) return structuredClone(batch.result);
     if (batch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
     return this.#withWriter(batch.projectRoot, async (lock) => {
       throwIfAborted(signal);
       const freshBatch = await this.#require(batchId, sessionId, projectRoot);
+      if (freshBatch.state === 'applied' && freshBatch.result) return structuredClone(freshBatch.result);
       if (freshBatch.state !== 'prepared') throw new Error(`Batch ${batchId} is not prepared`);
       const paths = [...new Set(freshBatch.files.flatMap((file) => [...file.aliases, file.canonical]))];
       await validateBatchFiles(freshBatch);
@@ -188,7 +191,7 @@ export class TstBatchEditManager {
             throwIfAborted(signal);
             await validateStagedFile(freshBatch.projectRoot, file);
             throwIfAborted(signal);
-          });
+          }, { createOnly: !file.exists });
           published.push({ file, target });
           const after = await snapshotBytes(target.absolute);
           if (!after.exists || after.hash !== file.afterHash) throw new Error(`post-write hash mismatch for ${file.path}`);
@@ -204,7 +207,7 @@ export class TstBatchEditManager {
             const target = await resolveWorkspacePath(freshBatch.projectRoot, record.file.canonical, false);
             const current = await snapshotBytes(target.absolute);
             if (target.canonical !== record.file.canonical || current.hash !== record.file.afterHash) throw new Error('Rollback target changed externally');
-            await restoreSnapshot(target.absolute, before);
+            await restoreSnapshot(target.absolute, before, record.file.mode);
           } catch { rollbackClean = false; }
         }
         if (rollbackClean) await this.#journal.abortBatch?.(journalToken).catch(() => undefined);
@@ -219,7 +222,7 @@ export class TstBatchEditManager {
       try {
         const refreshed = [];
         for (let offset = 0; offset < paths.length; offset += 64) {
-          const result = await this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64));
+          const result = await waitForTst(this.#tst.refreshGraphPaths(paths.slice(offset, offset + 64), { signal }), signal);
           refreshed.push(...(result?.paths ?? []));
         }
         refresh = { paths: refreshed };
@@ -241,7 +244,8 @@ export class TstBatchEditManager {
       }
 
       this.#emit({ type: 'edit.batch.applied', sessionId, batchId, paths, diffDigest: freshBatch.diffDigest, graphReady, graphError });
-      return { ...publicBatch(freshBatch), applied: true, graphReady, graphError, refresh };
+      freshBatch.result = { ...publicBatch(freshBatch), applied: true, graphReady, graphError, refresh };
+      return structuredClone(freshBatch.result);
     }, signal);
   }
 
@@ -317,6 +321,7 @@ async function validateStagedFile(root, file) {
   const target = await resolveWorkspacePath(root, file.canonical, false);
   const current = await snapshotBytes(target.absolute);
   if (file.exists ? !current.exists || current.hash !== file.baseHash : current.exists) throw new Error(`base file changed after prepare: ${file.path}`);
+  if (file.exists && !sameIdentity(current.identity, file.identity)) throw new Error(`file identity or metadata changed after prepare: ${file.path}`);
   return target;
 }
 async function graphRefreshSnapshots(root, stale, tst) {
@@ -380,11 +385,10 @@ async function stageOperation({ root, operation, index, files }) {
     const expected = Buffer.from(target.expected_source, 'utf8');
     if (!file.before.subarray(target.start_byte, target.end_byte).equals(expected)) throw new Error(`target source changed for ${target.target_id}`);
     let start = target.start_byte; let end = target.end_byte; let replacement;
-    const rawContent = operation.content ?? operation.replacement ?? operation.text ?? '';
-    if (operation.op === 'replace_node') replacement = Buffer.from(String(rawContent), 'utf8');
-    else if (operation.op === 'delete_node') replacement = Buffer.alloc(0);
-    else if (operation.op === 'insert_before_node') { start = target.start_byte; end = start; replacement = Buffer.from(String(rawContent), 'utf8'); }
-    else { start = target.end_byte; end = start; replacement = Buffer.from(String(rawContent), 'utf8'); }
+    const rawContent = operation.content ?? operation.replacement ?? operation.text;
+    replacement = operation.op === 'delete_node' ? Buffer.alloc(0) : contentBytes(rawContent, `${operation.op} content`);
+    if (operation.op === 'insert_before_node') end = start;
+    else if (operation.op === 'insert_after_node') start = end;
     addEdit(file, { index, start, end, replacement, description: `${operation.op}:${target.symbol}` });
     return;
   }
@@ -397,7 +401,8 @@ async function stageOperation({ root, operation, index, files }) {
       throw new Error(`stale expected_hash for ${file.path}${note}`);
     }
     const rawOld = operation.old_text ?? operation.oldText ?? operation.oldtext ?? operation.search ?? operation.needle;
-    const needle = Buffer.from(String(rawOld ?? ''), 'utf8');
+    if (rawOld !== undefined && typeof rawOld !== 'string') throw new Error('replace_text old_text must be a string');
+    const needle = Buffer.from(rawOld ?? '', 'utf8');
     if (!needle.length) {
       const keys = Object.keys(operation).filter((k) => operation[k] !== undefined && !['op', 'path', 'file_path', 'filePath', 'file'].includes(k));
       throw new Error(`replace_text old_text is required${keys.length ? ` (received keys: [${keys.join(', ')}])` : ''}`);
@@ -405,7 +410,7 @@ async function stageOperation({ root, operation, index, files }) {
     const positions = allOccurrences(file.before, needle);
     if (positions.length !== 1) throw new Error(`replace_text matched ${positions.length} times; exactly one match is required inside a batch`);
     const rawNew = operation.new_text ?? operation.newText ?? operation.newtext ?? operation.replacement ?? operation.replace;
-    addEdit(file, { index, start: positions[0], end: positions[0] + needle.length, replacement: Buffer.from(String(rawNew ?? ''), 'utf8'), description: 'replace_text' });
+    addEdit(file, { index, start: positions[0], end: positions[0] + needle.length, replacement: contentBytes(rawNew, 'replace_text new_text'), description: 'replace_text' });
     return;
   }
   if (operation.op === 'create_file') {
@@ -413,8 +418,8 @@ async function stageOperation({ root, operation, index, files }) {
     const file = await ensureFile(root, targetPath, files, { mustExist: false });
     if (file.exists) throw new Error(`create_file target already exists: ${file.path}`);
     if (file.edits.length) throw new Error(`multiple create operations for ${file.path}`);
-    const rawContent = operation.content ?? operation.text ?? operation.file_content ?? operation.fileContent ?? '';
-    addEdit(file, { index, start: 0, end: 0, replacement: Buffer.from(String(rawContent), 'utf8'), description: 'create_file' });
+    const rawContent = operation.content ?? operation.text ?? operation.file_content ?? operation.fileContent;
+    addEdit(file, { index, start: 0, end: 0, replacement: contentBytes(rawContent, 'create_file content'), description: 'create_file' });
     return;
   }
   throw new Error(`unsupported batch operation: ${operation.op}`);
@@ -431,8 +436,8 @@ async function ensureFile(root, path, files, { mustExist }) {
   const snapshot = await snapshotBytes(resolved.absolute);
   if (mustExist && !snapshot.exists) throw new Error(`file does not exist: ${resolved.relative}`);
   if (!mustExist && snapshot.exists) throw new Error(`file already exists: ${resolved.relative}`);
-  const mode = snapshot.exists ? (await stat(resolved.absolute)).mode : 0o644;
-  const file = { path: resolved.relative, canonical: resolved.canonical, aliases: [resolved.relative], absolute: resolved.absolute, exists: snapshot.exists, before: snapshot.exists ? snapshot.content : Buffer.alloc(0), baseHash: snapshot.hash, mode, edits: [], after: null, afterHash: null, parse: null };
+  const mode = snapshot.exists ? snapshot.identity.mode : 0o644;
+  const file = { path: resolved.relative, canonical: resolved.canonical, aliases: [resolved.relative], absolute: resolved.absolute, exists: snapshot.exists, before: snapshot.exists ? snapshot.content : Buffer.alloc(0), baseHash: snapshot.hash, identity: snapshot.identity, mode, edits: [], after: null, afterHash: null, parse: null };
   files.set(resolved.canonical, file); return file;
 }
 
@@ -459,7 +464,7 @@ function finalizeFileEdits(file) {
 }
 
 function serializeStagedFile(file) {
-  return { path: file.path, canonical: file.canonical, aliases: [...file.aliases], exists: file.exists, baseHash: file.baseHash, afterHash: file.afterHash, afterBase64: file.after.toString('base64'), mode: file.mode, parse: file.parse };
+  return { path: file.path, canonical: file.canonical, aliases: [...file.aliases], exists: file.exists, baseHash: file.baseHash, afterHash: file.afterHash, afterBase64: file.after.toString('base64'), identity: file.identity, mode: file.mode, parse: file.parse };
 }
 
 function publicBatch(batch) {
@@ -550,22 +555,49 @@ function backtrackOps(trace, n, m, dEnd, offset) {
   return ops.reverse();
 }
 
-async function atomicPublish(path, content, mode, beforePublish = async () => {}) {
+async function atomicPublish(path, content, mode, beforePublish = async () => {}, { createOnly = false } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const temp = join(dirname(path), `.${Date.now().toString(36)}.${randomUUID()}.cuppet-tmp`);
-  try { await writeFile(temp, content, { mode: mode & 0o777 }); await beforePublish(); await rename(temp, path); }
-  catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
+  try {
+    const handle = await open(temp, 'wx', mode & 0o777);
+    try {
+      await handle.writeFile(content);
+      // Creation respects umask; replacement must preserve the existing permissions exactly.
+      if (!createOnly) await handle.chmod(mode & 0o777);
+      await handle.sync();
+    } finally { await handle.close(); }
+    await beforePublish();
+    if (createOnly) {
+      // link() atomically refuses an existing destination, including a racing editor save.
+      await link(temp, path);
+      await rm(temp, { force: true }).catch(() => undefined);
+    } else await rename(temp, path);
+  } catch (error) { await rm(temp, { force: true }).catch(() => undefined); throw error; }
 }
-async function restoreSnapshot(path, snapshot) {
-  if (snapshot.exists) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, Buffer.from(snapshot.contentBase64, 'base64')); }
+async function restoreSnapshot(path, snapshot, mode) {
+  if (snapshot.exists) await atomicPublish(path, Buffer.from(snapshot.contentBase64, 'base64'), mode);
   else await rm(path, { force: true });
 }
+function fileIdentity(metadata) {
+  return { dev: metadata.dev, ino: metadata.ino, mode: metadata.mode, size: metadata.size, mtimeMs: metadata.mtimeMs, ctimeMs: metadata.ctimeMs };
+}
+function sameIdentity(left, right) {
+  return Boolean(left && right) && Object.keys(left).every((key) => left[key] === right[key]);
+}
 async function snapshotBytes(path) {
+  let handle;
   try {
-    const metadata = await stat(path); if (!metadata.isFile()) throw new Error('batch target must be a regular file');
+    // Nonblocking open lets fstat reject FIFOs without waiting for a writer.
+    handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+    const metadata = await handle.stat(); if (!metadata.isFile()) throw new Error('batch target must be a regular file');
     if (metadata.size > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} byte batch limit`);
-    const content = await readFile(path); return { exists: true, hash: sha256(content), content };
-  } catch (error) { if (error?.code === 'ENOENT') return { exists: false, hash: null, content: Buffer.alloc(0) }; throw error; }
+    const identity = fileIdentity(metadata);
+    const content = await handle.readFile();
+    if (content.length > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} byte batch limit`);
+    if (!sameIdentity(identity, fileIdentity(await handle.stat()))) throw new Error('batch target changed while reading');
+    return { exists: true, hash: sha256(content), content, identity };
+  } catch (error) { if (error?.code === 'ENOENT') return { exists: false, hash: null, content: Buffer.alloc(0), identity: null }; throw error; }
+  finally { await handle?.close(); }
 }
 
 async function resolveWorkspacePath(projectRoot, resource, mustExist) {
@@ -625,7 +657,11 @@ function normalizeOperations(values) {
     return clone;
   });
 }
-function allOccurrences(buffer, needle) { const output = []; let offset = 0; for (;;) { const index = buffer.indexOf(needle, offset); if (index < 0) break; output.push(index); offset = index + Math.max(1, needle.length); } return output; }
+function contentBytes(value, field) {
+  if (typeof value !== 'string') throw new Error(`${field} must be explicitly provided as a string (use an empty string for empty content)`);
+  return Buffer.from(value, 'utf8');
+}
+function allOccurrences(buffer, needle) { const output = []; let offset = 0; for (;;) { const index = buffer.indexOf(needle, offset); if (index < 0) break; output.push(index); offset = index + 1; } return output; }
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
 function capText(value, maxBytes) { const buffer = Buffer.from(String(value), 'utf8'); return buffer.length <= maxBytes ? buffer.toString('utf8') : `${buffer.subarray(0, maxBytes).toString('utf8')}\n…[truncated]`; }
 function cleanError(error) { return (error instanceof Error ? error.message : String(error)).slice(0, 1000); }
