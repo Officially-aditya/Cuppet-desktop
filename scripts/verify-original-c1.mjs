@@ -37,17 +37,17 @@ expect(batches.includes('Batch target validation failed; nothing was written.') 
 expect(batches.includes('beginBatch') && batches.includes("tool: 'tst_edit_batch'"), 'multi-file batch undo checkpoint is missing');
 expect(batches.includes('fingerprintKey: `tst-batch:${batchId}:${freshBatch.diffDigest}`'), 'permission is not bound to the prepared batch/diff digest');
 expect(batches.includes('atomicPublish') && batches.includes('post-write hash mismatch'), 'checked atomic file publication is missing');
-expect(batches.includes('refreshGraphPaths(paths)') && batches.includes('!returned.has(file.path) || returned.get(file.path) !== file.afterHash'), 'graph refresh receipt must cover every final file hash');
+expect(batches.includes('refreshGraphPaths(paths.slice(offset, offset + 64)') && batches.includes('paths.filter((path) => !returned.has(path) || returned.get(path) !== expected.get(path))') && batches.includes('[path, file.afterHash]'), 'graph refresh receipt must cover every final file hash');
 expect(batches.includes('this.#writer?.withProject') && !batches.includes('#projectLocks'), 'batch publication does not use the shared project writer');
 
 const writer = text['src/runtime/project-writer.mjs'];
-expect(writer.includes('withProject(projectRoot, operation)') && writer.includes('new Map()') && writer.includes('await prior.catch') && writer.includes('this.#tails.set(root, tail)') && writer.includes('this.#tails.delete(root)'), 'shared per-project writer is missing');
+expect(writer.includes('withProject(projectRoot, operation') && writer.includes('new Map()') && writer.includes('prior.catch(') && writer.includes('this.#tails.set(root, tail)') && writer.includes('this.#tails.delete(root)'), 'shared per-project writer is missing');
 
 const tools = text['src/runtime/tool-runtime.mjs']; const toolsDense = dense['src/runtime/tool-runtime.mjs'];
 for (const name of ['tst_explore','tst_read','tst_edit_batch','tst_validate']) expect(tools.includes(`'${name}'`), `model-facing original C1 tool missing: ${name}`);
 expect(tools.includes('REVISION-BOUND EDIT TARGETS') && tools.includes('validateReadTarget'), 'explore/read revision-ref flow is missing');
 expect(tools.includes('PREPARED (no files written)') && tools.includes('details: { prepared: true'), 'prepare is not explicitly write-free');
-expect(tools.includes("if (result.details?.prepared !== true) await this.#recordToolObservation"), 'prepared batches can leak into durable action observations');
+expect(/result\.details\?\.prepared !== true[^\n]*this\.#recordToolObservation\(/.test(tools), 'prepared batches can leak into durable action observations');
 expect(tools.includes('mutatedDuringValidation') && tools.includes('fileHashes: postHashes'), 'validation is not bound to stable post-edit hashes');
 expect(tools.includes('safeShellEnvironment()') && tools.includes('^CUPPET_.*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)'), 'child shell secret scrubbing is missing');
 expect(toolsDense.includes('details:{graphHandled:true,graphReady:result.graphReady'), 'batch graph-refresh receipt is not propagated to the runtime');
