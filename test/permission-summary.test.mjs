@@ -17,8 +17,8 @@ test('the plain-language summary is informational: only for commands, below the 
   assert.doesNotMatch(computation, /await|\.then\(|fetch\(|window\.cuppet|setTimeout/);
 });
 
-test('Settings explains what having no OS sandbox means, and only where commands would run unsandboxed', async () => {
-  const source = await read('../src/renderer/react/SettingsModal.tsx');
+test('Help explains what having no OS sandbox means, and only where commands would run unsandboxed', async () => {
+  const source = await read('../src/renderer/react/HelpModal.tsx');
   assert.match(source, /No OS sandbox on this system/);
   assert.match(source, /Shell commands run with your full user permissions, so the approval prompt is the only control/);
   // The condition is shared with the approval prompt rather than copied: macOS and Linux refuse to run commands

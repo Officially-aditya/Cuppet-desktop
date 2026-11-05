@@ -21,6 +21,7 @@ import { AddProjectModal } from './AddProjectModal';
 import { SearchModal } from './SearchModal';
 import { RemoteModal } from './RemoteModal';
 import { SettingsModal } from './SettingsModal';
+import { HelpModal, type HelpTopic } from './HelpModal';
 import { Toast } from './Toast';
 import { CUPPET_LOGO_URL } from './brand';
 import {
@@ -48,7 +49,7 @@ import {
 const LAST_SESSION_KEY = 'cuppet.desktop.last-session';
 
 type Draft = { projectId: string | null; mode: 'plan' | 'build' };
-type ModalName = 'new-chat' | 'add-project' | 'search' | 'remote' | 'settings' | null;
+type ModalName = 'new-chat' | 'add-project' | 'search' | 'remote' | 'settings' | 'help' | null;
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -73,6 +74,7 @@ export function App() {
   const [modal, setModal] = useState<ModalName>(null);
   const [projectSource, setProjectSource] = useState<'local' | 'github'>('local');
   const [settingsSection, setSettingsSection] = useState('general');
+  const [helpTopic, setHelpTopic] = useState<HelpTopic>('security');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cuppet.desktop.sidebar-collapsed') === '1');
@@ -245,6 +247,12 @@ export function App() {
     setModal(null);
     void openSession(id).catch(showToast);
   }), [openSession, showToast]);
+
+  // The native Help menu asks the window to show one of the help topics.
+  useEffect(() => window.cuppet.native.onHelpRequested?.((topic) => {
+    setHelpTopic(topic);
+    setModal('help');
+  }), []);
 
   const openFolder = useCallback(async () => {
     try {
@@ -609,6 +617,7 @@ export function App() {
       {modal === 'add-project' && <AddProjectModal initialSource={projectSource} onClose={() => setModal(null)} onAdded={async (project) => { await refreshLists(); startDraft(project.id); setModal(null); }} onError={showToast} />}
       {modal === 'search' && <SearchModal projects={projects} onClose={() => setModal(null)} onOpen={async (id) => { await openSession(id); setModal(null); }} onChanged={refreshLists} onError={showToast} />}
       {modal === 'remote' && <RemoteModal onClose={() => setModal(null)} onError={showToast} />}
+      {modal === 'help' && <HelpModal topic={helpTopic} onTopic={setHelpTopic} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal provider={provider} initialSection={settingsSection} onClose={() => setModal(null)} onSaved={hydrateClientProviderSettings} onOpenRemote={() => setModal('remote')} onError={showToast} />}
       <ShellPanelControls
         project={activeProject}

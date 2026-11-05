@@ -118,7 +118,6 @@ test('provider selection preserves catalogs and does not repeat Codex or sandbox
     './SelectControl': {}, './ModelPicker': {}, './GeneralPanel': {},
     // DOM-bound helpers the harness has no DOM for.
     './use-modal-behavior': { useModalBehavior() {} },
-    './sandbox-status': { isUnsandboxed: () => false },
   }, { window, localStorage: { getItem: () => null, setItem() {} },
     document: { body: { classList: { toggle() {} } } } });
   t.after(() => modal.close());
@@ -132,5 +131,6 @@ test('provider selection preserves catalogs and does not repeat Codex or sandbox
   }
   assert.equal(invalidations, 0);
   assert.equal(codexChecks, 1);
-  assert.equal(sandboxChecks, 1);
+  // Sandbox status moved to the Help menu, so Settings must not probe it at all, on open or on provider switches.
+  assert.equal(sandboxChecks, 0);
 });

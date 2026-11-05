@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, SandboxStatus, Session, TokenUsageSummary } from '../types';
+import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, Session, TokenUsageSummary } from '../types';
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
@@ -10,19 +10,15 @@ import { providerStatusPresentation } from './provider-status-presentation';
 import { ProviderAuthentication } from './ProviderAuthentication';
 import { PlanUsagePanel } from './PlanUsagePanel';
 import { readAppearancePreference, writeAppearancePreference, type AppearancePreference } from './appearance';
-import { isUnsandboxed } from './sandbox-status';
 import { useModalBehavior } from './use-modal-behavior';
 
 const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
-  security: ['Security & Sandbox', 'Inspect local OS kernel sandbox containment and credential protection.'],
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
   usage: ['Usage', 'Review your subscription limits and provider-reported token counts.'],
   devices: ['Connected devices', 'Review devices paired through Cuppet Remote.'],
-  privacy: ['Data & privacy', 'Understand where desktop data and credentials live.'],
-  about: ['About', 'Desktop runtime and build information.'],
 };
 
 const PREF_COMPACT = 'cuppet.desktop.pref.compact-sidebar';
@@ -53,7 +49,6 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
   const [usageLoading, setUsageLoading] = useState(false);
   const [compact, setCompact] = useState(localStorage.getItem(PREF_COMPACT) === '1');
   const [reduceMotion, setReduceMotion] = useState(localStorage.getItem(PREF_MOTION) === '1');
-  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
 
   const presets = current?.presets ?? provider?.presets ?? [];
   const usageProviderID = current?.primary?.providerID || current?.providerID || '';
@@ -139,19 +134,8 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
     finally { setUsageLoading(false); }
   }, [onError]);
 
-  const refreshSandbox = useCallback(async () => {
-    try {
-      if (window.cuppet.sandbox?.status) {
-        setSandboxStatus(await window.cuppet.sandbox.status());
-      }
-    } catch {
-      setSandboxStatus(null);
-    }
-  }, []);
-
-  useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); void refreshSandbox(); }, [refresh, refreshCodex, refreshDevices, refreshSandbox]);
+  useEffect(() => { void refresh(); void refreshCodex(); void refreshDevices(); }, [refresh, refreshCodex, refreshDevices]);
   useEffect(() => { if (section === 'usage') void refreshUsage(); }, [refreshUsage, section]);
-  useEffect(() => { if (section === 'security') void refreshSandbox(); }, [refreshSandbox, section]);
 
   useEffect(() => {
     document.body.classList.toggle('compact-sidebar', compact);
@@ -306,7 +290,6 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
             <header className="settings-hub-header"><div><h2 id="settings-title">{title}</h2><p>{description}</p></div><button type="button" className="icon-button settings-close-button" aria-label="Close" onClick={onClose}>×</button></header>
             <div className="settings-hub-content">
               {section === 'general' && <GeneralPanel />}
-              {section === 'security' && <SecurityPanel sandboxStatus={sandboxStatus} />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={activateProvider} onApiKey={setApiKey} onApiKeyCommit={persistApiKey} onReset={resetProvider} onModelSaved={modelSaved} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
@@ -315,8 +298,6 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
                 <UsagePanel current={current} usage={usage} loading={usageLoading} onRefresh={refreshUsage} />
               </>}
               {section === 'devices' && <DevicesPanel devices={devices} onOpenRemote={onOpenRemote} />}
-              {section === 'privacy' && <PrivacyPanel />}
-              {section === 'about' && <AboutPanel />}
             </div>
           </div>
         </div>
@@ -601,87 +582,6 @@ function UsageStat({ label, value, strong = false }: { label: string; value: str
 
 function DevicesPanel({ devices, onOpenRemote }: { devices: RemoteDevice[]; onOpenRemote: () => void }) {
   return <div className="settings-card"><div className="settings-card-heading"><div><h3>Connected devices</h3><p>Devices paired through Cuppet Remote.</p></div><button type="button" className="ghost-button settings-action-button" onClick={onOpenRemote}>Open Remote</button></div><div className="settings-device-list">{devices.length ? devices.map((device) => <div className="settings-row" key={device.deviceId}><div><strong>{device.name || 'Cuppet device'}</strong><span>{device.deviceId.slice(0, 18)}</span></div></div>) : <div className="settings-empty">No paired devices.</div>}</div></div>;
-}
-
-function SecurityPanel({ sandboxStatus }: { sandboxStatus: SandboxStatus | null }) {
-  const driverLabel = sandboxStatus
-    ? sandboxStatus.driverName === 'mac-seatbelt'
-      ? 'macOS Seatbelt (sandbox-exec)'
-      : sandboxStatus.driverName === 'linux-bwrap'
-        ? 'Linux Bubblewrap (bwrap)'
-        : sandboxStatus.available
-          ? sandboxStatus.driverName
-          : 'None (Unsandboxed)'
-    : 'Checking…';
-
-  const isEnforced = Boolean(sandboxStatus?.available);
-  // Without a sandbox, macOS and Linux refuse to run commands; any other platform runs them with the user's own permissions.
-  const unsandboxed = isUnsandboxed(sandboxStatus);
-
-  return (
-    <div className="settings-card">
-      <div className="settings-card-heading">
-        <div>
-          <h3>Kernel Sandbox Containment</h3>
-          <p>Local OS-level security boundaries applied to child commands and tools executed by Cuppet.</p>
-        </div>
-        <span className={`settings-status-pill${isEnforced ? '' : ' muted'}`}>
-          {isEnforced ? 'Enforced' : sandboxStatus ? 'Inactive' : 'Checking…'}
-        </span>
-      </div>
-
-      {unsandboxed && (
-        <div className="settings-callout" role="note">
-          <strong>No OS sandbox on this system</strong>
-          <span>Shell commands run with your full user permissions, so the approval prompt is the only control. Read each command before you allow it.</span>
-        </div>
-      )}
-
-      <div className="settings-row">
-        <div>
-          <strong>Sandboxing Engine</strong>
-          <span>{driverLabel}</span>
-        </div>
-        <span className="settings-value">{isEnforced ? 'Active' : 'Not Active'}</span>
-      </div>
-
-      <div className="settings-row">
-        <div>
-          <strong>File Write Confinement</strong>
-          <span>Restricted to project root and temporary directories. Modification of system or parent paths is blocked.</span>
-        </div>
-        <span className="settings-value">{isEnforced ? 'Project Root' : 'Unconfined'}</span>
-      </div>
-
-      <div className="settings-row">
-        <div>
-          <strong>Credential & Keychain Protection</strong>
-          <span>Strictly blocks child process reads to sensitive locations: ~/.ssh, ~/.aws, ~/.gnupg, and Keychain files.</span>
-        </div>
-        <span className="settings-value">{sandboxStatus?.credentialProtection ? 'Protected' : 'Standard'}</span>
-      </div>
-
-      <div className="settings-row">
-        <div>
-          <strong>Environment Sanitization</strong>
-          <span>Child processes receive a scrubbed environment allowlist. Cloud API keys, auth tokens, and sensitive env variables are automatically stripped.</span>
-        </div>
-        <span className="settings-value">Always Active</span>
-      </div>
-    </div>
-  );
-}
-
-function PrivacyPanel() {
-  return <div className="settings-card"><div className="settings-card-heading"><div><h3>Data & privacy</h3><p>Local-first controls for desktop data and credentials.</p></div></div>
-    <div className="settings-row"><div><strong>Conversation storage</strong><span>Desktop conversations and project state are stored locally.</span></div><span className="settings-value">Local</span></div>
-    <div className="settings-row"><div><strong>Provider credentials</strong><span>API keys use the operating system secure credential store when available. Codex OAuth remains owned by Codex.</span></div><span className="settings-value">On device</span></div>
-    <div className="settings-row"><div><strong>Remote control</strong><span>The desktop remains authoritative; provider credentials are not sent to paired devices.</span></div><span className="settings-value">Opt-in</span></div>
-  </div>;
-}
-
-function AboutPanel() {
-  return <div className="settings-card about-card"><div className="about-brand"><img src={CUPPET_LOGO_URL} alt="Cuppet" /><div><h3>Cuppet Desktop</h3><p>Independent local agent runtime for projects, conversations, tools, and Remote.</p></div></div><div className="settings-row"><div><strong>Renderer</strong><span>React + TypeScript, compiled with Vite.</span></div><span className="settings-value">React</span></div><div className="settings-row"><div><strong>Runtime</strong><span>Electron host with the independent Cuppet runtime.</span></div><span className="settings-value">Desktop</span></div></div>;
 }
 
 function deletedRecoveryLabel(session: Session, now = Date.now()) {

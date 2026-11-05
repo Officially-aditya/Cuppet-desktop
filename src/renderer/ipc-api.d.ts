@@ -118,8 +118,10 @@ export type CuppetApi = {
     toggleMaximizeWindow: () => Promise<boolean>;
     closeWindow: () => Promise<void>;
     isWindowMaximized: () => Promise<boolean>;
+    appVersion: () => Promise<string>;
     onOpenSession: (callback: (event: string) => void) => () => void;
     onWindowMaximizeChange: (callback: (event: boolean) => void) => () => void;
+    onHelpRequested: (callback: (event: 'security' | 'privacy' | 'about') => void) => () => void;
     platform: string;
   };
   settings: {

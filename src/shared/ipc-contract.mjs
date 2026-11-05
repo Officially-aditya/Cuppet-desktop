@@ -89,6 +89,7 @@ export const IPC_METHODS = {
   'native.toggleMaximizeWindow': method('native:toggle-maximize', [], 'boolean'),
   'native.closeWindow': method('native:close', [], 'void'),
   'native.isWindowMaximized': method('native:is-maximized', [], 'boolean'),
+  'native.appVersion': method('native:app-version', [], 'string'),
   'settings.get': method('settings:get', [], 'Types.ProviderSettings'),
   'settings.models': method('settings:models', [['options?', 'object']], 'Types.ProviderModelCatalog'),
   'settings.save': method('settings:save', [['value', 'object']], 'Types.ProviderSettings'),
@@ -100,6 +101,7 @@ export const IPC_EVENTS = {
   'terminal.onEvent': { channel: 'cuppet:terminal:event', type: 'Types.TerminalEvent' },
   'native.onOpenSession': { channel: 'cuppet:attention:open-session', type: 'string' },
   'native.onWindowMaximizeChange': { channel: 'cuppet:window:maximize-change', type: 'boolean' },
+  'native.onHelpRequested': { channel: 'cuppet:menu:open-help', type: "'security' | 'privacy' | 'about'" },
 };
 
 export const IPC_ARGUMENT_TYPES = {

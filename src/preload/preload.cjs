@@ -355,6 +355,10 @@ for (const [path, channel] of [
     "cuppet:native:is-maximized"
   ],
   [
+    "native.appVersion",
+    "cuppet:native:app-version"
+  ],
+  [
     "settings.get",
     "cuppet:settings:get"
   ],
@@ -389,6 +393,10 @@ for (const [path, channel] of [
   [
     "native.onWindowMaximizeChange",
     "cuppet:window:maximize-change"
+  ],
+  [
+    "native.onHelpRequested",
+    "cuppet:menu:open-help"
   ]
 ]) {
   expose(path, (callback) => {

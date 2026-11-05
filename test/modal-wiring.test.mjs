@@ -12,7 +12,8 @@ const path = (relative) => fileURLToPath(new URL(relative, import.meta.url));
 const read = (file) => readFile(path(`../src/renderer/react/${file}.tsx`), 'utf8');
 
 // Settings, Remote, Add project and New chat had no Escape handling and no focus management (UI-22).
-const MODALS = ['SettingsModal', 'RemoteModal', 'AddProjectModal', 'NewChatModal'];
+// Help joined later and follows the same pattern.
+const MODALS = ['SettingsModal', 'HelpModal', 'RemoteModal', 'AddProjectModal', 'NewChatModal'];
 
 for (const name of MODALS) {
   test(`${name} gets Escape, a focus trap and focus return from the shared hook`, async () => {

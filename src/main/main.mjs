@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, shell } from 'electron';
 import { realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,6 +14,7 @@ import { resolveProjectFileDetails, resolveProjectFilePath } from './project-fil
 import { decideProjectFileOpen } from './open-file-policy.mjs';
 import { createApprovalAttention } from './approval-attention.mjs';
 import { createWindowAppearance } from './window-appearance.mjs';
+import { HELP_TOPICS, installApplicationMenu } from './app-menu.mjs';
 import { createIpcRegistrar } from './ipc-boundary.mjs';
 import { validateAttachments, validateCommandInput } from './command-input.mjs';
 import { readProviderPlanUsage } from '../runtime/provider-plan-usage.mjs';
@@ -196,6 +197,7 @@ function registerIpc() {
     const win = BrowserWindow.fromWebContents(event.sender);
     return win?.isMaximized() ?? false;
   });
+  handle('native.appVersion', () => app.getVersion());
 
   handle('cliAgents.status', (_event, providerID) => request('provider.local.status', { providerID: validateCliProviderID(providerID) }));
   handle('cliAgents.connect', (_event, providerID) => request('provider.local.connect', { providerID: validateCliProviderID(providerID) }));
@@ -405,6 +407,20 @@ async function openExternal(value) {
   return { opened: true };
 }
 
+// Help topics open inside the app window. The menu is rebuilt when the window opens or closes so that
+// the Help entries are disabled on macOS while the app runs with no window.
+function openHelpTopic(topic) {
+  if (!HELP_TOPICS.includes(topic) || !mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('cuppet:menu:open-help', topic);
+}
+
+function installMenu() {
+  installApplicationMenu({ Menu, isMac: process.platform === 'darwin', appName: 'Cuppet', openHelp: openHelpTopic, canOpenHelp: Boolean(mainWindow) });
+}
+
 function createWindow() {
   const isMac = process.platform === 'darwin';
   mainWindow = new BrowserWindow({
@@ -440,7 +456,8 @@ function createWindow() {
   });
   mainWindow.loadFile(join(here, '..', '..', 'dist-renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.on('closed', () => { mainWindow = undefined; });
+  mainWindow.on('closed', () => { mainWindow = undefined; if (process.platform === 'darwin') installMenu(); });
+  installMenu();
 }
 
 app.whenReady().then(bootstrap).catch((error) => { console.error(error); app.quit(); });
