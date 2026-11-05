@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +61,8 @@ test('Stop cancels context preparation and staged parsing without caching or pre
   assert.equal(await readFile(join(root, 'a.js'), 'utf8'), 'const a = 1;');
 });
 test('native search resumes after the last visible match when tool output is shorter than an RPC page', { timeout: 20000 }, async (t) => {
-  if (!resolveManagedTstBinary()) return t.skip('Native TST is not bundled on this platform');
+  const binary = resolveManagedTstBinary();
+  if (!binary || !existsSync(binary)) return t.skip('Native TST is not bundled on this platform');
   const { root, tst, call } = await fixture(t, true);
   assert.equal(await tst.supports('graph.search_page'), true, 'bundled native TST must implement indexed pagination');
   for (let i = 0; i < 40; i++) await writeFile(join(root, 'f' + String(i).padStart(2, '0') + '.txt'), 'needle ' + 'x'.repeat(480));
@@ -75,7 +77,8 @@ test('native search resumes after the last visible match when tool output is sho
   assert.deepEqual(paths, Array.from({ length: 40 }, (_, i) => 'f' + String(i).padStart(2, '0') + '.txt'));
 });
 test('native search cursors reject changed workspaces, changed queries, and malformed inputs through the bridge', { timeout: 20000 }, async (t) => {
-  if (!resolveManagedTstBinary()) return t.skip('Native TST is not bundled on this platform');
+  const binary = resolveManagedTstBinary();
+  if (!binary || !existsSync(binary)) return t.skip('Native TST is not bundled on this platform');
   const { root, tst } = await fixture(t, true);
   await writeFile(join(root, 'a.js'), 'function work() {}\nfunction work() {}\nfunction workMore() {}\n');
   const input = { query: 'work', search_mode: 'exact_symbol', limit: 1 };
