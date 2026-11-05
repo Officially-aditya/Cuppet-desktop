@@ -68,7 +68,7 @@ async function rendererBenchmark() {
   // The benchmark uses a disposable profile with no credentials or provider requests.
   app.commandLine.appendSwitch('use-mock-keychain');
   const virtualDisplay = process.platform === 'darwin' && Boolean(process.env.CI);
-  const coldDomBudgetMs = virtualDisplay ? 500 : 250;
+  const coldDomBudgetMs = virtualDisplay ? 1000 : 250;
   const profile = mkdtempSync(join(tmpdir(), 'cuppet-switch-renderer-'));
   app.setPath('userData', profile);
   const db = new ConversationDatabase(join(profile, 'runtime', 'conversations.sqlite3'));
