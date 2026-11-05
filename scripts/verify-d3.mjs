@@ -50,7 +50,7 @@ expect(service.includes('providerFactory = createChatProvider'), 'RuntimeService
 expect(service.includes('new BackgroundEnricher({ providerFactory: this.#providerFactory'), 'background role does not share foreground provider factory');
 
 const background = text['src/runtime/background-enricher.mjs'];
-expect(background.includes("providerRequest(this.#providerConfig ?? {}, 'secondary')") && background.includes('this.#providerFactory(request)'), 'background secondary provider authority changed');
+expect(background.includes("providerRequest(config, 'secondary')") && background.includes('this.#providerFactory(request)'), 'background secondary provider authority changed');
 
 for (const script of [
   'src/runtime/provider.mjs',

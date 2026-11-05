@@ -4,7 +4,7 @@ F1 replaces E1's temporary optional-external TST boundary with a desktop-owned n
 
 ## Artifact authority
 
-Desktop consumes the standalone TST artifact produced by `Officially-aditya/Cuppet-code` at pinned revision `9f2a8ae63555b7534ee1ccfe211efce1ad46f630`.
+Desktop consumes the standalone TST artifact produced by `Officially-aditya/Cuppet-code` at pinned revision `06ce39c19fc34679078407c95b3a946faca7929c`.
 
 The source artifact must identify itself as `cuppet-tst-runtime`, report `cuppet.tst.v3`, match the current platform/runtime, and provide the SHA-256 digest of `bin/tst-daemon`. Desktop staging verifies all of those fields, executes `tst-daemon --protocol`, verifies the binary digest, then stages the daemon plus source notices into `vendor/tst/<runtime>/`. Packaging refuses to run unless the staged resource verifies again.
 

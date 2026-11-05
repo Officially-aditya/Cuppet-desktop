@@ -27,7 +27,7 @@
   "tst": {
     "protocol": "cuppet.tst.v3",
     "sourceRepository": "Officially-aditya/Cuppet-code",
-    "sourceRevision": "9f2a8ae63555b7534ee1ccfe211efce1ad46f630",
+    "sourceRevision": "06ce39c19fc34679078407c95b3a946faca7929c",
     "artifactKind": "cuppet-tst-runtime",
     "packagedMode": "managed-native-per-project",
     "sharedGlobalStore": true,

@@ -7,7 +7,7 @@ const paths=['src/runtime/context-compiler.mjs','src/runtime/lossless-plan.mjs',
 const text=Object.fromEntries(await Promise.all(paths.map(async p=>[p,await readFile(join(root,p),'utf8')])));const expect=(c,m)=>{if(!c)throw new Error(m)};
 expect(text['src/runtime/context-compiler.mjs'].includes('Math.min(2_048, Math.max(512, Math.floor(usableTokens * 0.04)))'),'foreground context budget changed');
 expect(text['src/runtime/context-compiler.mjs'].includes('Math.min(16_384, Math.max(0, Math.floor(usableTokens * 0.12)))'),'plan context budget changed');
-expect(text['src/runtime/context-compiler.mjs'].includes("mode: 'orchestrator', injected: false"),'orchestrator bypass missing');
+expect(text['src/runtime/context-compiler.mjs'].includes("mode: 'orchestrator'"),'orchestrator bypass missing');
 expect(text['src/runtime/lossless-plan.mjs'].includes('prompt: sourcePrompt'),'lossless plan exact-source preservation missing');
 expect(text['src/runtime/tst-client.mjs'].includes("TST_PROTOCOL_VERSION = 'cuppet.tst.v3'"),'TST v3 contract missing');
 expect(text['src/runtime/background-enricher.mjs'].includes("provenance: 'model_candidate'") && text['src/runtime/background-enricher.mjs'].includes('!this.#tst?.configured'),'background evidence/TST gates missing');

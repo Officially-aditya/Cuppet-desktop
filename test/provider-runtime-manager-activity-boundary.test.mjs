@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { providerActivity } from '../src/runtime/providers/activity.mjs';
@@ -103,7 +104,7 @@ test('stateless ACP emits canonical Activity without a legacy provider-event mir
   const activities = [];
   const legacy = [];
   const result = await adapter.stream([{ role: 'user', content: 'Reply when ready.' }], {
-    projectRoot: process.cwd(),
+    projectRoot: tmpdir(),
     onActivity: async (activity) => activities.push(activity),
     onProviderEvent: async (event) => legacy.push(event),
   });

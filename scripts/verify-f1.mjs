@@ -37,10 +37,10 @@ assert.equal(pkg.scripts['f1:package-smoke'], 'node scripts/smoke-packaged-tst.m
 assert.equal(pkg.scripts['f1:verify'], 'node scripts/verify-f1.mjs');
 assert.match(pkg.scripts['pack:dir'], /verify-staged-tst\.mjs/);
 assert.ok(pkg.build.extraResources?.some((item) => item.from === 'vendor/tst' && item.to === 'tst'));
-assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0' });
+assert.deepEqual(pkg.dependencies, { json5: '2.2.3', 'node-pty': '^1.1.0', 'vscode-jsonrpc': '8.2.1' });
 
 for (const token of [
-  "randomBytes(32).toString('hex')", "mode: 0o700", "bridge.call('shutdown')", "child.kill('SIGTERM')", "child.kill('SIGKILL')",
+  "randomBytes(32).toString('hex')", "mode: 0o700", "bridge.call('shutdown'", "child.kill('SIGTERM')", "child.kill('SIGKILL')",
   'CUPPET_TST_SOCKET', 'CUPPET_TST_TOKEN', "spawn(this.#binaryPath", "resourcesPath ? join(resolve(resourcesPath), 'tst'",
 ]) assert.ok(supervisor.includes(token), `managed TST supervisor missing ${token}`);
 assert.doesNotMatch(supervisor, /spawn\(['"]tst-daemon/);

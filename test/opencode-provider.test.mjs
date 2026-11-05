@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -109,7 +109,7 @@ test('OpenCode runs through shared ACP using provider-owned session defaults plu
   assert.equal(runtime.constructor.name, 'AcpProviderAdapter');
   const deltas = [];
   const result = await runtime.stream([{ role: 'user', content: 'Reply when ready.' }], {
-    projectRoot: process.cwd(),
+    projectRoot: tmpdir(),
     onDelta: async (delta) => deltas.push(delta),
   });
   assert.equal(result.text, 'OpenCode ACP ready.');
@@ -127,7 +127,7 @@ test('OpenCode permission policy wins over generic cliEnv overrides and MCP stay
     },
   }));
   const result = await runtime.stream([{ role: 'user', content: 'Use Cuppet tools if needed.' }], {
-    projectRoot: process.cwd(),
+    projectRoot: tmpdir(),
     tools: [{ name: 'workspace_read', description: 'Read a workspace file', inputSchema: { type: 'object', properties: {} } }],
     executeTool: async () => ({ ok: true }),
   });
@@ -140,7 +140,7 @@ test('warm OpenCode route opens fresh logical sessions without synthetic mode mu
   const adapter = registry.createConfiguredRuntime(configuration());
   const managed = manager.adapterFor({
     sessionId: 'opencode-warm-provider-default-test',
-    projectRoot: process.cwd(),
+    projectRoot: tmpdir(),
     adapter,
   });
   try {
@@ -166,7 +166,7 @@ test('OpenCode ACP authentication failure reaches the generic reauthentication c
   const runtime = registry.createConfiguredRuntime(configuration());
   let error;
   try {
-    await runtime.stream([{ role: 'user', content: 'AUTH_ERROR' }], { projectRoot: process.cwd() });
+    await runtime.stream([{ role: 'user', content: 'AUTH_ERROR' }], { projectRoot: tmpdir() });
   } catch (caught) {
     error = caught;
   }
@@ -183,7 +183,7 @@ test('OpenCode ACP no-provider failure is not collapsed into unexpected error', 
   const runtime = registry.createConfiguredRuntime(configuration());
   let error;
   try {
-    await runtime.stream([{ role: 'user', content: 'NO_PROVIDER' }], { projectRoot: process.cwd() });
+    await runtime.stream([{ role: 'user', content: 'NO_PROVIDER' }], { projectRoot: tmpdir() });
   } catch (caught) {
     error = caught;
   }
