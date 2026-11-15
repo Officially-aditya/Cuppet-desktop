@@ -25,7 +25,9 @@ const VERSION_COMMANDS = new Set([
 ]);
 const WORKSPACE_ACTIONS = new Set(['read', 'edit', 'write']);
 const AUTO_PROJECT_ACTIONS = new Set(['delete', 'agent-tool']);
-const PLAN_MUTATING_ACTIONS = new Set(['edit', 'write', 'delete', 'bash', 'browser-control', 'agent-tool', 'git-push', 'package-dmg']);
+// `mcp-tool` is a user-configured MCP server tool that does not declare itself read-only; it can do anything its server
+// can, so plan mode blocks it. `mcp-read` (an explicit readOnlyHint) is not listed here and is simply asked about.
+const PLAN_MUTATING_ACTIONS = new Set(['edit', 'write', 'delete', 'bash', 'browser-control', 'agent-tool', 'git-push', 'package-dmg', 'mcp-tool']);
 const UNSAFE_RESOURCE_CHARACTERS = /[\\*?\[\]{}]/;
 
 // Permission limits are REJECTION limits, never truncation limits. Every decision made here (the

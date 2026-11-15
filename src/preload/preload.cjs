@@ -35,6 +35,30 @@ for (const [path, channel] of [
     "cuppet:browser-control:disconnect"
   ],
   [
+    "mcp.list",
+    "cuppet:mcp:list"
+  ],
+  [
+    "mcp.save",
+    "cuppet:mcp:save"
+  ],
+  [
+    "mcp.import",
+    "cuppet:mcp:import"
+  ],
+  [
+    "mcp.setEnabled",
+    "cuppet:mcp:set-enabled"
+  ],
+  [
+    "mcp.remove",
+    "cuppet:mcp:remove"
+  ],
+  [
+    "mcp.restart",
+    "cuppet:mcp:restart"
+  ],
+  [
     "cognitive.status",
     "cuppet:cognitive:status"
   ],

@@ -13,6 +13,7 @@ import { DELETED_CHAT_PURGE_INTERVAL_MS, DELETED_CHAT_RETENTION_MS, purgeSession
 import { cleanupOwnedProviderSessions } from './providers/session-cleanup.mjs';
 import { listSessionEditedFiles } from './session-edited-files.mjs';
 import { BrowserControlManager } from './browser-control-manager.mjs';
+import { McpServerManager } from './mcp-manager.mjs';
 import { TurnStore } from './turn-store.mjs';
 import { RunStateProjection } from './run-state-projection.mjs';
 import { RunWaitProjection } from './run-wait-projection.mjs';
@@ -109,7 +110,8 @@ const tst = new RuntimeTstManager({
   },
 });
 const browserControl = new BrowserControlManager({ emit });
-const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, runState, providerRuntimeManager });
+const mcp = new McpServerManager({ emit });
+const runtimeService = new RuntimeService({ database: receiptDatabase.database, databasePath, dataDir, emit, tst, browserControl, mcp, runState, providerRuntimeManager });
 const service = {
   async handle(method, params = {}) {
     const context = tstContext(method, params);
@@ -122,7 +124,7 @@ const service = {
     if ((method === 'project.remove' || method === 'project.relocate') && params.projectId) await tst.unregisterProject(params.projectId).catch(() => undefined);
     return result;
   },
-  async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close()]); },
+  async close() { await Promise.all([runtimeService.close(), tst.close(), browserControl.close(), mcp.close()]); },
 };
 remote = new RemoteManager({ dataDir, call: (method, params, context) => handle(method, params, context), emit });
 const purgeTimer = setInterval(() => {
@@ -154,6 +156,11 @@ async function handle(method, params = {}, context = {}) {
     case 'integration.browser.status': return browserControl.status();
     case 'integration.browser.connect': return browserControl.connect();
     case 'integration.browser.disconnect': return browserControl.disconnect();
+    // MCP server configuration is pushed by the Electron main process (the only holder of the decrypted values) and is
+    // kept in memory only. These methods are not part of the remote command allowlist.
+    case 'integration.mcp.sync': return mcp.configure(Array.isArray(params.servers) ? params.servers.slice(0, 16) : []);
+    case 'integration.mcp.status': return mcp.status();
+    case 'integration.mcp.restart': return mcp.restart(boundedId(params.serverId));
     case 'session.list': { await purgeExpiredDeleted(); return service.handle('session.list', params); }
     case 'session.deleted.list': {
       await purgeExpiredDeleted();

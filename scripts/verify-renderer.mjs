@@ -157,6 +157,31 @@ assert.match(generalPanel, /<h3>Integrations<\/h3>/, 'General settings integrati
 assert.match(generalPanel, /Connect Chrome/, 'General settings Connect Chrome action missing');
 assert.match(generalPanel, /window\.cuppet\.integrations\.browserControl\.connect/, 'Connect Chrome does not use bounded browserControl API');
 assert.match(generalPanel, /integration\.browser-control\.updated/, 'General settings does not follow browserControl connection events');
+
+const [mcpPanel, mcpForm, mcpSettingsCss, mcpStore, settingsModalSource, indexCss] = await Promise.all([
+  read('src/renderer/react/McpPanel.tsx'),
+  read('src/renderer/react/mcp-form.ts'),
+  read('src/renderer/mcp-settings.css'),
+  read('src/main/mcp-settings.mjs'),
+  read('src/renderer/react/SettingsModal.tsx'),
+  read('src/renderer/index.css'),
+]);
+assert.match(settingsModalSource, /mcp: \['MCP'/, 'Settings is missing the MCP section');
+assert.match(settingsModalSource, /section === 'mcp' && <McpPanel \/>/, 'Settings does not render the MCP panel');
+assert.match(mcpPanel, /window\.cuppet\.mcp\.list/, 'MCP panel does not load through the bounded mcp API');
+assert.match(mcpPanel, /window\.cuppet\.mcp\.save/, 'MCP panel cannot save servers');
+assert.match(mcpPanel, /window\.cuppet\.mcp\.import/, 'MCP panel cannot import mcpServers JSON');
+assert.match(mcpPanel, /integration\.mcp\.updated/, 'MCP panel does not follow server status events');
+assert.match(mcpPanel, /type="password"[^>]*autoComplete="new-password"/, 'MCP environment values must be entered in a password field');
+assert.doesNotMatch(mcpPanel + mcpForm, /localStorage|sessionStorage/, 'MCP settings must not be kept in browser storage');
+assert.match(mcpForm, /saved: boolean/, 'MCP form must track stored values by name only');
+assert.match(indexCss, /@layer[^;]*mcp-settings/, 'MCP settings CSS layer is not declared');
+assert.match(indexCss, /mcp-settings\.css/, 'MCP settings CSS is not imported');
+assert.match(mcpSettingsCss, /\.mcp-env-row\{/, 'MCP environment row styles missing');
+assert.match(preload, /cuppet:mcp:save/, 'Generated preload does not expose mcp:save');
+assert.match(main, /handle\('mcp\.save'/, 'Main process does not register the MCP save handler');
+assert.match(main, /new McpSettingsStore\(.*\{ safeStorage \}\)/, 'MCP settings must be encrypted with the OS credential store');
+assert.doesNotMatch(mcpStore, /from 'electron'/, 'The MCP settings store must stay Electron-free so it can be tested');
 assert.match(generalSettingsCss, /\.integration-row/, 'browserControl integration row is not styled');
 assert.match(main, /handle\('native\.copyText'/, 'Electron main process does not expose native clipboard copy');
 assert.match(main, /clipboard\.writeText\(text\)/, 'native clipboard IPC does not write through Electron clipboard');

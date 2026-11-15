@@ -1,4 +1,4 @@
-@layer theme, base, commands, navigation, settings, execution, react, usage, composer-refinements, message-controls, sidebar-icons, sidebar-row-hover, controls, composer-mode, provider-model-settings, general-settings, permission-inline, workspace-enhancements, markdown-code, dialog, tst-memory-sidebar, project-terminal, shell-panel-controls, diff-viewer, platform, appearance, ui, accessibility;
+@layer theme, base, commands, navigation, settings, execution, react, usage, composer-refinements, message-controls, sidebar-icons, sidebar-row-hover, controls, composer-mode, provider-model-settings, general-settings, mcp-settings, permission-inline, workspace-enhancements, markdown-code, dialog, tst-memory-sidebar, project-terminal, shell-panel-controls, diff-viewer, platform, appearance, ui, accessibility;
 
 @import url('./theme.css') layer(theme);
 @import url('./styles.css') layer(base);
@@ -16,6 +16,7 @@
 @import url('./composer-mode.css') layer(composer-mode);
 @import url('./provider-model-settings.css') layer(provider-model-settings);
 @import url('./general-settings.css') layer(general-settings);
+@import url('./mcp-settings.css') layer(mcp-settings);
 @import url('./permission-inline.css') layer(permission-inline);
 @import url('./workspace-enhancements.css') layer(workspace-enhancements);
 @import url('./markdown-code.css') layer(markdown-code);

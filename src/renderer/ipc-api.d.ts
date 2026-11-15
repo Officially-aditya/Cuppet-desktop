@@ -14,6 +14,14 @@ export type CuppetApi = {
       disconnect: () => Promise<Types.BrowserControlStatus>;
     };
   };
+  mcp: {
+    list: () => Promise<Types.McpSettings>;
+    save: (value: Record<string, unknown>) => Promise<Types.McpSettings>;
+    import: (value: Record<string, unknown>) => Promise<Types.McpImportResult>;
+    setEnabled: (serverId: string, enabled: boolean) => Promise<Types.McpSettings>;
+    remove: (serverId: string) => Promise<Types.McpSettings>;
+    restart: (serverId: string) => Promise<Types.McpSettings>;
+  };
   cognitive: {
     status: () => Promise<Types.CognitiveStatus>;
     modeGet: (sessionId: string) => Promise<{ mode?: 'plan' | 'build' }>;

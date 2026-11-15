@@ -25,9 +25,9 @@ const MAX_BATCH_READS = 12;
 const MAX_VALIDATION_COMMANDS = 8;
 
 export class ToolRuntime {
-  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #backgroundProcesses; #sandbox; #operations; #graphCache = new Map(); #workspaceEpoch = new Map();
+  #tst; #plans; #permissions; #questions; #db; #emit; #batchEdits; #writer; #externalTools; #mcpTools; #backgroundProcesses; #sandbox; #operations; #graphCache = new Map(); #workspaceEpoch = new Map();
 
-  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, backgroundProcesses = null, sandboxManager = null, dataDir = join(homedir(), '.cuppet-desktop'), emit = () => {} }) {
+  constructor({ tst, planStore, permissions, questions, db, batchEdits = null, writer = null, externalTools = null, mcpTools = null, backgroundProcesses = null, sandboxManager = null, dataDir = join(homedir(), '.cuppet-desktop'), emit = () => {} }) {
     this.#tst = tst;
     this.#plans = planStore;
     this.#permissions = permissions;
@@ -36,6 +36,7 @@ export class ToolRuntime {
     this.#batchEdits = batchEdits;
     this.#writer = writer;
     this.#externalTools = externalTools;
+    this.#mcpTools = mcpTools;
     this.#backgroundProcesses = backgroundProcesses ?? new BackgroundProcessManager();
     this.#sandbox = sandboxManager ?? new SandboxManager({ protectedPaths: [dataDir] });
     this.#operations = new OperationBroker({ sandbox: this.#sandbox, dataDir });
@@ -51,6 +52,10 @@ export class ToolRuntime {
     if (Array.isArray(integrations) && integrations.includes('browserControl')) {
       const external = this.#externalTools?.definitions?.() ?? [];
       if (Array.isArray(external)) tools.push(...external.slice(0, 128));
+    }
+    if (Array.isArray(integrations) && integrations.includes('mcp')) {
+      const mcp = this.#mcpTools?.definitions?.() ?? [];
+      if (Array.isArray(mcp)) tools.push(...mcp.slice(0, 96));
     }
     return tools;
   }
@@ -173,6 +178,9 @@ export class ToolRuntime {
   }
 
   async #dispatch({ name, args, executionId, sessionId, projectRoot, integrations, mode, signal, authorize, delegate }) {
+    if (Array.isArray(integrations) && integrations.includes('mcp') && this.#mcpTools?.has?.(name)) {
+      return this.#mcpCall({ name, args, authorize, signal });
+    }
     if (Array.isArray(integrations) && integrations.includes('browserControl') && this.#externalTools?.has?.(name)) {
       const readOnly = ['browser_status', 'browser_observe', 'browser_inspect', 'browser_tabs'].includes(name);
       await authorize({
@@ -210,6 +218,28 @@ export class ToolRuntime {
       case 'package_dmg': return this.#mutating(projectRoot, () => this.#operations.packageDmg({ projectRoot, source: args.source, output: args.output, authorize, signal }), signal);
       default: throw new Error(`Unknown tool: ${name}`);
     }
+  }
+
+  // A user-configured MCP server tool. The approval shows the server, the tool and the complete arguments, because
+  // that is everything the server will receive. Servers run with the user's permissions and are outside the sandbox,
+  // so each call is asked about; an exact approval can be repeated for the session, never widened.
+  async #mcpCall({ name, args, authorize, signal }) {
+    const tool = this.#mcpTools.describe(name);
+    if (!tool) throw new Error(`MCP tool is unavailable: ${name}`);
+    const pretty = JSON.stringify(args ?? {}, null, 2);
+    await authorize({
+      action: tool.readOnly ? 'mcp-read' : 'mcp-tool',
+      resources: [`MCP server "${tool.serverName}" · tool "${tool.toolName}"`, pretty.length <= MAX_PERMISSION_RESOURCE_CHARS ? pretty : JSON.stringify(args ?? {})],
+      description: `Call the "${tool.toolName}" tool on your "${tool.serverName}" MCP server.`,
+      fingerprintKey: JSON.stringify([tool.serverId, tool.toolName, stableJson(args ?? {})]),
+    });
+    const result = await this.#mcpTools.call(name, args, { signal });
+    return {
+      output: String(result?.output ?? ''),
+      contentItems: Array.isArray(result?.contentItems) ? result.contentItems : [],
+      paths: [],
+      mutation: false,
+    };
   }
 
   async close() {
@@ -822,7 +852,7 @@ function injectToolPolicy(messages, projectBound, mode, delegation = false) {
     delegation ? 'Use cuppet_delegate for subagent work when independent tasks can be delegated; do not use provider-native subagent tools. Workers use the configured secondary model and share the current workspace and permission policy. Give each a self-contained task; avoid assigning overlapping edits. Inspect their results and verify the combined work.' : '',
     ['darwin', 'linux'].includes(process.platform) ? 'Default and Auto commands run inside the project sandbox with dedicated caches/temp storage. Full Access commands use host permissions and existing Git/SSH configuration. Use git_push for authenticated pushes without an additional approval prompt; Full Access also skips packaging approval. Never request credentials in shell. On macOS use package_dmg for disk images instead of host hdiutil commands.' : '',
     projectBound ? 'This session is project-bound; workspace tools are available through the runtime permission boundary. Never delete paths outside the active project root.' : 'This is a general chat; filesystem and shell tools are unavailable.',
-    mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, and agent side effects are blocked.' : '',
+    mode === 'plan' ? 'Plan mode is read-only: tst_edit_batch may prepare/inspect, but apply, generic writes, arbitrary shell execution, browser mutations, MCP tools that do not declare themselves read-only, and agent side effects are blocked.' : '',
     '</CUPPET_TOOL_POLICY>',
   ].filter(Boolean).join('\n');
   return [{ role: 'system', content: policy }, ...messages.map((message) => ({ ...message }))];

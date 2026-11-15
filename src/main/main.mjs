@@ -1,9 +1,10 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, safeStorage, shell } from 'electron';
 import { realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RuntimeClient } from './runtime-client.mjs';
 import { ProviderSettingsStore } from './provider-settings.mjs';
+import { McpSettingsStore } from './mcp-settings.mjs';
 import { providerPreset } from './provider-presets.mjs';
 import { ProjectTerminalManager } from './project-terminal-manager.mjs';
 import { executeCommand, listCommands, parseSlashCommand } from '../runtime/commands.mjs';
@@ -24,6 +25,7 @@ const APP_ICON = join(here, '..', '..', 'build', 'icon.png');
 const APP_ICON_MACOS = join(here, '..', '..', 'build', 'icon-macos.png');
 let runtime;
 let settings;
+let mcpSettings;
 let mainWindow;
 let runtimeDataDir;
 let terminals;
@@ -41,12 +43,19 @@ const attention = createApprovalAttention({
 });
 const loadLinkPreview = createLinkPreviewLoader();
 
+// Push the MCP configuration (with decrypted environment values) to the runtime process. Memory-only on that side.
+function syncMcpConfig() {
+  return runtime.request('integration.mcp.sync', { servers: mcpSettings.runtimeValue().servers });
+}
+
 async function bootstrap() {
   const userData = app.getPath('userData');
   windowAppearance = await createWindowAppearance({ nativeTheme, path: join(userData, 'appearance.json'), getWindow: () => mainWindow, isMac: process.platform === 'darwin' });
   runtimeDataDir = join(userData, 'runtime');
   settings = new ProviderSettingsStore(join(userData, 'provider-settings.json'));
   await settings.load();
+  mcpSettings = new McpSettingsStore(join(userData, 'mcp-servers.json'), { safeStorage });
+  await mcpSettings.load();
   runtime = new RuntimeClient({
     entry: join(here, '..', 'runtime', 'main.mjs'),
     dataDir: runtimeDataDir,
@@ -63,9 +72,14 @@ async function bootstrap() {
     mainWindow?.webContents.send('cuppet:event', event);
   });
   runtime.on('exit', (info) => mainWindow?.webContents.send('cuppet:event', { type: 'runtime.error', message: `Runtime exited unexpectedly${info?.code !== null ? ` (code ${info.code})` : ''}` }));
-  runtime.on('recovered', () => { void syncProviderConfig().then(() => runtime.request('remote.resume')).catch(() => undefined); });
+  runtime.on('recovered', () => {
+    void syncProviderConfig().then(() => runtime.request('remote.resume')).catch(() => undefined);
+    void syncMcpConfig().catch(() => undefined);
+  });
   await runtime.start();
   await syncProviderConfig().catch(() => undefined);
+  // Returns as soon as the configuration is applied; enabled servers start in the background.
+  await syncMcpConfig().catch(() => undefined);
   void runtime.request('remote.resume').catch(() => undefined);
   terminals = new ProjectTerminalManager({ request: (method, params) => runtime.request(method, params) });
   registerIpc();
@@ -91,6 +105,27 @@ function registerIpc() {
   handle('integrations.browserControl.status', () => request('integration.browser.status'));
   handle('integrations.browserControl.connect', () => request('integration.browser.connect'));
   handle('integrations.browserControl.disconnect', () => request('integration.browser.disconnect'));
+
+  // MCP servers. The configuration lives here (secrets encrypted); the runtime only ever receives it in memory.
+  const mcpView = async (value = mcpSettings.rendererValue()) => {
+    const statuses = await request('integration.mcp.status').catch(() => []);
+    const byId = new Map((Array.isArray(statuses) ? statuses : []).map((status) => [status.id, status]));
+    return { ...value, servers: value.servers.map((server) => ({ ...server, status: byId.get(server.id) ?? null })) };
+  };
+  const mcpApplied = async (value) => { await syncMcpConfig().catch(() => undefined); return mcpView(value); };
+  handle('mcp.list', () => mcpView());
+  handle('mcp.save', async (_event, value) => mcpApplied(await mcpSettings.save(value)));
+  handle('mcp.import', async (_event, value) => {
+    const result = await mcpSettings.importJson(typeof value?.json === 'string' ? value.json : '');
+    return { ...result, settings: await mcpApplied(result.settings) };
+  });
+  handle('mcp.setEnabled', async (_event, serverId, enabled) => mcpApplied(await mcpSettings.setEnabled(serverId, enabled)));
+  handle('mcp.remove', async (_event, serverId) => mcpApplied(await mcpSettings.remove(serverId)));
+  handle('mcp.restart', async (_event, serverId) => {
+    if (!mcpSettings.rendererValue().servers.some((server) => server.id === serverId)) throw new Error('Unknown MCP server.');
+    await request('integration.mcp.restart', { serverId });
+    return mcpView();
+  });
   handle('cognitive.status', () => request('cognitive.status'));
   handle('cognitive.modeGet', (_event, sessionId) => request('session.mode.get', { sessionId }));
   handle('cognitive.modeSet', (_event, sessionId, mode) => request('session.mode.set', { sessionId, mode }));

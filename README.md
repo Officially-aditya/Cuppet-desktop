@@ -84,6 +84,12 @@ Chats waiting for an approval or answer show **Needs input** in the sidebar. Whe
 
 In **Settings → General → Integrations**, choose **Connect Chrome** and connect the browserControl Chrome extension. Once connected, ask Cuppet to use the browser in plain language; mentioning `@browserControl` is optional. The local browserControl runtime and the extension must both be available.
 
+### MCP servers
+
+In **Settings → MCP**, add [Model Context Protocol](https://modelcontextprotocol.io) servers that give Cuppet extra tools. Enter a command and its arguments (one per line), or choose **Import JSON** and paste the `mcpServers` block from a server's documentation, Claude Desktop or Cursor. Imported servers start disabled so you can review each command before enabling it. Environment variables such as API tokens are stored encrypted with your operating system's credential store and are never shown again. If that store is unavailable, Cuppet refuses to save them rather than writing plaintext.
+
+Enabled servers start in the background. Their tools appear to the model as `mcp__<server>__<tool>`, and every call asks for approval first, showing the server, the tool and the full arguments. Plan mode blocks tools that do not declare themselves read-only. MCP servers run on your computer with your permissions, outside the command sandbox, so only add servers you trust. Only local command (stdio) servers are supported so far. See [MCP servers](docs/mcp-servers.md) for details.
+
 ### Remote access
 
 Open **Remote** in the desktop app to start the host, complete account linking or configure a relay, and create a pairing invitation. Pair a trusted device for control or a viewer for read-only access. Paired devices can be revoked from the host.
@@ -158,6 +164,7 @@ The React renderer handles presentation. Electron owns native integrations and c
 | Provider ownership, capabilities, and transports | [Provider architecture](docs/provider-architecture-v2.md) |
 | Code context, memory, and daemon lifecycle | [Managed TST runtime](docs/f1-managed-tst-runtime.md) |
 | Tool permissions and protected operations | [Tools and permissions](docs/phase-c1-tools-permissions.md) |
+| User-configured MCP servers | [MCP servers](docs/mcp-servers.md) |
 | Session continuation, questions, and undo | [Session controls](docs/phase-e-session-control.md) |
 | Remote pairing, scopes, and relay | [Remote control](docs/phase-c2-remote-control.md) |
 | Streaming, IPC, database migrations, and runtime typing | [Architecture review fixes](docs/architecture-review-ar04-ar09.md) |

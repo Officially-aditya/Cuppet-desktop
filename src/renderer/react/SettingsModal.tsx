@@ -3,6 +3,7 @@ import type { CliAgentStatus, ProviderPreset, ProviderSettings, RemoteDevice, Se
 import { SelectControl } from './SelectControl';
 import { ModelPicker } from './ModelPicker';
 import { GeneralPanel } from './GeneralPanel';
+import { McpPanel } from './McpPanel';
 import { CUPPET_LOGO_URL } from './brand';
 import { invalidateModelCatalogCache } from './model-catalog-cache';
 import { notifyProviderCatalogInvalid, notifyProviderSettingsChanged } from './provider-settings-events';
@@ -16,6 +17,7 @@ const SECTION_META: Record<string, [string, string]> = {
   general: ['General', 'Choose how Cuppet handles permissions and messages while it is working.'],
   account: ['Account', 'Manage account connections used by Cuppet on this computer.'],
   platform: ['Platform', 'Choose the model provider Cuppet uses on this computer.'],
+  mcp: ['MCP', 'Connect Model Context Protocol servers that give Cuppet extra tools.'],
   personalisation: ['Personalisation', 'Adjust local interface preferences.'],
   usage: ['Usage', 'Review your subscription limits and provider-reported token counts.'],
   devices: ['Connected devices', 'Review devices paired through Cuppet Remote.'],
@@ -292,6 +294,7 @@ export function SettingsModal({ provider, initialSection, onClose, onSaved, onOp
               {section === 'general' && <GeneralPanel />}
               {section === 'account' && <AccountPanel codex={codex} busy={busy} onConnect={connectCodex} onDisconnect={disconnectCodex} onError={onError} />}
               {section === 'platform' && <PlatformPanel current={current} presets={presets} selected={selected} providerID={providerID} apiKey={apiKey} isCodex={isCodex} isLocalCli={isLocalCli} cliStatus={cliStatus} codex={codex} note={note} busy={busy} onProvider={activateProvider} onApiKey={setApiKey} onApiKeyCommit={persistApiKey} onReset={resetProvider} onModelSaved={modelSaved} onConnect={connectCodex} onDisconnect={disconnectCodex} onConnectCli={connectLocalCli} />}
+              {section === 'mcp' && <McpPanel />}
               {section === 'personalisation' && <PersonalisationPanel compact={compact} reduceMotion={reduceMotion} onCompact={setCompact} onReduceMotion={setReduceMotion} />}
               {section === 'usage' && <>
                 <PlanUsagePanel providerID={usageProviderID} providerLabel={usageProviderLabel} />

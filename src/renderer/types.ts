@@ -271,6 +271,41 @@ export type BrowserControlStatus = {
   message?: string;
 };
 
+export type McpServerState = 'disabled' | 'stopped' | 'starting' | 'ready' | 'error';
+
+export type McpServerStatus = {
+  id: string;
+  name: string;
+  state: McpServerState;
+  message: string;
+  toolCount: number;
+  tools: Array<{ name: string; readOnly: boolean }>;
+};
+
+export type McpServer = {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+  /** Names only. Saved values are never sent to the renderer. */
+  envKeys: string[];
+  status: McpServerStatus | null;
+};
+
+export type McpSettings = {
+  servers: McpServer[];
+  limit: number;
+  encryptionAvailable: boolean;
+  encryptionUnavailableReason?: string;
+};
+
+export type McpImportResult = {
+  settings: McpSettings;
+  imported: string[];
+  skipped: Array<{ name: string; reason: string }>;
+};
+
 export type CognitiveStatus = {
   orchestratorEnabled?: boolean;
   backgroundPaused?: boolean;

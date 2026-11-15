@@ -1,0 +1,130 @@
+.mcp-heading-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-server-row {
+  align-items: flex-start;
+}
+
+.mcp-server-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 4px;
+}
+
+.mcp-server-copy .integration-title-row {
+  margin-bottom: 0;
+}
+
+.mcp-command {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mcp-error,
+.settings-row .mcp-error {
+  color: var(--warning);
+}
+
+.settings-status-pill.mcp-pill-error {
+  color: var(--warning);
+}
+
+.mcp-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 260px;
+}
+
+.mcp-tools summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-tools ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.mcp-tools li {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-inset);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-form-card .mcp-args {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.mcp-env {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.mcp-env legend {
+  padding: 0;
+  margin-bottom: 7px;
+}
+
+.mcp-env-empty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.mcp-add-env {
+  justify-self: start;
+}
+
+@media(max-width:760px) {
+  .mcp-heading-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mcp-env-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mcp-actions {
+    max-width: none;
+  }
+}
