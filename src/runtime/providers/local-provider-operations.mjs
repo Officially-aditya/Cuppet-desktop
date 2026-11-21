@@ -20,6 +20,44 @@ const STATUS_TIMEOUT_MS = 8_000;
 const LINK_STATE_FILE = 'cli-agent-links.json';
 const INSTALLED_CLI_MARKER = '__CUPPET_INSTALLED_CLI__=';
 
+const UNIX_CLAUDE_INSTALL = String.raw`
+set -e
+if [ -n "$CUPPET_ORIGINAL_PATH" ]; then export PATH="$CUPPET_ORIGINAL_PATH:$PATH"; fi
+if [ -n "$CUPPET_CLI_PATH" ]; then export PATH="$CUPPET_CLI_PATH:$PATH"; fi
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+[ -d "$HOME/.fnm/current/bin" ] && export PATH="$HOME/.fnm/current/bin:$PATH"
+[ -s "$HOME/.asdf/asdf.sh" ] && . "$HOME/.asdf/asdf.sh" 2>/dev/null || true
+[ -s "$HOME/.local/share/mise/bin/mise" ] && eval "$("$HOME/.local/share/mise/bin/mise" activate bash)" 2>/dev/null || true
+
+cli=""
+if npm install -g @agentclientprotocol/claude-agent-acp --include=optional 2>/dev/null; then
+  prefix=$(npm prefix -g 2>/dev/null | tail -n 1)
+  if [ -n "$prefix" ] && [ -x "$prefix/bin/claude-agent-acp" ]; then
+    cli="$prefix/bin/claude-agent-acp"
+  fi
+fi
+
+if [ -z "$cli" ] || [ ! -x "$cli" ]; then
+  mkdir -p "$HOME/.local/bin"
+  npm install -g --prefix "$HOME/.local" @agentclientprotocol/claude-agent-acp --include=optional 2>/dev/null || \
+  npm install -g --prefix "$HOME/.local" @agentclientprotocol/claude-agent-acp --force --include=optional
+  if [ -x "$HOME/.local/bin/claude-agent-acp" ]; then
+    cli="$HOME/.local/bin/claude-agent-acp"
+  fi
+fi
+
+if [ -z "$cli" ] || [ ! -x "$cli" ]; then
+  cli=$(command -v claude-agent-acp 2>/dev/null || true)
+fi
+
+if [ -n "$cli" ] && [ -x "$cli" ]; then
+  echo "__CUPPET_INSTALLED_CLI__=$cli"
+else
+  echo "Failed to install @agentclientprotocol/claude-agent-acp." >&2
+  exit 1
+fi
+`.trim();
+
 const WINDOWS_CLAUDE_INSTALL = String.raw`
 $ErrorActionPreference='Stop'
 $npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -471,7 +509,7 @@ export function installSpec(providerID, platform = process.platform) {
   if (platform === 'darwin' || platform === 'linux') {
     const specs = {
       opencode: { source: 'managed', script: 'curl -fsSL https://opencode.ai/install | bash' },
-      'claude-code': { source: 'npm', script: 'npm install -g @agentclientprotocol/claude-agent-acp --include=optional' },
+      'claude-code': { source: 'npm', script: UNIX_CLAUDE_INSTALL },
       'grok-build': { source: 'managed', script: 'curl -fsSL https://x.ai/cli/install.sh | bash' },
       'github-copilot': { source: 'managed', script: 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" bash' },
       'mistral-vibe': { source: 'managed', script: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
@@ -479,7 +517,12 @@ export function installSpec(providerID, platform = process.platform) {
       antigravity: { source: 'managed', script: 'curl -fsSL https://antigravity.google/cli/install.sh | bash' },
     };
     const spec = specs[id];
-    return spec ? { command: '/bin/bash', args: ['-lc', spec.script], source: spec.source } : null;
+    return spec ? {
+      command: '/bin/bash',
+      args: ['-lc', spec.script],
+      source: spec.source,
+      env: { CUPPET_ORIGINAL_PATH: process.env.PATH || '', ...(spec.env || {}) },
+    } : null;
   }
   if (platform === 'win32') {
     const specs = {
@@ -734,14 +777,28 @@ export async function preflightClaudeInstall(runImpl = runProviderCommand, platf
   if (!(platform === 'win32' ? win32Path.isAbsolute(root || '') : isAbsolute(root || ''))) throw new Error('npm did not report a usable global installation directory. Check the npm configuration, then reconnect.');
   const parent = platform === 'win32' ? win32Path.dirname : dirname;
   let directory = root;
+  let globalWritable = false;
   while (directory) {
-    try { await accessImpl(directory, fsConstants.W_OK); return; }
+    try { await accessImpl(directory, fsConstants.W_OK); globalWritable = true; break; }
     catch (error) {
-      if (error?.code !== 'ENOENT' || parent(directory) === directory) {
-        throw new Error(`The npm installation directory is not writable (${directory}). Configure a user-owned npm prefix, then reconnect.`);
-      }
+      if (error?.code !== 'ENOENT' || parent(directory) === directory) break;
       directory = parent(directory);
     }
   }
+  if (globalWritable) return;
+
+  if (platform !== 'win32') {
+    const userLocal = join(homedir(), '.local');
+    let localDir = userLocal;
+    while (localDir) {
+      try { await accessImpl(localDir, fsConstants.W_OK); return; }
+      catch (error) {
+        if (error?.code !== 'ENOENT' || parent(localDir) === localDir) break;
+        localDir = parent(localDir);
+      }
+    }
+  }
+
+  throw new Error(`The npm installation directory is not writable (${root}). Configure a user-owned npm prefix, then reconnect.`);
 }
 function cleanError(error) { return redactCredentials(error).slice(0, 500); }

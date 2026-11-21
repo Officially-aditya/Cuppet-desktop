@@ -106,6 +106,8 @@ test('Claude Code provider preset and connection flow preserve Claude-owned auth
   const macInstall = installSpec('claude-code', 'darwin');
   assert.equal(macInstall.command, '/bin/bash');
   assert.match(macInstall.args.join(' '), /@agentclientprotocol\/claude-agent-acp/);
+  assert.match(macInstall.args.join(' '), /--prefix "\$HOME\/\.local"/);
+  assert.match(macInstall.args.join(' '), /__CUPPET_INSTALLED_CLI__/);
 
   const windowsInstall = installSpec('claude-code', 'win32');
   assert.equal(windowsInstall.command, 'powershell.exe');
