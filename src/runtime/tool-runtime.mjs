@@ -60,7 +60,7 @@ export class ToolRuntime {
     return tools;
   }
 
-  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null, delegate = null, onToolCall = () => {}, takeBackgroundContext = () => '' }) {
+  async run({ adapter, messages, sessionId, projectId = null, projectRoot = null, integrations = [], mode = 'build', signal, onDelta, onPaths = async () => {}, onValidation = async () => {}, getAssistantMessageId = null, delegate = null, onToolCall = () => {}, takeBackgroundContext = () => '', nativeAgentInstructions = false }) {
     let resolvedProjectId = projectId;
     let resolvedProjectRoot = projectRoot;
     if ((!resolvedProjectId || !resolvedProjectRoot) && sessionId && this.#db) {
@@ -73,7 +73,9 @@ export class ToolRuntime {
         }
       } catch {}
     }
-    const conversation = injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode, Boolean(delegate));
+    const conversation = nativeAgentInstructions
+      ? messages.map((message) => ({ ...message }))
+      : injectToolPolicy(messages, Boolean(resolvedProjectRoot), mode, Boolean(delegate));
     let toolSteps = 0;
     let usage = null;
 

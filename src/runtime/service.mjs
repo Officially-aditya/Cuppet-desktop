@@ -623,14 +623,25 @@ export class RuntimeService {
               : [];
             return imageAttachments.length ? { ...message, imageAttachments } : { ...message };
           });
-        const compiled = await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot, signal });
-        const providerMessages = injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations, this.#mcp?.status?.() ?? []);
-        this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || providerMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
+        const providerID = String(provider?.providerID || provider?.primary?.providerID || '').trim().toLowerCase();
+        const providerOwnsAgentInstructions = providerID === 'claude-code' || providerID === 'antigravity';
+        // Keep these subscription agents' prompt/context assembly provider-owned.
+        // Cuppet capabilities are attached separately as session-scoped MCP tools.
+        const compiled = providerOwnsAgentInstructions
+          ? {
+            messages: durable.filter((message) => !(message.role === 'system' && String(message.content ?? '').startsWith('[PE3 routing marker]'))).map((message) => ({ ...message })),
+            mode: this.#cognitive.mode(sessionId), injected: false, trimmed: false, budgetTokens: 0, tst: this.#tst?.status ?? null,
+          }
+          : await this.#compiler.compile({ sessionId, messages: durable, usableTokens: contextWindow(provider), estimatedTokens: estimateMessages(durable), userMessageId: execution?.activeUserId ?? userId, projectRoot, signal });
+        const routedMessages = providerOwnsAgentInstructions
+          ? compiled.messages
+          : injectIntegrationContext(injectPe3Context(compiled.messages, refreshPaths, attachments), integrations, this.#mcp?.status?.() ?? []);
+        this.#emit({ type: 'context.compiled', sessionId, mode: compiled.mode, injected: compiled.injected || routedMessages.length !== compiled.messages.length, trimmed: compiled.trimmed, budgetTokens: compiled.budgetTokens ?? 0, tst: compiled.tst });
         const orchestrationEnabled = this.#cognitive.snapshot().orchestratorEnabled === true || process.env.CUPPET_ORCHESTRATOR === '1';
         const adapter = this.#providerFactory(orchestrationEnabled ? { ...provider, cuppetOrchestrationBridge: true } : provider ?? {});
         await this.#tools.run({
           adapter,
-          messages: providerMessages.map((msg) => ({
+          messages: routedMessages.map((msg) => ({
             role: msg.role,
             content: msg.content,
             ...(Array.isArray(msg.imageAttachments) && msg.imageAttachments.length ? { imageAttachments: msg.imageAttachments } : {}),
@@ -644,7 +655,7 @@ export class RuntimeService {
           contextWindow: contextWindow(provider),
           signal,
           ...(enrichment ? { onToolCall: () => enrichment.start(), takeBackgroundContext: () => enrichment.takeContext() } : {}),
-          ...(orchestrationEnabled ? { delegate: (args) => this.#startDelegation({ args, provider, signal, sessionId, projectId, projectRoot, integrations, mode: this.#cognitive.mode(sessionId), getAssistantMessageId: currentAssistantId, userMessage: [...providerMessages].reverse().find((message) => message.role === 'user') }) } : {}),
+          ...(orchestrationEnabled ? { delegate: (args) => this.#startDelegation({ args, provider, signal, sessionId, projectId, projectRoot, integrations, mode: this.#cognitive.mode(sessionId), getAssistantMessageId: currentAssistantId, userMessage: [...routedMessages].reverse().find((message) => message.role === 'user') }) } : {}),
           getAssistantMessageId: currentAssistantId,
           takeSteering,
           restoreSteering: (items) => execution?.steering.unshift(...items),
@@ -743,7 +754,9 @@ export class RuntimeService {
         await runtime.run({
           adapter, sessionId, projectId, projectRoot, integrations, mode, signal, getAssistantMessageId, suppressProviderActivity: true,
           messages: [
-            { role: 'system', content: 'You are a Cuppet subagent. Complete the assigned task and report what you did, evidence, and any unresolved issues. Work in the shared project; do not undo other workers’ changes. Do not delegate to further agents. Follow the user’s instructions and the existing permission policy.' },
+            ...(['claude-code', 'antigravity'].includes(String(workerProvider?.providerID || workerProvider?.primary?.providerID || '').trim().toLowerCase()) ? [] : [
+              { role: 'system', content: 'You are a Cuppet subagent. Complete the assigned task and report what you did, evidence, and any unresolved issues. Work in the shared project; do not undo other workers’ changes. Do not delegate to further agents. Follow the user’s instructions and the existing permission policy.' },
+            ]),
             { role: 'user', content: `Original user request:\n${String(userMessage?.content ?? '').slice(0, 12000)}\n\nYour assignment:\n${task.task}`, ...(Array.isArray(userMessage?.imageAttachments) ? { imageAttachments: userMessage.imageAttachments } : {}) },
           ],
           contextWindow: contextWindow(workerProvider),

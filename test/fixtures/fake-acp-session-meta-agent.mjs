@@ -11,12 +11,8 @@ rl.on('line', (line) => {
   }
   if (message.method === 'session/new') {
     const meta = message.params?._meta;
-    if (meta?.disableBuiltInTools !== true) {
-      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'disableBuiltInTools was not enabled' } });
-      return;
-    }
-    if (!Array.isArray(meta?.claudeCode?.options?.settingSources) || meta.claudeCode.options.settingSources.length !== 0) {
-      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Claude filesystem setting sources were not isolated' } });
+    if (meta && Object.keys(meta).length) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Cuppet overrode Claude session metadata' } });
       return;
     }
     write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'meta-session', configOptions: [] } });

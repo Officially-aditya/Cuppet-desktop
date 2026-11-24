@@ -54,6 +54,7 @@ export class JournaledToolRuntime {
   async run(options) {
     const initialMessageId = latestAssistantMessageID(this.#db, options.sessionId);
     const currentMessageId = () => options.getAssistantMessageId?.() || latestAssistantMessageID(this.#db, options.sessionId) || initialMessageId;
+    const nativeAgentInstructions = providerOwnsAgentInstructions(options.adapter);
     const benchmarkBefore = this.#benchmark ? this.executionSnapshot(options.sessionId) ?? {} : null;
     const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
     let benchmarkResult = null;
@@ -131,6 +132,7 @@ export class JournaledToolRuntime {
     try {
       benchmarkResult = await this.#inner.run({
         ...options,
+        nativeAgentInstructions,
         adapter: capture,
         onPaths: async (paths, mutation, details = null) => {
           await capture.onPaths(paths, mutation);
@@ -208,6 +210,12 @@ export class JournaledToolRuntime {
   }
 }
 
+function providerOwnsAgentInstructions(adapter) {
+  let backendId = '';
+  try { backendId = String(adapter?.cuppetManagedRuntime?.()?.backendId ?? '').trim().toLowerCase(); } catch {}
+  return backendId === 'claude-code' || backendId === 'antigravity';
+}
+
 class ToolMutationCapture {
   #steerCurrent = null;
   #restoreSteering;
@@ -271,17 +279,21 @@ class ToolMutationCapture {
       }
     };
 
-    const flushReasoning = async () => {
+    const flushReasoning = () => {
+      if (!pendingText) return;
       const segment = pendingText.trim();
-      if (segment) await this.#onReasoning(segment, { startedAt: pendingStartedAt ?? Date.now(), completedAt: Date.now() });
+      const completedAt = Date.now();
+      const startedAt = pendingStartedAt ?? completedAt;
+      // Drain the shared buffer before notifying observers or starting any tool work.
       pendingText = '';
       pendingStartedAt = null;
       clearPreview();
+      if (segment) this.#onReasoning(segment, { startedAt, completedAt });
     };
 
     const executeTool = typeof options?.executeTool === 'function'
       ? async (call) => {
-          await flushReasoning();
+          flushReasoning();
           this.#rememberCall(call);
           await this.#prepareCall(call);
           return this.#executionKernel.execute(call, {
@@ -308,7 +320,7 @@ class ToolMutationCapture {
       if (options?.signal?.aborted || !this.#adapter.canSteer?.()) return false;
       const pending = nativeSteering.then(async () => {
         await this.#adapter.steer(item);
-        await flushReasoning();
+        flushReasoning();
         await this.#applySteering([item]);
         return true;
       });
@@ -331,7 +343,7 @@ class ToolMutationCapture {
           return nativeSteering;
         },
         onActivity: async (activity) => {
-          if (activity?.type?.startsWith('activity.tool.') && pendingText) await flushReasoning();
+          if (activity?.type?.startsWith('activity.tool.')) flushReasoning();
           await this.#onActivity(activity);
         },
         ...(executeTool ? { executeTool: async (call) => {
@@ -343,7 +355,7 @@ class ToolMutationCapture {
           // with this reply, before the provider starts its next inference step.
           const steering = this.#drainSteering();
           if (!steering.length) return result;
-          await flushReasoning();
+          flushReasoning();
           await this.#applySteering(steering);
           const note = steeringNote(steering);
           const images = steering.flatMap((item) => (item.attachments ?? []).flatMap((attachment) =>
@@ -377,7 +389,7 @@ class ToolMutationCapture {
     if (!receivedText && typeof response?.text === 'string') pendingText = response.text;
     const toolCalls = Array.isArray(response?.toolCalls) ? response.toolCalls : [];
     if (toolCalls.length) {
-      await flushReasoning();
+      flushReasoning();
       for (const call of toolCalls) this.#rememberCall(call);
       if (this.#journal && this.#projectRoot) for (const call of toolCalls) await this.#prepareCall(call);
       if (!executeTool) return response;

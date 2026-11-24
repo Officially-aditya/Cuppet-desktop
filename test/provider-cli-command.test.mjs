@@ -78,4 +78,9 @@ test('Claude installer checks Node, npm, and global directory permissions before
   await assert.rejects(() => preflightClaudeInstall(async () => ({ stdout: 'v20.0.0' }), 'linux'), /Node.js 22/);
   await assert.rejects(() => preflightClaudeInstall(async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }, 'linux'), /Install Node.js/);
   await assert.rejects(() => preflightClaudeInstall(run, 'linux', async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }), /user-owned npm prefix/);
+
+  // When global npm root is not writable but user-local fallback is writable, preflight allows automatic user fallback
+  await preflightClaudeInstall(run, 'linux', async (dir) => {
+    if (dir.includes('node_modules')) throw Object.assign(new Error('root owned'), { code: 'EACCES' });
+  });
 });

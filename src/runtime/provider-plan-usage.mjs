@@ -1,7 +1,7 @@
 import { CodexAppServerClient, resolveCodexAppServerCommand } from './codex-app-server.mjs';
 import { parseCodexAccount } from './codex-account.mjs';
 import { redactCredentials } from './credential-sanitization.mjs';
-import { readAntigravityPlanUsage, readClaudePlanUsage, readCopilotPlanUsage } from './provider-plan-usage-readers.mjs';
+import { readCopilotPlanUsage } from './provider-plan-usage-readers.mjs';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -14,7 +14,7 @@ export async function readProviderPlanUsage(providerID, options = {}) {
     createClient = (launch) => new CodexAppServerClient(launch),
   } = options;
   const base = emptyUsage(text(providerID, 120));
-  const reader = new Map([['claude-code', readClaudePlanUsage], ['antigravity', readAntigravityPlanUsage], ['github-copilot', readCopilotPlanUsage]]).get(base.providerID);
+  const reader = new Map([['github-copilot', readCopilotPlanUsage]]).get(base.providerID);
   if (typeof reader === 'function') {
     try { return await reader(options); }
     catch (error) {
@@ -24,9 +24,13 @@ export async function readProviderPlanUsage(providerID, options = {}) {
   }
   if (base.providerID !== 'codex') return {
     ...base, status: 'unsupported',
-    message: base.providerID
-      ? 'Plan usage is not available for this platform in Cuppet yet. Check your provider’s usage page.'
-      : 'Choose a platform to view its plan usage.',
+    message: base.providerID === 'claude-code'
+      ? 'Cuppet does not query Claude subscription usage. Check usage in Claude Code.'
+      : base.providerID === 'antigravity'
+        ? 'Cuppet does not query Antigravity subscription usage. Check usage in Antigravity.'
+        : base.providerID
+          ? 'Plan usage is not available for this platform in Cuppet yet. Check your provider’s usage page.'
+          : 'Choose a platform to view its plan usage.',
   };
 
   let client;

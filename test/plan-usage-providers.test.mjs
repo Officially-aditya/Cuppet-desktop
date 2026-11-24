@@ -1,14 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readProviderPlanUsage } from '../src/runtime/provider-plan-usage.mjs';
-import { readClaudeCredentials, readAntigravityCredentials } from '../src/runtime/provider-plan-usage-readers.mjs';
 import { normalizeClaudePlanUsage, normalizeAntigravityPlanUsage, normalizeCopilotPlanUsage, usageReset } from '../src/runtime/plan-usage-normalizers.mjs';
 import { requestUsageJSON } from '../src/runtime/plan-usage-http.mjs';
 
 const reset = '2030-01-02T03:04:05.123456Z';
-const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
-const missing = () => { throw Object.assign(new Error('not found'), { code: 'ENOENT' }); };
 
 test('Claude windows retain model-specific weekly limits and never infer missing telemetry', () => {
   const report = normalizeClaudePlanUsage({
@@ -84,99 +80,20 @@ test('invalid, locale-dependent, and missing reset dates remain unknown', () => 
   assert.equal(usageReset('2030-01-01T01:00:00+01:00'), Date.parse('2030-01-01T00:00:00Z'));
 });
 
-test('Claude credentials respect environment and profile-scoped storage without cross-account fallback', async () => {
-  assert.equal((await readClaudeCredentials({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'env-token' }, readFileImpl: missing })).accessToken, 'env-token');
-  let path, service;
-  const profile = '/test/profile';
-  const file = await readClaudeCredentials({
-    env: { CLAUDE_CONFIG_DIR: profile, USER: 'test-user' }, home: '/test/home', platform: 'darwin',
-    runCommand: async (command, args, timeout, options) => {
-      assert.equal(command, '/usr/bin/security');
-      assert.equal(timeout, 4000);
-      assert.equal(options.stdin, 'ignore');
-      service = args.at(-1);
-      throw new Error('keychain unavailable');
-    },
-    readFileImpl: async p => { path = p; return JSON.stringify({ claudeAiOauth: { accessToken: 'file-token' } }); },
-  });
-  assert.equal(file.accessToken, 'file-token');
-  assert.equal(path, profile + '/.credentials.json');
-  assert.equal(service, 'Claude Code-credentials-' + createHash('sha256').update(profile).digest('hex').slice(0, 8));
-  const keychain = await readClaudeCredentials({
-    env: { USER: 'test-user' }, home: '/test/home', platform: 'darwin',
-    runCommand: async () => ({ stdout: '{"claudeAiOauth":{"accessToken":"keychain-token"}}' }),
-    readFileImpl: () => { throw new Error('file store must not override keychain'); },
-  });
-  assert.equal(keychain.accessToken, 'keychain-token');
-  assert.equal(await readClaudeCredentials({ env: {}, platform: 'linux', readFileImpl: missing }), null);
-  await assert.rejects(readClaudeCredentials({ env: {}, platform: 'linux', readFileImpl: async () => '{"accessToken":"private-token"' }), error => {
-    assert.doesNotMatch(error.message, /private-token/); return true;
-  });
-  await assert.rejects(readClaudeCredentials({ env: {}, platform: 'linux', readFileImpl: async () => { throw Object.assign(new Error('private-token'), { code: 'EACCES' }); } }), /Could not read Claude Code sign-in/);
-});
-
-test('Antigravity reads the same home and file store as its Cuppet ACP adapter', async () => {
-  let path;
-  const credentials = await readAntigravityCredentials({
-    env: {}, home: '/test/home', configuration: { cliEnv: { GEMINI_HOME: '~/custom-gemini' } },
-    readFileImpl: async p => { path = p; return '{"client_id":"client","refresh_token":"secret"}'; },
-  });
-  assert.equal(path, '/test/home/custom-gemini/antigravity-acp/acp_token.json');
-  assert.equal(credentials.client_id, 'client');
-  assert.equal(await readAntigravityCredentials({ env: {}, readFileImpl: missing }), null);
-});
-
-test('expired and restricted Claude tokens do not call a usage endpoint or refresh credentials', async () => {
-  for (const credentials of [{ accessToken: 'secret', expiresAt: 1 }, { accessToken: 'secret', scopes: ['user:inference'] }]) {
-    const report = await readProviderPlanUsage('claude-code', {
-      readClaudeCredentials: async () => credentials,
-      fetchImpl: async () => { throw new Error('must not request'); },
+test('Claude and Antigravity usage stays in their provider apps without reading credentials', async () => {
+  let credentialReads = 0, requests = 0;
+  for (const providerID of ['claude-code', 'antigravity']) {
+    const report = await readProviderPlanUsage(providerID, {
+      readClaudeCredentials: async () => { credentialReads++; return { accessToken: 'unused' }; },
+      readAntigravityCredentials: async () => { credentialReads++; return { token: 'unused' }; },
+      fetchImpl: async () => { requests++; throw new Error('Cuppet must not query usage endpoints'); },
     });
-    assert.equal(report.status, 'signed-out');
+    assert.equal(report.status, 'unsupported');
     assert.deepEqual(report.limits, []);
-    assert.doesNotMatch(report.message, /secret/);
+    assert.match(report.message, /Check usage in/);
   }
-});
-
-test('Antigravity falls back on older quota endpoints, selects enterprise endpoint and uses existing access tokens', async () => {
-  const calls = [];
-  const report = await readProviderPlanUsage('antigravity', {
-    readAntigravityCredentials: async () => ({ token: 'existing-access', expiry: '2035-01-01T00:00:00Z', token_uri: 'https://untrusted.invalid/token' }),
-    fetchImpl: async (url, options) => {
-      calls.push({ url, options });
-      if (url.endsWith(':loadCodeAssist')) return json({ paidTier: { usesGcpTos: true, name: 'Enterprise' }, cloudaicompanionProject: 'enterprise-project' });
-      if (url.endsWith(':retrieveUserQuotaSummary')) return json({}, 404);
-      return json({ models: { pro: { displayName: 'Gemini Pro', quotaInfo: { remainingFraction: 0.2 } } } });
-    },
-  });
-  assert.equal(report.status, 'available');
-  assert.equal(report.planType, 'Enterprise');
-  assert.equal(report.limits[0].windows[0].remainingPercent, 20);
-  assert.ok(calls.every(c => c.url.startsWith('https://cloudcode-pa.googleapis.com/')));
-  assert.equal(calls.length, 3);
-});
-
-test('Antigravity never onboards accounts or disguises failed quota reads as a valid allowance', async () => {
-  const credentials = { refresh_token: 'google-secret', client_id: 'client', client_secret: 'secret', token_uri: 'https://untrusted.invalid/token' };
-  for (const status of [400, 401, 403, 429, 500]) {
-    let calls = 0;
-    const report = await readProviderPlanUsage('antigravity', {
-      readAntigravityCredentials: async () => credentials,
-      fetchImpl: async url => { calls++; assert.equal(url, 'https://oauth2.googleapis.com/token'); return json({ error: 'google-secret' }, status); },
-    });
-    assert.equal(report.status, [400, 401, 403].includes(status) ? 'signed-out' : 'error');
-    assert.equal(calls, 1);
-    assert.deepEqual(report.limits, []);
-    assert.doesNotMatch(report.message, /google-secret/);
-  }
-  const calls = [];
-  const report = await readProviderPlanUsage('antigravity', {
-    readAntigravityCredentials: async () => credentials,
-    fetchImpl: async url => { calls.push(url); return json(url.includes('/token') ? { access_token: 'access' } : {}); },
-  });
-  assert.equal(report.status, 'unavailable');
-  assert.equal(calls.length, 2);
-  assert.ok(calls.every(url => !url.includes('onboardUser')));
+  assert.equal(credentialReads, 0);
+  assert.equal(requests, 0);
 });
 
 test('Copilot closes clients after every failure and never authenticates or queries quotas while signed out', async () => {

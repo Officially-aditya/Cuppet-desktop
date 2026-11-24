@@ -4,6 +4,10 @@ import { installCodexAuthIpc } from './codex-auth.mjs';
 import { installMacAutoUpdater } from './auto-update.mjs';
 import { applyLocalCliEnvironment } from '../runtime/local-cli-environment.mjs';
 
+if (process.platform === 'win32' && !app.commandLine.hasSwitch('force-color-profile')) {
+  app.commandLine.appendSwitch('force-color-profile', 'srgb');
+}
+
 const singleInstance = app.requestSingleInstanceLock();
 
 if (!singleInstance) {

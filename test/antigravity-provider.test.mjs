@@ -28,6 +28,7 @@ test('Antigravity ACP descriptor carries Google harness/auth policy without leak
   const descriptor = antigravityAcpDescriptor(installation);
   assert.equal(descriptor.transport, 'acp');
   assert.equal(descriptor.command, process.execPath);
+  assert.equal(descriptor.mcpToolBridge, true);
   assert.deepEqual(descriptor.authentication.methods, [{ id: 'oauth-personal' }]);
   const env = descriptor.environment({ ELECTRON_RUN_AS_NODE: '1', GOOGLE_API_KEY: 'do-not-forward', PATH: '/bin' });
   assert.equal(env.ANTIGRAVITY_HARNESS_PATH, fixture);
