@@ -19,8 +19,8 @@
   --accent-soft: #2d4669;
   --focus-ring: #91baff;
   --link: #a6c9ff;
-  --danger: #ffb4ab;
-  --danger-solid: #b6382d;
+  --danger: #e81123;
+  --danger-solid: #c42b1c;
   --success: #89dfa8;
   --warning: #f3ca83;
   --purple: #d8b4fe;
@@ -32,7 +32,7 @@
   --sidebar-glass-bg: rgba(24, 24, 24, .65);
   --sidebar-glass-collapsed: rgba(24, 24, 24, .75);
   --header-glass-bg: rgba(30, 30, 30, .95);
-  --syntax-keyword: #ffb4ab;
+  --syntax-keyword: #ff7b72;
   --syntax-string: #a5d6ff;
   --syntax-number: #a6c9ff;
   --syntax-title: #d8b4fe;
@@ -104,8 +104,8 @@
   --accent-soft: #dce9fc;
   --focus-ring: #2256ab;
   --link: #174eaa;
-  --danger: #ac241c;
-  --danger-solid: #ac241c;
+  --danger: #e81123;
+  --danger-solid: #c42b1c;
   --success: #1b6c38;
   --warning: #7a5205;
   --purple: #7040ab;

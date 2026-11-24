@@ -5,9 +5,11 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
+const bootstrapSource = await readFile(join(here, '..', 'src', 'main', 'bootstrap.mjs'), 'utf8');
 const mainSource = await readFile(join(here, '..', 'src', 'main', 'main.mjs'), 'utf8');
 const preloadSource = await readFile(join(here, '..', 'src', 'preload', 'preload.cjs'), 'utf8');
 const cssSource = await readFile(join(here, '..', 'src', 'renderer', 'shell-panel-controls.css'), 'utf8');
+const themeSource = await readFile(join(here, '..', 'src', 'renderer', 'theme.css'), 'utf8');
 const shellControlsSource = await readFile(join(here, '..', 'src', 'renderer', 'react', 'ShellPanelControls.tsx'), 'utf8');
 const windowControlsSource = await readFile(join(here, '..', 'src', 'renderer', 'react', 'DesktopWindowControls.tsx'), 'utf8');
 
@@ -54,4 +56,19 @@ test('shell header CSS has non-mac layout rules and window control styling', () 
   assert.match(cssSource, /\.desktop-window-controls\s*\{[^}]*-webkit-app-region:\s*no-drag/);
   assert.match(cssSource, /\.window-control-btn\s*\{[^}]*-webkit-app-region:\s*no-drag/);
   assert.match(cssSource, /\.window-control-btn\.window-control-close:hover\s*\{[^}]*background:\s*var\(--danger\)/);
+  assert.match(cssSource, /\.window-control-btn\.window-control-close:hover\s*\{[^}]*color:\s*#ffffff/);
+  assert.match(cssSource, /\.window-control-btn\.window-control-close:active\s*\{[^}]*background:\s*var\(--danger-solid\)/);
+  assert.match(cssSource, /\.window-control-btn\.window-control-close:active\s*\{[^}]*color:\s*#ffffff/);
+});
+
+test('desktop theme defines genuine red tokens for danger and controls', () => {
+  assert.match(themeSource, /--danger:\s*#e81123;/, 'dark theme --danger must be vibrant red #e81123, not pale pastel peach');
+  assert.match(themeSource, /--danger-solid:\s*#c42b1c;/, 'dark theme --danger-solid must be Windows fluent red #c42b1c');
+  assert.doesNotMatch(themeSource, /--danger:\s*#ffb4ab;/, 'pale peach #ffb4ab must not be used for danger');
+});
+
+test('desktop bootstrap forces sRGB color profile on Windows to prevent color distortion', () => {
+  assert.match(bootstrapSource, /process\.platform\s*===\s*'win32'/);
+  assert.match(bootstrapSource, /force-color-profile/);
+  assert.match(bootstrapSource, /'srgb'/);
 });

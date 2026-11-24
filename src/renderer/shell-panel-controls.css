@@ -417,12 +417,12 @@
 
 .window-control-btn.window-control-close:hover {
   background: var(--danger);
-  color: var(--text);
+  color: #ffffff;
 }
 
 .window-control-btn.window-control-close:active {
-  background: var(--danger);
-  color: var(--text);
+  background: var(--danger-solid);
+  color: #ffffff;
 }
 
 /* The original controls stay as the state owners. The titlebar drives them programmatically. */
