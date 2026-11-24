@@ -94,6 +94,9 @@ export function antigravityAcpDescriptor(installation, { resolveInstallation = r
     envOverride: installation ? 'CUPPET_ANTIGRAVITY_ACP_BIN' : '',
     loginHint: 'Complete Google Antigravity sign-in in the browser, then retry.',
     authentication: { methods: [{ id: 'oauth-personal' }], onSessionRequired: true, allowCached: true },
+    // Antigravity stays on Google's managed ACP runtime; Cuppet tool definitions
+    // are supplied through the protocol's MCP server field for each session.
+    mcpToolBridge: true,
     cleanupSessions: deleteAntigravitySessions,
     cleanupRequiresProcessExit: true,
     environment: (inherited = {}) => antigravityEnvironment(inherited, harnessPath),

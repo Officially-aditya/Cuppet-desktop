@@ -12,31 +12,28 @@ import { AcpSessionRuntime } from '../src/runtime/providers/transports/acp/acp-s
 const sessionMetaFixture = fileURLToPath(new URL('./fixtures/fake-acp-session-meta-agent.mjs', import.meta.url));
 const hostBridgeFixture = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
 const configFixture = fileURLToPath(new URL('./fixtures/fake-acp-config-agent.mjs', import.meta.url));
-const CLAUDE_SESSION_META = {
-  disableBuiltInTools: true,
-    claudeCode: { options: { settingSources: [], persistSession: false } },
-};
 
-test('Claude Code is a managed ACP backend with isolated Cuppet execution policy', () => {
+test('Claude Code keeps its native ACP agent layer and receives Cuppet tools through MCP', () => {
   const descriptor = localCliDescriptor('claude-code');
   assert.equal(descriptor.transport, 'acp');
   assert.equal(descriptor.command, 'claude-agent-acp');
-  assert.deepEqual(descriptor.sessionMeta, CLAUDE_SESSION_META);
-  assert.notEqual(descriptor.mcpToolBridge, true);
+  assert.equal(descriptor.sessionMeta, undefined);
+  assert.equal(descriptor.mcpToolBridge, true);
 
-  // Callers receive a deep clone so provider/runtime code cannot mutate the
-  // canonical descriptor and re-enable Claude project/user setting sources.
-  descriptor.sessionMeta.claudeCode.options.settingSources.push('project');
-  assert.deepEqual(localCliDescriptor('claude-code').sessionMeta, CLAUDE_SESSION_META);
+  // Callers receive independent descriptors; runtime configuration cannot
+  // disable Claude's native prompt, tools, or settings for other sessions.
+  descriptor.mcpToolBridge = false;
+  assert.equal(localCliDescriptor('claude-code').mcpToolBridge, true);
 
   const provider = createUntrackedChatProvider({ providerID: 'claude-code', model: 'cli-default' });
   const managed = provider.cuppetManagedRuntime();
   assert.equal(managed.protocol, 'acp');
   assert.equal(managed.backendId, 'claude-code');
-  assert.deepEqual(managed.descriptor.sessionMeta, CLAUDE_SESSION_META);
+  assert.equal(managed.descriptor.sessionMeta, undefined);
+  assert.equal(managed.descriptor.mcpToolBridge, true);
 });
 
-test('Claude Code ACP session forwards descriptor metadata that isolates native execution and settings', async () => {
+test('Claude Code ACP session receives no Cuppet session metadata overrides', async () => {
   const descriptor = localCliDescriptor('claude-code');
   const runtime = new AcpSessionRuntime({
     descriptor,
@@ -52,7 +49,7 @@ test('Claude Code ACP session forwards descriptor metadata that isolates native 
   }
 });
 
-test('Claude Code uses the ACP host bridge by default instead of requiring external MCP injection', async () => {
+test('Claude Code retains ACP host file and terminal capabilities alongside its MCP tool server', async () => {
   const provider = createUntrackedChatProvider({
     providerID: 'claude-code',
     model: 'cli-default',

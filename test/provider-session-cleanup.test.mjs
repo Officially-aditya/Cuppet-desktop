@@ -158,7 +158,7 @@ test('capability discovery uses one temporary session and cleans it after model 
 });
 
 test('Claude and Vibe disable session persistence only in the managed child configuration', () => {
-  assert.equal(localCliDescriptor('claude-code').sessionMeta.claudeCode.options.persistSession, false);
+  assert.equal(localCliDescriptor('claude-code').sessionPersistence, false);
   const environment = { VIBE_SESSION_LOGGING__ENABLED: 'true', MISTRAL_API_KEY: 'existing-auth' };
   const result = localCliDescriptor('mistral-vibe').environment(environment);
   assert.equal(result.VIBE_SESSION_LOGGING__ENABLED, 'false');

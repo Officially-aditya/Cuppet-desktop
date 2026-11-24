@@ -54,6 +54,7 @@ export class JournaledToolRuntime {
   async run(options) {
     const initialMessageId = latestAssistantMessageID(this.#db, options.sessionId);
     const currentMessageId = () => options.getAssistantMessageId?.() || latestAssistantMessageID(this.#db, options.sessionId) || initialMessageId;
+    const nativeAgentInstructions = providerOwnsAgentInstructions(options.adapter);
     const benchmarkBefore = this.#benchmark ? this.executionSnapshot(options.sessionId) ?? {} : null;
     const benchmarkStartedAt = this.#benchmark ? Date.now() : 0;
     let benchmarkResult = null;
@@ -131,6 +132,7 @@ export class JournaledToolRuntime {
     try {
       benchmarkResult = await this.#inner.run({
         ...options,
+        nativeAgentInstructions,
         adapter: capture,
         onPaths: async (paths, mutation, details = null) => {
           await capture.onPaths(paths, mutation);
@@ -206,6 +208,12 @@ export class JournaledToolRuntime {
   #safeEmit(event) {
     try { this.#emit(event); } catch {}
   }
+}
+
+function providerOwnsAgentInstructions(adapter) {
+  let backendId = '';
+  try { backendId = String(adapter?.cuppetManagedRuntime?.()?.backendId ?? '').trim().toLowerCase(); } catch {}
+  return backendId === 'claude-code' || backendId === 'antigravity';
 }
 
 class ToolMutationCapture {

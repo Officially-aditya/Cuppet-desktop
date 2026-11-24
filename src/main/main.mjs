@@ -96,7 +96,7 @@ function registerIpc() {
   handle('health', () => request('health'));
   handle('usage.summary', () => request('usage.summary'));
   handle('usage.plan', (_event, providerID) => {
-    const configuration = ['claude-code', 'antigravity', 'github-copilot'].includes(providerID) ? settings.runtimeValue() : {};
+    const configuration = providerID === 'github-copilot' ? settings.runtimeValue() : {};
     return readProviderPlanUsage(providerID, {
       resourcesPath: process.resourcesPath,
       configuration: configuration.providerID === providerID ? configuration : {},

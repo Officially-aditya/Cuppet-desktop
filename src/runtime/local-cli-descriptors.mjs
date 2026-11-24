@@ -21,14 +21,9 @@ const DESCRIPTORS = Object.freeze({
   'claude-code': descriptor({
     id: 'claude-code', label: 'Claude Code', transport: 'acp', command: 'claude-agent-acp', args: [], versionArgs: ['--cli', '--version'], envOverride: 'CUPPET_CLAUDE_ACP_BIN',
     loginHint: 'Run `claude-agent-acp --cli auth login` in Terminal and complete Claude sign-in, then retry.',
-    // claude-agent-acp forwards these ACP session extensions into the Claude Agent SDK.
-    // Remove Claude's built-in coding tools and filesystem settings sources so project/user
-    // MCP servers, hooks, plugins and tool settings cannot become a parallel execution path.
-    // Authentication remains Claude-owned and is resolved independently by the Agent SDK.
-    sessionMeta: {
-      disableBuiltInTools: true,
-      claudeCode: { options: { settingSources: [], persistSession: false } },
-    },
+    // Keep Claude Code's own prompt, tools and settings. Cuppet adds its tool catalog
+    // as an ACP MCP server instead of replacing Claude's native agent layer.
+    mcpToolBridge: true,
     sessionPersistence: false,
   }),
   'grok-build': descriptor({
