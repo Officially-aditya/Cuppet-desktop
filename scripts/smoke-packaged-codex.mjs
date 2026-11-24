@@ -20,7 +20,7 @@ await access(executable);
 await access(binary);
 await access(codeModeHost);
 const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
-const allowedVersions = ['0.160.0', '0.162.1'];
+const allowedVersions = ['0.171.0'];
 assert.ok(allowedVersions.includes(packageManifest.version));
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.equal(manifest.vendor, 'OpenAI');

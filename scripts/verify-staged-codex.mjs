@@ -25,7 +25,7 @@ for (const [path, label] of [[binary, 'Codex app-server'], [codeModeHost, 'Codex
   assert.ok(itemStat.size > 1_000_000, `staged ${label} is unexpectedly small`);
 }
 const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
-const allowedVersions = ['0.160.0', '0.162.1'];
+const allowedVersions = ['0.171.0'];
 assert.ok(allowedVersions.includes(packageManifest.version), `expected version in ${allowedVersions.join(', ')}, got ${packageManifest.version}`);
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.equal(manifest.schemaVersion, 2);

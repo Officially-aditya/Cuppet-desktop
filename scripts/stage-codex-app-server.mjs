@@ -5,15 +5,15 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { codexRuntimeKey } from '../src/runtime/codex-app-server.mjs';
 
-const RELEASE = 'rust-v0.162.1';
-const VERSION = '0.162.1';
+const RELEASE = 'rust-v0.171.0';
+const VERSION = '0.171.0';
 const ARTIFACTS = Object.freeze({
-  'darwin-arm64': { asset: 'codex-app-server-package-aarch64-apple-darwin.tar.gz', sha256: '28c0e2fbfb39a422dcfdd5bb87027a12242da7fa2dc997811bc0a6d2316c4f93' },
-  'darwin-x64': { asset: 'codex-app-server-package-x86_64-apple-darwin.tar.gz', sha256: 'b0bacdc1efa7cccf849c1435fd9b5de729f1f4f174eb0a742ce0f47ab42078ee' },
-  'linux-x64': { asset: 'codex-app-server-package-x86_64-unknown-linux-musl.tar.gz', sha256: '8748f9f8b708b3bc5a52b3f0a1ccddb22e6985f0efb4f45dafa1677e324abe0e' },
-  'linux-arm64': { asset: 'codex-app-server-package-aarch64-unknown-linux-musl.tar.gz', sha256: '0531a9250a968feb8597c4a3b43da0694b04333896fd6cd1e1c7d31702d159ec' },
-  'win32-x64': { asset: 'codex-app-server-package-x86_64-pc-windows-msvc.tar.gz', sha256: 'e67c01033b79e7ee3ec763b85cf5c7b774ba4846d46c0b0920193bd19f835728' },
-  'win32-arm64': { asset: 'codex-app-server-package-aarch64-pc-windows-msvc.tar.gz', sha256: 'f2f19e6dfcdb6adbbf59cc9864782edd85c87ffe500fa9d90b02636ee919649c' },
+  'darwin-arm64': { asset: 'codex-app-server-package-aarch64-apple-darwin.tar.gz', sha256: 'fe53328d2aa683e33ecef412a04ffb798025f65d7a41be9b09ad91fe91794402' },
+  'darwin-x64': { asset: 'codex-app-server-package-x86_64-apple-darwin.tar.gz', sha256: '047c0fbff055623590df793c5e31fca537299dea51132c1272f25698e439d512' },
+  'linux-x64': { asset: 'codex-app-server-package-x86_64-unknown-linux-musl.tar.gz', sha256: 'fbb41f283b22a161905a3849354ce7b7dd70c553ae422451aef908220fcabc8e' },
+  'linux-arm64': { asset: 'codex-app-server-package-aarch64-unknown-linux-musl.tar.gz', sha256: '73a7153f002d025db50fca0e11d43856bb726a732296818030ecb2e4a0cf0318' },
+  'win32-x64': { asset: 'codex-app-server-package-x86_64-pc-windows-msvc.tar.gz', sha256: '9b20001daac4387f94315013382c6853e40c8f63de0603be021e4a5e983c329c' },
+  'win32-arm64': { asset: 'codex-app-server-package-aarch64-pc-windows-msvc.tar.gz', sha256: '8a60e27c88bc567c8acab3338337b526e281bd08a76cf856f77a67b6a5e25a10' },
 });
 
 const args = Object.fromEntries(process.argv.slice(2).map((value) => {
