@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { CodexSessionRuntime, CodexSubscriptionProvider } from '../src/runtime/codex-provider.mjs';
+import { JournaledToolRuntime } from '../src/runtime/journaled-tool-runtime.mjs';
 
 class FakeCodexClient extends EventEmitter {
   constructor({ account = { type: 'chatgpt', planType: 'plus' }, toolCall = true } = {}) {
@@ -121,6 +122,61 @@ test('subscription provider streams through Codex while Cuppet executes dynamic 
   assert.equal(client.threadParams.dynamicTools[0].inputSchema.type, 'object');
   assert.match(client.threadParams.cwd, /cuppet-codex-runtime/);
   assert.equal(client.closed, true);
+});
+
+test('parallel Codex tools consume streamed commentary once and preserve subsequent text', { timeout: 5000 }, async () => {
+  const client = new FakeCodexClient({ toolCall: false });
+  const finish = client.finish.bind(client);
+  const respond = client.respond.bind(client);
+  const commentary = 'I found a gap in the handoff. The location field is classified as ordinary search.';
+  const emitDelta = (delta, itemId) => client.emit('notification', {
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread-1', turnId: 'turn-1', itemId, delta },
+  });
+  client.finish = () => {
+    emitDelta(commentary.slice(0, 28), 'progress');
+    emitDelta(commentary.slice(28), 'progress');
+    for (let id = 501; id <= 504; id++) {
+      client.emit('request', {
+        id,
+        method: 'item/tool/call',
+        params: { callId: `call-${id}`, turnId: 'turn-1', tool: 'cuppet_plan', arguments: { action: 'overview' } },
+      });
+    }
+    emitDelta('Check. ', 'answer');
+    emitDelta('Check. ', 'answer');
+  };
+  client.respond = (id, result) => {
+    respond(id, result);
+    if (client.responses.length === 4) finish();
+  };
+
+  const events = [];
+  const deltas = [];
+  const runtime = new JournaledToolRuntime({
+    journal: null,
+    emit: (event) => events.push(event),
+    db: { createToolExecution: () => ({}), finishToolExecution: () => ({}) },
+    planStore: { toolResult: async () => 'plan' },
+  });
+  try {
+    await runtime.run({
+      adapter: new CodexSubscriptionProvider({ providerID: 'codex', codexLaunch: { command: 'fake' }, clientFactory: () => client }),
+      messages: [{ role: 'user', content: 'Check the handoff.' }],
+      sessionId: 'parallel-codex-tools',
+      getAssistantMessageId: () => 'assistant-1',
+      onDelta: async (delta) => deltas.push(delta),
+    });
+
+    const progress = events.filter((event) => event.type === 'runtime.activity' && event.activity.kind === 'commentary');
+    assert.deepEqual(progress.map((event) => event.activity.text), [commentary]);
+    assert.ok(events.indexOf(progress[0]) < events.findIndex((event) => event.type === 'tool.started'));
+    assert.deepEqual(deltas, ['Check. Check. done']);
+    assert.equal(events.filter((event) => event.type === 'tool.finished' && event.success).length, 4);
+    assert.equal(client.responses.length, 4);
+  } finally {
+    await runtime.close();
+  }
 });
 
 test('managed Codex runtime reuses one app-server while model and effort change per ephemeral thread', async () => {
